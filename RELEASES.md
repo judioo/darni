@@ -19,6 +19,11 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- Reopen Closed Tab brings a tab back in the space you're in when its own space has been
+  archived since, instead of hiding it in the archived space.
+- An extension can no longer open a tab in an archived space.
+
 **Security**
 - An extension can no longer open a tab in an archived space, where no list would show it.
 
