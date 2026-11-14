@@ -463,7 +463,11 @@ public enum ExtensionTabPlacement: Equatable, Sendable {
 
     /// `currentSpace` is the key window's space; `windowSpace` the space a
     /// positive window ID names (nil when it names none or a Little Arc);
-    /// `profileMatches` says whether a space lives in the request's profile.
+    /// `spaces` the listed spaces, the current one first; `profileMatches`
+    /// says whether a space lives in the request's profile. A window ID
+    /// outlives its space's listing (`ExtensionWindowReporter` never forgets
+    /// one), so a window that names no listed space is no space: an extension
+    /// cannot open a tab in an archived space, where nothing would show it.
     public static func resolve(
         _ request: ExtensionTabRequest,
         currentSpace: UUID?,
@@ -484,7 +488,7 @@ public enum ExtensionTabPlacement: Equatable, Sendable {
             return .littleArc
         case .createTab, .optionsPage:
             if request.windowID > 0 {
-                guard let space = windowSpace else { return .decline("window \(request.windowID) is not a space") }
+                guard let space = windowSpace, spaces.contains(space) else { return .decline("window \(request.windowID) is not a space") }
                 return profileMatches(space) ? .newTab(space: space) : .decline("window \(request.windowID) is in another profile")
             }
             if let current = currentSpace, profileMatches(current) { return .newTab(space: current) }

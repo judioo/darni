@@ -19,6 +19,9 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Security**
+- An extension can no longer open a tab in an archived space, where no list would show it.
+
 ## ReArc 2026.1114.785 — 2026-11-14
 
 **New**

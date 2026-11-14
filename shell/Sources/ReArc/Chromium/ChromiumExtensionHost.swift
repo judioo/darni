@@ -239,7 +239,7 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
         guard let model else { return decline(request, "no browser model") }
         let store = model.store
         reconcileWindows()
-        let windowSpace = request.windowID > 0 ? reporter.key(forWindowID: request.windowID).flatMap { store.space(withID: $0)?.id } : nil
+        let windowSpace = request.windowID > 0 ? reporter.key(forWindowID: request.windowID).flatMap { store.listedSpace(withID: $0)?.id } : nil
         let active = store.activeSpaceID
         let order = [active] + store.visibleSpaces.map(\.id).filter { $0 != active }
         // An import's new extension: its welcome page waits in the background.

@@ -162,6 +162,9 @@ final class Wave27ModelTests: XCTestCase {
                        .decline("window 3 is in another profile"))
         XCTAssertEqual(place(ExtensionTabRequest(id: 1, profileID: 1, windowID: 4, kind: .createTab), window: nil),
                        .decline("window 4 is not a space"))
+        // An archived space keeps its window ID but is in no list: no tab opens where nothing shows it.
+        XCTAssertEqual(place(ExtensionTabRequest(id: 1, profileID: 1, windowID: 5, kind: .createTab), window: UUID()),
+                       .decline("window 5 is not a space"))
         XCTAssertEqual(place(ExtensionTabRequest(id: 1, profileID: 1, kind: .createWindow)), .littleArc)
         XCTAssertEqual(place(ExtensionTabRequest(id: 1, profileID: 1, tabID: 9, kind: .activate)), .activate(tab: 9))
         XCTAssertEqual(place(ExtensionTabRequest(id: 1, profileID: 1, kind: .activate)), .decline("no tab to activate"))
