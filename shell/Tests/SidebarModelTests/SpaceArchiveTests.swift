@@ -132,6 +132,33 @@ final class SpaceArchiveTests: XCTestCase {
         XCTAssertEqual(f.store.archivedSpaces(in: studio.id).map(\.id), [studioSpace.id])
     }
 
+    /// AB-02: a tab closed in a space that is archived since comes back in the
+    /// active space, in its folder neither; nothing moves into an archived space.
+    func testReopenAndMovesNeverPlaceATabInAnArchivedSpace() throws {
+        let f = try makeStore()
+        let work = f.store.content(for: f.work)
+        let folder = try XCTUnwrap(work.pinned.compactMap { entry -> SidebarFolder? in
+            if case .folder(let folder) = entry, folder.title == "Reading" { return folder }; return nil
+        }.first)
+        let article = try XCTUnwrap(folder.children.first?.id)
+        f.store.closeTab(article)
+        let scratch = try XCTUnwrap(f.store.content(for: f.work).today.first?.id)
+        f.store.closeTab(scratch)
+        XCTAssertNil(f.store.archiveSpace(f.work))
+        let active = f.store.activeSpaceID
+        XCTAssertNotEqual(active, f.work)
+
+        let reopened = try XCTUnwrap(f.store.reopenMostRecentClosedTab())
+        XCTAssertEqual(f.store.listedSpaceID(holding: reopened.id), active, "Today tab: the active space")
+        let fromFolder = try XCTUnwrap(f.store.reopenMostRecentClosedTab())
+        XCTAssertEqual(f.store.listedSpaceID(holding: fromFolder.id), active, "folder tab: the active space's Pinned")
+
+        XCTAssertFalse(f.store.moveTab(reopened.id, toSpace: f.work))
+        XCTAssertFalse(f.store.moveItem(reopened.id, to: .section(spaceID: f.work, section: .pinned), index: 0))
+        XCTAssertFalse(f.store.moveItem(reopened.id, to: .folder(folder.id), index: 0))
+        XCTAssertNil(f.store.listedSpaceID(holding: folder.id))
+    }
+
     func testTheLastListedSpaceCannotBeArchived() throws {
         let f = try makeStore()
         XCTAssertNil(f.store.archiveSpace(f.work))

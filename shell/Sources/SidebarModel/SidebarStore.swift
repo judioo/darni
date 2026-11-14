@@ -1086,13 +1086,13 @@ public final class SidebarStore {
 
     /// Puts the newest closed tab back where it was: same container and index,
     /// back into its split if that split still has room. A missing folder
-    /// falls back to the end of Pinned, a missing space to the active one, a
+    /// falls back to the end of Pinned, a missing or archived space to the active one, a
     /// missing profile to the active profile's favorites.
     @discardableResult
     public func reopenMostRecentClosedTab() -> Tab? {
         guard let record = closedTabStack.popMostRecent() else { return nil }
         archivedTabs.removeAll { $0.id == record.tab.id }
-        let spaceID = spaces.contains(where: { $0.id == record.spaceID }) ? record.spaceID : activeSpaceID
+        let spaceID = listedSpace(withID: record.spaceID) != nil ? record.spaceID : activeSpaceID
         let restored: Tab
         if let split = record.split {
             restored = reopenSplit(split, placement: record.placement, spaceID: spaceID)
@@ -1116,7 +1116,7 @@ public final class SidebarStore {
         case .section(let section, let index), .splitPane(_, _, let section, let index):
             return (.section(spaceID: spaceID, section: section), index)
         case .folder(let folderID, let index):
-            if folder(withID: folderID) != nil { return (.folder(folderID), index) }
+            if folder(withID: folderID) != nil, listedSpaceID(holding: folderID) != nil { return (.folder(folderID), index) }
             return (.section(spaceID: spaceID, section: .pinned), .max)
         case nil:
             return record.tab.kind == .pinned
@@ -1172,7 +1172,7 @@ public final class SidebarStore {
 
     private func rejoinSplit(_ splitID: SplitViewItem.ID, tab: Tab, at paneIndex: Int) -> Tab? {
         guard var split = split(withID: splitID), split.tabs.count < 4,
-              let location = locateSplit(splitID) else { return nil }
+              let location = locateSplit(splitID), listedSpace(withID: location.spaceID) != nil else { return nil }
         let copy = reopenedCopy(of: tab, kind: location.section == .pinned ? .pinned : .today)
         split.tabs.insert(copy, at: min(paneIndex, split.tabs.count))
         split.widthFactors[copy.id] = 1.0 / Double(split.tabs.count)
@@ -1210,7 +1210,7 @@ public final class SidebarStore {
     /// top of another space's Today section.
     @discardableResult
     public func moveTab(_ id: Tab.ID, toSpace destinationSpaceID: Space.ID) -> Bool {
-        guard spaces.contains(where: { $0.id == destinationSpaceID }),
+        guard listedSpace(withID: destinationSpaceID) != nil,
               tab(withID: id) != nil,
               let location = locate(id) else { return false }
         let wasSelected = selectedTabID == id
@@ -1955,10 +1955,10 @@ public final class SidebarStore {
             if case .tab = entry { return true }
             return false
         case .section(let spaceID, let section):
-            guard spaces.contains(where: { $0.id == spaceID }) else { return false }
+            guard listedSpace(withID: spaceID) != nil else { return false }
             return section == .pinned || !entry.isFolder
         case .folder(let folderID):
-            guard folder(withID: folderID) != nil, folderID != entry.id else { return false }
+            guard folder(withID: folderID) != nil, listedSpaceID(holding: folderID) != nil, folderID != entry.id else { return false }
             switch entry {
             case .tab:
                 return true

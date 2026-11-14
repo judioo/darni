@@ -71,4 +71,15 @@ extension SidebarStore {
         spaces.filter { $0.isArchived && $0.profileID == profileID }
             .sorted { ($0.archivedAt ?? .distantPast, $0.id.uuidString) > ($1.archivedAt ?? .distantPast, $1.id.uuidString) }
     }
+
+    /// The listed space an entry (tab, folder or split) sits in: nil for a
+    /// favorite, an unknown id or an entry of an archived space (AB-02).
+    func listedSpaceID(holding id: UUID) -> Space.ID? {
+        switch indexed(id)?.place {
+        case .tree(let spaceID, _, _), .splitPane(let spaceID, _, _):
+            return listedSpace(withID: spaceID)?.id
+        case .favorite, nil:
+            return nil
+        }
+    }
 }
