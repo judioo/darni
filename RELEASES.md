@@ -20,6 +20,8 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **Fixes**
+- Archived spaces now sync to your other Macs with Sync Sidebar on (iCloud's server was
+  updated for them on 14 November).
 - Reopen Closed Tab brings a tab back in the space you're in when its own space has been
   archived since, instead of hiding it in the archived space.
 - An extension can no longer open a tab in an archived space.
