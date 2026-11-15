@@ -37,6 +37,12 @@ final class NativeMessagingHostsTests: XCTestCase {
 
     private func hosts(_ data: URL) -> URL { data.appendingPathComponent("NativeMessagingHosts") }
 
+    /// Helper paths under /gone are uninstalled; any other path counts as installed.
+    @discardableResult
+    private func mirror(_ data: URL, _ sources: [URL]) -> [String] {
+        ChromiumNativeMessagingHosts.mirror(into: data, from: sources, isExecutable: { !$0.hasPrefix("/gone") })
+    }
+
     private func exists(_ name: String, _ data: URL) -> Bool {
         FileManager.default.fileExists(atPath: hosts(data).appendingPathComponent(name).path)
     }
@@ -55,26 +61,26 @@ final class NativeMessagingHostsTests: XCTestCase {
         try manifest("com.dropbox.nmh", in: chrome)
         try manifest("2bua8c4s2c.com.agilebits.1password", in: arc)
 
-        let first = ChromiumNativeMessagingHosts.mirror(into: data, from: [arc, chrome])
+        let first = mirror(data, [arc, chrome])
         XCTAssertEqual(first, ["com.1password.1password.json", "com.1password.1password7.json"])
         XCTAssertTrue(try read("com.1password.1password.json", data).contains("/arc"), "Arc wins")
         XCTAssertFalse(exists("com.dropbox.nmh.json", data), "not allowed")
         XCTAssertFalse(exists("2bua8c4s2c.com.agilebits.1password.json", data), "not allowed")
-        XCTAssertEqual(ChromiumNativeMessagingHosts.mirror(into: data, from: [arc, chrome]), [], "nothing changed")
+        XCTAssertEqual(mirror(data, [arc, chrome]), [], "nothing changed")
 
         try manifest("com.1password.1password", path: "/arc2", in: arc)
-        XCTAssertEqual(ChromiumNativeMessagingHosts.mirror(into: data, from: [arc, chrome]), ["com.1password.1password.json"])
+        XCTAssertEqual(mirror(data, [arc, chrome]), ["com.1password.1password.json"])
         XCTAssertTrue(try read("com.1password.1password.json", data).contains("/arc2"), "an update follows")
 
         try FileManager.default.removeItem(at: chrome.appendingPathComponent("com.1password.1password7.json"))
-        ChromiumNativeMessagingHosts.mirror(into: data, from: [arc, chrome])
+        mirror(data, [arc, chrome])
         XCTAssertFalse(exists("com.1password.1password7.json", data), "a copy goes when its source goes")
     }
 
     func testNothingFoundLeavesNoFolder() throws {
         let chrome = try dir("chrome"), data = try dir("data")
         try manifest("com.dropbox.nmh", in: chrome)
-        XCTAssertEqual(ChromiumNativeMessagingHosts.mirror(into: data, from: [chrome]), [])
+        XCTAssertEqual(mirror(data, [chrome]), [])
         XCTAssertFalse(FileManager.default.fileExists(atPath: hosts(data).path))
     }
 
@@ -84,10 +90,10 @@ final class NativeMessagingHostsTests: XCTestCase {
         try manifest("com.1password.1password", path: "/mine", in: own)
         try manifest("com.1password.1password", path: "/arc", in: arc)
 
-        XCTAssertEqual(ChromiumNativeMessagingHosts.mirror(into: data, from: [arc]), [])
+        XCTAssertEqual(mirror(data, [arc]), [])
         XCTAssertTrue(try read("com.1password.1password.json", data).contains("/mine"))
         try FileManager.default.removeItem(at: arc.appendingPathComponent("com.1password.1password.json"))
-        ChromiumNativeMessagingHosts.mirror(into: data, from: [arc])
+        mirror(data, [arc])
         XCTAssertTrue(try read("com.1password.1password.json", data).contains("/mine"), "not removed either")
     }
 
@@ -99,7 +105,7 @@ final class NativeMessagingHostsTests: XCTestCase {
         try manifest("com.dropbox.nmh", in: target)
         try write(#"["com.dropbox.nmh.json"]"#, as: ".rearc-copied.json", in: target)
 
-        ChromiumNativeMessagingHosts.mirror(into: data, from: [chrome])
+        mirror(data, [chrome])
         XCTAssertFalse(exists("com.dropbox.nmh.json", data))
         XCTAssertEqual(try read(".rearc-copied.json", data), "[]")
     }
@@ -107,13 +113,17 @@ final class NativeMessagingHostsTests: XCTestCase {
     // 2. Shipped runs on the person's own data only
 
     func testRunsOnlyForAShippedRunOnTheOwnersData() {
-        XCTAssertTrue(ChromiumNativeMessagingHosts.runs(testSwitches: false, environment: [:], infoDictionary: [:]))
-        XCTAssertFalse(ChromiumNativeMessagingHosts.runs(testSwitches: true, environment: [:], infoDictionary: [:]),
-                       "self-test and bench")
-        XCTAssertFalse(ChromiumNativeMessagingHosts.runs(testSwitches: false, environment: ["REARC_DATA_DIR": "/tmp/x"],
-                                                         infoDictionary: [:]))
-        XCTAssertTrue(ChromiumNativeMessagingHosts.runs(testSwitches: false, environment: ["REARC_DATA_DIR": ""],
-                                                        infoDictionary: [:]))
+        let own = URL(fileURLWithPath: "/Users/x/Library/Application Support/ReArc/Chromium")
+        func runs(_ switches: Bool, _ env: [String: String], _ dir: URL) -> Bool {
+            ChromiumNativeMessagingHosts.runs(testSwitches: switches, userDataDir: dir, environment: env,
+                                              infoDictionary: [:], ownUserDataDir: own)
+        }
+        XCTAssertTrue(runs(false, [:], own))
+        XCTAssertTrue(runs(false, [:], own.appendingPathComponent("../Chromium")), "the same folder, spelled differently")
+        XCTAssertFalse(runs(true, [:], own), "self-test and bench")
+        XCTAssertFalse(runs(false, ["REARC_DATA_DIR": "/tmp/x"], own))
+        XCTAssertTrue(runs(false, ["REARC_DATA_DIR": ""], own))
+        XCTAssertFalse(runs(false, [:], URL(fileURLWithPath: "/tmp/dev-profile")), "a development --user-data-dir")
     }
 
     // 3. Names
@@ -126,7 +136,7 @@ final class NativeMessagingHostsTests: XCTestCase {
         try write(#"["../../outside.json", "../outside.json", ".rearc-copied.json", "sub/x.json"]"#,
                   as: ".rearc-copied.json", in: target)
 
-        ChromiumNativeMessagingHosts.mirror(into: data, from: [])
+        mirror(data, [])
         XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path), "nothing outside the folder is removed")
         XCTAssertTrue(exists(".rearc-copied.json", data))
     }
@@ -156,8 +166,11 @@ final class NativeMessagingHostsTests: XCTestCase {
         let small = manifestJSON("com.1password.h")
         let big = String(small.dropLast(1)) + #", "pad": ""# + String(repeating: "x", count: 70_000) + #""}"#
         try write(big, as: "com.1password.h.json", in: arc)
+        try write(manifestJSON("com.1password.i", origins: ["chrome-extension://aeblfdkhhhdcdjpifhhbdiojplfjnco\u{0061}\u{0301}/"]),
+                  as: "com.1password.i.json", in: arc)                                    // a combining mark
+        try manifest("com.1password.gone", path: "/gone/1Password7.app/helper", in: arc)  // the app is uninstalled
         try manifest("com.1password.ok", in: arc)
 
-        XCTAssertEqual(ChromiumNativeMessagingHosts.mirror(into: data, from: [arc]), ["com.1password.ok.json"])
+        XCTAssertEqual(mirror(data, [arc]), ["com.1password.ok.json"])
     }
 }

@@ -762,7 +762,7 @@ final class ChromiumRuntime {
             let removed = ChromiumProfileDeletions.run(in: userDataDir)
             if !removed.isEmpty { ChromiumLog.info("removed the data of \(removed.count) deleted profile(s)") }
             // Before the engine reads them: 1Password's unlock with the app.
-            if ChromiumNativeMessagingHosts.runs(testSwitches: testSwitches) {
+            if ChromiumNativeMessagingHosts.runs(testSwitches: testSwitches, userDataDir: userDataDir) {
                 let hosts = ChromiumNativeMessagingHosts.mirror(into: userDataDir)
                 if !hosts.isEmpty { ChromiumLog.info("native messaging hosts from Arc/Chrome: \(hosts.joined(separator: ", "))") }
             }

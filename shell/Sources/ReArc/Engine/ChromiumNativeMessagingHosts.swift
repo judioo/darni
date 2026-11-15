@@ -30,15 +30,23 @@ enum ChromiumNativeMessagingHosts {
         ]
     }
 
+    /// The person's own engine folder.
+    static var defaultUserDataDir: URL {
+        ShellDataLocation.defaultRoot.appendingPathComponent("Chromium", isDirectory: true)
+    }
+
     /// Only a shipped run on the person's own data: not a verification
     /// bundle, a `REARC_DATA_DIR` launch, the self-test or the bench (as
-    /// `AppBundleIcon.defaultWrites`), so throwaway profiles never get the
-    /// owner's hosts and test runs never read Arc's folder.
-    static func runs(testSwitches: Bool,
+    /// `AppBundleIcon.defaultWrites`), nor any other engine folder (a
+    /// development bundle given `--user-data-dir`), so throwaway profiles
+    /// never get the owner's hosts and test runs never read Arc's folder.
+    static func runs(testSwitches: Bool, userDataDir: URL,
                      environment: [String: String] = ProcessInfo.processInfo.environment,
-                     infoDictionary: [String: Any]? = Bundle.main.infoDictionary) -> Bool {
+                     infoDictionary: [String: Any]? = Bundle.main.infoDictionary,
+                     ownUserDataDir: URL = defaultUserDataDir) -> Bool {
         if testSwitches || ShippedBuild.isVerificationBundle(infoDictionary: infoDictionary) { return false }
-        return environment[ShellDataLocation.environmentKey]?.isEmpty ?? true
+        guard environment[ShellDataLocation.environmentKey]?.isEmpty ?? true else { return false }
+        return userDataDir.standardizedFileURL.path == ownUserDataDir.standardizedFileURL.path
     }
 
     /// A plain manifest file name: no path, not hidden (the ledger's own
@@ -51,29 +59,40 @@ enum ChromiumNativeMessagingHosts {
         isPlainManifestName(name) && allowedNamePrefixes.contains { name.hasPrefix($0) }
     }
 
-    /// `name` is the file's stem, `type` stdio, `path` absolute, and
-    /// `allowed_origins` a non-empty list of extension origins. Chromium
-    /// checks most of this again; this keeps junk out of the folder.
-    static func isValidManifest(_ data: Data, fileName: String) -> Bool {
+    /// `name` is the file's stem, `type` stdio, `path` an existing
+    /// executable (an uninstalled app's manifest is left behind; the copy
+    /// comes and goes with the app), and `allowed_origins` a non-empty list
+    /// of extension origins. Chromium checks most of this again; this keeps
+    /// junk out of the folder.
+    static func isValidManifest(_ data: Data, fileName: String,
+                                isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> Bool {
         guard data.count <= maximumManifestSize,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               json["name"] as? String == String(fileName.dropLast(".json".count)),
               json["type"] as? String == "stdio",
-              let path = json["path"] as? String, path.hasPrefix("/"),
+              let path = json["path"] as? String, path.hasPrefix("/"), isExecutable(path),
               let origins = json["allowed_origins"] as? [String], !origins.isEmpty else { return false }
         return origins.allSatisfy(isExtensionOrigin)
+    }
+
+    /// The manifest's bytes, read only when its size allows.
+    private static func readManifest(at url: URL) -> Data? {
+        guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
+              size <= maximumManifestSize else { return nil }
+        return try? Data(contentsOf: url)
     }
 
     private static func isExtensionOrigin(_ origin: String) -> Bool {
         let prefix = "chrome-extension://"
         guard origin.hasPrefix(prefix), origin.hasSuffix("/") else { return false }
         let id = origin.dropFirst(prefix.count).dropLast()
-        return id.count == 32 && id.allSatisfy { ("a"..."p").contains($0) }
+        return id.count == 32 && id.allSatisfy { $0.isASCII && ("a"..."p").contains($0) }
     }
 
     /// Returns the manifest names copied or updated.
     @discardableResult
-    static func mirror(into userDataDir: URL, from sources: [URL] = sourceDirectories) -> [String] {
+    static func mirror(into userDataDir: URL, from sources: [URL] = sourceDirectories,
+                       isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> [String] {
         let fm = FileManager.default
         let target = userDataDir.appendingPathComponent(directoryName, isDirectory: true)
         let ledgerURL = target.appendingPathComponent(ledgerName)
@@ -84,8 +103,8 @@ enum ChromiumNativeMessagingHosts {
         for source in sources {
             let names = (try? fm.contentsOfDirectory(atPath: source.path)) ?? []
             for name in names.sorted() where isAllowed(name) && wanted[name] == nil {
-                guard let data = try? Data(contentsOf: source.appendingPathComponent(name)),
-                      isValidManifest(data, fileName: name) else { continue }
+                guard let data = readManifest(at: source.appendingPathComponent(name)),
+                      isValidManifest(data, fileName: name, isExecutable: isExecutable) else { continue }
                 wanted[name] = data
             }
         }
