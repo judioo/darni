@@ -25,6 +25,10 @@ lines and this section starts empty again.
 - Reopen Closed Tab brings a tab back in the space you're in when its own space has been
   archived since, instead of hiding it in the archived space.
 - An extension can no longer open a tab in an archived space.
+- A pinned tab can be removed from its row again: once it is closed, its button turns to ✕, and
+  ✕ takes it out of the sidebar, as in Arc. ⌘W still keeps pinned tabs.
+- A space you left blank comes back blank: a tab you closed no longer reopens after visiting
+  another space.
 - Closing the open tab in a pinned folder now leaves a blank page, as in Arc, instead of jumping
   to a Today tab. A collapsed folder no longer shows the closed tab.
 - A space in a container can now be archived. Its container and sign-ins wait with it, out of
