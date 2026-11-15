@@ -714,9 +714,14 @@ extension BrowserViewModel {
         guard store.archiveSpace(id) == nil else { return }
         reconcileEngineOwnership()
         loadSelectedIfNeeded()
-        showUndoToast("Space archived", systemImage: "archivebox") { [weak self] in
-            self?.restoreArchivedSpace(id, switching: wasActive)
+        let toast: () -> Void = { [weak self] in
+            self?.showUndoToast("Space archived", systemImage: "archivebox") { [weak self] in
+                self?.restoreArchivedSpace(id, switching: wasActive)
+            }
         }
+        // Set in the same pass as the space switch, the card dropped it
+        // (785: no Undo when archiving the space you are on).
+        if wasActive { DispatchQueue.main.async { toast() } } else { toast() }
     }
 
     func canArchiveSpace(_ id: Space.ID) -> Bool {

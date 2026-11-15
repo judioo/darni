@@ -29,6 +29,20 @@ final class Wave34ShellTests: XCTestCase {
 
     // MARK: Close wording (§4 item 1)
 
+    func testArchivingTheSpaceYouAreOnShowsUndoAfterTheSwitch() async throws {
+        // 785: set in the same pass as the space switch, the card dropped the toast.
+        let model = makeModel()
+        let active = model.store.activeSpaceID
+        model.archiveSpace(active)
+        XCTAssertNotEqual(model.store.activeSpaceID, active)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(model.toast?.message, "Space archived")
+        XCTAssertEqual(model.toast?.action, .undo)
+        model.runToastUndo()
+        XCTAssertEqual(model.store.activeSpaceID, active, "Undo restores it and goes back")
+        XCTAssertNil(model.store.space(withID: active)?.archivedAt)
+    }
+
     func testAnUnloadedPinnedRowShowsXAndItRemovesTheTab() {
         // Arc (owner's recording, 2026-11-15): an unloaded pinned tab's ✕
         // takes it out of the sidebar; an open one's — keeps it.
