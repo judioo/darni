@@ -524,10 +524,7 @@ extension BrowserViewModel {
             let space = store.space(withID: id)
             let content = store.content(for: id)
             let count = SidebarTree.tabs(content.pinned + content.today).count
-            // A container's only space takes the container along (`deleteSpace`).
-            let container = containerDeletedWithSpace(id).map { profileKeepsDataOnDelete?($0) == true
-                ? " Its container goes too; the container's browsing data stays on this Mac, in the first profile's folder."
-                : " Its container's cookies, sign-ins and site data are deleted too." } ?? ""
+            let container = spaceDeletionContainerNote(id)
             return ("Delete “\(space?.name ?? "Space")”?",
                     "The space and its \(count) pinned and Today tab\(count == 1 ? "" : "s") are deleted.\(container) This cannot be undone.",
                     "Delete Space")
@@ -682,6 +679,14 @@ extension BrowserViewModel {
 
     var canDeleteSpaces: Bool { store.visibleSpaces.count > 1 }
 
+    /// What a space delete says of its container: a container's only space
+    /// takes the container along (`deleteSpace`, `deleteArchivedSpace`).
+    func spaceDeletionContainerNote(_ id: Space.ID) -> String {
+        containerDeletedWithSpace(id).map { profileKeepsDataOnDelete?($0) == true
+            ? " Its container goes too; the container's browsing data stays on this Mac, in the first profile's folder."
+            : " Its container's cookies, sign-ins and site data are deleted too." } ?? ""
+    }
+
     // MARK: - Archive Space
 
     /// Archive Space: the space leaves every list, kept exactly as it was, and
@@ -706,9 +711,13 @@ extension BrowserViewModel {
         if switching { selectSpace(id) }
     }
 
-    /// Settings › Profiles › Archived Spaces › Delete…, once confirmed.
+    /// Settings › Profiles › Archived Spaces › Delete…, once confirmed. A
+    /// container's space takes its container along, as `deleteSpace` does.
     func deleteArchivedSpace(_ id: Space.ID) {
-        guard store.space(withID: id)?.isArchived == true, store.removeSpace(id) else { return }
+        guard store.space(withID: id)?.isArchived == true else { return }
+        let container = containerDeletedWithSpace(id)
+        guard store.removeSpace(id) else { return }
+        if let container { deleteProfile(container) }
         showToast("Space deleted", systemImage: "trash")
     }
 
@@ -716,7 +725,6 @@ extension BrowserViewModel {
     static func archiveRefusal(_ error: SpaceArchiveError) -> String {
         switch error {
         case .lastSpace: return "The last space cannot be archived"
-        case .containerSpace: return "A container's space cannot be archived"
         case .alreadyArchived, .notArchived, .spaceNotFound: return "This space cannot be archived"
         }
     }

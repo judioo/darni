@@ -175,19 +175,37 @@ final class SpaceArchiveTests: XCTestCase {
         XCTAssertNil(f.store.space(withID: f.side))
     }
 
-    func testAContainersSpaceCannotBeArchivedAndAProfileWithArchivedSpacesIsNotAContainer() throws {
+    func testAContainersSpaceArchivesWithItsContainerOutOfSightAndRestoresIt() throws {
         let f = try makeStore()
+        let parent = f.store.profiles[0].id
         let container = try XCTUnwrap(f.store.createContainer(forSpace: f.side))
-        XCTAssertEqual(f.store.archiveSpace(f.side), .containerSpace)
-        XCTAssertNil(f.store.space(withID: f.side)?.archivedAt)
+        XCTAssertNil(f.store.archiveBlocker(forSpace: f.side))
+        XCTAssertNil(f.store.archiveSpace(f.side))
 
+        // Archived under its parent; the container stays, out of every list.
+        XCTAssertEqual(f.store.archivedSpaces(in: parent).map(\.id), [f.side])
+        XCTAssertEqual(f.store.space(withID: f.side)?.profileID, container.id)
+        XCTAssertNotNil(f.store.profile(withID: container.id))
+        XCTAssertTrue(f.store.isContainer(container.id))
+        XCTAssertEqual(f.store.containers(of: parent).map(\.id), [container.id])
+        XCTAssertTrue(f.store.listedContainers(of: parent).isEmpty)
+        XCTAssertFalse(f.store.listedProfiles.contains { $0.id == container.id })
+        XCTAssertFalse(f.store.profileMenuRows(active: nil, includingContainers: true).contains { $0.profile.id == container.id })
+
+        XCTAssertNil(f.store.restoreArchivedSpace(f.side))
+        XCTAssertEqual(f.store.space(withID: f.side)?.profileID, container.id)
+        XCTAssertEqual(f.store.listedContainers(of: parent).map(\.id), [container.id])
+        XCTAssertTrue(f.store.profileMenuRows(active: nil, includingContainers: true).contains { $0.profile.id == container.id })
+    }
+
+    func testAProfileWithArchivedSpacesIsNotAContainer() throws {
+        let f = try makeStore()
         let studio = f.store.addProfile(name: "Studio")
         let first = try XCTUnwrap(f.store.spaces(in: studio.id).first)
         _ = f.store.addSpace(name: "Second", profileID: studio.id)
         XCTAssertNil(f.store.archiveSpace(first.id))
         XCTAssertEqual(f.store.containerConversionBlocker(studio.id, of: f.store.profiles[0].id), .needsExactlyOneSpace(count: 2),
                        "an archived space still counts")
-        XCTAssertNotNil(container)
     }
 
     // MARK: Lists

@@ -6,8 +6,6 @@ public enum SpaceArchiveError: Error, Equatable {
     case notArchived
     /// Delete's rule: the last listed space stays.
     case lastSpace
-    /// A container has exactly one space; archiving it would leave the container empty.
-    case containerSpace
 }
 
 /// Archive Space (docs/FEATURE-SPECS/ARCHIVE-SPACE.md), a ReArc addition: the
@@ -16,13 +14,14 @@ public enum SpaceArchiveError: Error, Equatable {
 /// Only `archivedAt` changes. Pinned and Today tabs, folders, theme, icon,
 /// boosts, profile and position (`sortRank`) all stay. The shell releases
 /// the space's engines (`reconcileEngineOwnership` keeps listed spaces' only).
+/// A container's space takes its container out of sight with it
+/// (`listedContainers(of:)`); the container and its sign-ins stay.
 extension SidebarStore {
 
     /// Why `archiveSpace(_:)` would refuse, or nil when it can run.
     public func archiveBlocker(forSpace id: Space.ID) -> SpaceArchiveError? {
         guard let space = space(withID: id) else { return .spaceNotFound }
         guard !space.isArchived else { return .alreadyArchived }
-        guard !isContainer(space.profileID) else { return .containerSpace }
         guard visibleSpaces.count > 1 else { return .lastSpace }
         return nil
     }
@@ -66,9 +65,9 @@ extension SidebarStore {
         return nil
     }
 
-    /// A profile's archived spaces, most recently archived first.
+    /// A profile's archived spaces, its containers' included, most recently archived first.
     public func archivedSpaces(in profileID: Profile.ID) -> [Space] {
-        spaces.filter { $0.isArchived && $0.profileID == profileID }
+        spaces.filter { $0.isArchived && owningProfileID(of: $0.profileID) == profileID }
             .sorted { ($0.archivedAt ?? .distantPast, $0.id.uuidString) > ($1.archivedAt ?? .distantPast, $1.id.uuidString) }
     }
 

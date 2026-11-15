@@ -75,6 +75,12 @@ extension SidebarStore {
         profiles.filter { $0.id != parentID && parentProfile(ofContainer: $0.id)?.id == parentID }
     }
 
+    /// The containers Settings and menus show: those whose space is archived
+    /// wait, out of sight, until it is restored.
+    public func listedContainers(of parentID: Profile.ID) -> [Profile] {
+        containers(of: parentID).filter { container in spaces.contains { $0.profileID == container.id && !$0.isArchived } }
+    }
+
     /// The container space `id` is in, when its profile is one.
     public func container(ofSpace id: Space.ID) -> Profile? {
         guard let profileID = space(withID: id)?.profileID, isContainer(profileID) else { return nil }

@@ -42,7 +42,7 @@ extension SidebarStore {
             let row = ProfileMenuRow(profile: profile, title: profile.name, isContainer: false,
                                      spaceCount: counts[profile.id] ?? 0, isActive: profile.id == checked)
             guard includingContainers else { return [row] }
-            return [row] + containers(of: profile.id).map { container in
+            return [row] + listedContainers(of: profile.id).map { container in
                 ProfileMenuRow(profile: container, title: containerTitle(container.id), isContainer: true,
                                spaceCount: spaces(in: container.id).count, isActive: container.id == checked)
             }

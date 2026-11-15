@@ -49,7 +49,7 @@ struct ArchivedSpacesGroup: View {
         let content = model.store.content(for: id)
         let count = SidebarTree.tabs(content.pinned + content.today).count
         return ("Delete “\(model.store.space(withID: id)?.name ?? "Space")”?",
-                "The space and its \(count) pinned and Today tab\(count == 1 ? "" : "s") are deleted. This cannot be undone.",
+                "The space and its \(count) pinned and Today tab\(count == 1 ? "" : "s") are deleted.\(model.spaceDeletionContainerNote(id)) This cannot be undone.",
                 "Delete Space")
     }
 }

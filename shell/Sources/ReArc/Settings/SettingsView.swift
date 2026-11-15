@@ -302,7 +302,7 @@ struct ProfilesSettingsPane: View {
                 VStack(spacing: 2) {
                     ForEach(model.store.listedProfiles) { profile in
                         profileRow(profile)
-                        ForEach(model.store.containers(of: profile.id)) { container in
+                        ForEach(model.store.listedContainers(of: profile.id)) { container in
                             ContainerProfileRow(model: model, container: container,
                                                 isSelected: selectedCloud == nil && container.id == selected?.id) {
                                 selection = container.id
