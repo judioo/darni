@@ -31,6 +31,8 @@ lines and this section starts empty again.
   another space.
 - Closing the open tab in a pinned folder now leaves a blank page, as in Arc, instead of jumping
   to a Today tab. A collapsed folder no longer shows the closed tab.
+- Archiving the space you're on shows Undo again (785 showed it only when archiving another
+  space).
 - A space in a container can now be archived. Its container and sign-ins wait with it, out of
   Settings › Profiles, and come back when you restore the space.
 
