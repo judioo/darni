@@ -1,16 +1,25 @@
 import Foundation
+import SidebarModel
 
 /// Native messaging hosts (Chromium's `NativeMessagingHosts` in the
 /// user-data-dir): how an extension talks to its desktop app, as 1Password's
 /// does to unlock with the app. Apps install their manifest only for browsers
 /// they know, so ReArc's folder stays empty. At launch ReArc copies in the
-/// manifests already installed for Arc and Chrome; each still names its own
-/// extensions in `allowed_origins`, so only they can use it. A manifest ReArc
-/// did not copy is never touched; copied ones follow their source and go when
-/// it goes (the ledger records which they are).
+/// allowed manifests already installed for Arc and Chrome; each still names
+/// its own extensions in `allowed_origins`, so only they can use it. A
+/// manifest ReArc did not copy is never touched; copied ones follow their
+/// source and go when it goes or stops being allowed (the ledger records
+/// which they are). Security review of 41876855: allowlist, not every host.
 enum ChromiumNativeMessagingHosts {
     static let directoryName = "NativeMessagingHosts"
     static let ledgerName = ".rearc-copied.json"
+    static let maximumManifestSize = 64 * 1024
+
+    /// Hosts copied without asking. The bar for a name here: the host
+    /// authenticates its caller itself (1Password checks the browser's
+    /// signature and asks the person to trust ReArc once). Anything else
+    /// waits for a per-host switch in Settings, off by default.
+    static let allowedNamePrefixes = ["com.1password."]
 
     /// Arc first (ReArc's people come from it), then Chrome.
     static var sourceDirectories: [URL] {
@@ -21,30 +30,72 @@ enum ChromiumNativeMessagingHosts {
         ]
     }
 
+    /// Only a shipped run on the person's own data: not a verification
+    /// bundle, a `REARC_DATA_DIR` launch, the self-test or the bench (as
+    /// `AppBundleIcon.defaultWrites`), so throwaway profiles never get the
+    /// owner's hosts and test runs never read Arc's folder.
+    static func runs(testSwitches: Bool,
+                     environment: [String: String] = ProcessInfo.processInfo.environment,
+                     infoDictionary: [String: Any]? = Bundle.main.infoDictionary) -> Bool {
+        if testSwitches || ShippedBuild.isVerificationBundle(infoDictionary: infoDictionary) { return false }
+        return environment[ShellDataLocation.environmentKey]?.isEmpty ?? true
+    }
+
+    /// A plain manifest file name: no path, not hidden (the ledger's own
+    /// name included), `.json`. Names from the ledger pass this too.
+    static func isPlainManifestName(_ name: String) -> Bool {
+        !name.contains("/") && !name.hasPrefix(".") && name.hasSuffix(".json") && name.count > ".json".count
+    }
+
+    static func isAllowed(_ name: String) -> Bool {
+        isPlainManifestName(name) && allowedNamePrefixes.contains { name.hasPrefix($0) }
+    }
+
+    /// `name` is the file's stem, `type` stdio, `path` absolute, and
+    /// `allowed_origins` a non-empty list of extension origins. Chromium
+    /// checks most of this again; this keeps junk out of the folder.
+    static func isValidManifest(_ data: Data, fileName: String) -> Bool {
+        guard data.count <= maximumManifestSize,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["name"] as? String == String(fileName.dropLast(".json".count)),
+              json["type"] as? String == "stdio",
+              let path = json["path"] as? String, path.hasPrefix("/"),
+              let origins = json["allowed_origins"] as? [String], !origins.isEmpty else { return false }
+        return origins.allSatisfy(isExtensionOrigin)
+    }
+
+    private static func isExtensionOrigin(_ origin: String) -> Bool {
+        let prefix = "chrome-extension://"
+        guard origin.hasPrefix(prefix), origin.hasSuffix("/") else { return false }
+        let id = origin.dropFirst(prefix.count).dropLast()
+        return id.count == 32 && id.allSatisfy { ("a"..."p").contains($0) }
+    }
+
     /// Returns the manifest names copied or updated.
     @discardableResult
     static func mirror(into userDataDir: URL, from sources: [URL] = sourceDirectories) -> [String] {
         let fm = FileManager.default
         let target = userDataDir.appendingPathComponent(directoryName, isDirectory: true)
         let ledgerURL = target.appendingPathComponent(ledgerName)
-        var copied = Set((try? JSONDecoder().decode([String].self, from: Data(contentsOf: ledgerURL))) ?? [])
+        let ledger = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: ledgerURL))) ?? []
+        var copied = Set(ledger.filter(isPlainManifestName))
 
-        var wanted: [String: URL] = [:]
+        var wanted: [String: Data] = [:]
         for source in sources {
             let names = (try? fm.contentsOfDirectory(atPath: source.path)) ?? []
-            for name in names.sorted() where name.hasSuffix(".json") && wanted[name] == nil {
-                wanted[name] = source.appendingPathComponent(name)
+            for name in names.sorted() where isAllowed(name) && wanted[name] == nil {
+                guard let data = try? Data(contentsOf: source.appendingPathComponent(name)),
+                      isValidManifest(data, fileName: name) else { continue }
+                wanted[name] = data
             }
         }
 
-        try? fm.createDirectory(at: target, withIntermediateDirectories: true)
         var changed: [String] = []
-        for (name, source) in wanted.sorted(by: { $0.key < $1.key }) {
+        if !wanted.isEmpty { try? fm.createDirectory(at: target, withIntermediateDirectories: true) }
+        for (name, data) in wanted.sorted(by: { $0.key < $1.key }) {
             let destination = target.appendingPathComponent(name)
             let exists = fm.fileExists(atPath: destination.path)
-            guard !exists || copied.contains(name),
-                  let data = try? Data(contentsOf: source),
-                  (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { continue }
+            guard !exists || copied.contains(name) else { continue }
             if exists, (try? Data(contentsOf: destination)) == data { continue }
             guard (try? data.write(to: destination, options: .atomic)) != nil else { continue }
             copied.insert(name)
@@ -54,7 +105,9 @@ enum ChromiumNativeMessagingHosts {
             try? fm.removeItem(at: target.appendingPathComponent(name))
             copied.remove(name)
         }
-        try? JSONEncoder().encode(copied.sorted()).write(to: ledgerURL, options: .atomic)
+        if fm.fileExists(atPath: target.path) {
+            try? JSONEncoder().encode(copied.sorted()).write(to: ledgerURL, options: .atomic)
+        }
         return changed
     }
 }

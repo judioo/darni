@@ -31,10 +31,9 @@ lines and this section starts empty again.
   another space.
 - Closing the open tab in a pinned folder now leaves a blank page, as in Arc, instead of jumping
   to a Today tab. A collapsed folder no longer shows the closed tab.
-- Extensions can now reach their desktop apps: ReArc uses the native messaging hosts installed
-  for Arc and Chrome. This is what 1Password's extension needs to unlock with the 1Password app.
-  1Password asks you to trust ReArc once (1Password Settings, trusted browsers). Not yet
-  checked end to end with 1Password.
+- 1Password's extension can unlock with the 1Password app: when 1Password is set up for Arc
+  or Chrome, ReArc uses the same link to the app. 1Password asks once to trust ReArc. Only
+  1Password's link is used. Not yet checked end to end with 1Password.
 - Archiving the space you're on shows Undo again (785 showed it only when archiving another
   space).
 - A space in a container can now be archived. Its container and sign-ins wait with it, out of
