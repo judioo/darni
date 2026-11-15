@@ -759,6 +759,11 @@ final class ChromiumRuntime {
         userDataDir = ChromiumLaunchArguments.userDataDir(in: arguments).map { URL(fileURLWithPath: $0, isDirectory: true) }
         startupDirectory = ChromiumLaunchArguments.startupProfileDirectory(in: arguments)
         if let userDataDir {
+            // Crash dumps (page content) into ReArc's data, not the stock
+            // Chromium folder every engine shares (RC-802 AC-02). Helpers
+            // and the crashpad handler inherit it.
+            setenv(ChromiumLaunchArguments.crashDumpEnvironmentKey,
+                   ChromiumLaunchArguments.crashDumpDirectory(userDataDir: userDataDir).path, 1)
             let removed = ChromiumProfileDeletions.run(in: userDataDir)
             if !removed.isEmpty { ChromiumLog.info("removed the data of \(removed.count) deleted profile(s)") }
             // Before the engine reads them: 1Password's unlock with the app.

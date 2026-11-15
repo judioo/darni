@@ -364,6 +364,24 @@ final class Wave26ShellTests: XCTestCase {
         XCTAssertEqual(presented, 1)
     }
 
+    /// RC-802 AC-01: a rule's archived space comes back for the link, which
+    /// opens there; the default route never takes it.
+    func testAirTrafficControlRestoresAnArchivedSpaceForItsLink() throws {
+        let model = makeModel { store in store.addSpace(name: "Work") }
+        model.externalLinkDestination = .littleArc
+        let work = try XCTUnwrap(model.store.spaces.first { $0.name == "Work" })
+        model.linkRouting = LinkRoutingState(rules: [LinkRoutingRule(pattern: "github.com", destination: .space(work.id))])
+        model.archiveSpace(work.id)
+        XCTAssertEqual(model.store.space(withID: work.id)?.isArchived, true)
+
+        model.openExternalURL(URL(string: "https://github.com/rearc")!)
+        XCTAssertEqual(model.store.space(withID: work.id)?.isArchived, false, "restored for the link")
+        XCTAssertEqual(model.store.activeSpaceID, work.id)
+        XCTAssertEqual(model.store.selectedTab?.url.absoluteString, "https://github.com/rearc")
+        XCTAssertTrue(model.store.littleArcLiveWindows.isEmpty, "not the default route")
+        XCTAssertEqual(model.toast?.message, "Restored Work for a link")
+    }
+
     // MARK: Site Control Center
 
     func testSiteControlCenterBoostsZoomAndSiteData() async throws {

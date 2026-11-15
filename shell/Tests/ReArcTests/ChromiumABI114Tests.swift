@@ -163,4 +163,11 @@ final class ChromiumProfileStoragePlanTests: XCTestCase {
         XCTAssertEqual(ChromiumLaunchArguments.startupProfileDirectory(in: args + ["--profile-directory=Profile 2"]), "Profile 2")
         XCTAssertNil(ChromiumLaunchArguments.userDataDir(in: ["ReArc"]))
     }
+
+    /// RC-802 AC-02: crash dumps stay in the engine's own folder.
+    func testCrashDumpsGoIntoTheUserDataDir() {
+        let dir = URL(fileURLWithPath: "/tmp/rearc-data/Chromium", isDirectory: true)
+        XCTAssertEqual(ChromiumLaunchArguments.crashDumpDirectory(userDataDir: dir).path, "/tmp/rearc-data/Chromium/Crashpad")
+        XCTAssertEqual(ChromiumLaunchArguments.crashDumpEnvironmentKey, "BREAKPAD_DUMP_LOCATION")
+    }
 }

@@ -206,6 +206,17 @@ enum ChromiumLaunchArguments {
         try? Data(#"{"dns_over_https":{"mode":"off"}}"#.utf8).write(to: localState)
     }
 
+    /// Chromium reads this before its own default, ~/Library/Application
+    /// Support/Chromium/Crashpad, which ignores --user-data-dir
+    /// (chrome_crash_reporter_client.cc).
+    static let crashDumpEnvironmentKey = "BREAKPAD_DUMP_LOCATION"
+
+    /// The engine's crash database: `Crashpad` in its user-data-dir, where
+    /// Chrome keeps it, so a throwaway profile's dumps stay with it.
+    static func crashDumpDirectory(userDataDir: URL) -> URL {
+        userDataDir.appendingPathComponent("Crashpad", isDirectory: true)
+    }
+
     /// The `--user-data-dir` the engine runs with (last occurrence wins, as in Chromium).
     static func userDataDir(in arguments: [String]) -> String? {
         arguments.last { $0.hasPrefix(userDataDirFlag) }.map { String($0.dropFirst(userDataDirFlag.count)) }

@@ -131,6 +131,18 @@ extension BrowserViewModel {
             if spaceID == store.activeSpaceID {
                 openInNewTab(url)
             } else {
+                // A rule's archived space comes back for the link (RC-802 AC-01):
+                // never the default route, which would take a container's site
+                // into the main profile.
+                if store.space(withID: spaceID)?.isArchived == true {
+                    guard store.restoreArchivedSpace(spaceID) == nil else {
+                        showToast("This link's space is archived and could not be restored", systemImage: "archivebox")
+                        NSApp?.activate(ignoringOtherApps: true)
+                        return
+                    }
+                    let name = store.space(withID: spaceID)?.name ?? "Space"
+                    showToast("Restored \(name) for a link", systemImage: "archivebox")
+                }
                 // An Air Traffic Control space: switch to it (and its profile) first.
                 let tab = store.addTab(kind: .today, title: url.host() ?? "New Tab", url: url, in: spaceID)
                 store.focusTab(tab.id)

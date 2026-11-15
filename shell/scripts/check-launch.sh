@@ -33,9 +33,10 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/rearc-launch-check.XXXXXX")"
 LINK="http://127.0.0.1:9/rearc-launch-check"
 REPORTS="${REARC_CRASH_REPORTS:-$HOME/Library/Logs/DiagnosticReports}"
 # Renderer, GPU and utility crashes never reach DiagnosticReports: Chromium's handler writes them
-# as minidumps under the default user data dir's Crashpad folder, whatever --user-data-dir says
-# (chrome_paths.cc DIR_CRASH_DUMPS), for this unbranded engine ~/Library/Application
-# Support/Chromium/Crashpad (security RC-0.1.0-602 T-11). Colon-separated; tests override it.
+# as minidumps. Since RC-802 AC-02 the shell points it (BREAKPAD_DUMP_LOCATION) at
+# <user-data-dir>/Crashpad, the probes' $WORK/profile-*/Crashpad below; builds before that
+# used ~/Library/Application Support/Chromium/Crashpad whatever --user-data-dir said
+# (security RC-0.1.0-602 T-11), still watched for older bundles. Colon-separated; tests override it.
 CRASHPAD="${REARC_CRASHPAD_DIRS:-$HOME/Library/Application Support/Chromium/Crashpad}"
 # The app and its helpers (which keep Chromium's names) and crashpad; then minidumps.
 reports() {

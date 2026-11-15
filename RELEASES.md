@@ -19,6 +19,14 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- A link from another app that an Air Traffic Control rule sends to an archived space now
+  brings that space back and opens there, instead of disappearing.
+
+**Security**
+- Crash reports stay in ReArc's own data folder instead of the Chromium folder other
+  Chromium-based apps share.
+
 ## ReArc 2026.1115.802 — 2026-11-15
 
 **Fixes**
