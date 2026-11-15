@@ -19,6 +19,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1115.802 — 2026-11-15
+
 **Fixes**
 - Archived spaces now sync to your other Macs with Sync Sidebar on (iCloud's server was
   updated for them on 14 November).
