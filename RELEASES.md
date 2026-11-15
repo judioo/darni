@@ -25,6 +25,8 @@ lines and this section starts empty again.
 - Reopen Closed Tab brings a tab back in the space you're in when its own space has been
   archived since, instead of hiding it in the archived space.
 - An extension can no longer open a tab in an archived space.
+- A space in a container can now be archived. Its container and sign-ins wait with it, out of
+  Settings › Profiles, and come back when you restore the space.
 
 **Security**
 - An extension can no longer open a tab in an archived space, where no list would show it.
