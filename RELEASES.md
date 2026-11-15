@@ -19,6 +19,11 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**New**
+- Video that only played in Chrome now plays in ReArc: H.264 video, AAC audio and HLS streams,
+  decoded by macOS's own decoders. Protected video (Netflix, Disney+ and other DRM services)
+  still doesn't play.
+
 **Fixes**
 - A link from another app that an Air Traffic Control rule sends to an archived space now
   brings that space back and opens there, instead of disappearing.

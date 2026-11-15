@@ -101,6 +101,7 @@ tab/091-context-menu-save-link.patch           # P-TAB-001 ABI 1.64, bridge 0.72
 # Security backports: upstream fixes the pinned Chromium line does not have.
 # Drop each one when the pin moves to a build that contains the fix.
 security/001-cve-2026-121203-resize-observer.patch # upstream 70bfe6689 (Chrome 157.0.8103.38): ResizeObserver gathers by pointer
+media/001-platform-h264-aac.patch               # P-MEDIA-001 H.264/AAC through VideoToolbox/AudioToolbox, FFmpeg stays "Chromium" (release engines since 2026-11-16)
 #
 # Planned inventory (see README.md and engine/docs/ENGINE.md §4);
 # uncomment as patches land:
