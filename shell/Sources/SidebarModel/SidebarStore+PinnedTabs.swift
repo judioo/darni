@@ -16,9 +16,11 @@ extension SidebarStore {
     public func unloadPinnedTab(_ id: Tab.ID) -> Bool {
         guard case .pinned = locate(id), case .tab = entry(withID: id) else { return false }
         if selectedItemID == id {
-            // A saved pin is not an open-tab successor. Only Today can take
-            // focus; otherwise leave the space empty (including folder peeks).
-            selectedItemID = content(for: activeSpaceID).todayLeaves.first?.id
+            // A saved pin is not an open-tab successor. In a folder Arc selects
+            // nothing, Today tabs or not: the page goes blank and a collapsed
+            // folder shows no tab (checked in Arc, 2026-11-15). At the top
+            // level only Today can take focus.
+            selectedItemID = parentFolderID(of: id) == nil ? content(for: activeSpaceID).todayLeaves.first?.id : nil
         }
         resetTabToSavedURL(id)
         notifyMutation()

@@ -111,11 +111,28 @@ final class Wave19SidebarTests: XCTestCase {
         XCTAssertFalse(store.isFolderExpanded(outer.id))
     }
 
-    func testUnloadingPinSelectsFirstTodayRowInItsSpace() throws {
+    func testUnloadingAFolderPinSelectsNothingEvenWithTodayTabs() throws {
+        // Arc (2026-11-15): ⌘W on a folder's open tab leaves the page blank,
+        // with Today tabs open, and the collapsed folder shows no tab.
         let store = makeStore()
         let pin = store.addTab(kind: .pinned, title: "Pin", url: url("https://pin.test"))
         let folder = try XCTUnwrap(store.createFolder(containing: [pin.id]))
+        store.addTab(kind: .pinned, title: "Next", url: url("https://next.test"))
         store.setFolderExpanded(folder.id, false)
+        store.addTab(kind: .today, title: "Today", url: url("https://today.test"))
+        store.selectTab(pin.id)
+
+        XCTAssertTrue(store.unloadPinnedTab(pin.id))
+        XCTAssertNil(store.selectedItemID)
+        XCTAssertFalse(store.isFolderExpanded(folder.id))
+        let rows = SidebarOutlineRow.rows(store.outline(for: store.activeSpaceID).pinned, expanded: store.expandedFolderIDs, selected: store.selectedItemID)
+        XCTAssertFalse(rows.contains { $0.id == pin.id })
+        XCTAssertNotNil(store.tab(withID: pin.id))
+    }
+
+    func testUnloadingATopLevelPinSelectsFirstTodayRowInItsSpace() throws {
+        let store = makeStore()
+        let pin = store.addTab(kind: .pinned, title: "Pin", url: url("https://pin.test"))
         store.addTab(kind: .today, title: "Older", url: url("https://older.test"))
         let newer = store.addTab(kind: .today, title: "Newer", url: url("https://newer.test"))
         store.selectTab(pin.id)
