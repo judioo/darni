@@ -918,7 +918,8 @@ final class BrowserViewModel {
 
     /// Cmd+W / hover close. A favorite is unloaded (engine dropped, kept in
     /// the strip) and a pinned tab is unloaded back to its saved URL, as in
-    /// Arc; anything else is closed and archived.
+    /// Arc; anything else is closed and archived. The row's ✕ on an unloaded
+    /// pinned tab removes it instead (`closeTabFromRow`).
     func closeTab(_ id: Tab.ID) {
         // The page may ask "Leave site?" first (Chromium beforeunload); Stay keeps the tab.
         closeThroughPage(id) { [weak self] in self?.closeTabNow(id) }

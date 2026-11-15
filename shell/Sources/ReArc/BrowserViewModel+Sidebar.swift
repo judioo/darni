@@ -25,6 +25,9 @@ enum TabCloseKind: Equatable {
     case archive
     /// A pinned tab goes back to its saved URL, unloaded; the row stays.
     case unloadPinned
+    /// A pinned tab with no page open: Arc's ✕ takes it out of the sidebar
+    /// (to the archive), as a Today tab's does.
+    case removePinned
     /// A favorite is unloaded and stays in the strip.
     case unloadFavorite
 
@@ -33,6 +36,7 @@ enum TabCloseKind: Equatable {
         switch self {
         case .archive: "Archive this tab"
         case .unloadPinned: "Close and Keep Pinned"
+        case .removePinned: "Remove from Sidebar"
         case .unloadFavorite: "Close tab"
         }
     }
@@ -155,6 +159,20 @@ extension BrowserViewModel {
         case .pinned where store.splitContaining(tabID: id) == nil: return .unloadPinned
         default: return .archive
         }
+    }
+
+    /// The row's button: as `closeKind`, except that a pinned tab with no page
+    /// open shows ✕ and leaves the sidebar (Arc). ⌘W keeps `closeKind`.
+    func rowCloseKind(of id: Tab.ID) -> TabCloseKind {
+        let kind = closeKind(of: id)
+        guard kind == .unloadPinned, store.selectedTabID != id, !canUnloadTab(id) else { return kind }
+        return .removePinned
+    }
+
+    /// The row button's action (`rowCloseKind`).
+    func closeTabFromRow(_ id: Tab.ID) {
+        if rowCloseKind(of: id) == .removePinned { return deleteTab(id) }
+        closeTab(id)
     }
 
     /// Whether a tab inside the folder (nested folders included) has a live

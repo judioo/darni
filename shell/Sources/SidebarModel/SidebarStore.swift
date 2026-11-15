@@ -124,6 +124,9 @@ public final class SidebarStore {
     var selectionBySpace: [Space.ID: UUID] {
         didSet { refreshSelectionObservers() }
     }
+    /// Spaces left with nothing selected (a closed pin's blank page): coming
+    /// back shows them blank again, as Arc does, not a remembered or first tab.
+    @ObservationIgnored var spacesLeftBlank: Set<Space.ID> = []
     /// Each window's ⇧/⌘-click selection (`SidebarMultiSelection`); not persisted.
     /// Set while one command closes several tabs (`closingAsOneBatch`).
     @ObservationIgnored var closedTabBatchID: UUID?
@@ -339,9 +342,7 @@ public final class SidebarStore {
               owningProfileID(of: target.profileID) == activeOwningProfileID else { return }
         activeProfileID = target.profileID
         guard id != activeSpaceID else { return }
-        if let selected = selectedItemID {
-            selectionBySpace[activeSpaceID] = selected
-        }
+        rememberSelectionOnLeaving()
         activeSpaceID = id
         lastActiveSpaceByProfile[activeOwningProfileID] = id
         selectedItemID = restoredSelection(for: id)
@@ -473,9 +474,7 @@ public final class SidebarStore {
 
     public func selectSpace(_ id: Space.ID) {
         guard id != activeSpaceID, listedSpace(withID: id) != nil else { return }
-        if let selected = selectedItemID {
-            selectionBySpace[activeSpaceID] = selected
-        }
+        rememberSelectionOnLeaving()
         if let profileID = space(withID: id)?.profileID, profileID != activeProfileID {
             activeProfileID = profileID
         }
@@ -1683,7 +1682,15 @@ public final class SidebarStore {
         }
     }
 
+    /// The active space's selection, kept for when it is shown again;
+    /// nothing selected is kept too (`spacesLeftBlank`).
+    private func rememberSelectionOnLeaving() {
+        selectionBySpace[activeSpaceID] = selectedItemID
+        if selectedItemID == nil { spacesLeftBlank.insert(activeSpaceID) } else { spacesLeftBlank.remove(activeSpaceID) }
+    }
+
     func restoredSelection(for spaceID: Space.ID) -> UUID? {
+        guard !spacesLeftBlank.contains(spaceID) else { return nil }
         let rows = displayRows(in: spaceID)
         if let remembered = selectionBySpace[spaceID], rows.ids.contains(remembered) {
             return remembered

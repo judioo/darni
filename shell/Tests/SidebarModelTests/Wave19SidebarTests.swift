@@ -130,6 +130,33 @@ final class Wave19SidebarTests: XCTestCase {
         XCTAssertNotNil(store.tab(withID: pin.id))
     }
 
+    func testASpaceLeftBlankIsBlankWhenYouComeBack() throws {
+        // Arc (owner's recording, 2026-11-15): close a folder's open tab, visit
+        // another space, come back: still blank, folder still closed.
+        let store = makeStore()
+        let home = store.activeSpaceID
+        let work = try XCTUnwrap(store.spaces.first { $0.id != home }).id
+        let pin = store.addTab(kind: .pinned, title: "Pin", url: url("https://pin.test"))
+        let folder = try XCTUnwrap(store.createFolder(containing: [pin.id]))
+        store.addTab(kind: .pinned, title: "Top", url: url("https://top.test"))
+        store.setFolderExpanded(folder.id, false)
+        store.selectTab(pin.id)
+
+        XCTAssertTrue(store.unloadPinnedTab(pin.id))
+        XCTAssertNil(store.selectedItemID)
+        store.selectSpace(work)
+        store.selectSpace(home)
+        XCTAssertEqual(store.activeSpaceID, home)
+        XCTAssertNil(store.selectedItemID, "not the closed tab, nor the first row")
+        XCTAssertFalse(store.isFolderExpanded(folder.id))
+
+        // Leaving with a selection remembers it again.
+        store.selectTab(pin.id)
+        store.selectSpace(work)
+        store.selectSpace(home)
+        XCTAssertEqual(store.selectedItemID, pin.id)
+    }
+
     func testUnloadingATopLevelPinSelectsFirstTodayRowInItsSpace() throws {
         let store = makeStore()
         let pin = store.addTab(kind: .pinned, title: "Pin", url: url("https://pin.test"))

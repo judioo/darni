@@ -29,6 +29,28 @@ final class Wave34ShellTests: XCTestCase {
 
     // MARK: Close wording (§4 item 1)
 
+    func testAnUnloadedPinnedRowShowsXAndItRemovesTheTab() {
+        // Arc (owner's recording, 2026-11-15): an unloaded pinned tab's ✕
+        // takes it out of the sidebar; an open one's — keeps it.
+        var pinned: Tab!, other: Tab!
+        let model = makeModel { store in
+            pinned = store.addTab(kind: .pinned, title: "P", url: self.url("p"))
+            other = store.addTab(kind: .pinned, title: "O", url: self.url("o"))
+        }
+        model.selectTab(pinned.id)
+        XCTAssertEqual(model.rowCloseKind(of: pinned.id), .unloadPinned, "open: — keeps it")
+        model.closeTabFromRow(pinned.id)
+        XCTAssertNotNil(model.store.tab(withID: pinned.id), "— unloads, the row stays")
+        model.selectTab(other.id)
+        XCTAssertEqual(model.rowCloseKind(of: pinned.id), .removePinned, "no page open")
+        XCTAssertEqual(model.rowCloseKind(of: other.id), .unloadPinned, "the selected tab")
+        XCTAssertEqual(model.closeKind(of: pinned.id), .unloadPinned, "⌘W still keeps pins")
+        XCTAssertEqual(TabCloseKind.removePinned.buttonSymbol, "xmark")
+        model.closeTabFromRow(pinned.id)
+        XCTAssertNil(model.store.tab(withID: pinned.id))
+        XCTAssertNotNil(model.store.tab(withID: other.id))
+    }
+
     func testCloseWordingFollowsTheSection() {
         var today: Tab!, pinned: Tab!, favorite: Tab!
         let model = makeModel { store in
