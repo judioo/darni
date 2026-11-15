@@ -95,6 +95,12 @@ OVERRIDES=()
   || die "refusing to write $DIST (development bundles live there)"
 [[ -d "$OUT/Chromium.app" ]] || die "no release engine at $OUT (scripts/build-engine-release.sh)"
 [[ ! -e "$OUT/libchrome_dll.dylib" ]] || die "$OUT is a component (dev) build"
+# Widevine needs the CDM helper and its signing checks first (security/PRE-drm-widevine.md,
+# conditions 1-8); until then no distributable bundle carries an engine built with it.
+if [[ $QA == 0 ]] && { grep -Eq '^[[:space:]]*enable_widevine[[:space:]]*=[[:space:]]*true' "$OUT/args.gn" 2>/dev/null \
+  || grep -q 'BUILDFLAG_INTERNAL_ENABLE_WIDEVINE() (1)' "$OUT/gen/third_party/widevine/cdm/buildflags.h" 2>/dev/null; }; then
+  die "the engine at $OUT is built with Widevine, which no release ships yet (security/PRE-drm-widevine.md)"
+fi
 if [[ $DMG == 1 ]]; then
   # ${a[@]+...}: an empty array is "unbound" under set -u in macOS bash 3.2.
   pin_gate=()
