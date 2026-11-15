@@ -382,6 +382,25 @@ final class Wave26ShellTests: XCTestCase {
         XCTAssertEqual(model.toast?.message, "Restored Work for a link")
     }
 
+    /// RC-802 AC-01, the rule's "already open" branch: the archived space's
+    /// own tab at the link's URL is focused once the space is back.
+    func testAirTrafficControlRestoresAnArchivedSpaceToFocusItsOpenTab() throws {
+        let model = makeModel { store in store.addSpace(name: "Work") }
+        model.externalLinkDestination = .littleArc
+        let work = try XCTUnwrap(model.store.spaces.first { $0.name == "Work" })
+        let link = URL(string: "https://github.com/rearc")!
+        let open = model.store.addTab(kind: .pinned, title: "ReArc", url: link, in: work.id)
+        model.linkRouting = LinkRoutingState(rules: [LinkRoutingRule(pattern: "github.com", destination: .space(work.id))])
+        model.archiveSpace(work.id)
+
+        model.openExternalURL(link)
+        XCTAssertEqual(model.store.space(withID: work.id)?.isArchived, false, "restored for the link")
+        XCTAssertEqual(model.store.activeSpaceID, work.id)
+        XCTAssertEqual(model.store.selectedItemID, open.id, "the tab already there, not a new one")
+        XCTAssertEqual(model.store.displayTabs(in: work.id).filter { $0.url == link }.count, 1)
+        XCTAssertEqual(model.toast?.message, "Restored Work for a link")
+    }
+
     // MARK: Site Control Center
 
     func testSiteControlCenterBoostsZoomAndSiteData() async throws {
