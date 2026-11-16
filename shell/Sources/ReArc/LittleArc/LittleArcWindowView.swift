@@ -49,7 +49,8 @@ struct LittleArcWindowView: View {
         .background(
             WindowKeyObserver(
                 onBecameKey: { model.keyLittleArcID = windowID },
-                onClose: { if model.keyLittleArcID == windowID { model.keyLittleArcID = nil } }
+                onClose: { if model.keyLittleArcID == windowID { model.keyLittleArcID = nil } },
+                onResignKey: { if model.keyLittleArcID == windowID { model.keyLittleArcID = nil } }
             )
             .frame(width: 0, height: 0)
         )

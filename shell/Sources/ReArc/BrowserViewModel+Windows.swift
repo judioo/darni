@@ -66,22 +66,27 @@ extension BrowserViewModel {
 struct WindowKeyObserver: NSViewRepresentable {
     var onBecameKey: () -> Void
     var onClose: () -> Void
+    /// Focus left the window (it stays open).
+    var onResignKey: () -> Void = {}
 
     func makeNSView(context: Context) -> ObservingView {
         let view = ObservingView()
         view.onBecameKey = onBecameKey
         view.onClose = onClose
+        view.onResignKey = onResignKey
         return view
     }
 
     func updateNSView(_ nsView: ObservingView, context: Context) {
         nsView.onBecameKey = onBecameKey
         nsView.onClose = onClose
+        nsView.onResignKey = onResignKey
     }
 
     final class ObservingView: NSView {
         var onBecameKey: (() -> Void)?
         var onClose: (() -> Void)?
+        var onResignKey: (() -> Void)?
         private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
@@ -93,11 +98,19 @@ struct WindowKeyObserver: NSViewRepresentable {
             observers.append(center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in
                 self?.onBecameKey?()
             })
+            observers.append(center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+                self?.onResignKey?()
+            })
             observers.append(center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
                 self?.onClose?()
             })
             if window.isKeyWindow {
-                DispatchQueue.main.async { [weak self] in self?.onBecameKey?() }
+                // Only if it still is by then: a late report would leave a closed or
+                // background window recorded as key (⌃Tab then refused to open).
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.window?.isKeyWindow == true else { return }
+                    self.onBecameKey?()
+                }
             }
         }
 
