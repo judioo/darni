@@ -1,0 +1,173 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 the toolbar colour sample no longer re-lays out the page
+
+Every scroll that paused for half a second made the next one flicker: the
+page vanished for 4 to 7 frames (window background, then white) about
+100 ms into the next scroll and came back shifted sideways by up to a
+scrollbar's width. ReArcTabCaptureSnapshot scope 2 (tab/071, the top 4 CSS
+px for the host's toolbar colour, sampled 250 ms after a scroll settles)
+was a clipped Page.captureScreenshot, and DevTools renders a clipped shot
+under device emulation (viewport offset and scale), so the renderer laid
+the page out again for that frame. Chrome never samples, which is why it
+never flickered under the same input.
+
+Scope 2 now copies the top 4 DIP of the view's own surface
+(RenderWidgetHostView::CopyFromSurface, no DevTools, no emulation) and
+encodes that strip as PNG; the result hops back to the UI sequence and keeps
+the epoch and document checks. Scopes 0 and 1 are unchanged. Measured with
+synthetic wheel and trackpad scrolling on Wikipedia and a plain page: 29 to
+31 blank frames per 8 s before, 0 after, no horizontal shifts; a page with
+a red sticky header and no theme-color still turns the toolbar red.
+
+Bridge 0.74.0. Nothing in the C ABI changes.
+
+Last rebased: 2026-11-16 onto Chromium 156.0.8078.100 (overlay f66d00b59a).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index 29bcfda460..d9cdf523d4 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.73.0";
++  return "0.74.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_services_abi.cc b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+index 2992d71e6b..5e804b235c 100644
+--- a/chrome/browser/rearc_bridge/rearc_services_abi.cc
++++ b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+@@ -27,6 +27,7 @@
+ #include "base/no_destructor.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "base/timer/timer.h"
+ #include "base/time/time.h"
+@@ -55,11 +56,17 @@
+ #include "content/public/browser/media_session.h"
+ #include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_handle.h"
++#include "components/viz/common/frame_sinks/copy_output_result.h"
++#include "content/public/browser/render_widget_host_view.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_observer.h"
+ #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+ #include "services/media_session/public/mojom/media_session.mojom.h"
++#include "third_party/skia/include/core/SkBitmap.h"
+ #include "third_party/skia/include/core/SkColor.h"
++#include "ui/gfx/codec/png_codec.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/gfx/geometry/size.h"
+ #include "url/gurl.h"
+ 
+ namespace rearc {
+@@ -678,6 +685,10 @@ class PageServices : public content::DevToolsAgentHostClient,
+     snapshot_callback_ = callback;
+     snapshot_context_ = context;
+     snapshot_epoch_ = document_epoch_;
++    if (scope == 2) {
++      CaptureTopEdge(document_epoch_);
++      return;
++    }
+     Send("Page.getLayoutMetrics", {},
+          base::BindOnce(&PageServices::Capture, weak_factory_.GetWeakPtr(),
+                         scope, document_epoch_));
+@@ -1017,9 +1028,8 @@ class PageServices : public content::DevToolsAgentHostClient,
+       FinishSnapshot(status ? status : REARC_CANCELLED, {});
+       return;
+     }
+-    // Scope 2 (ABI 1.51): the visible viewport's top 4 CSS px, where a
+-    // sticky header sits after a scroll, for the host's toolbar colour.
+-    const bool top_edge = scope == 2;
++    // Scope 2 (ABI 1.51, the top edge for the host's toolbar colour) never
++    // comes here: CaptureTopEdge copies it from the view's surface.
+     const bool full_page = scope == 1;
+     const auto* dimensions =
+         result.FindDict(full_page ? "cssContentSize" : "cssVisualViewport");
+@@ -1029,7 +1039,7 @@ class PageServices : public content::DevToolsAgentHostClient,
+     }
+     const double width =
+         dimensions->FindDouble(full_page ? "width" : "clientWidth").value_or(0);
+-    const double height = top_edge ? 4 :
++    const double height =
+         dimensions->FindDouble(full_page ? "height" : "clientHeight").value_or(0);
+     if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 ||
+         height <= 0 || width > 16384 || height > 16384 ||
+@@ -1041,14 +1051,7 @@ class PageServices : public content::DevToolsAgentHostClient,
+     params.Set("format", "png");
+     params.Set("fromSurface", true);
+     params.Set("captureBeyondViewport", full_page);
+-    if (top_edge) {
+-      params.Set("clip", base::DictValue()
+-                             .Set("x", dimensions->FindDouble("pageX").value_or(0))
+-                             .Set("y", dimensions->FindDouble("pageY").value_or(0))
+-                             .Set("width", width)
+-                             .Set("height", height)
+-                             .Set("scale", 1));
+-    } else if (full_page) {
++    if (full_page) {
+       params.Set("clip", base::DictValue()
+                              .Set("x", 0)
+                              .Set("y", 0)
+@@ -1090,6 +1093,54 @@ class PageServices : public content::DevToolsAgentHostClient,
+              },
+              weak_factory_.GetWeakPtr(), epoch));
+   }
++  // Scope 2 copies the view's own surface. A clipped Page.captureScreenshot
++  // renders its frame under device emulation (viewport offset and scale), so
++  // the page re-laid out and showed a blank, shifted frame each time a scroll
++  // settled and the host sampled its toolbar colour.
++  void CaptureTopEdge(uint64_t epoch) {
++    auto* view = web_contents()->GetRenderWidgetHostView();
++    const gfx::Size size = view ? view->GetViewBounds().size() : gfx::Size();
++    if (!view || size.IsEmpty()) {
++      FinishSnapshot(REARC_INVALID_STATE, {});
++      return;
++    }
++    // The callback may run on another sequence; it hops back to this one.
++    view->CopyFromSurface(
++        gfx::Rect(0, 0, size.width(), std::min(size.height(), 4)), gfx::Size(),
++        base::Seconds(2),
++        base::BindOnce(
++            [](scoped_refptr<base::SequencedTaskRunner> runner,
++               base::WeakPtr<PageServices> self, uint64_t epoch,
++               const content::CopyFromSurfaceResult& result) {
++              SkBitmap bitmap;
++              if (result.has_value()) bitmap = result->bitmap;
++              runner->PostTask(
++                  FROM_HERE, base::BindOnce(&PageServices::FinishTopEdge,
++                                            self, epoch, std::move(bitmap)));
++            },
++            base::SequencedTaskRunner::GetCurrentDefault(),
++            weak_factory_.GetWeakPtr(), epoch));
++  }
++  void FinishTopEdge(uint64_t epoch, SkBitmap bitmap) {
++    if (!snapshot_callback_ || snapshot_epoch_ != epoch) {
++      return;
++    }
++    if (!Current() || epoch != document_epoch_) {
++      FinishSnapshot(REARC_CANCELLED, {});
++      return;
++    }
++    if (bitmap.drawsNothing()) {
++      FinishSnapshot(REARC_INVALID_STATE, {});
++      return;
++    }
++    auto png = gfx::PNGCodec::EncodeBGRASkBitmap(bitmap,
++                                                 /*discard_transparency=*/true);
++    if (!png || png->size() > REARC_MAX_BLOB_BYTES) {
++      FinishSnapshot(png ? REARC_TOO_LARGE : REARC_INTERNAL, {});
++      return;
++    }
++    FinishSnapshot(REARC_OK, std::string(png->begin(), png->end()));
++  }
+   void FinishSnapshot(ReArcStatus status, std::string png) {
+     auto callback = snapshot_callback_;
+     snapshot_callback_ = nullptr;

@@ -103,6 +103,7 @@ tab/091-context-menu-save-link.patch           # P-TAB-001 ABI 1.64, bridge 0.72
 security/001-cve-2026-121203-resize-observer.patch # upstream 70bfe6689 (Chrome 157.0.8103.38): ResizeObserver gathers by pointer
 media/001-platform-h264-aac.patch               # P-MEDIA-001 H.264/AAC through VideoToolbox/AudioToolbox, FFmpeg stays "Chromium" (release engines since 2026-11-16)
 tab/092-popup-keeps-opener-document.patch       # P-TAB-001 bridge 0.73.0: popups with an opener get no synthetic about:blank (Studio Preview, OAuth popups)
+tab/093-toolbar-colour-from-surface.patch        # P-TAB-001 bridge 0.74.0: toolbar colour from the view surface, not a clipped DevTools shot (scroll flicker)
 #
 # Planned inventory (see README.md and engine/docs/ENGINE.md §4);
 # uncomment as patches land:
