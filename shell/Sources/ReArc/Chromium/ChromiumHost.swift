@@ -522,7 +522,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     private func prepareLittleArcWindow() {
         guard model != nil, !terminating, preparedLittleArcWindow == nil else { return }
         preparedLittleArcWindow = makeWindow(
-            size: NSSize(width: 520, height: 420), title: "Little ReArc",
+            size: LittleArcWindowView.defaultSize(within: NSScreen.main?.visibleFrame.size), title: "Little ReArc",
             content: NSHostingView(rootView: AnyView(Color.clear))
         )
         preparedLittleArcWindow?.isExcludedFromWindowsMenu = true
@@ -674,7 +674,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                 window.isExcludedFromWindowsMenu = false
             } else {
                 window = makeWindow(
-                    size: NSSize(width: 520, height: 420), title: "Little ReArc",
+                    size: LittleArcWindowView.defaultSize(within: NSScreen.main?.visibleFrame.size), title: "Little ReArc",
                     content: NSHostingView(rootView: LittleArcWindowView(model: model, windowID: id))
                 )
             }

@@ -9,6 +9,16 @@ struct LittleArcWindowView: View {
     @Environment(\.dismissWindow) private var dismissWindow
     let windowID: LittleArcWindow.ID
 
+    /// Big enough to read a page in (the owner's chosen size, 2026-11-16;
+    /// 520 × 420 was too small), within `visible` (the screen's visible frame)
+    /// less a margin on smaller screens.
+    static func defaultSize(within visible: CGSize?) -> CGSize {
+        let wanted = CGSize(width: 1270, height: 920)
+        guard let visible else { return wanted }
+        return CGSize(width: max(420, min(wanted.width, visible.width - 80)),
+                      height: max(320, min(wanted.height, visible.height - 80)))
+    }
+
     @State private var isEditingAddress = false
     @State private var addressText = ""
     @FocusState private var addressFocused: Bool
