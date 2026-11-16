@@ -19,11 +19,13 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1116.818 — 2026-11-16
+## ReArc 2026.1116.820 — 2026-11-16
 
 **Fixes**
 - Scrolling no longer flickers. When you started scrolling again after a pause, the page went
   blank for a moment and jumped sideways, then came back.
+- ⌃Tab opens the tab switcher after you've used a Little ReArc window. Once one had closed,
+  ⌃Tab could do nothing in the main window.
 
 **Security**
 - The engine now carries seven fixes that Chrome 157 has and ReArc's engine line, 156, did not:
