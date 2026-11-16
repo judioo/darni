@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --target-cpu=arm64|--target-cpu=x64) TARGET_CPU="${1#*=}" ;;
     --jobs=*) jobs="${1#*=}"; [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || die 'invalid jobs'; BUILD_COMMAND+=("-j" "$jobs") ;;
     --gen-only) GEN_ONLY=1 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
