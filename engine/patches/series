@@ -101,6 +101,13 @@ tab/091-context-menu-save-link.patch           # P-TAB-001 ABI 1.64, bridge 0.72
 # Security backports: upstream fixes the pinned Chromium line does not have.
 # Drop each one when the pin moves to a build that contains the fix.
 security/001-cve-2026-121203-resize-observer.patch # upstream 70bfe6689 (Chrome 157.0.8103.38): ResizeObserver gathers by pointer
+security/002-cve-2026-121083-animation-id-overflow.patch # upstream 109fd0a12 (Chrome 157.0.8103.38): Compositing
+security/003-cve-2026-121100-attribute-across-will-modify.patch # upstream 82a730ca3 (Chrome 157.0.8103.38): DOM
+security/004-cve-2026-121117-backdrop-filter-reference.patch # upstream 28a31c03a (Chrome 157.0.8103.38): Paint
+security/005-cve-2026-121140-passthrough-context-restore.patch # upstream 776099dc8 (Chrome 157.0.8103.38): Internals (GPU)
+security/006-cve-2026-121181-range-expand-shadow.patch # upstream ae56f8394 (Chrome 157.0.8103.38): Editing
+security/007-cve-2026-121185-pip-document-child.patch # upstream 726155039 (Chrome 157.0.8103.38): PictureInPicture
+security/008-cve-2026-126845-graphite-snap-failure.patch # upstream 55d51d9ae (Chrome 157.0.8103.78): GPU
 media/001-platform-h264-aac.patch               # P-MEDIA-001 H.264/AAC through VideoToolbox/AudioToolbox, FFmpeg stays "Chromium" (release engines since 2026-11-16)
 tab/092-popup-keeps-opener-document.patch       # P-TAB-001 bridge 0.73.0: popups with an opener get no synthetic about:blank (Studio Preview, OAuth popups)
 tab/093-toolbar-colour-from-surface.patch        # P-TAB-001 bridge 0.74.0: toolbar colour from the view surface, not a clipped DevTools shot (scroll flicker)
