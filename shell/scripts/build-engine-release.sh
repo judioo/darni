@@ -17,6 +17,7 @@
 # Usage: scripts/build-engine-release.sh [--target-cpu=arm64|x64] [--jobs=N] [--gen-only]
 #   REARC_RELEASE_OUT  output dir relative to engine/chromium/src (default out/ReArc-release-<cpu>)
 #   REARC_TEAM_ID      your ten-character Apple Team ID (or set it in shell/signing.local.env)
+#   REARC_ENGINE_CODECS  0: without H.264/AAC (default 1, see GN_ARGS)
 set -euo pipefail
 
 SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --target-cpu=arm64|--target-cpu=x64) TARGET_CPU="${1#*=}" ;;
     --jobs=*) jobs="${1#*=}"; [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || die 'invalid jobs'; BUILD_COMMAND+=("-j" "$jobs") ;;
     --gen-only) GEN_ONLY=1 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -88,6 +89,14 @@ GN_ARGS=(
   # upgrade check reading stored site data back (RELEASE.md, "Upgrade check").
   "branding_file_path=\"$GENERATED_BRANDING\""
 )
+# H.264 and AAC in MP4 (proprietary_codecs; also HEVC, the HLS player and the MSE MPEG-2 TS
+# parser) since 2026-11-16 (security/PRE-drm-widevine.md, addendum). FFmpeg stays "Chromium"
+# (no H.264 or AAC decoder in it): VideoToolbox decodes H.264 and AudioToolbox AAC (overlay
+# media/001). REARC_ENGINE_CODECS=0 builds without them. Widevine is not built for release:
+# release.sh refuses an engine with it until the CDM helper ships.
+if [[ "${REARC_ENGINE_CODECS:-1}" == 1 ]]; then
+  GN_ARGS+=('proprietary_codecs=true' 'ffmpeg_branding="Chromium"')
+fi
 printf '=== gn gen %s (overlay %s) ===\nargs: %s\n' "$OUT_DIR" "$(git rev-parse --short=10 HEAD)" "${GN_ARGS[*]}"
 mkdir -p "$OUT_DIR"
 printf '%s\n' "${GN_ARGS[@]}" > "$OUT_DIR/args.gn"

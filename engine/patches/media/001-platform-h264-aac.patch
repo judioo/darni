@@ -1,0 +1,256 @@
+From: ReArc Authors
+Subject: [PATCH] P-MEDIA-001 H.264 and AAC through macOS decoders (proprietary_codecs, FFmpeg "Chromium")
+
+For REARC_ENGINE_CODECS builds (proprietary_codecs): the engine plays
+H.264 and AAC without shipping a patented decoder. FFmpeg keeps its
+"Chromium" configuration (it demuxes MP4: the mov demuxer is in both
+brandings). VideoToolbox decodes H.264 as in Chrome. AudioToolbox, which
+Chromium used only for xHE-AAC (and AC3/E-AC3), decodes every AAC
+profile in the GPU process (Chrome decodes ordinary AAC in the renderer
+with FFmpeg; accepted in security review D-01): MPEG-4 AAC input from
+the esds cookie, the richest layer of the format list for HE-AAC. ADTS
+frames (the MP4 stream parser adds them for MSE, MPEG-2 TS carries them)
+lose their header; whether a stream is ADTS is decided on its first
+frame, and only a whole ADTS frame counts (frame_length equal to the
+buffer), so src= streams of raw frames are never cut (review D-02). The
+GPU process advertises AAC to the renderer. FFmpeg leaves the sample
+format unset for AAC (no decoder), so ffmpeg_common takes float planar,
+AudioToolbox's output. media/BUILD.gn allows proprietary_codecs with
+FFmpeg "Chromium" on macOS only.
+
+Default engine (no proprietary_codecs): the patch is in series, so it
+compiles in, but the code it runs is unchanged except the decoder's
+input offset plumbing, which is always 0 there. Everything else is
+under USE_PROPRIETARY_CODECS.
+
+Not covered: a bare ADTS .aac file (FFmpeg "Chromium" has no aac
+demuxer). Checked in QA bundles (2026-11-16, codecs-only engine): MSE
+fMP4 and MPEG-2 TS H.264/AAC (review D-03), native HLS with TS segments,
+an H.264/AAC MP4 and an AAC .m4a by src= all decode audio and video;
+with enable_widevine also a Widevine DASH stream (2026-11-15).
+
+Last rebased: 2026-11-15 onto Chromium 156.0.8078.100 (overlay 5bf4a08605).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/media/BUILD.gn b/media/BUILD.gn
+index 1919962dd1..1bd42664d3 100644
+--- a/media/BUILD.gn
++++ b/media/BUILD.gn
+@@ -87,7 +87,10 @@ buildflag_header("media_buildflags") {
+   }
+ }
+ 
+-if (proprietary_codecs && media_use_ffmpeg) {
++# ReArc: on macOS proprietary codecs may go with FFmpeg "Chromium": FFmpeg
++# demuxes MP4 (its mov demuxer is in both brandings) and VideoToolbox and
++# AudioToolbox decode H.264 and AAC, so no patented decoder ships.
++if (proprietary_codecs && media_use_ffmpeg && !is_mac) {
+   assert(
+       ffmpeg_branding != "Chromium",
+       "proprietary codecs and ffmpeg_branding set to Chromium are incompatible")
+diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
+index 1eeaafafaf..82a60dd2f3 100644
+--- a/media/ffmpeg/ffmpeg_common.cc
++++ b/media/ffmpeg/ffmpeg_common.cc
+@@ -391,6 +391,15 @@ bool AVCodecContextToAudioDecoderConfig(const AVCodecContext* codec_context,
+   }
+ 
+   switch (codec) {
++#if BUILDFLAG(USE_PROPRIETARY_CODECS) && BUILDFLAG(IS_MAC)
++    // ReArc: FFmpeg "Chromium" has no AAC decoder, so it leaves |sample_fmt|
++    // unset; AudioToolbox decodes AAC to float planar.
++    case AudioCodec::kAAC:
++      if (sample_format == kUnknownSampleFormat) {
++        sample_format = kSampleFormatPlanarF32;
++      }
++      break;
++#endif
+     // For AC3/EAC3 we enable only demuxing, but not decoding, so FFmpeg does
+     // not fill |sample_fmt|.
+     case AudioCodec::kAC3:
+diff --git a/media/filters/mac/audio_toolbox_audio_decoder.cc b/media/filters/mac/audio_toolbox_audio_decoder.cc
+index 03c8cf1b0e..8a47dd4aea 100644
+--- a/media/filters/mac/audio_toolbox_audio_decoder.cc
++++ b/media/filters/mac/audio_toolbox_audio_decoder.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <algorithm>
+ #include <optional>
++#include <vector>
+ 
+ #include "base/apple/osstatus_logging.h"
+ #include "base/auto_reset.h"
+@@ -39,6 +40,13 @@ bool CanUseAudioToolbox(const AudioDecoderConfig& config) {
+       config.codec() == AudioCodec::kAC3) {
+     return true;
+   }
++#endif
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++  // ReArc: the engine's FFmpeg carries no AAC decoder (ffmpeg_branding
++  // "Chromium"), so every AAC profile decodes here, as macOS ships it.
++  if (config.codec() == AudioCodec::kAAC) {
++    return true;
++  }
+ #endif
+   // We use AudioToolbox for decoding xHE-AAC content and that's available on
+   // macOS 10.15 or higher.
+@@ -47,9 +55,25 @@ bool CanUseAudioToolbox(const AudioDecoderConfig& config) {
+ 
+ struct InputData {
+   raw_ptr<DecoderBuffer> buffer = nullptr;
++  // Bytes to skip at the start of `buffer` (an ADTS header).
++  size_t offset = 0;
+   AudioStreamPacketDescription packet = {};
+ };
+ 
++// The size of the ADTS header in front of an AAC frame (the MP4 parser
++// adds one for MSE, MPEG-2 TS carries them), or 0 when `data` is not one
++// whole ADTS frame: sync word, layer 0 and a frame_length equal to the
++// buffer. AudioToolbox takes raw frames plus the magic cookie.
++size_t AdtsHeaderSize(base::span<const uint8_t> data) {
++  if (data.size() < 7 || data[0] != 0xFF || (data[1] & 0xF6) != 0xF0) {
++    return 0;
++  }
++  const size_t header = (data[1] & 0x01) ? 7 : 9;
++  const size_t frame_length = ((data[3] & 0x03) << 11) | (data[4] << 3) |
++                              ((data[5] & 0xE0) >> 5);
++  return frame_length == data.size() && data.size() > header ? header : 0;
++}
++
+ // Special error code we use to differentiate real errors from end of buffer.
+ constexpr OSStatus kNoMoreDataError = -12345;
+ 
+@@ -67,11 +91,12 @@ OSStatus ProvideInputCallback(AudioConverterRef decoder,
+ 
+   *num_packets = buffer_list->mNumberBuffers = 1;
+   buffer_list->mBuffers[0].mNumberChannels = 0;
+-  buffer_list->mBuffers[0].mDataByteSize = input_data->buffer->size();
++  buffer_list->mBuffers[0].mDataByteSize =
++      input_data->buffer->size() - input_data->offset;
+ 
+   // No const version of this API unfortunately, so we need const_cast().
+-  buffer_list->mBuffers[0].mData =
+-      const_cast<uint8_t*>(base::span(*input_data->buffer).data());
++  buffer_list->mBuffers[0].mData = const_cast<uint8_t*>(
++      base::span(*input_data->buffer).subspan(input_data->offset).data());
+ 
+   if (packets)
+     *packets = &input_data->packet;
+@@ -129,6 +154,7 @@ void AudioToolboxAudioDecoder::Initialize(const AudioDecoderConfig& config,
+ 
+   // This decoder supports re-initialization.
+   decoder_.reset();
++  adts_stream_ = AdtsStream::kNo;
+ 
+   output_cb_ = output_cb;
+   const bool success = CreateDecoder(config);
+@@ -171,7 +197,18 @@ void AudioToolboxAudioDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
+       return;
+     }
+     last_input_timestamp_ = buffer->timestamp();
+-    input_data.packet.mDataByteSize = buffer->size();
++    if (adts_stream_ != AdtsStream::kNo) {
++      // Decided once per stream, on its first frame: src= playback (FFmpeg)
++      // sends raw frames, MSE and MPEG-2 TS send ADTS frames.
++      const size_t header = AdtsHeaderSize(base::span(*buffer));
++      if (adts_stream_ == AdtsStream::kUndecided) {
++        adts_stream_ = header ? AdtsStream::kYes : AdtsStream::kNo;
++      }
++      if (adts_stream_ == AdtsStream::kYes) {
++        input_data.offset = header;
++      }
++    }
++    input_data.packet.mDataByteSize = buffer->size() - input_data.offset;
+   }
+ 
+   // Must be filled in each time in case AudioConverterFillComplexBuffer()
+@@ -272,9 +309,20 @@ bool AudioToolboxAudioDecoder::CreateDecoder(const AudioDecoderConfig& config) {
+ 
+   switch (config.codec()) {
+     case AudioCodec::kAAC: {
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++      // Input is xHE-AAC / USAC, or (ReArc) any other AAC profile.
++      const bool xhe = config.profile() == AudioCodecProfile::kXHE_AAC;
++      input_format.mFormatID = xhe ? kAudioFormatMPEGD_USAC
++                                   : kAudioFormatMPEG4AAC;
++      if (config.extra_data().empty()) {
++        MEDIA_LOG(ERROR, media_log_) << "AAC without AudioSpecificConfig";
++        return false;
++      }
++#else
+       // Input is xHE-AAC / USAC.
+       CHECK_EQ(config.profile(), AudioCodecProfile::kXHE_AAC);
+       input_format.mFormatID = kAudioFormatMPEGD_USAC;
++#endif
+       magic_cookie = mp4::ESDescriptor::CreateEsds(config.extra_data());
+ 
+       // Have macOS fill in the rest of the input_format for us.
+@@ -287,6 +335,28 @@ bool AudioToolboxAudioDecoder::CreateDecoder(const AudioDecoderConfig& config) {
+             << "AudioFormatGetProperty() failed";
+         return false;
+       }
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++      if (!xhe) {
++        // HE-AAC (v2): the format list's first entry is the richest layer
++        // (SBR/PS at the full rate); FormatInfo describes the AAC-LC core.
++        UInt32 list_size = 0;
++        if (AudioFormatGetPropertyInfo(kAudioFormatProperty_FormatList,
++                                       magic_cookie.size(), magic_cookie.data(),
++                                       &list_size) == noErr &&
++            list_size >= sizeof(AudioFormatListItem)) {
++          std::vector<AudioFormatListItem> list(list_size /
++                                                sizeof(AudioFormatListItem));
++          list_size = list.size() * sizeof(AudioFormatListItem);
++          if (AudioFormatGetProperty(kAudioFormatProperty_FormatList,
++                                     magic_cookie.size(), magic_cookie.data(),
++                                     &list_size, list.data()) == noErr &&
++              list_size >= sizeof(AudioFormatListItem)) {
++            input_format = list.front().mASBD;
++          }
++        }
++      }
++      adts_stream_ = xhe ? AdtsStream::kNo : AdtsStream::kUndecided;
++#endif
+       break;
+     }
+ #if BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+diff --git a/media/filters/mac/audio_toolbox_audio_decoder.h b/media/filters/mac/audio_toolbox_audio_decoder.h
+index b50c0ca201..86a3b43d6e 100644
+--- a/media/filters/mac/audio_toolbox_audio_decoder.h
++++ b/media/filters/mac/audio_toolbox_audio_decoder.h
+@@ -64,6 +64,11 @@ class MEDIA_EXPORT AudioToolboxAudioDecoder : public AudioDecoder {
+   // "Converter" for turning encoded samples into raw audio.
+   ScopedAudioConverterRef decoder_;
+ 
++  // ReArc: AAC other than xHE-AAC may arrive as ADTS frames (MSE, MPEG-2
++  // TS) or raw (src=); decided on the stream's first frame.
++  enum class AdtsStream { kNo, kUndecided, kYes };
++  AdtsStream adts_stream_ = AdtsStream::kNo;
++
+   // Callback that delivers output frames.
+   OutputCB output_cb_;
+ 
+diff --git a/media/mojo/services/gpu_mojo_media_client_mac.cc b/media/mojo/services/gpu_mojo_media_client_mac.cc
+index 1d1ec8a5db..bc856cb69d 100644
+--- a/media/mojo/services/gpu_mojo_media_client_mac.cc
++++ b/media/mojo/services/gpu_mojo_media_client_mac.cc
+@@ -11,6 +11,7 @@
+ #include "media/filters/mac/audio_toolbox_audio_decoder.h"
+ #include "media/filters/mac/audio_toolbox_audio_encoder.h"
+ #include "media/gpu/mac/video_toolbox_video_decoder.h"
++#include "media/media_buildflags.h"
+ #include "media/mojo/services/gpu_mojo_media_client.h"
+ 
+ namespace media {
+@@ -33,6 +34,10 @@ class GpuMojoMediaClientMac final : public GpuMojoMediaClient {
+   GetPlatformSupportedAudioDecoderConfigs() final {
+     SupportedAudioDecoderConfigs audio_configs;
+     audio_configs.emplace_back(AudioCodec::kAAC, AudioCodecProfile::kXHE_AAC);
++#if BUILDFLAG(USE_PROPRIETARY_CODECS)
++    // ReArc: AudioToolbox decodes every AAC profile (no FFmpeg AAC decoder).
++    audio_configs.emplace_back(AudioCodec::kAAC, AudioCodecProfile::kUnknown);
++#endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
+ #if BUILDFLAG(ENABLE_PLATFORM_AC3_EAC3_AUDIO)
+     audio_configs.emplace_back(AudioCodec::kAC3, AudioCodecProfile::kUnknown);
+     audio_configs.emplace_back(AudioCodec::kEAC3, AudioCodecProfile::kUnknown);
