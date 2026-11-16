@@ -1,6 +1,6 @@
 # ReArc engine C ABI
 
-ABI **1.64** (major remains 1 for existing hosts), bridge **0.72.0**, compiled Chromium **156.0.8078.100**. Public header:
+ABI **1.64** (major remains 1 for existing hosts), bridge **0.74.0**, compiled Chromium **156.0.8078.100**. Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2205,7 +2205,7 @@ draws in the page's colour.
 |---|---|
 | `ReArcEngineSetThemeColorCallback(cb, ctx)` | `cb(ctx, const ReArcThemeColorEvent*)`, borrowed for the call: `document` (`ReArcDocumentIdentity`), `has_color`, `argb` (0xAARRGGBB, `WebContents::GetThemeColor`: the last matching `<meta name="theme-color">`, media queries applied). Posted once when the tab's services attach, on each change (`DidChangeThemeColor`), and once per new primary document even when unchanged, so the host can key it by document; never twice in a row with the same value for one document. A tag a script adds later arrives as a change. Null disables delivery. |
 | `ReArcTabGetThemeColor(tab, &has_color, &argb)` | The current value. Null outputs are invalid_argument; outputs are zeroed on error. |
-| `ReArcTabCaptureSnapshot(tab, 2, …)` | Scope 2: the visible viewport's top 4 CSS px at its scroll offset (`cssVisualViewport.pageX/pageY`), so a sticky header is what a capture after a scroll sees. Same path, limits, busy rule and cancellation as scope 0; the PNG is a few rows (800 pt at 2x: 1600×8, about 0.5 KB). Scope 3 and up are invalid_argument. |
+| `ReArcTabCaptureSnapshot(tab, 2, …)` | Scope 2: the top 4 DIP of what the view shows at its scroll offset, so a sticky header is what a capture after a scroll sees. Same busy rule and cancellation as scope 0; the PNG is a few rows. Since bridge 0.74.0 it is copied from the view's surface, not taken through `Page.captureScreenshot`: see "Toolbar colour sample from the view surface (bridge 0.74.0)" for the path and its statuses. Scope 3 and up are invalid_argument. |
 
 The shell uses the theme colour when there is one, else samples scope 2
 rarely: on a new document, at the load's end, after a scroll settles and when
@@ -2577,3 +2577,37 @@ download source CONTEXT_MENU. The save path comes through the file chooser
 channel (1.19) as a save request, as Save Image As (action 6) does. Without a
 link it returns `invalid_state`. No struct or earlier action changed. Hosts
 gate the menu item on the feature.
+
+## Popups keep their opener's document (bridge 0.73.0)
+
+Patch `tab/092-popup-keeps-opener-document`. Installing a nonempty script plan
+or link peek (`ReArcTabSetScripts`, `ReArcTabSetLinkPeek`) on a tab with no
+commit and no pending entry loads a synthetic about:blank first (tab/022). A
+`window.open` popup that keeps its opener is in that state until the opener's
+navigation of it begins, and the synthetic load aborted that navigation
+(`net::ERR_ABORTED`): the popup stayed on about:blank. Contents with an opener
+(`WebContents::HasOpener`) are now left alone. Their initial empty document is
+the opener's. noopener popups (they carry a pending entry) and host-created
+tabs are unchanged. No signature or struct changes.
+
+**Tests:** none automated yet. Checked by hand on a local page: named and
+`_blank` popups, and a named popup reused.
+
+## Toolbar colour sample from the view surface (bridge 0.74.0)
+
+Patch `tab/093-toolbar-colour-from-surface`. `ReArcTabCaptureSnapshot` scope 2
+no longer goes through DevTools. A clipped `Page.captureScreenshot` renders its
+frame under device emulation, so the page laid out again every time the host
+sampled its toolbar colour (a blank, shifted frame at the start of the next
+scroll). Scope 2 now copies the top 4 DIP of the view's own surface
+(`RenderWidgetHostView::CopyFromSurface`, 2 s timeout) and encodes the strip
+as PNG. The result returns to the UI sequence and keeps the snapshot's epoch
+and document checks, so the busy rule, the callback and cancellation on
+navigation or teardown are as before. New for scope 2: a tab with no view or
+an empty view completes with `invalid_state`, and so does a copy that returns
+nothing (the timeout, or a surface with no frame). Scopes 0 and 1 are
+unchanged. No signature or struct changes.
+
+**Tests:** `engine/tests/run_c_abi.py theme` checks scope 2's colour (see "Page
+theme colour (1.51)"). The patch header records the scroll measurement: 29 to
+31 blank frames per 8 s before, 0 after.
