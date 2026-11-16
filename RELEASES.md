@@ -19,7 +19,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1116.808 — 2026-11-16
+## ReArc 2026.1116.811 — 2026-11-16
 
 **New**
 - Video that only played in Chrome now plays in ReArc: H.264 and HEVC video, AAC audio and HLS
@@ -32,6 +32,8 @@ lines and this section starts empty again.
 - Little ReArc's toolbar keeps its height when your profile has a photo: the picture filled
   the toolbar instead of showing as a small round avatar.
 - Little ReArc opens at a size you can read a page in, instead of a small window.
+- Pages that open a window of their own (a site's Preview button, "Log in with Google" in an
+  extension) now load in it, instead of leaving an empty about:blank tab.
 - Settings › General shows when ReArc is your default browser, with a tick when it becomes the
   default, instead of asking again after you've chosen ReArc.
 
