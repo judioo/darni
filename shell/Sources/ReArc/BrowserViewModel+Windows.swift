@@ -62,7 +62,7 @@ extension BrowserViewModel {
     }
 }
 
-/// Reports when its window becomes key, and when it closes.
+/// Reports when its window becomes key, stops being key, and closes.
 struct WindowKeyObserver: NSViewRepresentable {
     var onBecameKey: () -> Void
     var onClose: () -> Void

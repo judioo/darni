@@ -90,7 +90,7 @@ protocol DefaultBrowserSetting {
 
 /// What Settings shows for the default browser, re-read whenever it may have
 /// changed (Settings shown, ReArc or a window active again, macOS's confirmation
-/// done). `becameDefault` is true only on the check that sees ReArc turn into
+/// done). `update` returns true only on the check that sees ReArc turn into
 /// the default: Settings plays its tick then, not every time it opens.
 struct DefaultBrowserStatus: Equatable {
     /// Nil until the first check.

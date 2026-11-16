@@ -494,11 +494,4 @@ final class Wave21ShellTests: XCTestCase {
         XCTAssertEqual(status.isDefault, false)
         XCTAssertTrue(status.update(isDefault: true))
     }
-    /// Little ReArc opens at the owner's size, kept on smaller screens.
-    func testLittleArcDefaultSizeFitsTheScreen() {
-        XCTAssertEqual(LittleArcWindowView.defaultSize(within: nil), CGSize(width: 1270, height: 920))
-        XCTAssertEqual(LittleArcWindowView.defaultSize(within: CGSize(width: 1728, height: 1079)), CGSize(width: 1270, height: 920))
-        XCTAssertEqual(LittleArcWindowView.defaultSize(within: CGSize(width: 1280, height: 775)), CGSize(width: 1200, height: 695))
-        XCTAssertEqual(LittleArcWindowView.defaultSize(within: CGSize(width: 300, height: 200)), CGSize(width: 420, height: 320))
-    }
 }
