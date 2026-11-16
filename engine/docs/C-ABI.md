@@ -87,7 +87,7 @@ before ownership changes. The header is authoritative for C signatures.
 | `ReArcTabReload(tab, ignore_cache)` | NavigationController normal/bypass-cache reload. |
 | `ReArcTabGoBack(tab)` / `ReArcTabGoForward(tab)` | NavigationController history; no-op if unavailable. |
 | `ReArcTabStop(tab)` | Stops loading. |
-| `ReArcTabRefreshState(tab)` | Queues complete core presentation snapshot. |
+| `ReArcTabRefreshState(tab)` | Queues complete core presentation snapshot. No caller yet. Before the shell calls it mid-load, or shows a pending destination for a popup, forward the URL part of `ReArcTabDelegate::NavigationStateChanged` (now a no-op): an opener can write into a popup's empty first document, and the popup would otherwise show a real site's address over the opener's content (security RC-2026.1116.811 AD-01). |
 | `ReArcTabActivate(tab)` | Focuses only an attached presented tab in its registered key, visible, nonminiaturized window; otherwise invalid_state. |
 | `ReArcWindowRegister(window, ns_window)` | Nonzero shell ID and +0 NSWindow pointer; engine retains registration; duplicate live ID rejected. |
 | `ReArcWindowClosed(window)` | Invalidates this window's leases with window_closed, releases window registration; tabs persist. Native will-close notification invokes this too. |
