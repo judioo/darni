@@ -132,9 +132,10 @@ final class LoopbackFixtureServer {
         """,
         // The /pip player the way YouTube plays in ReArc: VP9 at 1280x720 through
         // Media Source Extensions, which VideoToolbox decodes in hardware on
-        // Apple silicon (the engine has no H.264: proprietary_codecs is off, so
-        // YouTube sends VP9 or AV1). /pip's 320x180 VP8 blob is always decoded
-        // in software. `window.hw` is MediaCapabilities' powerEfficient for it.
+        // Apple silicon (written when no engine had H.264, so YouTube sent VP9
+        // or AV1; release engines have it since media/001, which /codecs
+        // covers). /pip's 320x180 VP8 blob is always decoded in software.
+        // `window.hw` is MediaCapabilities' powerEfficient for it.
         "/pip-mse": """
         <!doctype html><html><head><title>pip-loading</title></head><body style="margin:0">
         <video id="v" playsinline style="width:640px;height:360px"></video><script>

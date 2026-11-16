@@ -2038,6 +2038,40 @@ final class ChromiumSelfTest {
         engine.load(url)
     }
 
+    /// A new Today tab on a fixture page, selected and loading, for a step
+    /// that needs a page of its own.
+    @MainActor
+    private func openFixtureTab(_ model: BrowserViewModel, _ store: SidebarStore, title: String,
+                                path: String) throws -> (tab: Tab, engine: ChromiumEngine) {
+        let url = URL(string: "\(serverBase)\(path)")!
+        let tab = store.addTab(kind: .today, title: title, url: url)
+        model.selectTab(tab.id)
+        let engine = try shellEngine(model, tab)
+        loadShellTab(model, tab, engine, url)
+        return (tab, engine)
+    }
+
+    /// Runs `body` on a fixture page in a tab of its own (`openFixtureTab`),
+    /// then closes the tab and selects the one shown before.
+    @MainActor
+    private func withFixtureTab(_ model: BrowserViewModel, _ store: SidebarStore, title: String, path: String,
+                                _ body: (Tab, ChromiumEngine) async throws -> Void) async throws {
+        let previous = store.selectedTab?.id
+        let (tab, engine) = try openFixtureTab(model, store, title: title, path: path)
+        defer {
+            model.closeTab(tab.id)
+            if let previous { model.selectTab(previous) }
+        }
+        try await body(tab, engine)
+    }
+
+    /// The page's renderer still answers a script and the engine reports no crash.
+    @MainActor
+    private func checkRendererAlive(_ engine: ChromiumEngine, after what: String) async throws {
+        let alive = (try? await engine.evaluate("1 + 1", in: .page)) as? NSNumber
+        try check(alive?.intValue == 2 && !engine.isCrashed, "renderer after \(what): crashed \(engine.isCrashed)")
+    }
+
     // MARK: Trusted navigation
 
     @MainActor
@@ -3271,30 +3305,21 @@ extension ChromiumSelfTest {
     /// with the renderer up. An embedding that never prerenders logs a gap.
     @MainActor
     private func prerenderChecks(model: BrowserViewModel, store: SidebarStore) async throws {
-        let url = URL(string: "\(serverBase)/prerender-from")!
-        let previous = store.selectedTab?.id
-        let tab = store.addTab(kind: .today, title: "Prerender", url: url)
-        model.selectTab(tab.id)
-        let engine = try shellEngine(model, tab)
-        loadShellTab(model, tab, engine, url)
-        defer {
-            model.closeTab(tab.id)
-            if let previous { model.selectTab(previous) }
-        }
-        try await wait("prerender source page loaded", timeout: 15) { engine.pageTitle == "prerender-from" && !engine.isLoading }
-        // Time for the speculation rule to start and finish the prerender.
-        try await Task.sleep(for: .seconds(2))
-        _ = try await engine.evaluate("document.getElementById('go').click(), true", in: .page)
-        try await wait("prerender target shown", timeout: 15) {
-            engine.pageTitle == "prerender-activated" || engine.pageTitle == "prerender-loaded-normally"
-        }
-        try check(engine.currentURL?.path == "/prerender-to", "after the click the tab shows \(engine.currentURL?.absoluteString ?? "nil")")
-        let alive = (try? await engine.evaluate("1 + 1", in: .page)) as? NSNumber
-        try check(alive?.intValue == 2 && !engine.isCrashed, "renderer after the prerender navigation: crashed \(engine.isCrashed)")
-        if engine.pageTitle == "prerender-activated" {
-            log("PASS prerender: a speculation rule prerendered /prerender-to and the link click activated it; renderer alive")
-        } else {
-            log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
+        try await withFixtureTab(model, store, title: "Prerender", path: "/prerender-from") { _, engine in
+            try await wait("prerender source page loaded", timeout: 15) { engine.pageTitle == "prerender-from" && !engine.isLoading }
+            // Time for the speculation rule to start and finish the prerender.
+            try await Task.sleep(for: .seconds(2))
+            _ = try await engine.evaluate("document.getElementById('go').click(), true", in: .page)
+            try await wait("prerender target shown", timeout: 15) {
+                engine.pageTitle == "prerender-activated" || engine.pageTitle == "prerender-loaded-normally"
+            }
+            try check(engine.currentURL?.path == "/prerender-to", "after the click the tab shows \(engine.currentURL?.absoluteString ?? "nil")")
+            try await checkRendererAlive(engine, after: "the prerender navigation")
+            if engine.pageTitle == "prerender-activated" {
+                log("PASS prerender: a speculation rule prerendered /prerender-to and the link click activated it; renderer alive")
+            } else {
+                log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
+            }
         }
     }
 
@@ -3304,36 +3329,27 @@ extension ChromiumSelfTest {
     /// proprietary codecs is a gap in a dev build and a failure in a release.
     @MainActor
     private func codecChecks(model: BrowserViewModel, store: SidebarStore) async throws {
-        let url = URL(string: "\(serverBase)/codecs")!
-        let previous = store.selectedTab?.id
-        let tab = store.addTab(kind: .today, title: "Codecs", url: url)
-        model.selectTab(tab.id)
-        let engine = try shellEngine(model, tab)
-        loadShellTab(model, tab, engine, url)
-        defer {
-            model.closeTab(tab.id)
-            if let previous { model.selectTab(previous) }
+        try await withFixtureTab(model, store, title: "Codecs", path: "/codecs") { _, engine in
+            try await wait("codecs fixture finished", timeout: 40) {
+                engine.pageTitle == "codecs-done" || engine.pageTitle?.hasPrefix("codecs-err") == true
+            }
+            if engine.pageTitle == "codecs-err:no-mp4-recorder" {
+                let release = ShippedBuild.isRelease(infoDictionary: Bundle.main.infoDictionary)
+                try check(!release, "release engine has no H.264 MediaRecorder (proprietary codecs off?)")
+                log("ABI-GAP codecs: this engine records no H.264 MP4 (built without proprietary codecs)")
+                return
+            }
+            let json = (try? await engine.evaluate("JSON.stringify(window.codecs)", in: .page)) as? String ?? "{}"
+            let result = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+            let src = result["src"] as? String, mse = result["mse"] as? String, damaged = result["damaged"] as? String ?? ""
+            try check(src == "ok", "H.264 src= playback: \(src ?? "nil") (\(json))")
+            try check(mse == "ok", "H.264 MediaSource playback: \(mse ?? "nil") (\(json))")
+            try check(damaged == "ok" || damaged.hasPrefix("error:") || damaged.hasPrefix("timeout:"),
+                      "damaged clip: \(damaged)")
+            try await checkRendererAlive(engine, after: "the damaged clip")
+            log("PASS codecs: \(result["mime"] as? String ?? "?") \(result["bytes"] ?? "?") bytes, audio \(result["audio"] ?? "?"); "
+                + "src= \(src ?? ""), MediaSource \(mse ?? ""), damaged copy \(damaged), renderer alive")
         }
-        try await wait("codecs fixture finished", timeout: 40) {
-            engine.pageTitle == "codecs-done" || engine.pageTitle?.hasPrefix("codecs-err") == true
-        }
-        if engine.pageTitle == "codecs-err:no-mp4-recorder" {
-            let release = ShippedBuild.isRelease(infoDictionary: Bundle.main.infoDictionary)
-            try check(!release, "release engine has no H.264 MediaRecorder (proprietary codecs off?)")
-            log("ABI-GAP codecs: this engine records no H.264 MP4 (built without proprietary codecs)")
-            return
-        }
-        let json = (try? await engine.evaluate("JSON.stringify(window.codecs)", in: .page)) as? String ?? "{}"
-        let result = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
-        let src = result["src"] as? String, mse = result["mse"] as? String, damaged = result["damaged"] as? String ?? ""
-        try check(src == "ok", "H.264 src= playback: \(src ?? "nil") (\(json))")
-        try check(mse == "ok", "H.264 MediaSource playback: \(mse ?? "nil") (\(json))")
-        try check(damaged == "ok" || damaged.hasPrefix("error:") || damaged.hasPrefix("timeout:"),
-                  "damaged clip: \(damaged)")
-        let alive = (try? await engine.evaluate("1 + 1", in: .page)) as? NSNumber
-        try check(alive?.intValue == 2 && !engine.isCrashed, "renderer after the damaged clip: crashed \(engine.isCrashed)")
-        log("PASS codecs: \(result["mime"] as? String ?? "?") \(result["bytes"] ?? "?") bytes, audio \(result["audio"] ?? "?"); "
-            + "src= \(src ?? ""), MediaSource \(mse ?? ""), damaged copy \(damaged), renderer alive")
     }
 
     /// Wave 32 (ABI 1.43): switching away from a playing video shows its strip
@@ -3354,10 +3370,7 @@ extension ChromiumSelfTest {
             model.embedsVideoInSidebar = embeds
             model.automaticPictureInPicture = automatic
         }
-        let tab = store.addTab(kind: .today, title: "Live video \(path)", url: URL(string: "\(serverBase)\(path)")!)
-        model.selectTab(tab.id)
-        let engine = try shellEngine(model, tab)
-        loadShellTab(model, tab, engine, URL(string: "\(serverBase)\(path)")!)
+        let (tab, engine) = try openFixtureTab(model, store, title: "Live video \(path)", path: path)
         try await wait("live video fixture playing", timeout: 25) {
             engine.pageTitle == "pip-playing" || engine.pageTitle?.hasPrefix("pip-err") == true
         }
