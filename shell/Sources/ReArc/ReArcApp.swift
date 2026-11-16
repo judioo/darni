@@ -28,7 +28,9 @@ struct ReArcApp: App {
             }
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 520, height: 420)
+        // Big enough to read a page in (the owner's chosen size, 2026-11-16;
+        // 520 × 420 was too small); macOS fits it to smaller screens.
+        .defaultSize(width: 1270, height: 920)
 
         WindowGroup("Private Window", id: "private", for: UUID.self) { $windowID in
             if let windowID, let window = model.privateWindows[windowID] {

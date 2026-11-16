@@ -292,7 +292,11 @@ struct LittleArcWindowView: View {
                 ProfileAvatarView(profile: profile, diameter: 20)
                     .containerMark(container, ring: .circle(26), surface: .window)
             }
-            .menuStyle(.borderlessButton)
+            // As the sidebar's profile menus: a borderless menu draws its label as
+            // an NSPopUpButton image at the picture's own size, so a photo avatar
+            // filled the toolbar; a plain button keeps the 20 pt frame.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
             .help(container.map { "Profile: \(profile.name) · Container: \($0.name), own sign-ins" } ?? "Profile: \(profile.name)")

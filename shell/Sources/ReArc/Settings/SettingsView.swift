@@ -125,6 +125,45 @@ private extension AutoArchiveThreshold {
 
 // MARK: General
 
+/// Default browser: a button until ReArc is the default, then a check mark. The
+/// state is read when the row appears and whenever it may have changed; the
+/// tick plays only when ReArc turns into the default while Settings is open.
+struct DefaultBrowserRow: View {
+    @Bindable var model: BrowserViewModel
+    @State private var status = DefaultBrowserStatus()
+    @State private var ticks = 0
+
+    var body: some View {
+        SettingsLabeledRow(label: "Default browser") {
+            if status.isDefault == true {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .symbolEffect(.bounce, value: ticks)
+                    Text("ReArc is your default browser")
+                        .foregroundStyle(.secondary)
+                }
+                .transition(.opacity)
+                .accessibilityElement(children: .combine)
+            } else {
+                Button("Set ReArc as Default…") { model.setAsDefaultBrowser() }
+            }
+        }
+        .onAppear { check() }
+        .onChange(of: model.defaultBrowserRevision) { check() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in check() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in check() }
+    }
+
+    private func check() {
+        let now = model.isDefaultBrowser
+        guard now != status.isDefault else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            if status.update(isDefault: now) { ticks += 1 }
+        }
+    }
+}
+
 /// Arc's General keeps Warn before quitting and Profile Settings…; its
 /// updater and Previews rows wait for those features. ReArc's own rows
 /// (default browser, the sidebar's look and sides) have their own box.
@@ -135,9 +174,7 @@ struct GeneralSettingsPane: View {
         SettingsPage {
             SettingsGroup {
                 SettingsSwitchRow(label: "Warn before quitting", isOn: $model.warnBeforeQuitting)
-                SettingsLabeledRow(label: "Default browser") {
-                    Button("Set ReArc as Default…") { model.setAsDefaultBrowser() }
-                }
+                DefaultBrowserRow(model: model)
             }
             #if REARC_CHROMIUM
             if AppUpdater.shared.isEnabled { UpdateSettingsSection() }

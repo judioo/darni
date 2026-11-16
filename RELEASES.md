@@ -29,6 +29,11 @@ lines and this section starts empty again.
 **Fixes**
 - A link from another app that an Air Traffic Control rule sends to an archived space now
   brings that space back and opens there, instead of disappearing.
+- Little ReArc's toolbar keeps its height when your profile has a photo: the picture filled
+  the toolbar instead of showing as a small round avatar.
+- Little ReArc opens at a size you can read a page in, instead of a small window.
+- Settings › General shows when ReArc is your default browser, with a tick when it becomes the
+  default, instead of asking again after you've chosen ReArc.
 
 **Security**
 - Crash reports stay in ReArc's own data folder instead of the Chromium folder other

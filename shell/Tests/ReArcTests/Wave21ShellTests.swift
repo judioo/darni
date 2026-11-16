@@ -477,4 +477,21 @@ final class Wave21ShellTests: XCTestCase {
         router.receive(third)
         XCTAssertEqual(model.store.selectedTab?.url, third)
     }
+
+    /// Settings' default-browser row: the tick plays only when ReArc turns
+    /// into the default, not when Settings opens on a ReArc already default.
+    func testDefaultBrowserStatusTicksOnlyOnTheChange() {
+        var opened = DefaultBrowserStatus()
+        XCTAssertFalse(opened.update(isDefault: true), "already the default when Settings opens: no tick")
+        XCTAssertFalse(opened.update(isDefault: true))
+
+        var status = DefaultBrowserStatus()
+        XCTAssertFalse(status.update(isDefault: false))
+        XCTAssertEqual(status.isDefault, false)
+        XCTAssertTrue(status.update(isDefault: true), "became the default: tick")
+        XCTAssertFalse(status.update(isDefault: true), "still the default: no second tick")
+        XCTAssertFalse(status.update(isDefault: false), "another browser took over")
+        XCTAssertEqual(status.isDefault, false)
+        XCTAssertTrue(status.update(isDefault: true))
+    }
 }
