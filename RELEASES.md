@@ -19,6 +19,12 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Security**
+- The engine now carries seven fixes that Chrome 157 has and ReArc's engine line, 156, did not:
+  CVE-2026-121083 (animations), CVE-2026-121100 (page elements), CVE-2026-121117 (backdrop
+  filters), CVE-2026-121140 (WebGL), CVE-2026-121181 (text ranges), CVE-2026-121185
+  (Picture in Picture) and CVE-2026-126845 (graphics). Chrome rates each High.
+
 ## ReArc 2026.1116.811 — 2026-11-16
 
 **New**
