@@ -1287,6 +1287,7 @@ final class ChromiumSelfTest {
         } else {
             log("ABI-GAP picture_in_picture not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 30): Picture in Picture is WebKit-only")
         }
+        try await codecChecks(model: model, store: store)
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3262,6 +3263,44 @@ extension ChromiumSelfTest {
             + "sidebar badge followed pip_active; overlay \(overlayName); events \(phases.joined(separator: ","))")
     }
 
+    /// H.264/AAC (media/001, security RC-811 AD-02): a clip the page records
+    /// itself plays with src= and through MediaSource, and a damaged copy
+    /// neither hangs nor takes the renderer down. An engine without
+    /// proprietary codecs is a gap in a dev build and a failure in a release.
+    @MainActor
+    private func codecChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        let url = URL(string: "\(serverBase)/codecs")!
+        let previous = store.selectedTab?.id
+        let tab = store.addTab(kind: .today, title: "Codecs", url: url)
+        model.selectTab(tab.id)
+        let engine = try shellEngine(model, tab)
+        loadShellTab(model, tab, engine, url)
+        defer {
+            model.closeTab(tab.id)
+            if let previous { model.selectTab(previous) }
+        }
+        try await wait("codecs fixture finished", timeout: 40) {
+            engine.pageTitle == "codecs-done" || engine.pageTitle?.hasPrefix("codecs-err") == true
+        }
+        if engine.pageTitle == "codecs-err:no-mp4-recorder" {
+            let release = ShippedBuild.isRelease(infoDictionary: Bundle.main.infoDictionary)
+            try check(!release, "release engine has no H.264 MediaRecorder (proprietary codecs off?)")
+            log("ABI-GAP codecs: this engine records no H.264 MP4 (built without proprietary codecs)")
+            return
+        }
+        let json = (try? await engine.evaluate("JSON.stringify(window.codecs)", in: .page)) as? String ?? "{}"
+        let result = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+        let src = result["src"] as? String, mse = result["mse"] as? String, damaged = result["damaged"] as? String ?? ""
+        try check(src == "ok", "H.264 src= playback: \(src ?? "nil") (\(json))")
+        try check(mse == "ok", "H.264 MediaSource playback: \(mse ?? "nil") (\(json))")
+        try check(damaged == "ok" || damaged.hasPrefix("error:") || damaged.hasPrefix("timeout:"),
+                  "damaged clip: \(damaged)")
+        let alive = (try? await engine.evaluate("1 + 1", in: .page)) as? NSNumber
+        try check(alive?.intValue == 2 && !engine.isCrashed, "renderer after the damaged clip: crashed \(engine.isCrashed)")
+        log("PASS codecs: \(result["mime"] as? String ?? "?") \(result["bytes"] ?? "?") bytes, audio \(result["audio"] ?? "?"); "
+            + "src= \(src ?? ""), MediaSource \(mse ?? ""), damaged copy \(damaged), renderer alive")
+    }
+
     /// Wave 32 (ABI 1.43): switching away from a playing video shows its strip
     /// and the live video in the sidebar, the video keeps presenting frames
     /// while its tab is hidden, pause and play work through the strip, the
@@ -4802,6 +4841,12 @@ extension ChromiumSelfTest {
         // ⌃Tab: the switcher from a focused page; releasing Control shows the most recent other tab.
         if store.recentTabSwitcherItems().count > 1 {
             let expected = store.recentTabSwitcherItems()[1].id
+            // The step has failed with a lost synthetic press (808, 2026-11-16); this
+            // line tells that apart from a switcher that could not open.
+            let key = NSApp.keyWindow
+            log("⌃Tab precondition: key \(key.map { String(describing: Swift.type(of: $0)) } ?? "nil") is the test window \(key === window), "
+                + "sheet \(key?.attachedSheet != nil), command bar \(model.isCommandBarPresented), little arc \(model.keyLittleArcID != nil), "
+                + "private \(model.keyPrivateWindow != nil), recent \(store.recentTabSwitcherItems().count)")
             press("\t", keyCode: 48, .control, in: window)
             try await wait("⌃Tab opened the switcher") { model.tabSwitcher != nil }
             releaseModifiers(in: window)

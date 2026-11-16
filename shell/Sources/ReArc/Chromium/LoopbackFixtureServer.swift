@@ -182,6 +182,79 @@ final class LoopbackFixtureServer {
         rec.start(); setTimeout(function () { rec.stop(); }, 3000);
         </script></body></html>
         """,
+        // H.264/AAC through the platform decoders (media/001): the page records
+        // its own MP4 (canvas + oscillator), then plays it with src= and through
+        // MediaSource, then a copy overwritten after its first 2 KB (the header). Results in
+        // window.codecs; the title ends "codecs-done" or "codecs-err:<why>".
+        "/codecs": """
+        <!doctype html><html><head><title>codecs-loading</title></head><body style="margin:0">
+        <video id="v" muted playsinline style="width:320px;height:180px"></video><script>
+        var v = document.getElementById('v'), W = 320, H = 180, out = window.codecs = {};
+        var c = document.createElement('canvas'); c.width = W; c.height = H;
+        var g = c.getContext('2d'), n = 0;
+        var tick = setInterval(function () {
+          g.fillStyle = 'hsl(' + (n * 15 % 360) + ',80%,50%)'; g.fillRect(0, 0, W, H);
+          g.fillStyle = '#fff'; g.fillRect((n * 11) % W, 0, 20, H); n++;
+        }, 40);
+        var mimes = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1'];
+        var mime = window.MediaRecorder && mimes.find(function (m) { return MediaRecorder.isTypeSupported(m); });
+        if (!mime) { document.title = 'codecs-err:no-mp4-recorder'; }
+        else {
+          out.mime = mime;
+          var stream = c.captureStream(25), ac = new AudioContext(), osc = ac.createOscillator();
+          var dest = ac.createMediaStreamDestination(), gain = ac.createGain();
+          gain.gain.value = 0; osc.connect(gain); gain.connect(dest); osc.start();
+          stream.addTrack(dest.stream.getAudioTracks()[0]);
+          var parts = [], rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 800000 });
+          rec.ondataavailable = function (e) { parts.push(e.data); };
+          rec.onstop = function () { clearInterval(tick); new Blob(parts, { type: 'video/mp4' }).arrayBuffer().then(run); };
+          rec.start(250); setTimeout(function () { rec.stop(); }, 2000);
+        }
+        // Resolves 'ok' once 5 frames are presented (and audio decoded when the clip has it).
+        function play(src, audio) {
+          return new Promise(function (done) {
+            var frames = 0, settled = false;
+            function finish(r) { if (!settled) { settled = true; v.pause(); done(r); } }
+            v.onerror = function () { finish('error:' + (v.error ? v.error.code : '?')); };
+            var count = function () {
+              frames++;
+              var heard = !audio || (v.webkitAudioDecodedByteCount || 0) > 0;
+              if (frames >= 5 && heard) finish('ok'); else v.requestVideoFrameCallback(count);
+            };
+            v.requestVideoFrameCallback(count);
+            setTimeout(function () { finish('timeout:frames=' + frames + ',audio=' + (v.webkitAudioDecodedByteCount || 0)); }, 6000);
+            v.src = src;
+            v.play().catch(function (e) { finish('play:' + e.name); });
+          });
+        }
+        function mse(bytes, type) {
+          if (!MediaSource.isTypeSupported(type)) return Promise.resolve('unsupported:' + type);
+          var ms = new MediaSource(), url = URL.createObjectURL(ms);
+          ms.addEventListener('sourceopen', function () {
+            var sb = ms.addSourceBuffer(type);
+            sb.addEventListener('updateend', function () { if (ms.readyState === 'open') ms.endOfStream(); }, { once: true });
+            sb.appendBuffer(bytes);
+          }, { once: true });
+          return play(url, out.audio);
+        }
+        function run(bytes) {
+          out.bytes = bytes.byteLength;
+          out.audio = mime.indexOf('mp4a') >= 0;
+          play(URL.createObjectURL(new Blob([bytes], { type: 'video/mp4' })), out.audio).then(function (r) {
+            out.src = r;
+            return mse(bytes, out.audio ? 'video/mp4; codecs="avc1.42E01E,mp4a.40.2"' : 'video/mp4; codecs="avc1.42E01E"');
+          }).then(function (r) {
+            out.mse = r;
+            var bad = new Uint8Array(bytes.slice(0));
+            for (var i = Math.min(2048, bad.length >> 2); i < bad.length; i += 7) bad[i] = 0xFF;
+            return play(URL.createObjectURL(new Blob([bad], { type: 'video/mp4' })), false);
+          }).then(function (r) {
+            out.damaged = r;
+            document.title = 'codecs-done';
+          });
+        }
+        </script></body></html>
+        """,
         // Four case-insensitive "needle"s, two of them lowercase.
         "/find": """
         <!doctype html><html><head><title>find</title></head><body style="font:24px -apple-system">
