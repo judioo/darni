@@ -19,6 +19,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1116.808 — 2026-11-16
+
 **New**
 - Video that only played in Chrome now plays in ReArc: H.264 and HEVC video, AAC audio and HLS
   streams, as on X, Reddit, Vimeo and most news sites, decoded by macOS's own decoders. Protected
