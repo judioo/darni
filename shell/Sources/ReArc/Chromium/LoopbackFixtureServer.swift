@@ -182,6 +182,23 @@ final class LoopbackFixtureServer {
         rec.start(); setTimeout(function () { rec.stop(); }, 3000);
         </script></body></html>
         """,
+        // Prerendering (security AA-01): a speculation rule prerenders
+        // /prerender-to, and #go navigates there. The target's title says
+        // whether it was shown by activating that prerender.
+        "/prerender-from": """
+        <!doctype html><html><head><title>prerender-from</title>
+        <script type="speculationrules">{"prerender":[{"source":"list","urls":["/prerender-to"]}]}</script>
+        </head><body><a id="go" href="/prerender-to">next</a></body></html>
+        """,
+        "/prerender-to": """
+        <!doctype html><html><head><title>prerender-loading</title><script>
+        if (document.prerendering) {
+          document.addEventListener('prerenderingchange', function () { document.title = 'prerender-activated'; }, { once: true });
+        } else {
+          document.title = 'prerender-loaded-normally';
+        }
+        </script></head><body>prerender target</body></html>
+        """,
         // H.264/AAC through the platform decoders (media/001): the page records
         // its own MP4 (canvas + oscillator), then plays it with src= and through
         // MediaSource, then a copy overwritten after its first 2 KB (the header). Results in

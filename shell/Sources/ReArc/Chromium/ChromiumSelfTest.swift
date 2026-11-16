@@ -1288,6 +1288,7 @@ final class ChromiumSelfTest {
             log("ABI-GAP picture_in_picture not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 30): Picture in Picture is WebKit-only")
         }
         try await codecChecks(model: model, store: store)
+        try await prerenderChecks(model: model, store: store)
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3261,6 +3262,40 @@ extension ChromiumSelfTest {
         try await wait("tab A back on /a after PiP", timeout: 15) { engine.pageTitle == Self.titleA && !engine.isLoading }
         log("PASS Picture in Picture (ABI 1.30): MediaRecorder WebM with audio -> pip_available; \(paths.joined(separator: "; ")); "
             + "sidebar badge followed pip_active; overlay \(overlayName); events \(phases.joined(separator: ","))")
+    }
+
+    /// Prerender activation (security AA-01, RC-811 AD-02): the engine runs
+    /// with LazyBrowserInterfaceBroker off, which changes how an activated
+    /// prerender gets its interface broker. A page prerenders a second one by
+    /// speculation rule, a link click goes there, and the tab must show it
+    /// with the renderer up. An embedding that never prerenders logs a gap.
+    @MainActor
+    private func prerenderChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        let url = URL(string: "\(serverBase)/prerender-from")!
+        let previous = store.selectedTab?.id
+        let tab = store.addTab(kind: .today, title: "Prerender", url: url)
+        model.selectTab(tab.id)
+        let engine = try shellEngine(model, tab)
+        loadShellTab(model, tab, engine, url)
+        defer {
+            model.closeTab(tab.id)
+            if let previous { model.selectTab(previous) }
+        }
+        try await wait("prerender source page loaded", timeout: 15) { engine.pageTitle == "prerender-from" && !engine.isLoading }
+        // Time for the speculation rule to start and finish the prerender.
+        try await Task.sleep(for: .seconds(2))
+        _ = try await engine.evaluate("document.getElementById('go').click(), true", in: .page)
+        try await wait("prerender target shown", timeout: 15) {
+            engine.pageTitle == "prerender-activated" || engine.pageTitle == "prerender-loaded-normally"
+        }
+        try check(engine.currentURL?.path == "/prerender-to", "after the click the tab shows \(engine.currentURL?.absoluteString ?? "nil")")
+        let alive = (try? await engine.evaluate("1 + 1", in: .page)) as? NSNumber
+        try check(alive?.intValue == 2 && !engine.isCrashed, "renderer after the prerender navigation: crashed \(engine.isCrashed)")
+        if engine.pageTitle == "prerender-activated" {
+            log("PASS prerender: a speculation rule prerendered /prerender-to and the link click activated it; renderer alive")
+        } else {
+            log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
+        }
     }
 
     /// H.264/AAC (media/001, security RC-811 AD-02): a clip the page records
