@@ -487,6 +487,10 @@ struct SidebarSwipeMonitor: NSViewRepresentable {
         private(set) var claimed = false
         private var swallowMomentum = false
         private var lock = SwipeAxisLock()
+        /// The gesture's events until its axis is decided. A sideways swipe never
+        /// reaches the sidebar list, so the list doesn't drift or show its scroll
+        /// bar; an upright one is handed back to the list in order.
+        private var held: [NSEvent] = []
 
         init(parent: SidebarSwipeMonitor) { self.parent = parent }
 
@@ -502,13 +506,17 @@ struct SidebarSwipeMonitor: NSViewRepresentable {
                 return swallow ? nil : event
             }
             if event.phase.contains(.began) {
+                replayHeld()
                 let point = view.convert(event.locationInWindow, from: nil)
-                tracking = window.isKeyWindow && view.bounds.contains(point) && parent.isEnabled()
+                // Not only in the key window: as in Arc, a swipe over the sidebar of a window
+                // behind pages its spaces without a click first (owner, 2026-11-18).
+                tracking = window.isVisible && view.bounds.contains(point) && parent.isEnabled()
                 claimed = false
                 swallowMomentum = false
                 lock = SwipeAxisLock()
-                if tracking { _ = lock.add(dx: contentDelta(event), dy: event.scrollingDeltaY) }
-                return event
+                guard tracking else { return event }
+                held = [event]
+                return decide(after: event)
             }
             guard tracking else { return event }
             if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
@@ -517,7 +525,9 @@ struct SidebarSwipeMonitor: NSViewRepresentable {
                     claimed = false
                     swallowMomentum = true
                     if event.phase.contains(.ended) { parent.onEnd() } else { parent.onCancel() }
+                    return nil
                 }
+                replayHeld()
                 return event
             }
             guard event.phase.contains(.changed) else { return event }
@@ -525,22 +535,40 @@ struct SidebarSwipeMonitor: NSViewRepresentable {
                 parent.onChange(contentDelta(event))
                 return nil
             }
+            held.append(event)
+            return decide(after: event)
+        }
+
+        /// Adds the newest held event to the axis lock; nil keeps it held or swallowed.
+        private func decide(after event: NSEvent) -> NSEvent? {
             switch lock.add(dx: contentDelta(event), dy: event.scrollingDeltaY) {
             case .horizontal:
+                held = []
                 claimed = true
                 parent.onBegin()
                 parent.onChange(lock.dx)
                 return nil
             case .vertical:
                 tracking = false
+                held.removeLast()
+                replayHeld()
                 return event
             case .undecided:
-                return event
+                return nil
             }
         }
 
+        /// Gives held events to the view under them (the sidebar list), oldest first.
+        private func replayHeld() {
+            let events = held
+            held = []
+            guard let first = events.first, let content = view?.window?.contentView,
+                  let target = content.hitTest(content.convert(first.locationInWindow, from: nil)) else { return }
+            for event in events { target.scrollWheel(with: event) }
+        }
+
         private func contentDelta(_ event: NSEvent) -> Double {
-            SwipeAxisLock.contentDelta(event.scrollingDeltaX, invertedFromDevice: event.isDirectionInvertedFromDevice)
+            SwipeAxisLock.contentDelta(event.scrollingDeltaX)
         }
     }
 }

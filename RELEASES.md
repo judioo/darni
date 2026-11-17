@@ -26,6 +26,11 @@ lines and this section starts empty again.
 - A two-finger swipe goes back or forward a page in any ReArc window under the pointer, as in
   Arc, not only in the active one. Before, a swipe in a window behind another nudged the page
   sideways instead.
+- Swiping between spaces in the sidebar moves the way your scroll direction setting moves
+  content, as in Arc. With natural scrolling off it used to run the other way.
+- A space swipe works over the sidebar of a window behind another, without clicking first.
+- A space swipe moves only sideways: the space's list no longer drifts up or down or shows its
+  scroll bar at the start of a swipe.
 
 ## ReArc 2026.1117.864 — 2026-11-17
 
