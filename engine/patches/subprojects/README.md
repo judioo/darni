@@ -29,6 +29,7 @@ Order for the list, most urgent first:
 | `ffmpeg/002-cve-2026-121047-mov-frag-index.patch` | High | The same |
 | `angle/002-cve-2026-130954-switch-variable-rename.patch` | High (two CVEs) | Any page with WebGL, Metal shader translator |
 | `angle/001-cve-2026-130910-switch-folding-order.patch` | High | Any page with WebGL |
+| `angle/003-cve-2026-121037-constructor-size-after-inference.patch` | High | Any page with WebGL |
 
 The security reviewer owns the patches in this folder, as with
 `engine/patches/security`. The ledger is `security/BACKPORTS.md` on branch
