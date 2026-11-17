@@ -19,7 +19,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1117.862 — 2026-11-17
+## ReArc 2026.1117.864 — 2026-11-17
 
 **Fixes**
 - Tab groups are either open or closed. A closed group hides all its tabs; closing a group while
