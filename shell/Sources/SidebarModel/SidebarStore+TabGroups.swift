@@ -584,6 +584,10 @@ public struct TabGroupCommandBarRow: Identifiable, Equatable, Sendable {
 
     public var countText: String { TabGroup.countText(tabCount) }
 
+    /// The count beside the name in the group's chip. An unnamed group has
+    /// none: its name is its count already ("3 Tabs").
+    public var chipCount: String? { name == countText ? nil : "\(tabCount)" }
+
     /// Rows for a space: none while the setting is off or anything is typed.
     public static func rows(in store: SidebarStore, spaceID: Space.ID? = nil, query: String, enabled: Bool) -> [TabGroupCommandBarRow] {
         guard enabled, query.isEmpty else { return [] }

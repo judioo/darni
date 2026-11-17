@@ -175,6 +175,12 @@ final class BrowserViewModel {
     var tabGroupEditor: TabGroupEditorRequest?
     /// New Tab in Group: the group ⌘T's new tab joins.
     var commandBarNewTabGroupID: TabGroup.ID?
+    /// The ⌘T bar's chip the keyboard is on, after Tab moved into the Tab
+    /// Groups chips (`BrowserViewModel+CommandBarKeys`). The field keeps the
+    /// keyboard meanwhile.
+    var commandBarTabGroupHighlight: TabGroup.ID?
+    /// The bar's width on screen: where its Tab Groups chips wrap.
+    var commandBarWidth = CommandBarOverlay.arcWidth
     /// Answers "Delete tab group?" and "Close tab and delete group?" in the
     /// alert's place (tests).
     @ObservationIgnored var answerTabGroupDeletion: ((TabGroupDeletionQuestion) -> TabGroupDeletionAnswer)?
@@ -419,6 +425,8 @@ final class BrowserViewModel {
             // so ↓ then Return ran the first row (Break check 2026-11-08).
             if commandBarText != oldValue {
                 commandBarHighlightedIndex = 0
+                // Typing folds the Tab Groups chips away.
+                if !commandBarText.isEmpty { commandBarTabGroupHighlight = nil }
                 // Typing into a fresh chip ends the beat its old rows had.
                 if !commandBarText.isEmpty, commandBarSiteSearchHeldRows != nil { collapseCommandBarSiteSearchRows() }
                 PerfSignposts.interaction(.commandBarKey, "\(commandBarText.count) chars")
@@ -1882,6 +1890,7 @@ final class BrowserViewModel {
     func dismissCommandBar() {
         commandBarCreatesNewTab = false
         commandBarNewTabGroupID = nil
+        commandBarTabGroupHighlight = nil
         isCommandBarPresented = false
         commandBarMenuSnapshot = nil
         cancelCommandBarLive()
@@ -2036,6 +2045,7 @@ final class BrowserViewModel {
         commandBarMenuSnapshot = nil
         commandBarCreatesNewTab = false
         commandBarNewTabGroupID = nil
+        commandBarTabGroupHighlight = nil
         resetCommandBarSiteSearch()
         commandBarSplitAnchorID = nil
         commandBarTargetID = target

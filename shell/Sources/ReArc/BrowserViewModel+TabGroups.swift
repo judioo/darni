@@ -166,7 +166,13 @@ extension BrowserViewModel {
     /// stays where it opened.
     var commandBarTabGroupsRoom: CGFloat {
         guard tabGroupsEnabled, commandBarCreatesNewTab else { return 0 }
-        return CommandBarTabGroupsSection.height(rows: store.tabGroupsAvailable().count)
+        let rows = TabGroupCommandBarRow.rows(in: store, query: "", enabled: true)
+        return CommandBarTabGroupsMetrics.height(CommandBarTabGroupsMetrics.layout(rows: rows, barWidth: commandBarWidth))
+    }
+
+    /// The chips of the groups the bar lists now, as they wrap across it.
+    var commandBarTabGroupLayout: TabGroupChipLayout {
+        CommandBarTabGroupsMetrics.layout(rows: commandBarTabGroups, barWidth: commandBarWidth)
     }
 
     /// A click on a group in the command bar: the active space shows it, at the top of Today.

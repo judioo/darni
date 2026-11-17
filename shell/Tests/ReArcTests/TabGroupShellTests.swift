@@ -173,13 +173,6 @@ final class TabGroupShellTests: XCTestCase {
         XCTAssertTrue(model.commandBarTabGroups.isEmpty, "⌘L is not the new-tab bar")
     }
 
-    func testTheSectionTakesNoRoomWithoutGroups() {
-        XCTAssertEqual(CommandBarTabGroupsSection.height(rows: 0), 0)
-        XCTAssertGreaterThan(CommandBarTabGroupsSection.height(rows: 1), 0)
-        XCTAssertEqual(CommandBarTabGroupsSection.height(rows: 9), CommandBarTabGroupsSection.height(rows: CommandBarTabGroupsSection.maxVisibleRows),
-                       "more than four scroll")
-    }
-
     // MARK: Delete, ungroup, remove
 
     func testDeleteGroupAsksFirstAndDontAskAgainIsRemembered() throws {
