@@ -55,6 +55,49 @@ struct HistorySwipeTests {
         #expect(!swipe.handle(phase: .momentum, x: 50, y: 0, edges: edges, canGoBack: true, canGoForward: true).released)
     }
 
+    /// Owner, 2026-11-18: a real swipe's first event was (1, 2), and the whole sideways swipe
+    /// went to the page. The axis is decided over the first few points, as the space swipe does.
+    @Test func aSlightlyVerticalFirstEventStillSwipesBack() {
+        var swipe = HistorySwipe()
+        let first = swipe.handle(phase: .began, x: 1, y: 2, edges: edges, canGoBack: true, canGoForward: false)
+        #expect(first.consumes && first.holds && first.direction == nil)
+        let second = swipe.handle(phase: .changed, x: 18, y: 0, edges: edges, canGoBack: true, canGoForward: false)
+        #expect(second.consumes && !second.holds && !second.replay)
+        #expect(second.direction == .back && second.progress == 0.19)
+        for _ in 0..<5 { _ = swipe.handle(phase: .changed, x: 18, y: 0, edges: edges, canGoBack: true, canGoForward: false) }
+        #expect(swipe.handle(phase: .ended, x: 0, y: 0, edges: edges, canGoBack: true, canGoForward: false).commit == .back)
+    }
+
+    @Test func aVerticalDecisionGivesTheHeldEventsToThePage() {
+        var swipe = HistorySwipe()
+        #expect(swipe.handle(phase: .began, x: 0, y: 0, edges: edges, canGoBack: true, canGoForward: true).holds)
+        #expect(swipe.handle(phase: .changed, x: 1, y: 2, edges: edges, canGoBack: true, canGoForward: true).holds)
+        let vertical = swipe.handle(phase: .changed, x: 0, y: 6, edges: edges, canGoBack: true, canGoForward: true)
+        #expect(!vertical.consumes && !vertical.holds && vertical.replay)
+        let next = swipe.handle(phase: .changed, x: 30, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+        #expect(!next.consumes && !next.replay, "the page keeps the gesture; the held events go back once")
+    }
+
+    @Test func aGestureThatEndsUndecidedGoesToThePage() {
+        var swipe = HistorySwipe()
+        _ = swipe.handle(phase: .began, x: 2, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+        let ended = swipe.handle(phase: .ended, x: 0, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+        #expect(!ended.consumes && ended.replay && !ended.released)
+        _ = swipe.handle(phase: .began, x: 2, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+        let cancelled = swipe.handle(phase: .cancelled, x: 0, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+        #expect(!cancelled.consumes && cancelled.replay)
+    }
+
+    @Test func nothingIsHeldWhenThereIsNowhereToGo() {
+        var swipe = HistorySwipe()
+        let first = swipe.handle(phase: .began, x: 1, y: 0, edges: edges, canGoBack: false, canGoForward: false)
+        #expect(!first.consumes && !first.holds && !first.replay)
+        var edged = HistorySwipe()
+        let atEdge = edged.handle(phase: .began, x: 1, y: 0, edges: .init(back: false, forward: false),
+                                  canGoBack: true, canGoForward: true)
+        #expect(!atEdge.consumes && !atEdge.holds)
+    }
+
     @Test func discSlidesOutAtFixedSizeThenSwellsWhenArmed() {
         let hidden = HistorySwipe.indicator(progress: 0, reduceMotion: false)
         #expect(hidden.centre + hidden.radius == 0)

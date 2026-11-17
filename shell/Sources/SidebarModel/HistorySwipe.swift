@@ -16,21 +16,34 @@ public struct HistorySwipe {
         public var commit: Direction? = nil
         /// The fingers left a tracked swipe; the indicator fades out (`commit` picks which fade).
         public var released = false
+        /// The event is held while the swipe's axis is undecided.
+        public var holds = false
+        /// The gesture is the page's after all: the held events go to it, in order, before this one.
+        public var replay = false
     }
 
     public static let threshold = 100.0
     private enum State { case idle, deciding, rejected, tracking(Direction), finished }
     private var state: State = .idle
     private var distance = 0.0
+    /// A real trackpad's first events are a point or two, often more vertical than not, so one
+    /// event can't decide the axis: the space swipe's lock decides over its first few points
+    /// (owner, 2026-11-18: a Pinterest swipe went to the page because its first event was 1, 2).
+    private var lock = SwipeAxisLock()
+    private var holding = false
     private var edges = Edges(back: false, forward: false)
     public init() {}
 
     public mutating func handle(phase: Phase, x: Double, y: Double,
                                 edges: Edges, canGoBack: Bool, canGoForward: Bool) -> Update {
         if phase == .began {
-            state = .deciding
             distance = 0
+            lock = SwipeAxisLock()
+            holding = false
             self.edges = edges
+            // Nothing to go to: the gesture is the page's from the first event, nothing held.
+            let possible = edges.back && canGoBack || edges.forward && canGoForward
+            state = possible ? .deciding : .rejected
         }
         if phase == .momentum {
             switch state {
@@ -43,17 +56,30 @@ public struct HistorySwipe {
             let consumes: Bool
             if case .tracking = state { consumes = true } else { consumes = false }
             state = consumes ? .finished : .idle
-            return Update(consumes: consumes, progress: 0, released: consumes)
+            return Update(consumes: consumes, progress: 0, released: consumes, replay: release())
         }
-        if case .deciding = state, x != 0 || y != 0 {
-            let direction: Direction = x > 0 ? .back : .forward
-            let available = direction == .back ? self.edges.back && canGoBack : self.edges.forward && canGoForward
-            if abs(x) > abs(y) * 1.5, available { state = .tracking(direction) }
-            else { state = .rejected }
+        if case .deciding = state {
+            switch lock.add(dx: x, dy: y) {
+            case .undecided where phase != .ended:
+                // Zero-travel events too: the page must still see the gesture's began.
+                holding = true
+                return Update(consumes: true, progress: 0, holds: true)
+            case .horizontal:
+                let direction: Direction = lock.dx > 0 ? .back : .forward
+                let available = direction == .back ? self.edges.back && canGoBack : self.edges.forward && canGoForward
+                state = available ? .tracking(direction) : .rejected
+            default:
+                state = .rejected
+            }
+            if case .tracking(let direction) = state {
+                // The held travel counts, so the disc starts where the fingers are.
+                holding = false
+                distance = max(0, direction == .back ? lock.dx - x : x - lock.dx)
+            }
         }
         guard case .tracking(let direction) = state else {
             if phase == .ended { state = .idle }
-            return Update(consumes: false, progress: 0)
+            return Update(consumes: false, progress: 0, replay: release())
         }
         distance = max(0, distance + (direction == .back ? x : -x))
         if phase == .ended {
@@ -63,6 +89,12 @@ public struct HistorySwipe {
                           commit: available && distance >= Self.threshold ? direction : nil, released: true)
         }
         return Update(consumes: true, direction: direction, progress: min(distance / Self.threshold, 1))
+    }
+
+    /// True once, when events were held for a decision that went to the page.
+    private mutating func release() -> Bool {
+        defer { holding = false }
+        return holding
     }
 }
 

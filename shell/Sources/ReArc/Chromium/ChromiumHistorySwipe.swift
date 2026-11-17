@@ -12,6 +12,8 @@ final class ChromiumHistorySwipe {
     private var machine = HistorySwipe()
     private var edges = HistorySwipe.Edges(back: false, forward: false)
     private var pending: [NSEvent] = []
+    /// Events the machine holds while it decides the axis; the page gets them if it isn't a swipe.
+    private var held: [NSEvent] = []
     private var probing = false
     private var gesture = false
     private var awaitingBegan = false
@@ -29,6 +31,7 @@ final class ChromiumHistorySwipe {
     func stop() {
         generation += 1
         flushProbe(edges: nil)
+        held = []
         indicator.reset()
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
@@ -77,6 +80,7 @@ final class ChromiumHistorySwipe {
         generation += 1
         flushProbe(edges: nil)
         machine = HistorySwipe()
+        held = []
         indicator.reset()
         gesture = true
         probing = true
@@ -129,8 +133,15 @@ final class ChromiumHistorySwipe {
         if phase != .momentum {
             ChromiumLog.trace("history swipe: \(phase) dx \(event.scrollingDeltaX) dy \(event.scrollingDeltaY) edges \(edges) "
                 + "canGoBack \(host.engine.canGoBack) canGoForward \(host.engine.canGoForward) -> consumes \(update.consumes)"
+                + (update.holds ? " (held)" : "") + (update.replay ? " (gives \(held.count) held to the page)" : "")
                 + (update.commit.map { " commit \($0)" } ?? ""))
         }
+        if update.replay {
+            let events = held
+            held = []
+            for event in events { wheelTarget?.scrollWheel(with: event) }
+        }
+        if update.holds { held.append(event) } else if update.consumes { held = [] }
         if update.released {
             indicator.dismiss(committing: update.commit != nil)
         } else if let direction = update.direction {
