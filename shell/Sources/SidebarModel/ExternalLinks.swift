@@ -35,21 +35,27 @@ public enum ExternalLinkDestination: String, CaseIterable, Codable, Sendable {
 }
 
 /// Decides what a link from another app does. Only web pages (and local
-/// files) are admitted, through the same URL policy as the command bar; a
-/// page already open in the active profile is focused instead of opened
-/// twice.
+/// files) are admitted, through the same URL policy as the command bar. As
+/// in Arc, a link meant for Little ReArc always gets a Little ReArc: the one
+/// still showing that page, else a new one, never a tab in a space (a Little
+/// ReArc moved into a space is a tab from then on). Links for a space focus
+/// a page already open there instead of opening it twice.
 public enum ExternalLinkRouting {
 
     public enum Route: Equatable, Sendable {
         case littleArc(URL, profileID: Profile.ID)
+        /// A Little ReArc window still showing the page.
+        case focusLittleArc(LittleArcWindow.ID)
         case newTab(URL, spaceID: Space.ID)
         case focusTab(Tab.ID)
         case rejected
     }
 
     /// Air Traffic Control rules come first: the first enabled rule whose
-    /// space or profile exists decides (a page already open in that space is
-    /// focused). Otherwise an open page is focused, else `destination`.
+    /// space or profile exists decides (a page already open in that space, or
+    /// in a Little ReArc of that profile, is focused). Otherwise `destination`:
+    /// Little ReArc as above, or the current space, which focuses a page
+    /// already open in the active profile.
     public static func route(
         _ url: URL,
         destination: ExternalLinkDestination,
@@ -66,16 +72,26 @@ public enum ExternalLinkRouting {
                 let open = store.displayTabs(in: spaceID).first { $0.url.absoluteString == url.absoluteString }
                 return open.map { .focusTab($0.id) } ?? .newTab(url, spaceID: spaceID)
             case .littleArc(let profileID):
-                return .littleArc(url, profileID: profileID)
+                return littleArc(url, profileID: profileID, in: store)
             }
         }
-        if let open = openTab(matching: url, in: store) { return .focusTab(open) }
         switch destination {
         case .littleArc:
-            return .littleArc(url, profileID: store.activeProfileID)
+            return littleArc(url, profileID: store.activeProfileID, in: store)
         case .activeSpace:
+            if let open = openTab(matching: url, in: store) { return .focusTab(open) }
             return .newTab(url, spaceID: store.activeSpaceID)
         }
+    }
+
+    /// The live Little ReArc of `profileID` showing `url` (the most recently
+    /// used), else a new one.
+    static func littleArc(_ url: URL, profileID: Profile.ID, in store: SidebarStore) -> Route {
+        let target = url.absoluteString
+        let open = store.littleArcLiveWindows
+            .filter { $0.profileID == profileID && $0.url.absoluteString == target }
+            .max { $0.lastActiveAt < $1.lastActiveAt }
+        return open.map { .focusLittleArc($0.id) } ?? .littleArc(url, profileID: profileID)
     }
 
     /// A tab of the active profile (favorites included) already showing `url`.

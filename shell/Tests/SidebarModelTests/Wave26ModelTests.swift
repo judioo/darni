@@ -341,6 +341,27 @@ final class Wave26AirTrafficModelTests: XCTestCase {
         XCTAssertFalse(LinkRoutingRule(matchType: .domain, pattern: "github.com", destination: .space(space), isEnabled: false).matches(url))
     }
 
+    /// As in Arc: a link for Little ReArc never goes to a space's tab, even
+    /// the one a Little ReArc became; it reuses a Little ReArc still showing it.
+    func testLittleArcLinksGetALittleArcNotASpaceTab() {
+        let store = SidebarStore(spaces: [Space(name: "Main", sortRank: "a")])
+        let url = URL(string: "https://bsky.app/profile/x/post/1")!
+        let profile = store.activeProfileID
+        XCTAssertEqual(ExternalLinkRouting.route(url, destination: .littleArc, in: store), .littleArc(url, profileID: profile))
+
+        let window = store.createLittleArcWindow(url: url)
+        XCTAssertEqual(ExternalLinkRouting.route(url, destination: .littleArc, in: store), .focusLittleArc(window.id),
+                       "the Little ReArc still showing the page")
+
+        XCTAssertNotNil(store.promoteLittleArcToTab(id: window.id))
+        XCTAssertEqual(ExternalLinkRouting.route(url, destination: .littleArc, in: store), .littleArc(url, profileID: profile),
+                       "moved into a space: the next click opens a new Little ReArc")
+        XCTAssertNotEqual(ExternalLinkRouting.route(url, destination: .activeSpace, in: store), .littleArc(url, profileID: profile))
+        guard case .focusTab = ExternalLinkRouting.route(url, destination: .activeSpace, in: store) else {
+            return XCTFail("the current-space setting still focuses the open tab")
+        }
+    }
+
     func testRoutingUsesTheFirstRuleWithALiveDestination() {
         let store = SidebarStore(spaces: [Space(name: "Main", sortRank: "a"), Space(name: "Work", sortRank: "b")])
         let work = store.spaces[1].id
