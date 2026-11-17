@@ -35,10 +35,9 @@ signals them as well (Task::Kill, base::Process::Terminate, SIGTERM), and a
 tab whose renderer was killed already reports is_crashed
 (WebContentsImpl::IsCrashed counts TERMINATION_STATUS_PROCESS_WAS_KILLED).
 
-Not built: written against the overlay below without a build, as the
-checkout is shared. rearc_perf_metrics.cc and
-chrome_content_browser_client.cc with this patch pass clang -fsyntax-only
-under the flags of obj/chrome/browser/core.ninja (ReArc-dev-arm64).
+Built into the release engine (overlay adbb86cb3f, out/ReArc-codecs-arm64)
+and shipped in 2026.1117.849; its self-test step (task manager) passes and
+the Task Manager window showed live network figures on screen.
 engine/tests/c_abi_perf_host.mm has the new step and has not run.
 
 Bridge 0.75.0, ABI 1.65, feature task_manager. No struct changes.

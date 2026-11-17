@@ -209,7 +209,7 @@ struct GeneralSettingsPane: View {
             }
             SettingsGroup {
                 SettingsSwitchRow(label: "Tab groups",
-                                  detail: "Keep tabs together under a named, coloured header, as in Chrome. One group can show in several spaces. To make one, right-click a tab or “+ New Tab”.",
+                                  detail: "Keep tabs together under a named, coloured header, as in Chrome. One group can show in several spaces. To make one, right-click a tab or “+ New Tab”. With Sync Sidebar on, the addresses of a group’s tabs sync to your other Macs as they change.",
                                   isOn: $model.tabGroupsEnabled)
                 if model.tabGroupsEnabled {
                     SettingsSwitchRow(label: "Ask before deleting a tab group", isOn: $model.asksBeforeDeletingTabGroup)
