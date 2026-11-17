@@ -32,6 +32,15 @@ lines and this section starts empty again.
   A second ReArc window behind the first still needs a click.
 - A space swipe moves only sideways: the space's list no longer drifts up or down or shows its
   scroll bar at the start of a swipe.
+- Two windows on the same space are no longer linked: each keeps its own selected tab, closed
+  folders and multi-selection, so choosing a tab in one no longer changes the other, and a
+  call's video shows only in its own window's sidebar.
+- Clicking a tab that is playing video in a window behind moves it there in one click, not two.
+
+**Sync**
+- With Sync Sidebar on, a tab group's tab sends its new address to your other Macs only once
+  it has stayed on that page for 2 seconds, so the short-lived sign-in redirects that carry
+  one-time codes never sync.
 
 ## ReArc 2026.1117.864 — 2026-11-17
 
