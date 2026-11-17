@@ -67,13 +67,35 @@ enum ChromiumNativeMessagingHosts {
     /// junk out of the folder.
     static func isValidManifest(_ data: Data, fileName: String,
                                 isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> Bool {
+        validHostPath(data, fileName: fileName, isExecutable: isExecutable) != nil
+    }
+
+    /// A valid manifest's `path`: the executable the engine starts for it.
+    private static func validHostPath(_ data: Data, fileName: String, isExecutable: (String) -> Bool) -> String? {
         guard data.count <= maximumManifestSize,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               json["name"] as? String == String(fileName.dropLast(".json".count)),
               json["type"] as? String == "stdio",
               let path = json["path"] as? String, path.hasPrefix("/"), isExecutable(path),
-              let origins = json["allowed_origins"] as? [String], !origins.isEmpty else { return false }
-        return origins.allSatisfy(isExtensionOrigin)
+              let origins = json["allowed_origins"] as? [String], !origins.isEmpty,
+              origins.allSatisfy(isExtensionOrigin) else { return nil }
+        return path
+    }
+
+    /// The helper the engine starts for `host`, from the manifest ReArc
+    /// itself copied into `userDataDir`: allowed, in the ledger, and valid
+    /// when read again. nil for a manifest ReArc did not copy. This reads
+    /// ReArc's own copy only, never the app's files
+    /// (`OnePasswordConnection` knows 1Password's helper by this path).
+    static func copiedHostPath(named host: String, in userDataDir: URL,
+                               isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }) -> String? {
+        let name = host + ".json"
+        let target = userDataDir.appendingPathComponent(directoryName, isDirectory: true)
+        guard isAllowed(name),
+              let ledger = try? JSONDecoder().decode([String].self, from: Data(contentsOf: target.appendingPathComponent(ledgerName))),
+              ledger.contains(name),
+              let data = readManifest(at: target.appendingPathComponent(name)) else { return nil }
+        return validHostPath(data, fileName: name, isExecutable: isExecutable)
     }
 
     /// The manifest's bytes, read only when its size allows.
