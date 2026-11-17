@@ -1,0 +1,566 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 process details for the host's task manager (ABI 1.65)
+
+The host's Task Manager window (Chrome's Window > Task manager) could list
+the engine's processes from ReArcEngineGetProcesses but could not name them
+as Chrome does or fill the Network column: the list says which tabs have a
+frame in a renderer, not which of them have their page there, names an
+extension's process only as "an extension", cannot tell the spare renderer
+from any other renderer without a page, and counts no network bytes.
+
+ReArcEngineGetProcessDetails returns the same rows and details_json, a JSON
+object keyed by pid: main_frame_tabs and subframe_tabs (Chrome's "Tab:" and
+"Subframe:" rows; frames of a page kept for Back or loading ahead are in
+neither), site (the subframes' site URL), extension_id and extension_name
+(ProcessMap::GetEnabledExtensionByProcessID), spare
+(SpareRenderProcessHostManager::GetSpares), title (ChildProcessData::name,
+"Network Service") and network_bytes. JSON, so a host can call it by symbol
+lookup without the new header and later keys need no struct change.
+
+network_bytes counts the network service's data-use reports, the same ones
+Chrome's task manager counts: ChromeContentBrowserClient::
+OnNetworkServiceDataUseUpdate also calls rearc::perf::RecordNetworkBytes,
+per RenderProcessHost, and what no frame asked for goes to the browser as
+TaskManagerImpl::UpdateAccumulatedStatsNetworkForRoute does. The reports are
+off by default (NetworkService::EnableDataUseUpdates). Each details request
+switches them on (again, so a restarted network service keeps reporting),
+and the first report that arrives more than 5 s after the last request
+switches them off: nothing is counted and no timer runs while the host's
+window is closed.
+
+ReArcEngineGetProcesses is unchanged for a host: its collector moved into
+CollectProcesses, shared by both calls. No call is added for End task: the
+processes are the host's own children, Chrome's task manager on macOS
+signals them as well (Task::Kill, base::Process::Terminate, SIGTERM), and a
+tab whose renderer was killed already reports is_crashed
+(WebContentsImpl::IsCrashed counts TERMINATION_STATUS_PROCESS_WAS_KILLED).
+
+Not built: written against the overlay below without a build, as the
+checkout is shared. rearc_perf_metrics.cc and
+chrome_content_browser_client.cc with this patch pass clang -fsyntax-only
+under the flags of obj/chrome/browser/core.ninja (ReArc-dev-arm64).
+engine/tests/c_abi_perf_host.mm has the new step and has not run.
+
+Bridge 0.75.0, ABI 1.65, feature task_manager. No struct changes.
+
+Last rebased: 2026-11-17 onto Chromium 156.0.8078.100 (overlay 2f23d016ce).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 58e682d..0ab68d4 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -43,6 +43,7 @@ _ReArcEngineSetPageTimingCallback
+ _ReArcEngineSetViewPresentationCallback
+ _ReArcMetricsGetHistogram
+ _ReArcEngineGetProcesses
++_ReArcEngineGetProcessDetails
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 1899fd2..be0ed9c 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -50,6 +50,7 @@ _ReArcEngineSetPageTimingCallback
+ _ReArcEngineSetViewPresentationCallback
+ _ReArcMetricsGetHistogram
+ _ReArcEngineGetProcesses
++_ReArcEngineGetProcessDetails
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 59d8883..65be0fd 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -179,6 +179,7 @@
+ // like the rearc_bridge sources it references; guarded so the file keeps
+ // compiling on other platforms.
+ #include "chrome/browser/rearc_bridge/engine_mode.h"
++#include "chrome/browser/rearc_bridge/rearc_perf.h"
+ #include "chrome/browser/rearc_bridge/rearc_video_overlay.h"
+ #include "chrome/browser/rearc_bridge/web_contents_view_delegate_mac.h"
+ #endif
+@@ -7833,6 +7834,13 @@ void ChromeContentBrowserClient::OnNetworkServiceDataUseUpdate(
+     base::ByteSize sent_bytes) {
+   task_manager::TaskManagerInterface::UpdateAccumulatedStatsNetworkForRoute(
+       render_frame_host_id, recv_bytes, sent_bytes);
++#if BUILDFLAG(IS_MAC)
++  // tab/094: the host's task manager counts the same reports per process.
++  rearc::perf::RecordNetworkBytes(
++      render_frame_host_id ? render_frame_host_id.child_id.GetUnsafeValue()
++                           : rearc::perf::kNoRenderer,
++      (recv_bytes + sent_bytes).InBytes());
++#endif
+ }
+ 
+ base::FilePath
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 9e3f242..9fb894d 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 64, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 65, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -1654,6 +1654,36 @@ typedef void (*ReArcProcessListCallback)(void* context, ReArcStatus status,
+ REARC_ENGINE_EXPORT ReArcStatus ReArcEngineGetProcesses(
+     ReArcProcessListCallback completion, void* context);
+ 
++// Task manager (task_manager, ABI 1.65): the same rows as
++// ReArcEngineGetProcesses, and details_json: a UTF-8 JSON object keyed by
++// decimal pid with what a task manager shows besides. Every row has an entry.
++// A key that does not apply is left out, and a host ignores keys it does not
++// know. 64-bit numbers are decimal strings.
++//   "network_bytes": bytes received plus sent, a running total. Requests no
++//     frame made are the browser's, as in Chrome's task manager. The engine
++//     counts while a host keeps asking and stops about 5 s after the last
++//     request, so a host takes a rate from two successive answers and none
++//     across a pause.
++//   Renderers: "main_frame_tabs": the tab_ids whose page (primary main frame)
++//     is in this process. "subframe_tabs": the tab_ids with only a frame of
++//     another site of their page here, and "site", the site URL of the first
++//     such frame. A tab_id in neither has a page kept for Back here, or one
++//     loading ahead. "extension_id" and "extension_name" for an enabled
++//     extension's process. "spare": true for the spare renderer.
++//   Browser child processes: "title", Chrome's display name ("Network
++//     Service").
++// Deferred, exactly once. details_json is borrowed and never null with
++// REARC_OK. Ending a process needs no call: the processes are the host's own
++// children, and Chrome's task manager on macOS signals them too (SIGTERM);
++// the tabs in it then report is_crashed.
++typedef void (*ReArcProcessDetailsCallback)(void* context,
++                                            ReArcStatus status,
++                                            const ReArcProcessInfo* processes,
++                                            size_t count,
++                                            const char* details_json);
++REARC_ENGINE_EXPORT ReArcStatus ReArcEngineGetProcessDetails(
++    ReArcProcessDetailsCallback completion, void* context);
++
+ #ifdef __cplusplus
+ }  // extern "C"
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 391a1d1..1b5c48d 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -989,6 +989,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "client_certificates" ||
+          std::string(feature) == "key_equivalent_events" ||
+          std::string(feature) == "perf_metrics" ||
++         std::string(feature) == "task_manager" ||
+          std::string(feature) == "early_window" ||
+          std::string(feature) == "media_capture" ||
+          std::string(feature) == "search_engines" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index d9cdf52..e6629d3 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.74.0";
++  return "0.75.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_perf.h b/chrome/browser/rearc_bridge/rearc_perf.h
+index d34ffc5..e2831ed 100644
+--- a/chrome/browser/rearc_bridge/rearc_perf.h
++++ b/chrome/browser/rearc_bridge/rearc_perf.h
+@@ -75,6 +75,13 @@ void AttachPageTiming(uint64_t tab_id, content::WebContents* contents);
+ // complete with cancelled (exactly once, through ABIPost).
+ void CancelPendingHistograms();
+ 
++// task_manager (ABI 1.65): one data-use report of the network service, from
++// ChromeContentBrowserClient::OnNetworkServiceDataUseUpdate. renderer_id is
++// the RenderProcessHost id of the frame that asked, kNoRenderer when no frame
++// did. Counted only while a host asks for process details.
++inline constexpr int kNoRenderer = -1;
++void RecordNetworkBytes(int renderer_id, uint64_t bytes);
++
+ }  // namespace rearc::perf
+ 
+ // os_signpost stays out of this header: <os/signpost.h> brings mach-o macros
+diff --git a/chrome/browser/rearc_bridge/rearc_perf_metrics.cc b/chrome/browser/rearc_bridge/rearc_perf_metrics.cc
+index eabf2fd..23df30b 100644
+--- a/chrome/browser/rearc_bridge/rearc_perf_metrics.cc
++++ b/chrome/browser/rearc_bridge/rearc_perf_metrics.cc
+@@ -5,6 +5,8 @@
+ // perf-0 (perf_metrics, ABI 1.44): page timing, view presentation feedback,
+ // histogram snapshots and the process list. Measurement only: nothing here is
+ // attached or observed until the host sets the matching callback.
++// task_manager (ABI 1.65): the process list with what a task manager names
++// and counts besides.
+ 
+ #include <libproc.h>
+ #include <mach/mach_time.h>
+@@ -23,18 +25,22 @@
+ 
+ #include "base/check.h"
+ #include "base/functional/bind.h"
++#include "base/json/json_writer.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/metrics/histogram_base.h"
+ #include "base/metrics/histogram_samples.h"
+ #include "base/metrics/statistics_recorder.h"
+ #include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "base/time/time.h"
+ #include "base/timer/timer.h"
++#include "base/values.h"
+ #include "cc/trees/render_frame_metadata.h"
++#include "chrome/browser/browser_process.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
+ #include "chrome/browser/rearc_bridge/rearc_engine_abi.h"
+@@ -58,16 +64,22 @@
+ #include "content/public/browser/child_process_data.h"
+ #include "content/public/browser/histogram_fetcher.h"
+ #include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/network_service_instance.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/render_frame_metadata_provider.h"
+ #include "content/public/browser/render_process_host.h"
+ #include "content/public/browser/render_widget_host.h"
+ #include "content/public/browser/render_widget_host_observer.h"
+ #include "content/public/browser/render_widget_host_view.h"
++#include "content/public/browser/security_principal.h"
++#include "content/public/browser/site_instance.h"
++#include "content/public/browser/spare_render_process_host_manager.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_user_data.h"
+ #include "content/public/common/process_type.h"
+ #include "extensions/browser/process_map.h"
++#include "extensions/common/extension.h"
++#include "services/network/public/mojom/network_service.mojom.h"
+ #include "ui/compositor/compositor.h"
+ #include "url/gurl.h"
+ 
+@@ -456,6 +468,7 @@ WEB_CONTENTS_USER_DATA_KEY_IMPL(ResizeWatcher);
+ 
+ // --- Process list ----------------------------------------------------------
+ 
++constexpr int kNoNetworkBytes = -2;
+ struct ProcessRow {
+   int32_t pid = 0;
+   uint32_t type = 4;
+@@ -463,6 +476,17 @@ struct ProcessRow {
+   uint64_t profile_id = 0;
+   bool is_extension = false;
+   std::vector<uint64_t> tab_ids;
++  // task_manager (ABI 1.65).
++  // Whose network bytes these are: a RenderProcessHost id, perf::kNoRenderer
++  // for the browser, kNoNetworkBytes for a process that is never credited.
++  int network_key = kNoNetworkBytes;
++  std::vector<uint64_t> main_frame_tab_ids;
++  std::vector<uint64_t> subframe_tab_ids;
++  std::string site;
++  std::string extension_id;
++  std::string extension_name;
++  std::string title;
++  bool spare = false;
+ };
+ 
+ void FillUsage(ReArcProcessInfo& info) {
+@@ -482,6 +506,177 @@ void FillUsage(ReArcProcessInfo& info) {
+   info.cpu_time_us = static_cast<int64_t>(nanos / 1000);
+ }
+ 
++// Bytes received plus sent by ProcessRow::network_key, counted while a host
++// asks for process details.
++std::map<int, uint64_t>& NetworkBytes() {
++  static base::NoDestructor<std::map<int, uint64_t>> bytes;
++  return *bytes;
++}
++// When a host last asked for details. Null: nothing is counted.
++base::TimeTicks g_last_details_request;
++constexpr base::TimeDelta kNetworkCountLinger = base::Seconds(5);
++
++bool CanReachNetworkService() {
++  return g_browser_process && !g_browser_process->IsShuttingDown();
++}
++
++// The network service reports data use only when asked (Chrome asks while its
++// task manager is open). Asked with every request: a network service that
++// restarted starts with the reports off.
++void KeepCountingNetworkBytes() {
++  if (!CanReachNetworkService()) return;
++  g_last_details_request = base::TimeTicks::Now();
++  content::GetNetworkService()->EnableDataUseUpdates(true);
++}
++
++bool IsSpareRenderer(content::RenderProcessHost* host) {
++  for (const auto& spare :
++       content::SpareRenderProcessHostManager::Get().GetSpares()) {
++    if (spare.get() == host) return true;
++  }
++  return false;
++}
++
++// The browser first, then every live renderer and browser child process.
++std::vector<ProcessRow> CollectProcesses() {
++  std::vector<ProcessRow> rows;
++  rows.push_back({static_cast<int32_t>(getpid()), 0, "browser"});
++  rows.back().network_key = perf::kNoRenderer;
++  std::map<int, size_t> renderers;
++  for (auto it = content::RenderProcessHost::AllHostsIterator(); !it.IsAtEnd();
++       it.Advance()) {
++    content::RenderProcessHost* host = it.GetCurrentValue();
++    if (!host->IsInitializedAndNotDead() || !host->GetProcess().IsValid()) {
++      continue;
++    }
++    ProcessRow row;
++    row.pid = host->GetProcess().Pid();
++    row.type = 1;
++    row.network_key = host->GetDeprecatedID();
++    content::BrowserContext* context = host->GetBrowserContext();
++    row.profile_id = BridgeProfileId(Profile::FromBrowserContext(context));
++    if (auto* map = extensions::ProcessMap::Get(context)) {
++      row.is_extension = map->Contains(host->GetDeprecatedID());
++      if (const extensions::Extension* extension =
++              map->GetEnabledExtensionByProcessID(host->GetID())) {
++        row.extension_id = extension->id();
++        row.extension_name = extension->name();
++      }
++    }
++    row.spare = IsSpareRenderer(host);
++    renderers[host->GetDeprecatedID()] = rows.size();
++    rows.push_back(std::move(row));
++  }
++  auto& registry = TabRegistry::Get();
++  for (uint64_t id : registry.SessionIds()) {
++    TabSession* session = registry.FindSession(id);
++    if (!session) continue;
++    content::RenderFrameHost* main =
++        session->web_contents()->GetPrimaryMainFrame();
++    // What the tab has in each process. 2: its page's main frame. 1: only a
++    // frame of another site of its page. 0: a page kept for Back, or one
++    // loading ahead.
++    std::map<size_t, int> hosting;
++    session->web_contents()->ForEachRenderFrameHost(
++        [&](content::RenderFrameHost* frame) {
++          auto found = renderers.find(frame->GetProcess()->GetDeprecatedID());
++          if (found == renderers.end()) return;
++          int& role = hosting[found->second];
++          if (frame == main) {
++            role = 2;
++          } else if (role == 0 && frame->IsActive() &&
++                     frame->GetOutermostMainFrame() == main) {
++            role = 1;
++            ProcessRow& row = rows[found->second];
++            if (row.site.empty()) {
++              row.site = frame->GetSiteInstance()
++                             ->GetSecurityPrincipal()
++                             .GetDeprecatedSiteURL()
++                             .spec();
++            }
++          }
++        });
++    for (const auto& [index, role] : hosting) {
++      rows[index].tab_ids.push_back(id);
++      if (role == 2) rows[index].main_frame_tab_ids.push_back(id);
++      if (role == 1) rows[index].subframe_tab_ids.push_back(id);
++    }
++  }
++  for (content::BrowserChildProcessHostIterator it; !it.Done(); ++it) {
++    const base::Process& process = it.GetProcess();
++    if (!process.IsValid()) continue;
++    const content::ChildProcessData& data = it.GetData();
++    ProcessRow row;
++    row.pid = process.Pid();
++    row.type = data.process_type == content::PROCESS_TYPE_GPU ? 2
++               : data.process_type == content::PROCESS_TYPE_UTILITY ? 3
++                                                                    : 4;
++    row.name = data.metrics_name.empty() ? base::UTF16ToUTF8(data.name)
++                                         : data.metrics_name;
++    row.title = base::UTF16ToUTF8(data.name);
++    rows.push_back(std::move(row));
++  }
++  return rows;
++}
++
++// Borrows the rows' strings and tab ids.
++std::vector<ReArcProcessInfo> ProcessInfos(const std::vector<ProcessRow>& rows) {
++  std::vector<ReArcProcessInfo> infos;
++  for (const auto& row : rows) {
++    ReArcProcessInfo info{row.pid,
++                          row.type,
++                          row.name.c_str(),
++                          row.profile_id,
++                          row.is_extension,
++                          row.tab_ids.data(),
++                          row.tab_ids.size(),
++                          0,
++                          0,
++                          0};
++    FillUsage(info);
++    infos.push_back(info);
++  }
++  return infos;
++}
++
++base::ListValue TabIdList(const std::vector<uint64_t>& ids) {
++  base::ListValue list;
++  for (uint64_t id : ids) list.Append(base::NumberToString(id));
++  return list;
++}
++
++// details_json of ReArcEngineGetProcessDetails (rearc_engine_abi.h).
++std::string ProcessDetailsJson(const std::vector<ProcessRow>& rows) {
++  std::map<int, uint64_t>& bytes = NetworkBytes();
++  // A renderer that is gone takes its count with it.
++  std::set<int> counted;
++  for (const ProcessRow& row : rows) counted.insert(row.network_key);
++  std::erase_if(bytes,
++                [&](const auto& entry) { return !counted.contains(entry.first); });
++  base::DictValue details;
++  for (const ProcessRow& row : rows) {
++    base::DictValue entry;
++    auto used = bytes.find(row.network_key);
++    entry.Set("network_bytes",
++              base::NumberToString(used == bytes.end() ? uint64_t{0}
++                                                       : used->second));
++    if (row.type == 1) {
++      entry.Set("main_frame_tabs", TabIdList(row.main_frame_tab_ids));
++      entry.Set("subframe_tabs", TabIdList(row.subframe_tab_ids));
++      if (!row.site.empty()) entry.Set("site", row.site);
++      if (!row.extension_id.empty()) {
++        entry.Set("extension_id", row.extension_id);
++        entry.Set("extension_name", row.extension_name);
++      }
++      if (row.spare) entry.Set("spare", true);
++    } else if (!row.title.empty()) {
++      entry.Set("title", row.title);
++    }
++    details.Set(base::NumberToString(row.pid), std::move(entry));
++  }
++  return base::WriteJson(details).value_or("{}");
++}
++
+ }  // namespace
+ 
+ namespace perf {
+@@ -546,6 +741,20 @@ std::map<uint64_t, HistogramRequest>& HistogramRequests() {
+   static base::NoDestructor<std::map<uint64_t, HistogramRequest>> requests;
+   return *requests;
+ }
++void RecordNetworkBytes(int renderer_id, uint64_t bytes) {
++  if (g_last_details_request.is_null()) return;
++  if (base::TimeTicks::Now() - g_last_details_request > kNetworkCountLinger) {
++    // The host stopped asking (its task manager closed or went out of sight):
++    // the network service stops reporting until the host asks again.
++    g_last_details_request = base::TimeTicks();
++    if (CanReachNetworkService()) {
++      content::GetNetworkService()->EnableDataUseUpdates(false);
++    }
++    return;
++  }
++  NetworkBytes()[renderer_id] += bytes;
++}
++
+ void CancelPendingHistograms() {
+   CHECK(pthread_main_np());
+   auto requests = std::move(HistogramRequests());
+@@ -653,70 +862,27 @@ ReArcStatus ReArcEngineGetProcesses(ReArcProcessListCallback completion,
+   if (!completion) return REARC_INVALID_ARGUMENT;
+   rearc::ABIPost(base::BindOnce(
+       [](ReArcProcessListCallback completion, void* context) {
+-        std::vector<rearc::ProcessRow> rows;
+-        rows.push_back({static_cast<int32_t>(getpid()), 0, "browser"});
+-        std::map<int, size_t> renderers;
+-        for (auto it = content::RenderProcessHost::AllHostsIterator();
+-             !it.IsAtEnd(); it.Advance()) {
+-          content::RenderProcessHost* host = it.GetCurrentValue();
+-          if (!host->IsInitializedAndNotDead() || !host->GetProcess().IsValid()) {
+-            continue;
+-          }
+-          rearc::ProcessRow row;
+-          row.pid = host->GetProcess().Pid();
+-          row.type = 1;
+-          content::BrowserContext* context = host->GetBrowserContext();
+-          row.profile_id =
+-              rearc::BridgeProfileId(Profile::FromBrowserContext(context));
+-          if (auto* map = extensions::ProcessMap::Get(context)) {
+-            row.is_extension = map->Contains(host->GetDeprecatedID());
+-          }
+-          renderers[host->GetDeprecatedID()] = rows.size();
+-          rows.push_back(std::move(row));
+-        }
+-        auto& registry = rearc::TabRegistry::Get();
+-        for (uint64_t id : registry.SessionIds()) {
+-          rearc::TabSession* session = registry.FindSession(id);
+-          if (!session) continue;
+-          std::set<size_t> hosting;
+-          session->web_contents()->ForEachRenderFrameHost(
+-              [&](content::RenderFrameHost* frame) {
+-                auto found =
+-                    renderers.find(frame->GetProcess()->GetDeprecatedID());
+-                if (found != renderers.end()) hosting.insert(found->second);
+-              });
+-          for (size_t index : hosting) rows[index].tab_ids.push_back(id);
+-        }
+-        for (content::BrowserChildProcessHostIterator it; !it.Done(); ++it) {
+-          const base::Process& process = it.GetProcess();
+-          if (!process.IsValid()) continue;
+-          const content::ChildProcessData& data = it.GetData();
+-          rearc::ProcessRow row;
+-          row.pid = process.Pid();
+-          row.type = data.process_type == content::PROCESS_TYPE_GPU ? 2
+-                     : data.process_type == content::PROCESS_TYPE_UTILITY ? 3
+-                                                                          : 4;
+-          row.name = data.metrics_name.empty() ? base::UTF16ToUTF8(data.name)
+-                                               : data.metrics_name;
+-          rows.push_back(std::move(row));
+-        }
+-        std::vector<ReArcProcessInfo> infos;
+-        for (const auto& row : rows) {
+-          ReArcProcessInfo info{row.pid,
+-                                row.type,
+-                                row.name.c_str(),
+-                                row.profile_id,
+-                                row.is_extension,
+-                                row.tab_ids.data(),
+-                                row.tab_ids.size(),
+-                                0,
+-                                0,
+-                                0};
+-          rearc::FillUsage(info);
+-          infos.push_back(info);
+-        }
++        const std::vector<rearc::ProcessRow> rows = rearc::CollectProcesses();
++        const std::vector<ReArcProcessInfo> infos = rearc::ProcessInfos(rows);
+         completion(context, REARC_OK, infos.data(), infos.size());
+       },
+       completion, context));
+   return REARC_OK;
+ }
++
++ReArcStatus ReArcEngineGetProcessDetails(ReArcProcessDetailsCallback completion,
++                                         void* context) {
++  CHECK(pthread_main_np());
++  if (!completion) return REARC_INVALID_ARGUMENT;
++  rearc::ABIPost(base::BindOnce(
++      [](ReArcProcessDetailsCallback completion, void* context) {
++        rearc::KeepCountingNetworkBytes();
++        const std::vector<rearc::ProcessRow> rows = rearc::CollectProcesses();
++        const std::vector<ReArcProcessInfo> infos = rearc::ProcessInfos(rows);
++        const std::string details = rearc::ProcessDetailsJson(rows);
++        completion(context, REARC_OK, infos.data(), infos.size(),
++                   details.c_str());
++      },
++      completion, context));
++  return REARC_OK;
++}

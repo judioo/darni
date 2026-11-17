@@ -209,6 +209,7 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         emptySpaceClick.delaysPrimaryMouseButtonEvents = false
         emptySpaceClick.delegate = self
         scroll.addGestureRecognizer(emptySpaceClick)
+        scroll.emptySpaceMenu = { [weak self] event in self?.emptySpaceMenu(for: event) }
         rebuild(animated: false, reloadAll: true)
         trackSelection()
         observeInteraction(scroll)
@@ -230,6 +231,16 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     @objc private func openTabFromEmptySpace(_ recognizer: NSClickGestureRecognizer) {
         guard gestureRecognizerShouldBegin(recognizer) else { return }
         model.newTab()
+    }
+
+    /// A right-click under the last row: the sidebar's own menu. A row's
+    /// SwiftUI menu takes a right-click on the row before it gets here.
+    private func emptySpaceMenu(for event: NSEvent) -> NSMenu? {
+        guard let tableView else { return nil }
+        let point = tableView.convert(event.locationInWindow, from: nil)
+        let bottom = tableView.numberOfRows > 0 ? tableView.rect(ofRow: tableView.numberOfRows - 1).maxY : 0
+        guard SidebarEmptySpaceClick.opensMenu(rowIndex: tableView.row(at: point), y: point.y, rowsBottom: bottom) else { return nil }
+        return SidebarEmptySpaceMenu.menu(model: model)
     }
 
     func invalidate() {
@@ -608,6 +619,14 @@ final class SidebarSelectionKeyView: NSView, NSMenuItemValidation {
 /// monitor) only ever saw a swipe begin and the pager was left mid-swipe.
 private final class SidebarScrollView: NSScrollView {
     override class var isCompatibleWithResponsiveScrolling: Bool { false }
+
+    /// The menu for a right-click no row took (the table and the clip view
+    /// have none, so the click comes up to here); nil for none.
+    var emptySpaceMenu: ((NSEvent) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        emptySpaceMenu?(event) ?? super.menu(for: event)
+    }
 }
 
 private final class SidebarTableView: NSTableView {

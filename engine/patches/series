@@ -111,6 +111,7 @@ security/008-cve-2026-126845-graphite-snap-failure.patch # upstream 55d51d9ae (C
 media/001-platform-h264-aac.patch               # P-MEDIA-001 H.264/AAC through VideoToolbox/AudioToolbox, FFmpeg stays "Chromium" (release engines since 2026-11-16)
 tab/092-popup-keeps-opener-document.patch       # P-TAB-001 bridge 0.73.0: popups with an opener get no synthetic about:blank (Studio Preview, OAuth popups)
 tab/093-toolbar-colour-from-surface.patch        # P-TAB-001 bridge 0.74.0: toolbar colour from the view surface, not a clipped DevTools shot (scroll flicker)
+tab/094-task-manager-process-details.patch      # P-TAB-001 ABI 1.65, bridge 0.75.0: process details for the host's task manager (names, pages and frames, network bytes)
 #
 # Planned inventory (see README.md and engine/docs/ENGINE.md §4);
 # uncomment as patches land:

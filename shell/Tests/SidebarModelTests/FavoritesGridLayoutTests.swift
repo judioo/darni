@@ -37,4 +37,11 @@ final class FavoritesGridLayoutTests: XCTestCase {
         XCTAssertFalse(SidebarEmptySpaceClick.opensNewTab(clickCount: 2, rowIndex: -1, y: 99, rowsBottom: 100))
         XCTAssertFalse(SidebarEmptySpaceClick.opensNewTab(clickCount: 3, rowIndex: -1, y: 101, rowsBottom: 100))
     }
+
+    func testOnlyRightClicksBelowAllRowsOpenTheSidebarMenu() {
+        XCTAssertTrue(SidebarEmptySpaceClick.opensMenu(rowIndex: -1, y: 101, rowsBottom: 100))
+        XCTAssertTrue(SidebarEmptySpaceClick.opensMenu(rowIndex: -1, y: 0, rowsBottom: 0), "a sidebar with no rows")
+        XCTAssertFalse(SidebarEmptySpaceClick.opensMenu(rowIndex: 4, y: 101, rowsBottom: 100), "a row has its own menu")
+        XCTAssertFalse(SidebarEmptySpaceClick.opensMenu(rowIndex: -1, y: 99, rowsBottom: 100))
+    }
 }
