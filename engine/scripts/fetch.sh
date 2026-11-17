@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Sync only by default. Hooks and overlay application are explicit later stages.
-# Usage: fetch.sh [--sync | --runhooks | --apply-overlay]
+# Usage: fetch.sh [--sync | --runhooks | --apply-overlay | --apply-subprojects]
+# --apply-subprojects applies engine/patches/series-subprojects inside Chromium's sub-project
+# checkouts (ffmpeg, ANGLE, ...). gclient sync and a pin bump reset those checkouts, so run
+# it again after either; --apply-overlay runs it too.
 set -euo pipefail
 
 ENGINE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,7 +14,9 @@ MODE="${1:---sync}"
 log() { printf '\n=== %s | %s ===\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
 die() { printf 'fetch.sh: error: %s\n' "$*" >&2; exit 1; }
 [[ $# -le 1 ]] || die 'expected at most one stage argument'
-case "$MODE" in --sync|--runhooks|--apply-overlay) ;; *) die "unknown stage: $MODE" ;; esac
+case "$MODE" in --sync|--runhooks|--apply-overlay|--apply-subprojects) ;; *) die "unknown stage: $MODE" ;; esac
+# shellcheck source=subprojects.sh
+source "$ENGINE_DIR/scripts/subprojects.sh"
 PIN="$(awk '!/^[[:space:]]*(#|$)/ {v=$0} END {gsub(/[[:space:]]/, "", v); print v}' "$ENGINE_DIR/CHROMIUM_PIN")"
 [[ "$PIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'invalid CHROMIUM_PIN'
 [[ "$(uname -s)" == Darwin ]] || die 'requires macOS'
@@ -86,6 +91,38 @@ fi
 [[ -f .rearc-sync-complete && -d src/.git ]] || die 'no completed sync; run fetch.sh first'
 BASE="$(cat .rearc-sync-complete)"
 [[ "$(git -C src rev-parse "refs/tags/$PIN^{commit}")" == "$BASE" ]] || die 'pin changed; sync/rebase manually'
+
+# Each patch is applied and committed inside its checkout; one that does not apply stops here.
+apply_subprojects() {
+  local entries checkout rel dir patch subject applied=0
+  entries="$(subproject_entries "$ENGINE_DIR/patches/series-subprojects")" || die 'invalid engine/patches/series-subprojects'
+  while IFS=$'\t' read -r checkout rel; do
+    [[ -n "$checkout" ]] || continue
+    dir="$CHROMIUM_ROOT/src/$checkout"
+    patch="$ENGINE_DIR/patches/subprojects/$rel"
+    [[ -e "$dir/.git" ]] || die "not a checkout: src/$checkout"
+    [[ -f "$patch" ]] || die "missing patch: $patch"
+    if subproject_applied "$dir" "$rel"; then
+      log "src/$checkout already has $rel"
+      continue
+    fi
+    git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet || die "src/$checkout has uncommitted changes"
+    git -C "$dir" apply --index "$patch" || die "patch failed: $rel in src/$checkout; nothing was committed for it"
+    subject="$(subproject_subject "$rel")"
+    git -C "$dir" -c user.name='ReArc Overlay' -c user.email='rearc-overlay@localhost' commit -q -m "$subject"
+    applied=$((applied + 1))
+  done <<<"$entries"
+  log "Applied $applied sub-project patches"
+  cut -f1 <<<"$entries" | sort -u | while IFS= read -r checkout; do
+    [[ -n "$checkout" ]] && printf 'sub-project %s at %s\n' "$checkout" "$(git -C "$CHROMIUM_ROOT/src/$checkout" rev-parse --short=10 HEAD)"
+  done
+}
+
+if [[ "$MODE" == --apply-subprojects ]]; then
+  [[ -f .rearc-hooks-complete && "$(cat .rearc-hooks-complete)" == "$BASE" ]] || die 'run --runhooks first'
+  apply_subprojects
+  exit 0
+fi
 [[ "$(git -C src rev-parse HEAD)" == "$BASE" ]] || die 'HEAD differs from synced base; preserve local commits and rebase manually'
 git -C src diff --quiet && git -C src diff --cached --quiet || die 'src has tracked changes'
 
@@ -126,3 +163,4 @@ if ! git diff --cached --quiet; then
   git -c user.name='ReArc Overlay' -c user.email='rearc-overlay@localhost' commit -m "rearc overlay @ $PIN"
 fi
 log "Applied $applied patches. Empty series means stock Chromium, with no ReArc bridge or lifecycle implementation."
+apply_subprojects

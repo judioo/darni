@@ -72,6 +72,20 @@ BASE="$(git rev-parse "refs/tags/$PIN^{commit}")"
 git merge-base --is-ancestor "$BASE" HEAD || die 'HEAD does not descend from pin'
 SOURCE_VERSION="$(git show "$BASE:chrome/VERSION" | awk -F= '{v=v sep $2; sep="."} END {print v}')"
 [[ "$SOURCE_VERSION" == "$PIN" ]] || die 'unexpected chrome/VERSION'
+# Sub-project patches (security fixes in ffmpeg, ANGLE, ...): gclient sync and a pin bump
+# drop them, so a release engine refuses a checkout that lacks one.
+# shellcheck source=../../engine/scripts/subprojects.sh
+source "$ENGINE_DIR/scripts/subprojects.sh"
+SUBPROJECTS="$(subproject_entries "$ENGINE_DIR/patches/series-subprojects")" || die 'invalid engine/patches/series-subprojects'
+SUBPROJECT_HEADS=''
+while IFS=$'\t' read -r checkout rel; do
+  [[ -n "$checkout" ]] || continue
+  subproject_applied "$CHROMIUM_SRC/$checkout" "$rel" \
+    || die "$checkout lacks $rel; run engine/scripts/fetch.sh --apply-subprojects"
+done <<<"$SUBPROJECTS"
+for checkout in $(cut -f1 <<<"$SUBPROJECTS" | sort -u); do
+  SUBPROJECT_HEADS+=" $checkout $(git -C "$CHROMIUM_SRC/$checkout" rev-parse --short=10 HEAD)"
+done
 
 GN_ARGS=(
   'target_os="mac"' "target_cpu=\"$TARGET_CPU\""
@@ -97,7 +111,7 @@ GN_ARGS=(
 if [[ "${REARC_ENGINE_CODECS:-1}" == 1 ]]; then
   GN_ARGS+=('proprietary_codecs=true' 'ffmpeg_branding="Chromium"')
 fi
-printf '=== gn gen %s (overlay %s) ===\nargs: %s\n' "$OUT_DIR" "$(git rev-parse --short=10 HEAD)" "${GN_ARGS[*]}"
+printf '=== gn gen %s (overlay %s; sub-projects:%s) ===\nargs: %s\n' "$OUT_DIR" "$(git rev-parse --short=10 HEAD)" "${SUBPROJECT_HEADS:- none}" "${GN_ARGS[*]}"
 mkdir -p "$OUT_DIR"
 printf '%s\n' "${GN_ARGS[@]}" > "$OUT_DIR/args.gn"
 chmod 600 "$OUT_DIR/args.gn"
@@ -115,4 +129,4 @@ missing="$(comm -23 \
       chrome/browser/rearc_bridge/rearc_engine_entry_mac.h | sed -E 's/[[:space:](]//g; s/^/_/' | sort -u) \
   <(nm -gU "$FRAMEWORK/Versions/$PIN/Chromium Framework" | awk '{print $3}' | sort -u))"
 [[ -z "$missing" ]] || die "framework does not export these ABI functions (add them to chrome/app/framework.exports and framework.order): $(tr '\n' ' ' <<<"$missing")"
-printf '\nRelease engine built: %s/%s (overlay %s)\n' "$CHROMIUM_SRC" "$OUT_DIR" "$(git rev-parse HEAD)"
+printf '\nRelease engine built: %s/%s (overlay %s; sub-projects:%s)\n' "$CHROMIUM_SRC" "$OUT_DIR" "$(git rev-parse HEAD)" "${SUBPROJECT_HEADS:- none}"
