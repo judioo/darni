@@ -46,6 +46,10 @@ extension BrowserViewModel {
         revealTabGroup(groupID)
         reconcileEngineOwnership()
         loadSelectedIfNeeded()
+        // The tab left the sidebar on screen: say where it went.
+        if store.tabGroupReference(ofGroup: groupID) == nil {
+            showToast("Added to “\(group.displayName)”", systemImage: "square.stack.3d.up.fill")
+        }
         return true
     }
 

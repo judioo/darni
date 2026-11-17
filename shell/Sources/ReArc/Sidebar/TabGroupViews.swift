@@ -32,7 +32,7 @@ extension TabGroupColor {
 
 /// A tab group's row: a header in the group's colour with the stack glyph,
 /// its name (or its tab count while unnamed) and a chevron. A click opens
-/// and closes it; a double click opens the editor.
+/// and closes it, as in Chrome; the editor is in its menu.
 struct TabGroupRowView<Menu: View>: View {
     let name: String
     let color: TabGroupColor
@@ -40,7 +40,6 @@ struct TabGroupRowView<Menu: View>: View {
     let isExpanded: Bool
     let isDropTarget: Bool
     let onToggle: () -> Void
-    let onEdit: () -> Void
     /// New Tab in Group, on hover.
     var onNewTab: (() -> Void)? = nil
     @ViewBuilder let menu: () -> Menu
@@ -97,7 +96,6 @@ struct TabGroupRowView<Menu: View>: View {
             let duration = isExpanded ? SidebarListController.collapseDuration : SidebarListController.expandDuration
             withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { onToggle() }
         })
-        .simultaneousGesture(TapGesture(count: 2).onEnded(onEdit))
         .onHover { isHovering = $0 }
         .contextMenu { menu() }
         .help("\(name), \(TabGroup.countText(tabCount))")
@@ -156,7 +154,8 @@ struct TabGroupEditorView: View {
         .frame(width: TabGroupMetrics.editorWidth)
         .onAppear {
             name = group?.name ?? ""
-            nameFocused = true
+            // Once the popover's window is up; asked for at once, the field can miss the keyboard.
+            DispatchQueue.main.async { nameFocused = true }
         }
         .onExitCommand(perform: onClose)
     }

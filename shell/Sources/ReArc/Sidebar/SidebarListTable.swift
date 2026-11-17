@@ -629,7 +629,11 @@ private final class SidebarScrollView: NSScrollView {
     var emptySpaceMenu: () -> NSMenu? = { nil }
 
     override class var isCompatibleWithResponsiveScrolling: Bool { false }
-    override func menu(for event: NSEvent) -> NSMenu? { emptySpaceMenu() }
+    /// A right-click a row passed on (the Today divider has no menu) shows none.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        if let table = documentView as? NSTableView, table.row(at: table.convert(event.locationInWindow, from: nil)) >= 0 { return nil }
+        return emptySpaceMenu()
+    }
 }
 
 private final class SidebarTableView: NSTableView {

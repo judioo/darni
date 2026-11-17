@@ -254,6 +254,12 @@ struct SelectionContextMenu: View {
         if model.canOpenInSplitView(ids) {
             Button("Open in Split View") { model.openInSplitView(ids) }
         }
+        if model.tabGroupsEnabled, !tabs.isEmpty, let spaceID {
+            Button(tabs.count == 1 ? "Add Tab to New Group" : "Add \(tabs.count) Tabs to New Group") {
+                model.store.clearMultiSelection(in: model.store.keyWindowID)
+                model.newTabGroup(in: spaceID, containing: tabs)
+            }
+        }
         Divider()
         if let spaceID {
             Menu("Move to Folder") {

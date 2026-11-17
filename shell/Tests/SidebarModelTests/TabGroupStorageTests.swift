@@ -157,6 +157,32 @@ final class TabGroupPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.tabGroups.groups.first?.tabs.count, 2)
     }
 
+    /// Sync's tidy-up of copies of one Arc space folds spaces and profiles
+    /// together inside a snapshot (`ArcTwinSpaces`): groups follow.
+    func testTidyingCopiesOfAnArcSpaceKeepsItsGroups() throws {
+        let f = try GroupFixture()
+        var snapshot = f.store.makeSnapshot()
+        snapshot.fold(space: f.work, into: f.home)
+        let merged = try reload(snapshot)
+        XCTAssertEqual(merged.spaces(showingTabGroup: f.group).map(\.id), [f.home], "Work's row came along; Home keeps one")
+        XCTAssertEqual(merged.tabGroup(withID: f.group)?.tabs.count, 2)
+
+        var renamed = merged.makeSnapshot()
+        let newID = UUID(), profile = UUID()
+        renamed.rename(space: f.home, to: newID, profile: profile)
+        let moved = try reload(renamed)
+        XCTAssertEqual(moved.tabGroup(withID: f.group)?.profileID, profile, "a group only that space shows goes to its new profile")
+        XCTAssertEqual(moved.spaces(showingTabGroup: f.group).map(\.id), [newID])
+
+        var folded = moved.makeSnapshot()
+        let into = f.store.profiles[0].id
+        folded.fold(profile: profile, into: into, knownFavoriteURLs: [])
+        let back = try reload(folded)
+        XCTAssertEqual(back.tabGroup(withID: f.group)?.profileID, into)
+        XCTAssertEqual(back.spaces(showingTabGroup: f.group).map(\.id), [newID])
+        XCTAssertEqual(back.tabGroup(withID: f.group)?.tabs.map(\.displayTitle), ["Docs", "News"])
+    }
+
     func testARowForAMissingSpaceOrAnotherProfileIsDroppedNotItsGroup() throws {
         let f = try GroupFixture()
         let other = f.store.addProfile(name: "Other")

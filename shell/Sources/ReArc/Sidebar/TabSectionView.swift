@@ -142,7 +142,6 @@ struct SidebarEntryRow: View, Equatable {
                 isExpanded: model.store.isTabGroupExpanded(reference.id),
                 isDropTarget: isDropInto,
                 onToggle: click(reference.id) { model.store.toggleTabGroupExpanded(reference.id) },
-                onEdit: { model.editTabGroup(reference.groupID, from: reference.id) },
                 onNewTab: { model.newTab(inGroup: reference.groupID) }
             ) {
                 TabGroupContextMenu(model: model, reference: reference)
