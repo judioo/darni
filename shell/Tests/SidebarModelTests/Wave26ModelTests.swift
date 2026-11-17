@@ -362,6 +362,31 @@ final class Wave26AirTrafficModelTests: XCTestCase {
         }
     }
 
+    /// The same through a rule: only a Little ReArc of the rule's profile
+    /// counts, and of several showing the page the most recently used.
+    func testALittleArcRuleReusesALittleArcOfItsProfile() {
+        let store = SidebarStore(spaces: [Space(name: "Main", sortRank: "a")])
+        let other = store.addProfile(name: "Other")
+        let url = URL(string: "https://github.com/rearc")!
+        let state = LinkRoutingState(rules: [
+            LinkRoutingRule(matchType: .domain, pattern: "github.com", destination: .littleArc(other.id)),
+        ])
+        func route() -> ExternalLinkRouting.Route {
+            ExternalLinkRouting.route(url, destination: .activeSpace, in: store, rules: state)
+        }
+
+        store.createLittleArcWindow(url: url)
+        XCTAssertEqual(route(), .littleArc(url, profileID: other.id), "a Little ReArc of another profile is not the rule's")
+
+        let start = Date()
+        let older = store.createLittleArcWindow(url: url, profileID: other.id, at: start)
+        let newer = store.createLittleArcWindow(url: url, profileID: other.id, at: start.addingTimeInterval(1))
+        XCTAssertEqual(route(), .focusLittleArc(newer.id))
+        store.touchLittleArcWindow(id: older.id, at: start.addingTimeInterval(2))
+        XCTAssertEqual(route(), .focusLittleArc(older.id), "the most recently used")
+        XCTAssertEqual(ExternalLinkRouting.describe(.focusLittleArc(older.id), in: store), "The open Little ReArc “github.com”")
+    }
+
     func testRoutingUsesTheFirstRuleWithALiveDestination() {
         let store = SidebarStore(spaces: [Space(name: "Main", sortRank: "a"), Space(name: "Work", sortRank: "b")])
         let work = store.spaces[1].id

@@ -443,6 +443,24 @@ final class Wave21ShellTests: XCTestCase {
         XCTAssertEqual(model.externalLinkDestination, .littleArc)
     }
 
+    /// A link whose page a Little ReArc still shows brings that window
+    /// forward. No second window, and no tab.
+    func testALinkAlreadyInALittleArcFocusesThatWindow() throws {
+        let model = makeModel()
+        model.externalLinkDefaults = try XCTUnwrap(UserDefaults(suiteName: "rearc-w21-\(UUID().uuidString)"))
+        model.externalLinkDestination = .littleArc
+        let page = URL(string: "https://example.com/news")!
+        model.openExternalURL(page)
+        let first = try XCTUnwrap(model.store.littleArcLiveWindows.last)
+        let tabCount = model.store.displayTabs().count
+        model.clearLittleArcOpenRequests()
+
+        model.openExternalURL(page)
+        XCTAssertEqual(model.store.littleArcLiveWindows.map(\.id), [first.id], "no second Little ReArc")
+        XCTAssertEqual(model.littleArcOpenRequests, [first.id], "the open one is asked to the front")
+        XCTAssertEqual(model.store.displayTabs().count, tabCount)
+    }
+
     func testLinksBeforeTheModelWaitForIt() {
         let router = ExternalLinkRouter()
         let page = URL(string: "https://example.net/")!
