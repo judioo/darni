@@ -15,6 +15,27 @@ extension SidebarStore {
         var tabs: [Tab] = []
         var placements: [Tab.ID: TabPlacement] = [:]
 
+        // A split sits at section level, so a tab group's tab leaves its group
+        // to join one, landing below the group's row. Checked for every tab
+        // first: a split that cannot be made leaves the groups as they were.
+        let grouped = tabIDs.filter { tabGroupID(holding: $0) != nil }
+        if !grouped.isEmpty {
+            var sections = Set<ItemContainerKind.SpaceSection>()
+            for tabID in tabIDs {
+                switch indexed(tabID)?.place {
+                case .groupTab(let groupID):
+                    guard let place = tabGroupPlaces(of: groupID).first(where: { $0.spaceID == sid }) else { return nil }
+                    sections.insert(place.section)
+                case .tree(let spaceID, let section, nil) where spaceID == sid:
+                    sections.insert(section)
+                default:
+                    return nil
+                }
+            }
+            guard sections.count == 1 else { return nil }
+            for tabID in grouped { removeTabFromGroup(tabID, in: sid) }
+        }
+
         for tabID in tabIDs {
             guard let location = locate(tabID),
                   tabLocationSpace(location) == sid,
@@ -25,7 +46,7 @@ extension SidebarStore {
                 resolvedSection = .pinned
             case .today:
                 resolvedSection = .unpinned
-            case .favorite, .splitPane:
+            case .favorite, .splitPane, .tabGroup:
                 return nil
             }
             if let section, section != resolvedSection { return nil }
@@ -183,6 +204,7 @@ extension SidebarStore {
         case .pinned(let spaceID): return .pinned(spaceID: spaceID, index: index)
         case .today(let spaceID): return .today(spaceID: spaceID, index: index)
         case .splitPane: return .today(spaceID: activeSpaceID, index: index)
+        case .tabGroup(let spaceID, _): return .today(spaceID: spaceID, index: index)
         }
     }
 

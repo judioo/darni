@@ -233,6 +233,7 @@ extension SidebarStore {
                 case .tab(let tab): keys.insert(BookmarkImportPlan.key(tab.savedURL ?? tab.url)); keys.insert(BookmarkImportPlan.key(tab.url))
                 case .split(let split): for tab in split.tabs { keys.insert(BookmarkImportPlan.key(tab.savedURL ?? tab.url)); keys.insert(BookmarkImportPlan.key(tab.url)) }
                 case .folder(let folder): walk(folder.children)
+                case .tabGroup(let reference): walk(reference.group.tabs.map { .tab($0) })
                 case .easel: break
                 }
             }

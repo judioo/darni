@@ -81,7 +81,7 @@ extension SidebarStore {
         case .tab(let tab): selectTab(tab.id)
         case .split(let split): selectSplit(split.id)
         case .easel(let ref): selectEasel(ref.id)
-        case .folder: return nil
+        case .folder, .tabGroup: return nil
         }
         return entry.id
     }
@@ -97,6 +97,13 @@ extension SidebarStore {
         guard space(withID: destinationSpaceID) != nil,
               let source = spaceContaining(entryID: id), source != destinationSpaceID,
               let parent = parent(of: id) else { return false }
+        if let reference = tabGroupReference(withID: id), case .section(_, let section) = parent {
+            // A tab group's row: the destination gets its own row for the same group, and this space's goes.
+            let index = section == .pinned ? sectionEntries(for: .pinned, spaceID: destinationSpaceID).count : 0
+            guard case .success = addTabGroup(reference.groupID, to: destinationSpaceID, section: section, index: index) else { return false }
+            removeTabGroupReference(id)
+            return true
+        }
         let section: ItemContainerKind.SpaceSection
         switch parent {
         case .favorites:
@@ -105,6 +112,9 @@ extension SidebarStore {
             section = .pinned
         case .section(_, let current):
             section = current
+        case .tabGroup:
+            // Out of its group, as a tab of the destination.
+            section = .unpinned
         }
         let wasSelected = selectedItemID == id
         let index = section == .pinned ? sectionEntries(for: .pinned, spaceID: destinationSpaceID).count : 0
@@ -125,12 +135,13 @@ extension SidebarStore {
     // MARK: - Clear Today
 
     /// Clear Unpinned Tabs (Arc Tidy): archives every Today tab of the space
-    /// except splits and easels. The selected tab goes too, as in Arc.
+    /// except splits, easels and tab groups' tabs. The selected tab goes too, as in Arc.
     /// Returns the archived ids, newest record last, for Undo.
     @discardableResult
     public func clearTodayTabs(in spaceID: Space.ID? = nil) -> [Tab.ID] {
         let id = spaceID ?? activeSpaceID
-        let tabs = content(for: id).todayLeaves.compactMap { entry -> Tab.ID? in
+        // A tab group's tabs stay: other spaces may show them too.
+        let tabs = SidebarTree.leaves(content(for: id).today.filter { !$0.isTabGroup }).compactMap { entry -> Tab.ID? in
             if case .tab(let tab) = entry { return tab.id }
             return nil
         }
