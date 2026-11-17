@@ -44,11 +44,12 @@ extension BrowserViewModel {
         if !handleSelectionClick(on: id, in: window, modifiers: modifiers) { action() }
     }
 
-    /// Tabs, splits and folders take part; easels open as before.
+    /// Tabs, splits and folders take part; easels open as before, and a tab
+    /// group's row opens and closes (its tabs take part as tabs do).
     static func isSelectableRow(_ entry: SidebarEntry?) -> Bool {
         switch entry {
         case .tab, .split, .folder: true
-        case .easel, nil: false
+        case .easel, .tabGroup, nil: false
         }
     }
 

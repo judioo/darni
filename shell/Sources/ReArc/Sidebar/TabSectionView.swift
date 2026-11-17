@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 import SidebarModel
 
 /// Where a drag hovering a sidebar row lands: next to it, or into it (a
-/// folder takes the item; a tab makes a new folder with the dragged tab).
+/// folder or a tab group takes the item; a tab stacks into a split).
 enum SidebarDropPosition: Equatable {
     case before, after, into
 }
@@ -22,12 +22,17 @@ struct SidebarRowItem: Identifiable {
 
     static func rows(_ entries: [SidebarEntry], depth: Int = 0, expanded: Set<UUID>, selected: UUID?) -> [SidebarRowItem] {
         entries.flatMap { entry -> [SidebarRowItem] in
-            guard case .folder(let folder) = entry else { return [SidebarRowItem(entry: entry, depth: depth)] }
-            let header = SidebarRowItem(entry: entry, depth: depth)
-            if expanded.contains(folder.id) {
-                return [header] + rows(folder.children, depth: depth + 1, expanded: expanded, selected: selected)
+            let children: [SidebarEntry]
+            switch entry {
+            case .folder(let folder): children = folder.children
+            case .tabGroup(let reference): children = reference.group.tabs.map { .tab($0) }
+            case .tab, .split, .easel: return [SidebarRowItem(entry: entry, depth: depth)]
             }
-            if let selected, let leaf = SidebarTree.leaves(folder.children).first(where: { $0.id == selected }) {
+            let header = SidebarRowItem(entry: entry, depth: depth)
+            if expanded.contains(entry.id) {
+                return [header] + rows(children, depth: depth + 1, expanded: expanded, selected: selected)
+            }
+            if let selected, let leaf = SidebarTree.leaves(children).first(where: { $0.id == selected }) {
                 return [header, SidebarRowItem(entry: leaf, depth: depth + 1)]
             }
             return [header]
@@ -71,6 +76,7 @@ struct SidebarEntryRow: View, Equatable {
                 }
             }
             .modifier(ItemIconPopover(model: model, itemID: id))
+            .modifier(TabGroupEditorPopover(model: model, anchorID: id, referenceID: id))
             .padding(.leading, isMini ? CGFloat(MiniSidebarLayout.indent(depth: depth)) : CGFloat(depth) * 14)
         }
     }
@@ -127,6 +133,19 @@ struct SidebarEntryRow: View, Equatable {
                 onToggle: click(folder.id) { model.store.toggleFolderExpanded(folder.id) }
             ) {
                 FolderContextMenu(model: model, folder: folder)
+            }
+        case .tabGroup(let reference):
+            TabGroupRowView(
+                name: reference.group.displayName,
+                color: reference.group.color,
+                tabCount: reference.group.tabs.count,
+                isExpanded: model.store.isTabGroupExpanded(reference.id),
+                isDropTarget: isDropInto,
+                onToggle: click(reference.id) { model.store.toggleTabGroupExpanded(reference.id) },
+                onEdit: { model.editTabGroup(reference.groupID, from: reference.id) },
+                onNewTab: { model.newTab(inGroup: reference.groupID) }
+            ) {
+                TabGroupContextMenu(model: model, reference: reference)
             }
         case .easel(let ref):
             EaselRowView(
@@ -266,9 +285,12 @@ struct SidebarRowDropDelegate: DropDelegate {
             switch dragged {
             case .tab: canEnter = true
             case .folder(let moving): canEnter = !SidebarTree.contains(folder.id, in: moving.children)
-            case .split, .easel: canEnter = false
+            case .split, .easel, .tabGroup: canEnter = false
             }
             if canEnter, (0.25 ... 0.75).contains(fraction) { return .into }
+        case .tabGroup(let reference):
+            // A tab joins the group; any other row lands beside the group's.
+            if model.store.canMove(draggedItemID, intoTabGroup: reference.groupID), (0.25 ... 0.75).contains(fraction) { return .into }
         case .tab, .split:
             if model.store.canCombineIntoSplit(draggedItemID, onto: target.id), (0.3 ... 0.7).contains(fraction) {
                 if SidebarGroupingDwell.isReady(over: target.id) { return .into }
@@ -325,6 +347,9 @@ struct SidebarRowDropDelegate: DropDelegate {
             case (.into, .folder(let folder)):
                 if let selection { model.moveItems(selection, intoFolder: folder.id) }
                 else { model.moveItem(draggedItemID, intoFolder: folder.id) }
+            case (.into, .tabGroup(let reference)):
+                if let selection { model.addTabs(selection, toGroup: reference.groupID) }
+                else { model.addTab(draggedItemID, toGroup: reference.groupID) }
             case (.into, _):
                 model.combineIntoSplit(draggedItemID, onto: target.id)
             case (.before, _), (.after, _):

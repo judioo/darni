@@ -23,7 +23,9 @@ struct TabContextMenu: View {
         let store = model.store
         let kind = store.kind(of: tab.id)
         let inSplit = store.splitContaining(tabID: tab.id) != nil
-        let isSpaceTab = (kind == .pinned || kind == .today) && !inSplit
+        // A tab group's tab is the group's, not one space's: it has the group's items in place of a space tab's.
+        let inGroup = store.tabGroupID(holding: tab.id) != nil
+        let isSpaceTab = (kind == .pinned || kind == .today) && !inSplit && !inGroup
 
         if kind == .favorite {
             Button("Remove from Favorites") { model.removeFavorite(tab.id) }
@@ -31,6 +33,9 @@ struct TabContextMenu: View {
         } else if isSpaceTab {
             Button(kind == .pinned ? "Unpin Tab" : "Pin Tab") { model.togglePin(tab.id) }
             Button("Add to Favorites") { model.addToFavorites(tab.id) }
+        }
+        if kind != .favorite, !inSplit {
+            TabGroupTabMenuItems(model: model, tabID: tab.id)
         }
         if kind == .pinned, !inSplit {
             Divider()
@@ -97,7 +102,7 @@ struct TabContextMenu: View {
             }
         }
         Divider()
-        if isSpaceTab {
+        if isSpaceTab || inGroup {
             Button("Archive Tab") { model.archiveTab(tab.id) }
         }
         if kind == .pinned, !inSplit {
@@ -210,7 +215,7 @@ struct SectionItemContextMenu: View {
         case .easel(let ref):
             Divider()
             Button("Delete") { model.deleteEaselSidebarItem(ref.id) }
-        case .tab, .folder:
+        case .tab, .folder, .tabGroup:
             EmptyView()
         }
     }

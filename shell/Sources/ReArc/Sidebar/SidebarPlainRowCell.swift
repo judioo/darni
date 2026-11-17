@@ -38,6 +38,9 @@ final class SidebarPlainRowCell: NSView {
     private let token = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let unread = CALayer()
+    /// The bar beside a tab group's tab, in the group's colour. On the cell
+    /// itself, under the hosted row, so it stays while the row is live.
+    private let groupBar = CALayer()
     private let content = NSView()
 
     override init(frame frameRect: NSRect) {
@@ -45,6 +48,8 @@ final class SidebarPlainRowCell: NSView {
         wantsLayer = true
         layerContentsRedrawPolicy = .never
         content.wantsLayer = true
+        groupBar.isHidden = true
+        layer?.addSublayer(groupBar)
         addSubview(fill)
         addSubview(content)
 
@@ -167,6 +172,8 @@ final class SidebarPlainRowCell: NSView {
             }
             unread.backgroundColor = NSColor.controlAccentColor.cgColor
             unread.isHidden = !state.isUnread
+            groupBar.backgroundColor = state.groupColor.map { NSColor($0.color(dark: chrome.isDark)).cgColor }
+            groupBar.isHidden = state.groupColor == nil
             fill.selectedColor = NSColor(chrome.rowSelected).cgColor
             fill.hoverColor = NSColor(chrome.rowHover).cgColor
             fill.multiSelectedColor = NSColor(chrome.rowMultiSelected).cgColor
@@ -250,6 +257,13 @@ final class SidebarPlainRowCell: NSView {
         title.frame = NSRect(x: titleX, y: (midY - titleHeight / 2).rounded(), width: titleWidth, height: titleHeight)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        // The whole pitch tall, so the bars of a group's tabs join into one line
+        // under the group's header; one level in from this row, where the header starts.
+        let barX = state.isMini
+            ? max(1, x0 - TabGroupMetrics.barWidth - 1)
+            : x0 - 14 + TabGroupMetrics.barInset - TabGroupMetrics.barWidth / 2
+        groupBar.frame = CGRect(x: barX, y: 0, width: TabGroupMetrics.barWidth, height: bounds.height)
+        groupBar.cornerRadius = TabGroupMetrics.barWidth / 2
         if state.isMini {
             unread.frame = CGRect(x: iconX + size - 1, y: midY - size / 2 - 5, width: 6, height: 6)
         } else {
@@ -464,6 +478,8 @@ struct PlainRowState: Equatable {
     var isUnread = false
     var isExpanded = false
     var holdsOpenTabs = false
+    /// The tab is in a tab group of this colour.
+    var groupColor: TabGroupColor?
     /// Drawn at mini width (⇧⌘S).
     var isMini = false
     /// Something only the SwiftUI row draws (a loading ring, a crash glyph,
@@ -490,6 +506,7 @@ struct PlainRowState: Equatable {
             state.isSelected = model.store.isSelected(tab.id, inSpace: spaceID)
             state.isUnloaded = model.isTabUnloaded(tab.id)
             state.isUnread = tab.isUnread
+            state.groupColor = model.store.tabGroupColor(holding: tab.id)
             state.needsHosting = model.tabActivity(tab.id) != .idle
                 || model.showsAudibleIndicator(for: tab.id)
                 || model.isPictureInPicture(tab.id)
@@ -502,7 +519,7 @@ struct PlainRowState: Equatable {
             state.isExpanded = model.store.isFolderExpanded(folder.id)
             state.holdsOpenTabs = model.folderHoldsOpenTab(folder.id)
             state.needsHosting = model.inlineRename(forRow: folder.id) != nil || model.itemIconEditorID == folder.id
-        case .split, .easel, nil:
+        case .split, .easel, .tabGroup, nil:
             // Not a row the plain cell draws: the SwiftUI row takes over.
             state.needsHosting = true
         }
@@ -513,7 +530,7 @@ struct PlainRowState: Equatable {
         a.title == b.title && a.customIcon == b.customIcon && a.favicon === b.favicon && a.token == b.token && a.isSelected == b.isSelected
             && a.isMultiSelected == b.isMultiSelected
             && a.isUnloaded == b.isUnloaded && a.isUnread == b.isUnread && a.isExpanded == b.isExpanded
-            && a.holdsOpenTabs == b.holdsOpenTabs && a.isMini == b.isMini
+            && a.holdsOpenTabs == b.holdsOpenTabs && a.groupColor == b.groupColor && a.isMini == b.isMini
             && a.needsHosting == b.needsHosting && a.chrome == b.chrome
     }
 }

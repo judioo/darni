@@ -161,6 +161,22 @@ final class BrowserViewModel {
     var warnBeforeQuitting = QuitWarning.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(warnBeforeQuitting, forKey: QuitWarning.defaultsKey) }
     }
+    /// Settings › General › Tab groups: off, nothing offers to make a group
+    /// and the command bar lists none (`BrowserViewModel+TabGroups`).
+    var tabGroupsEnabled = TabGroupsPreference.isEnabled(in: .standard) {
+        didSet { TabGroupsPreference.setEnabled(tabGroupsEnabled, in: externalLinkDefaults) }
+    }
+    /// Delete Group asks first; its "Don't ask again" turns this off.
+    var asksBeforeDeletingTabGroup = TabGroupDeleteConfirmation.asks(in: .standard) {
+        didSet { TabGroupDeleteConfirmation.setAsks(asksBeforeDeletingTabGroup, in: externalLinkDefaults) }
+    }
+    /// The tab group whose name and colour editor is open.
+    var tabGroupEditor: TabGroupEditorRequest?
+    /// New Tab in Group: the group ⌘T's new tab joins.
+    var commandBarNewTabGroupID: TabGroup.ID?
+    /// Answers Delete Group's question in the alert's place (tests); the
+    /// arguments are the group and how many spaces show it.
+    @ObservationIgnored var answerTabGroupDeletion: ((TabGroup, Int) -> TabGroupDeletionAnswer)?
     /// Settings › Advanced: reopen every window of the last session at launch.
     var restoresWindows = WindowRestorePreference.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(restoresWindows, forKey: WindowRestorePreference.defaultsKey) }
@@ -1570,6 +1586,7 @@ final class BrowserViewModel {
     @discardableResult
     func openInNewTab(_ url: URL) -> Tab {
         let tab = store.addTab(kind: .today, title: url.host() ?? "New Tab", url: url)
+        joinCommandBarTabGroup(tab.id)
         store.selectTab(tab.id)
         engineHost.engine(for: tab, profileID: profileID(for: tab)).load(url)
         loadSelectedIfNeeded()
@@ -1831,6 +1848,7 @@ final class BrowserViewModel {
 
     func dismissCommandBar() {
         commandBarCreatesNewTab = false
+        commandBarNewTabGroupID = nil
         isCommandBarPresented = false
         commandBarMenuSnapshot = nil
         cancelCommandBarLive()
@@ -1984,6 +2002,7 @@ final class BrowserViewModel {
     private func openCommandBar(target: Tab.ID?, text: String) {
         commandBarMenuSnapshot = nil
         commandBarCreatesNewTab = false
+        commandBarNewTabGroupID = nil
         resetCommandBarSiteSearch()
         commandBarSplitAnchorID = nil
         commandBarTargetID = target

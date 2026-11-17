@@ -212,6 +212,8 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         rebuild(animated: false, reloadAll: true)
         trackSelection()
         observeInteraction(scroll)
+        table.emptySpaceMenu = { [weak self] in self?.emptySpaceMenu() }
+        scroll.emptySpaceMenu = { [weak self] in self?.emptySpaceMenu() }
         selectionKeys.bind(to: model) { [weak self] in self?.context.window }
         scroll.addSubview(selectionKeys)
         trackMultiSelection()
@@ -230,6 +232,21 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     @objc private func openTabFromEmptySpace(_ recognizer: NSClickGestureRecognizer) {
         guard gestureRecognizerShouldBegin(recognizer) else { return }
         model.newTab()
+    }
+
+    /// The menu of the list's blank space, below its last row: New Tab
+    /// Group, while Settings › General › Tab groups is on. Nil shows none.
+    private func emptySpaceMenu() -> NSMenu? {
+        guard model.tabGroupsEnabled else { return nil }
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "New Tab Group", action: #selector(newTabGroupFromEmptySpace), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func newTabGroupFromEmptySpace() {
+        model.newTabGroup(in: spaceID)
     }
 
     func invalidate() {
@@ -349,7 +366,8 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     /// Accessibility's press on a plain row: what a click on the row does.
     func press(_ id: UUID, kind: SidebarOutlineNode.Kind) {
         switch kind {
-        case .folder:
+        case .folder, .tabGroup:
+            // A tab group's row opens and closes through the same call.
             model.store.toggleFolderExpanded(id)
         default:
             model.selectTab(id)
@@ -607,13 +625,22 @@ final class SidebarSelectionKeyView: NSView, NSMenuItemValidation {
 /// the queue, past `sendEvent`, so the space-swipe monitor (a local event
 /// monitor) only ever saw a swipe begin and the pager was left mid-swipe.
 private final class SidebarScrollView: NSScrollView {
+    /// The menu for a right-click under the table, where it does not fill the list.
+    var emptySpaceMenu: () -> NSMenu? = { nil }
+
     override class var isCompatibleWithResponsiveScrolling: Bool { false }
+    override func menu(for event: NSEvent) -> NSMenu? { emptySpaceMenu() }
 }
 
 private final class SidebarTableView: NSTableView {
+    /// The menu for a right-click on no row; the rows bring their own.
+    var emptySpaceMenu: () -> NSMenu? = { nil }
+
     override var acceptsFirstResponder: Bool { false }
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool { true }
-    override func menu(for event: NSEvent) -> NSMenu? { nil }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        row(at: convert(event.locationInWindow, from: nil)) < 0 ? emptySpaceMenu() : nil
+    }
 }
 
 /// A row view with nothing of its own to draw: the SwiftUI row draws its
@@ -716,11 +743,14 @@ struct SidebarListCell: View {
                 SidebarTodayCell(model: model, spaceID: spaceID)
             }
         case .newTab:
-            if context.isMini {
-                MiniNewTabRowView { model.newTab() }
-            } else {
-                NewTabRowView { model.newTab() }
+            Group {
+                if context.isMini {
+                    MiniNewTabRowView { model.newTab() }
+                } else {
+                    NewTabRowView { model.newTab() }
+                }
             }
+            .contextMenu { NewTabGroupMenuItem(model: model, spaceID: spaceID) }
         case .sectionEnd(let section, let isEmpty):
             SectionEndDropZone(
                 destination: .section(spaceID: spaceID, section: section),
