@@ -91,9 +91,12 @@ struct SidebarView: View {
             .background(
                 SidebarSwipeMonitor(
                     // Not under a drag, the Library, nor the command bar or tab switcher's scrim.
+                    // Only in the model's key window: a landing ends in `selectSpace`, which
+                    // switches that window's space, so a swipe in another ReArc window would
+                    // move the wrong one. ReArc behind another app keeps its key window.
                     isEnabled: { [model, window, binding = $draggedItemID] in
                         binding.wrappedValue == nil && !model.isCommandBarPresented && model.tabSwitcher == nil
-                            && model.librarySection(in: window) == nil
+                            && model.librarySection(in: window) == nil && model.isKeyBrowserWindow(window)
                     },
                     onBegin: { pager.beginSwipe() },
                     onChange: { pager.swipe(byPoints: $0, pageWidth: Double(width)) },

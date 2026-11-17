@@ -508,8 +508,9 @@ struct SidebarSwipeMonitor: NSViewRepresentable {
             if event.phase.contains(.began) {
                 replayHeld()
                 let point = view.convert(event.locationInWindow, from: nil)
-                // Not only in the key window: as in Arc, a swipe over the sidebar of a window
-                // behind pages its spaces without a click first (owner, 2026-11-18).
+                // Not AppKit's key window: as in Arc, a swipe over the sidebar pages its spaces
+                // without a click first when another app is active (owner, 2026-11-18).
+                // `isEnabled` asks for the model's key window.
                 tracking = window.isVisible && view.bounds.contains(point) && parent.isEnabled()
                 claimed = false
                 swallowMomentum = false
