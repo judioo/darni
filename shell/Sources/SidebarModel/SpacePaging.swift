@@ -320,11 +320,12 @@ public struct SpaceOverscroll: Equatable, Sendable {
 /// swipe or ordinary vertical scrolling, from its first few points of travel.
 public struct SwipeAxisLock: Equatable, Sendable {
     /// A horizontal scroll delta as content travel (negative shows the next
-    /// space). The page follows the fingers whatever the scroll direction
-    /// setting, as macOS's page swipes do: only natural scrolling
-    /// (`invertedFromDevice`) already reports the fingers' way.
-    public static func contentDelta(_ scrollingDeltaX: Double, invertedFromDevice: Bool) -> Double {
-        invertedFromDevice ? scrollingDeltaX : -scrollingDeltaX
+    /// space). It is the delta macOS reports, so the pages move the way the
+    /// scroll direction setting moves any content, as in Arc. With natural
+    /// scrolling off, inverting it made the sidebar run against Arc's (owner,
+    /// 2026-11-18).
+    public static func contentDelta(_ scrollingDeltaX: Double) -> Double {
+        scrollingDeltaX
     }
 
     public enum Axis: Equatable, Sendable { case undecided, horizontal, vertical }

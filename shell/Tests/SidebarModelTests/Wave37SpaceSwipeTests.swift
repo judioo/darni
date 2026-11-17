@@ -8,18 +8,17 @@ final class Wave37SpaceSwipeTests: XCTestCase {
 
     // MARK: Direction
 
-    func testThePageFollowsTheFingersWhateverTheScrollSetting() {
-        // Fingers move left: natural scrolling reports −dx, classic scrolling +dx.
-        XCTAssertEqual(SwipeAxisLock.contentDelta(-12, invertedFromDevice: true), -12)
-        XCTAssertEqual(SwipeAxisLock.contentDelta(12, invertedFromDevice: false), -12)
-        XCTAssertEqual(SwipeAxisLock.contentDelta(5, invertedFromDevice: true), 5)
+    func testThePageMovesTheWayTheScrollSettingMovesContent() {
+        // The reported delta is the content's travel under either setting, as in Arc.
+        XCTAssertEqual(SwipeAxisLock.contentDelta(-12), -12)
+        XCTAssertEqual(SwipeAxisLock.contentDelta(12), 12)
     }
 
-    func testFingersMovingLeftShowTheNextSpace() {
+    func testContentMovingLeftShowsTheNextSpace() {
         let width = 228.0
         var paging = SpacePaging(pageCount: 3, page: 0)
         paging.beginTracking(at: 0)
-        let travel = SwipeAxisLock.contentDelta(-0.7 * width, invertedFromDevice: true)
+        let travel = SwipeAxisLock.contentDelta(-0.7 * width)
         // SpacePagerController.swipe(byPoints:): content travel → pages.
         paging.track(by: -travel / width, at: 1)
         XCTAssertEqual(paging.position(at: 1), 0.7, accuracy: 1e-9)

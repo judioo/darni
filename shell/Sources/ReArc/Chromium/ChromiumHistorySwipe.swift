@@ -38,13 +38,22 @@ final class ChromiumHistorySwipe {
         // Not only the key window: macOS sends a swipe to the window under the pointer even
         // when another window or app is active, and Arc goes back there too (owner, 2026-11-17).
         guard let host, event.window === host.window, host.window?.isVisible == true,
-              !host.isHiddenOrHasHiddenAncestor, host.pickerOverlay == nil, host.leaseAttachmentID != nil else { return event }
+              !host.isHiddenOrHasHiddenAncestor, host.pickerOverlay == nil, host.leaseAttachmentID != nil else {
+            if let host, event.window === host.window, event.phase.contains(.began) {
+                ChromiumLog.trace("history swipe: page not ready (visible \(host.window?.isVisible == true), "
+                    + "hidden \(host.isHiddenOrHasHiddenAncestor), picker \(host.pickerOverlay != nil), "
+                    + "attached \(host.leaseAttachmentID != nil))")
+            }
+            return event
+        }
         let point = host.convert(event.locationInWindow, from: nil)
         guard event.hasPreciseScrollingDeltas else { return event }
         if event.phase.contains(.mayBegin) || (event.phase.contains(.began) && !awaitingBegan) {
-            guard host.bounds.contains(point), let content = host.window?.contentView,
-                  let target = content.hitTest(content.convert(event.locationInWindow, from: nil)),
-                  target.isDescendant(of: host) else {
+            let content = host.window?.contentView
+            let target = content.flatMap { $0.hitTest($0.convert(event.locationInWindow, from: nil)) }
+            guard host.bounds.contains(point), let target, target.isDescendant(of: host) else {
+                ChromiumLog.trace("history swipe: gesture not over this page (in bounds \(host.bounds.contains(point)), "
+                    + "hit \(target.map { String(describing: type(of: $0)) } ?? "nothing"))")
                 // A gesture that ends without momentum never clears `gesture`; one
                 // starting elsewhere (the sidebar) must not be taken for the page's.
                 gesture = false
@@ -79,13 +88,19 @@ final class ChromiumHistorySwipe {
         let source = HistorySwipeEdgeScript.source(x: x, y: host.isFlipped ? y : 1 - y)
         Task { [weak self, weak engine] in
             guard let engine else { return }
-            let result = try? await engine.evaluate(source, in: .editor, timeoutMS: 100, sameNavigation: true)
+            let result: Any?
+            do { result = try await engine.evaluate(source, in: .editor, timeoutMS: 100, sameNavigation: true) } catch {
+                ChromiumLog.trace("history swipe: edge probe failed: \(error)")
+                result = nil
+            }
             guard let self, self.generation == token, self.host?.engine === engine, self.probing else { return }
             let values = result as? [String: Bool]
+            ChromiumLog.trace("history swipe: edge probe -> \(values.map(String.init(describing:)) ?? "no edges")")
             self.flushProbe(edges: values.map { .init(back: $0["back"] == true, forward: $0["forward"] == true) })
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self, self.generation == token, self.probing else { return }
+            ChromiumLog.trace("history swipe: edge probe timed out; the page gets the gesture")
             self.generation += 1
             self.flushProbe(edges: nil)
         }
@@ -111,6 +126,11 @@ final class ChromiumHistorySwipe {
         else { phase = .unphased }
         let update = machine.handle(phase: phase, x: event.scrollingDeltaX, y: event.scrollingDeltaY,
                                     edges: edges, canGoBack: host.engine.canGoBack, canGoForward: host.engine.canGoForward)
+        if phase != .momentum {
+            ChromiumLog.trace("history swipe: \(phase) dx \(event.scrollingDeltaX) dy \(event.scrollingDeltaY) edges \(edges) "
+                + "canGoBack \(host.engine.canGoBack) canGoForward \(host.engine.canGoForward) -> consumes \(update.consumes)"
+                + (update.commit.map { " commit \($0)" } ?? ""))
+        }
         if update.released {
             indicator.dismiss(committing: update.commit != nil)
         } else if let direction = update.direction {
