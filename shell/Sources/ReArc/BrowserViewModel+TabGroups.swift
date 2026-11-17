@@ -103,6 +103,14 @@ extension BrowserViewModel {
         return TabGroupCommandBarRow.rows(in: store, query: commandBarText, enabled: tabGroupsEnabled)
     }
 
+    /// The room the ⌘T bar keeps under it for Tab Groups, so a short window
+    /// still holds the whole card. It does not follow the typing: the bar
+    /// stays where it opened.
+    var commandBarTabGroupsRoom: CGFloat {
+        guard tabGroupsEnabled, commandBarCreatesNewTab else { return 0 }
+        return CommandBarTabGroupsSection.height(rows: store.tabGroupsAvailable().count)
+    }
+
     /// A click on a group in the command bar: the active space shows it, at the top of Today.
     func addTabGroupToActiveSpace(_ groupID: TabGroup.ID) {
         guard case .success(let row) = store.addTabGroup(groupID) else { return }

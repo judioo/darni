@@ -120,7 +120,8 @@ struct BrowserView: View {
                 GeometryReader { geometry in
                     commandBar(width: min(CommandBarOverlay.arcWidth, geometry.size.width - 40))
                         .frame(maxWidth: .infinity)
-                        .padding(.top, max(20, min(geometry.size.height * CommandBarOverlay.topFraction, geometry.size.height - 440)))
+                        .padding(.top, max(20, min(geometry.size.height * CommandBarOverlay.topFraction,
+                                                   geometry.size.height - 440 - model.commandBarTabGroupsRoom)))
                 }
                 .ignoresSafeArea()
             }

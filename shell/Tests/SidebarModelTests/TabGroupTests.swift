@@ -336,6 +336,31 @@ final class TabGroupTests: XCTestCase {
         XCTAssertNotNil(f.store.tabGroup(withID: ours.groupID))
     }
 
+    func testASpaceThatChangesProfileKeepsItsGroups() throws {
+        let f = makeStore()
+        let other = f.store.addProfile(name: "Other", createInitialSpace: false)
+        let shared = try XCTUnwrap(f.store.createTabGroup(name: "Shared", containing: [f.docs]))
+        _ = try f.store.addTabGroup(shared.groupID, to: f.work).get()
+        let own = try XCTUnwrap(f.store.createTabGroup(name: "Own", in: f.work))
+        let wiki = try XCTUnwrap(f.store.addTab(toGroup: own.groupID, title: "Wiki", url: url("wiki.test")))
+
+        XCTAssertNil(f.store.changeProfile(ofSpace: f.work, to: other.id))
+        // A group only Work shows goes with it, the same group with the same tab.
+        XCTAssertEqual(f.store.tabGroup(withID: own.groupID)?.profileID, other.id)
+        XCTAssertEqual(f.store.tabGroupID(holding: wiki.id), own.groupID)
+        // One other spaces show too stays theirs; Work gets a copy with tabs of its own
+        // (one tab cannot have pages in two profiles' storage).
+        XCTAssertEqual(f.store.tabGroup(withID: shared.groupID)?.profileID, f.store.profiles[0].id)
+        XCTAssertEqual(f.store.spaces(showingTabGroup: shared.groupID).map(\.id), [f.home])
+        let copies = SidebarTree.tabGroups(f.store.content(for: f.work).today).filter { $0.group.name == "Shared" }
+        XCTAssertEqual(copies.count, 1)
+        XCTAssertNotEqual(copies.first?.groupID, shared.groupID)
+        XCTAssertEqual(copies.first?.group.profileID, other.id)
+        XCTAssertEqual(copies.first?.group.tabs.map(\.url), [url("docs.test")])
+        XCTAssertNotEqual(copies.first?.group.tabs.first?.id, f.docs)
+        XCTAssertEqual(f.store.tabGroupsAvailable(toAddIn: f.home).map(\.name), [], "Home's profile has no group it does not show")
+    }
+
     // MARK: Command bar
 
     func testTheCommandBarListsOnlyGroupsTheSpaceDoesNotShow() throws {
