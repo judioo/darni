@@ -109,6 +109,12 @@ public final class SidebarSyncCoordinator {
     private var clock: HybridLogicalClock
     /// Kinds whose upload the schema rejected: until when they wait, and why.
     private var schemaRejections: [SyncRecordKind: (until: Date, error: SyncTransportError)] = [:]
+    /// A tab group's tab keeps its last captured address until a new one has
+    /// held this long (RC-2026.1117.849 AE-01): sign-in redirects, which carry
+    /// most one-time codes, last well under a second.
+    public static let groupAddressSettle: TimeInterval = 2
+    /// New addresses of group tabs not yet held for `groupAddressSettle`, by record name.
+    private var settlingAddresses: [String: (url: SyncValue, since: Date)] = [:]
 
     public init(
         transport: SidebarSyncTransport,
@@ -585,9 +591,12 @@ public final class SidebarSyncCoordinator {
     func capture(_ snapshot: SidebarSnapshot, joining: Bool = false, overDeleted: Set<String> = []) {
         let bodies = SidebarSyncProjection.extract(snapshot)
         let at = now()
+        settlingAddresses = settlingAddresses.filter { bodies[$0.key] != nil }
         for (name, body) in bodies {
             let known = state.records[name]
             if joining, let known, known.payload.isAlive || !overDeleted.contains(name) { continue }
+            var body = body
+            if !joining { holdUnsettledAddress(name, &body, known: known, at: at) }
             var record = known ?? SyncShadowRecord(payload: SyncRecordPayload(kind: body.kind))
             let alive = known != nil && record.payload.isAlive
             var changed = false
@@ -615,6 +624,32 @@ public final class SidebarSyncCoordinator {
         }
         state.clock = clock.last
         persist()
+    }
+
+    /// A group tab whose address changed keeps its captured address and title
+    /// until the new address has been seen for `groupAddressSettle`. A tab
+    /// new to the group goes up with its first address: there is no older
+    /// one to keep. Edits run a capture and the cycle 3 s later another, so a
+    /// settled address goes up with the next cycle.
+    private func holdUnsettledAddress(_ name: String, _ body: inout SyncRecordBody, known: SyncShadowRecord?, at: Date) {
+        guard body.kind == .item,
+              case .group? = body.values["parent"]?.stringValue.flatMap(SidebarSyncProjection.Parent.init(key:)),
+              let url = body.values["url"],
+              let known, known.payload.isAlive,
+              let captured = known.payload.fields["url"]?.value, captured != url else {
+            settlingAddresses[name] = nil
+            return
+        }
+        if let seen = settlingAddresses[name], seen.url == url {
+            if at.timeIntervalSince(seen.since) >= Self.groupAddressSettle {
+                settlingAddresses[name] = nil
+                return
+            }
+        } else {
+            settlingAddresses[name] = (url, at)
+        }
+        body.values["url"] = captured
+        if let title = known.payload.fields["title"]?.value { body.values["title"] = title }
     }
 
     /// The record names of `profiles` in `snapshot`: each profile, its

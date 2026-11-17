@@ -387,6 +387,40 @@ final class TabGroupSyncTests: XCTestCase {
         XCTAssertNil(a.store.tabGroup(withID: f.group), "and it does not come back")
     }
 
+    /// RC-2026.1117.849 AE-01: a sign-in redirect, with its code, is gone
+    /// before it has held for `groupAddressSettle`, so it never goes up.
+    func testAGroupTabsAddressGoesUpOnlyOnceItHolds() async throws {
+        let server = InMemorySyncServer()
+        let clock = SyncClock()
+        let f = try GroupFixture()
+        let a = Mac("mac-a", server: server, store: f.store, clock: clock)
+        await a.sync()
+        func uploaded() -> SyncValue? { server.records(account: "alice")[item(f.docs)]?.payload.values["url"] }
+        XCTAssertEqual(uploaded(), .string("https://docs.test/"))
+
+        let redirect = URL(string: "https://docs.test/callback?code=one-time")!
+        f.store.updateTab(f.docs, url: redirect)
+        a.edited()
+        await a.sync()
+        XCTAssertEqual(uploaded(), .string("https://docs.test/"), "a cycle within the redirect's life keeps the old address")
+
+        let page = URL(string: "https://docs.test/home?tab=2")!
+        f.store.updateTab(f.docs, url: page)
+        a.edited()
+        await a.sync()
+        XCTAssertEqual(uploaded(), .string("https://docs.test/"), "the next address has not held yet either")
+        clock.advance(SidebarSyncCoordinator.groupAddressSettle)
+        await a.sync()
+        XCTAssertEqual(uploaded(), .string(page.absoluteString), "once it holds, the whole address goes up")
+        XCTAssertFalse(server.records(account: "alice").values.contains { $0.payload.values["url"] == .string(redirect.absoluteString) })
+
+        let wiki = try XCTUnwrap(a.store.addTab(toGroup: f.group, title: "Wiki", url: url("wiki.test")))
+        a.edited()
+        await a.sync()
+        XCTAssertEqual(server.records(account: "alice")[item(wiki.id)]?.payload.values["url"], .string("https://wiki.test/"),
+                       "a tab new to the group goes up with its first address")
+    }
+
     func testARowPinnedOnAnotherMacReplacesThisMacsTodayRow() throws {
         let f = try GroupFixture()
         let stamp = SyncStamp(millis: 1_800_000_000_000, device: "a")
