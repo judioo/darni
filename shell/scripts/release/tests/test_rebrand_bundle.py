@@ -2,6 +2,7 @@
 say ReArc and carry ReArc's icon, and the permission reasons name ReArc. No app, no signing."""
 import plistlib
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,7 +71,6 @@ class RebrandBundleTests(unittest.TestCase):
         self.assertIn('CFBundleGetInfoString = "Chromium 156', text)
 
     def test_a_missing_helper_fails(self):
-        import shutil
         shutil.rmtree(self.app / HELPERS / ALERTS[0])
         result = self.run_script(str(self.app), str(self.icns))
         self.assertNotEqual(result.returncode, 0)

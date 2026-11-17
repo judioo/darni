@@ -24,6 +24,7 @@ distribution.
 | `release/BRANDING` | Release BRANDING input: the overlay's BRANDING. `build-engine-release.sh` appends `MAC_TEAM_ID` from `REARC_TEAM_ID` (environment or `shell/signing.local.env`) into `shell/.build-release/BRANDING`. |
 | `release/entitlements/` | `app`, `helper-renderer`, `helper-gpu` entitlements, copied from `chrome/app/*-entitlements.plist` at the pin. |
 | `release/version.py` | ReArc's version, `YYYY.MMDD.<build>`, from a RELEASES.md heading or a commit; checks the heading, names the DMG and the tag (see Versioning). |
+| `release/rebrand-bundle.py` | Run by `bundle-chromium.sh` before signing. Puts ReArc's name and icon where the engine's localized strings still say Chromium: the two alerts helpers macOS shows as the notifying app, and the permission reasons in the app's `InfoPlist.strings`. Prints the helpers it changed, which the bundle step signs again ad hoc. |
 | `release/signing-env.sh` | Shared loader for `shell/signing.local.env`. Environment wins, and it never prints a value. |
 | `release/dmg-background.swift` | Draws the DMG background (brand canvas and cobalt arrow). |
 

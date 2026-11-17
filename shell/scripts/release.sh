@@ -162,7 +162,8 @@ else
 fi
 
 # 2. Release shell build + bundle. iCloud entitlements are added by sign-release.sh, which
-#    signs every code object again; the bundle step only signs the executable.
+#    signs every code object again; the bundle step only signs the executable and, ad hoc,
+#    the two alerts helpers it renames.
 START=$SECONDS
 REARC_ICLOUD_CONTAINER="" "$SHELL_DIR/scripts/bundle-chromium.sh" --release --engine-out "$OUT" --dist "$DIST"
 APP="$DIST/ReArc.app"
