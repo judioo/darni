@@ -9,7 +9,8 @@ import Foundation
 /// never adds itself and never reads or writes 1Password's files. ReArc
 /// cannot see whether 1Password trusts it either, so nothing here claims to
 /// know: the prompt is a setup step, shown while the person has not said it
-/// is done.
+/// is done and no helper of 1Password's has stayed attached to ReArc
+/// (`OnePasswordConnection`).
 public enum OnePasswordConnect {
     /// The 1Password desktop app (version 8).
     public static let appBundleID = "com.1password.1password"
@@ -35,12 +36,27 @@ public enum OnePasswordConnect {
 
     /// The prompt shows by itself: the app and the extension are both here,
     /// the person has not pressed Done, and has closed it neither in this
-    /// launch nor `maximumDismissals` times.
+    /// launch nor `maximumDismissals` times, and the connection is not
+    /// evidently working (`OnePasswordConnectionState.hidesPrompt`).
     public static func showsPrompt(appInstalled: Bool, extensionInstalled: Bool,
                                    preference: OnePasswordConnectPreference,
-                                   dismissedThisLaunch: Bool = false) -> Bool {
+                                   dismissedThisLaunch: Bool = false,
+                                   connectionHidesPrompt: Bool = false) -> Bool {
         appInstalled && extensionInstalled && !preference.isDone && !dismissedThisLaunch
-            && preference.dismissals < maximumDismissals
+            && preference.dismissals < maximumDismissals && !connectionHidesPrompt
+    }
+
+    /// A reading of the connection can still change the prompt in this
+    /// launch. It cannot once the prompt is closed for the launch or for
+    /// good, or once a helper was seen attached. After Done only a lost
+    /// connection brings the prompt back, and this launch's verdict settles
+    /// that. None of this turns back within a launch.
+    public static func watchesConnection(preference: OnePasswordConnectPreference,
+                                         connection: OnePasswordConnectionState,
+                                         dismissedThisLaunch: Bool = false) -> Bool {
+        guard !dismissedThisLaunch, preference.dismissals < maximumDismissals,
+              !connection.wasConnectedThisLaunch else { return false }
+        return !preference.isDone || (connection.stored && !connection.hasVerdict)
     }
 
     /// Settings › General keeps the instructions for as long as the app is
@@ -54,6 +70,14 @@ public enum OnePasswordConnect {
     public static let done = "Done"
     /// The Settings row's label.
     public static let settingsLabel = "1Password"
+    /// The Settings row while a helper is attached. The steps stay under
+    /// it: an attached helper is not 1Password's word that it trusts ReArc.
+    public static let connected = "Connected"
+    public static let connectedMessage = "If 1Password stays locked in ReArc, add ReArc as a browser in 1Password: "
+        + "Settings › Browser › Add Browser, then choose ReArc. Restart ReArc afterwards."
+
+    /// The words under the Settings row's label: the steps, in every state.
+    public static func settingsMessage(connected: Bool) -> String { connected ? connectedMessage : message }
     /// The mini sidebar's space menu, which has no room for the card.
     public static let menuTitle = "Connect 1Password to ReArc…"
     public static let menuHide = "Hide Connect 1Password"
@@ -82,5 +106,15 @@ public struct OnePasswordConnectPreference: Equatable, Sendable {
     public func save(to defaults: UserDefaults) {
         defaults.set(isDone, forKey: Self.doneKey)
         defaults.set(dismissals, forKey: Self.dismissalsKey)
+    }
+
+    /// A connection seen in an earlier launch is gone
+    /// (`OnePasswordConnectionState.Outcome.notConnected(lost: true)`). Done
+    /// was said of that connection, so the prompt may come back, once: one
+    /// close ends it, and a prompt already closed for good stays closed.
+    public mutating func connectionLost() {
+        guard isDone else { return }
+        isDone = false
+        dismissals = max(dismissals, OnePasswordConnect.maximumDismissals - 1)
     }
 }
