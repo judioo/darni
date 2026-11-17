@@ -410,12 +410,13 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         withObservationTracking {
             let store = model.store
             let spaceID = spaceID
+            let window = context.window
             return SidebarListRow.rows(
                 outline: store.outline(for: spaceID),
                 expanded: store.expandedFolderIDs,
-                pinnedCollapsed: model.isPinnedSectionCollapsed(spaceID: spaceID, in: context.window),
+                pinnedCollapsed: model.isPinnedSectionCollapsed(spaceID: spaceID, in: window),
                 isDragging: isDragging,
-                selection: { store.selection(among: $0, inSpace: spaceID) }
+                selection: { store.selection(among: $0, inSpace: spaceID, in: window) }
             )
         } onChange: { [weak self] in
             DispatchQueue.main.async { self?.rebuild(animated: true) }

@@ -98,4 +98,41 @@ struct WindowSelectionTests {
         store.unregisterWindow(b)
         #expect(store.selectionByWindow[b] == nil)
     }
+
+    /// A window's ⇧/⌘-click selection is its own too: it stays when another
+    /// window on the same space becomes key and shows a different tab.
+    @Test func aWindowKeepsItsMultiSelectionWhenAnotherOnItsSpaceBecomesKey() {
+        let (store, a, b, meet, mail) = twoWindows()
+        let space = store.activeSpaceID
+        store.windowBecameKey(b)
+        store.selectTab(mail.id)
+        store.extendMultiSelection(to: meet.id, inSpace: space, visibleOrder: [meet.id, mail.id], in: b)
+        #expect(store.multiSelectedIDs(in: b).map(Set.init) == [meet.id, mail.id])
+
+        store.windowBecameKey(a)
+        #expect(store.selectedItemID(in: b) == mail.id)
+        #expect(store.multiSelectedIDs(in: b).map(Set.init) == [meet.id, mail.id], "b still shows mail, so its selection stands")
+    }
+
+    /// A collapsed folder shows its selected tab. In a window that is not
+    /// key that is the window's own tab, not the key window's.
+    @Test func aCollapsedFolderShowsEachWindowsOwnTab() throws {
+        let (store, a, b, meet, mail) = twoWindows()
+        let space = store.activeSpaceID
+        let folder = try #require(store.createFolder(withSelection: [mail.id], in: space))
+        store.setFolderExpanded(folder.id, false)
+        store.windowBecameKey(b)
+        store.selectTab(mail.id)
+        store.setFolderExpanded(folder.id, false)
+        store.windowBecameKey(a)
+        #expect(store.selectedItemID(in: a) == meet.id)
+        #expect(store.selectedItemID(in: b) == mail.id)
+
+        func shown(in window: SidebarWindowID) -> [SidebarListRow.ID] {
+            SidebarListRow.rows(outline: store.outline(for: space), expanded: store.expandedFolderIDs, pinnedCollapsed: false,
+                                isDragging: false) { store.selection(among: $0, inSpace: space, in: window) }.map(\.id)
+        }
+        #expect(shown(in: b).contains(.item(mail.id)), "b's own tab shows under its closed folder")
+        #expect(!shown(in: a).contains(.item(mail.id)), "a shows another tab, so the folder stays shut there")
+    }
 }
