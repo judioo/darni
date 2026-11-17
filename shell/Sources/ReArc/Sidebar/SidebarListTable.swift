@@ -167,6 +167,14 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     static let expandDuration: TimeInterval = 0.18
     static let collapseDuration: TimeInterval = 0.1
 
+    /// A click on a row that opens and closes (a folder, a tab group, at
+    /// full or mini width): `toggle` runs at the disclosure's pace, or at
+    /// once with Reduce Motion.
+    static func toggleDisclosure(isExpanded: Bool, reduceMotion: Bool, _ toggle: () -> Void) {
+        let duration = isExpanded ? collapseDuration : expandDuration
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { toggle() }
+    }
+
     init(model: BrowserViewModel, spaceID: Space.ID, context: SidebarListCellContext) {
         self.model = model
         self.spaceID = spaceID

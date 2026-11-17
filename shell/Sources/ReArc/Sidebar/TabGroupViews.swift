@@ -93,8 +93,7 @@ struct TabGroupRowView<Menu: View>: View {
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .padding(.vertical, (SidebarMetrics.rowPitch - TabGroupMetrics.headerHeight) / 2)
         .gesture(TapGesture().onEnded {
-            let duration = isExpanded ? SidebarListController.collapseDuration : SidebarListController.expandDuration
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { onToggle() }
+            SidebarListController.toggleDisclosure(isExpanded: isExpanded, reduceMotion: reduceMotion, onToggle)
         })
         .onHover { isHovering = $0 }
         .contextMenu { menu() }

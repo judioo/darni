@@ -231,8 +231,7 @@ struct FolderRowView<Menu: View>: View {
         .padding(.vertical, (SidebarMetrics.rowPitch - SidebarMetrics.rowHeight) / 2)
         // Off while renaming, so clicks in the field place the caret.
         .gesture(TapGesture().onEnded {
-            let duration = isExpanded ? SidebarListController.collapseDuration : SidebarListController.expandDuration
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { onToggle() }
+            SidebarListController.toggleDisclosure(isExpanded: isExpanded, reduceMotion: reduceMotion, onToggle)
         }, including: rename == nil ? .all : .subviews)
         .onHover { isHovering = $0 }
         .contextMenu { menu() }
