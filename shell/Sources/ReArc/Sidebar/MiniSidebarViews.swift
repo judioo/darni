@@ -296,8 +296,7 @@ struct MiniFolderRowView<Menu: View>: View {
         .modifier(MiniRowHighlight(isMultiSelected: isMultiSelected, isHovering: isHovering, isDropTarget: isDropTarget))
         .help(folder.title)
         .gesture(TapGesture().onEnded {
-            let duration = isExpanded ? SidebarListController.collapseDuration : SidebarListController.expandDuration
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { onToggle() }
+            SidebarListController.toggleDisclosure(isExpanded: isExpanded, reduceMotion: reduceMotion, onToggle)
         })
         .onHover { isHovering = $0 }
         .contextMenu { menu() }
@@ -340,8 +339,7 @@ struct MiniTabGroupRowView<Menu: View>: View {
         .modifier(MiniRowHighlight(isHovering: isHovering, isDropTarget: isDropTarget))
         .help("\(name), \(TabGroup.countText(tabCount))")
         .gesture(TapGesture().onEnded {
-            let duration = isExpanded ? SidebarListController.collapseDuration : SidebarListController.expandDuration
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { onToggle() }
+            SidebarListController.toggleDisclosure(isExpanded: isExpanded, reduceMotion: reduceMotion, onToggle)
         })
         .onHover { isHovering = $0 }
         .contextMenu { menu() }

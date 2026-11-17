@@ -9,14 +9,17 @@ struct LittleArcWindowView: View {
     @Environment(\.dismissWindow) private var dismissWindow
     let windowID: LittleArcWindow.ID
 
+    /// The smallest the window goes: the content's minimum, and the floor of `defaultSize`.
+    static let minimumSize = CGSize(width: 420, height: 320)
+
     /// Big enough to read a page in (the owner's chosen size, 2026-11-16;
     /// 520 × 420 was too small), within `visible` (the screen's visible frame)
     /// less a margin on smaller screens.
     static func defaultSize(within visible: CGSize?) -> CGSize {
         let wanted = CGSize(width: 1270, height: 920)
         guard let visible else { return wanted }
-        return CGSize(width: max(420, min(wanted.width, visible.width - 80)),
-                      height: max(320, min(wanted.height, visible.height - 80)))
+        return CGSize(width: max(minimumSize.width, min(wanted.width, visible.width - 80)),
+                      height: max(minimumSize.height, min(wanted.height, visible.height - 80)))
     }
 
     @State private var isEditingAddress = false
@@ -44,7 +47,7 @@ struct LittleArcWindowView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(minWidth: 420, minHeight: 320)
+        .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         .overlay(alignment: .topLeading) { LittleArcProbeMarker(windowID: windowID) }
         .background(
             WindowKeyObserver(

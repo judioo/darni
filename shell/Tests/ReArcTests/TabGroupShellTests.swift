@@ -534,10 +534,8 @@ final class TabGroupShellTests: XCTestCase {
         for color in TabGroupColor.allCases {
             for dark in [false, true] {
                 let fill = color.fill(dark: dark)
-                func linear(_ value: Double) -> Double { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
-                let luminance = 0.2126 * linear(fill.red) + 0.7152 * linear(fill.green) + 0.0722 * linear(fill.blue)
-                let ink = color.inkIsDark(dark: dark) ? 0.0 : 1.0
-                let contrast = (max(luminance, ink) + 0.05) / (min(luminance, ink) + 0.05)
+                let ink: PageColor = color.inkIsDark(dark: dark) ? .black : .white
+                let contrast = PageColor(red: fill.red, green: fill.green, blue: fill.blue).contrast(with: ink)
                 XCTAssertGreaterThanOrEqual(contrast, 3, "\(color.title) \(dark ? "dark" : "light"): \(contrast)")
             }
         }

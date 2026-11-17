@@ -60,14 +60,20 @@ extension BrowserViewModel {
         editTabGroup(reference.groupID, from: reference.id)
         // The page takes the keyboard back as the menu closes, and that
         // dismisses the editor's popover at once (seen on screen 2026-11-17).
-        // Ask again once focus has settled, unless the user closed it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        // Ask once more when focus has settled, if no editor is open by then.
+        // That cannot tell a popover focus dismissed from one the person
+        // closed in that time: either way the editor comes back, once.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.tabGroupEditorSettleDelay) { [weak self] in
             guard let self, self.tabGroupEditor == nil,
                   self.store.tabGroup(withID: reference.groupID) != nil else { return }
             self.editTabGroup(reference.groupID, from: reference.id)
         }
         return reference
     }
+
+    /// How long after a group is made its editor is asked for again
+    /// (`newTabGroup`): past the menu's closing and the page's taking focus.
+    static let tabGroupEditorSettleDelay: TimeInterval = 0.35
 
     /// Add Tab to Group ▸ and a drop on a group's row: the tab joins the end
     /// of the group, in every space that shows it. False when it did not

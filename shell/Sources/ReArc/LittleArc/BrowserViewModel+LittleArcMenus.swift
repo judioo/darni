@@ -46,6 +46,14 @@ extension BrowserViewModel {
 
 /// A menu item that runs a closure: the Dock menu is rebuilt on every
 /// request, so it keeps no table of actions.
+///
+/// The item is its own target, and a menu item holds its target weakly: the
+/// closure runs only while something still holds the menu when AppKit sends
+/// the action. A menu handed to AppKit from `menu(for:)` is let go before
+/// that, so its owner keeps it (`SidebarListController.shownEmptySpaceMenu`).
+/// A menu shown with `popUp(positioning:at:in:)` sends the action before the
+/// call returns, and a menu a view owns and refills in `menuNeedsUpdate`
+/// stays: neither needs keeping.
 final class ClosureMenuItem: NSMenuItem {
     private let handler: () -> Void
 
