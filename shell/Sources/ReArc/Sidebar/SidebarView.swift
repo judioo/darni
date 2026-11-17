@@ -104,7 +104,8 @@ struct SidebarView: View {
 
             if mini {
                 // Media as icons, then the bar's buttons stacked; the Finish
-                // setup card is a badge on the space icon (`MiniSpaceHeaderView`).
+                // setup and Connect 1Password cards are a badge on the space
+                // icon (`MiniSpaceHeaderView`).
                 MiniMediaColumn(model: model)
                 MiniUpdateNotice(model: model)
                 MiniBottomBar(model: model, draggedItemID: $draggedItemID)
@@ -119,6 +120,9 @@ struct SidebarView: View {
                         .padding(.bottom, MediaStripMetrics.gap)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                 }
+
+                // Connect 1Password, a one-time step, in the same place and card.
+                ConnectOnePasswordSlot(model: model)
 
                 BottomBarView(model: model, draggedItemID: $draggedItemID)
             }
