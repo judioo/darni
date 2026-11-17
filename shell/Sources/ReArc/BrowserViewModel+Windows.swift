@@ -35,11 +35,11 @@ extension BrowserViewModel {
     }
 
     func selectedItemID(in window: SidebarWindowID?) -> UUID? {
-        store.selectedItemID(inSpace: store.focusedSpaceID(in: window))
+        store.selectedItemID(in: window)
     }
 
     func selectedTab(in window: SidebarWindowID?) -> Tab? {
-        store.selectedTab(inSpace: store.focusedSpaceID(in: window))
+        store.selectedTab(in: window)
     }
 
     func selectedEaselRef(in window: SidebarWindowID?) -> SidebarEaselRef? {

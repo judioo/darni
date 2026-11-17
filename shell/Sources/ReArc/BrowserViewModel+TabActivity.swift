@@ -261,10 +261,9 @@ extension BrowserViewModel {
 
     /// Selected in some window (a split counts when it is the selection).
     func isTabOnScreen(_ tabID: Tab.ID) -> Bool {
-        let windows = Array(store.focusedSpaceByWindow.keys)
-        let spaces = windows.isEmpty ? [store.activeSpaceID] : windows.map { store.focusedSpaceID(in: $0) }
-        for spaceID in Set(spaces) {
-            guard let selected = store.selectedItemID(inSpace: spaceID) else { continue }
+        let windows: [SidebarWindowID?] = store.focusedSpaceByWindow.isEmpty ? [nil] : Array(store.focusedSpaceByWindow.keys)
+        for window in windows {
+            guard let selected = store.selectedItemID(in: window) else { continue }
             if selected == tabID { return true }
             if let split = store.split(withID: selected), split.tabs.contains(where: { $0.id == tabID }) { return true }
         }

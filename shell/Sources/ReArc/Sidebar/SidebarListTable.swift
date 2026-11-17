@@ -469,7 +469,7 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     private func trackSelection() {
         guard isActive else { return }
         let (selected, reveal) = withObservationTracking {
-            (model.store.selectedItemID(inSpace: spaceID), model.sidebarRowReveal)
+            (model.store.selectedItemID(in: context.window), model.sidebarRowReveal)
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 // After the rows' own rebuild, which is queued the same way.

@@ -503,7 +503,7 @@ struct PlainRowState: Equatable {
             state.customIcon = tab.customIcon
             state.favicon = model.favicon(for: tab)
             state.token = tab.faviconToken
-            state.isSelected = model.store.isSelected(tab.id, inSpace: spaceID)
+            state.isSelected = model.store.isSelected(tab.id, inSpace: spaceID, in: window)
             state.isUnloaded = model.isTabUnloaded(tab.id)
             state.isUnread = tab.isUnread
             state.groupColor = model.store.tabGroupColor(holding: tab.id)

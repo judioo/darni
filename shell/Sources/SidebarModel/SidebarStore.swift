@@ -101,6 +101,7 @@ public final class SidebarStore {
     public internal(set) var selectedItemID: UUID? {
         didSet {
             guard selectedItemID != oldValue else { return }
+            takeFromOtherWindows(selectedItemID)
             refreshSelectionObservers()
             onSelectionChange?(oldValue, selectedItemID)
         }
@@ -125,6 +126,9 @@ public final class SidebarStore {
     public internal(set) var focusedSpaceByWindow: [SidebarWindowID: Space.ID] = [:]
     /// The window whose space and selection `activeSpaceID` / `selectedItemID` are.
     public internal(set) var keyWindowID: SidebarWindowID?
+    /// What each other window shows, and on which space; the key window's is
+    /// `selectedItemID` (SidebarStore+Windows). Not persisted.
+    public internal(set) var selectionByWindow: [SidebarWindowID: WindowSelection] = [:]
     public var autoPiPPolicy = AutoPiPPolicyState()
     /// Clock for last-active stamps and archive times (tests inject a fixed date).
     @ObservationIgnored public var now: () -> Date = { Date() }
@@ -584,7 +588,7 @@ public final class SidebarStore {
     }
 
     /// `displayEntries(in:)` and its ids, cached until the tree changes.
-    private func displayRows(in id: Space.ID) -> (entries: [SidebarEntry], ids: Set<UUID>) {
+    func displayRows(in id: Space.ID) -> (entries: [SidebarEntry], ids: Set<UUID>) {
         let profileID = space(withID: id)?.profileID ?? activeProfileID
         observation.access(.spaceContent(id))
         observation.access(.favorites(profileID))

@@ -105,7 +105,7 @@ final class SidebarHoverPreview: NSObject, NSPopoverDelegate {
         let store = controller.model.store
         switch (kind, store.entry(withID: id)) {
         case (.tab, .tab(let tab)?):
-            return !store.isSelected(tab.id, inSpace: controller.spaceID)
+            return !store.isSelected(tab.id, inSpace: controller.spaceID, in: controller.context.window)
         case (.folder, .folder(let folder)?):
             return !store.isFolderExpanded(folder.id) && !folder.children.isEmpty
         default:
