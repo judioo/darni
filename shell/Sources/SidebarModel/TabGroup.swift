@@ -36,15 +36,16 @@ public enum TabGroupColor: String, CaseIterable, Sendable {
         return SpaceColor(hex: hex) ?? SpaceColor(red: 0.5, green: 0.5, blue: 0.5)
     }
 
-    /// Whether the header's name and icon are dark on `fill(dark:)` (a light
-    /// fill), or white.
+    /// Whether the header's name and icon are dark on `fill(dark:)`, or
+    /// white: whichever has the greater contrast with the fill (dark ink wins
+    /// above a relative luminance of about 0.18).
     public func inkIsDark(dark: Bool) -> Bool {
         let color = fill(dark: dark)
         func linear(_ value: Double) -> Double {
             value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
         }
         let luminance = 0.2126 * linear(color.red) + 0.7152 * linear(color.green) + 0.0722 * linear(color.blue)
-        return luminance > 0.4
+        return (luminance + 0.05) / 0.05 > 1.05 / (luminance + 0.05)
     }
 
     /// The colour a new group takes: the first one no group in `used` has,
