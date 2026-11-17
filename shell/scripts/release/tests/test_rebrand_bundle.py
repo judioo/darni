@@ -19,6 +19,11 @@ APP_STRINGS = (
     'NSCameraUsageDescription = "Chromium にアクセスを許可すると、ウェブサイトからアクセスをリクエストできるようになります。";\n'
     'NSHumanReadableCopyright = "Copyright 2026 The Chromium Authors. All rights reserved.";\n'
 )
+# Hindi spells the engine's name out (the 156.0.8078.100 engine's hi.lproj).
+HINDI_STRINGS = (
+    '"Chromium Shortcut" = "Chromium का शॉर्टकट";\n'
+    'NSCameraUsageDescription = "क्रोमियम को ऐक्सेस मिलने के बाद, वेबसाइटें आपसे ऐक्सेस मांग सकेंगी.";\n'
+)
 
 
 class RebrandBundleTests(unittest.TestCase):
@@ -31,6 +36,9 @@ class RebrandBundleTests(unittest.TestCase):
         ja = self.app / "Contents/Resources/ja.lproj"
         ja.mkdir(parents=True)
         (ja / "InfoPlist.strings").write_text(APP_STRINGS, encoding="utf-8")
+        hi = self.app / "Contents/Resources/hi.lproj"
+        hi.mkdir()
+        (hi / "InfoPlist.strings").write_text(HINDI_STRINGS, encoding="utf-8")
         for name in ALERTS:
             res = self.app / HELPERS / name / "Contents/Resources"
             (res / "base.lproj").mkdir(parents=True)
@@ -69,6 +77,12 @@ class RebrandBundleTests(unittest.TestCase):
         self.assertIn('"Chromium Shortcut" = "Chromium のショートカット";', text)
         self.assertIn("Copyright 2026 The Chromium Authors. All rights reserved.", text)
         self.assertIn('CFBundleGetInfoString = "Chromium 156', text)
+
+    def test_a_translated_engine_name_becomes_rearc_too(self):
+        self.assertEqual(self.run_script(str(self.app), str(self.icns)).returncode, 0)
+        text = (self.app / "Contents/Resources/hi.lproj/InfoPlist.strings").read_text(encoding="utf-8")
+        self.assertIn('NSCameraUsageDescription = "ReArc को ऐक्सेस मिलने के बाद', text)
+        self.assertIn('"Chromium Shortcut" = "Chromium का शॉर्टकट";', text)
 
     def test_a_missing_helper_fails(self):
         shutil.rmtree(self.app / HELPERS / ALERTS[0])
