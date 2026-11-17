@@ -15,10 +15,13 @@ public struct TaskManagerProcess: Equatable, Sendable {
 
     /// What an engine with `task_manager` (ABI 1.65) adds to the list.
     public struct Details: Equatable, Sendable {
-        /// The tabs whose page (primary main frame) runs here. The rest of
-        /// `tabIDs` only have a frame of another site here.
+        /// The tabs whose page (primary main frame) runs here.
         public var mainFrameTabIDs: [UInt64]
-        /// The site of the frames here that belong to other tabs' pages.
+        /// The tabs that only have a frame of another site of their page
+        /// here. A tab in `tabIDs` and in neither list has a page kept for
+        /// Back here, or one loading ahead: nothing the person sees.
+        public var subframeTabIDs: [UInt64]
+        /// The site of those frames.
         public var site: String
         /// An extension process: which extension.
         public var extensionID: String
@@ -31,10 +34,11 @@ public struct TaskManagerProcess: Equatable, Sendable {
         public var networkBytes: UInt64
 
         public init(
-            mainFrameTabIDs: [UInt64] = [], site: String = "", extensionID: String = "", extensionName: String = "",
-            isSpare: Bool = false, title: String = "", networkBytes: UInt64 = 0
+            mainFrameTabIDs: [UInt64] = [], subframeTabIDs: [UInt64] = [], site: String = "", extensionID: String = "",
+            extensionName: String = "", isSpare: Bool = false, title: String = "", networkBytes: UInt64 = 0
         ) {
             self.mainFrameTabIDs = mainFrameTabIDs
+            self.subframeTabIDs = subframeTabIDs
             self.site = site
             self.extensionID = extensionID
             self.extensionName = extensionName
@@ -55,6 +59,7 @@ public struct TaskManagerProcess: Equatable, Sendable {
                 guard let pid = Int32(key) else { continue }
                 var details = Details()
                 details.mainFrameTabIDs = (entry["main_frame_tabs"] as? [String] ?? []).compactMap { UInt64($0) }
+                details.subframeTabIDs = (entry["subframe_tabs"] as? [String] ?? []).compactMap { UInt64($0) }
                 details.site = entry["site"] as? String ?? ""
                 details.extensionID = entry["extension_id"] as? String ?? ""
                 details.extensionName = entry["extension_name"] as? String ?? ""
@@ -430,7 +435,8 @@ public enum TaskManagerRows {
             return (single(name.map { "Extension: \($0)" } ?? "Extension", .browserExtension(id)), .tabsAndExtensions, [])
         }
 
-        // Without `task_manager` the engine does not say which tabs only have a frame here.
+        // Without `task_manager` the engine does not say which tabs only have
+        // a frame here: every tab with a frame in the process is listed as a tab.
         let mainFrames = process.details.map { Set($0.mainFrameTabIDs) }
         var tasks: [TaskManagerTask] = []
         var tabTitles: [String] = []
@@ -438,10 +444,13 @@ public enum TaskManagerRows {
             tasks.append(TaskManagerTask(id: "\(pid)/tab/\(id)", title: "\(tab.isPrivate ? "Private tab" : "Tab"): \(tab.title)", icon: .tab(id)))
             tabTitles.append(tab.title)
         }
-        if let mainFrames, let site = process.details?.site {
-            for (id, tab) in known where !mainFrames.contains(id) {
+        if let mainFrames, let details = process.details {
+            let subframes = Set(details.subframeTabIDs).subtracting(mainFrames)
+            for (id, tab) in known where subframes.contains(id) {
                 let prefix = tab.isPrivate ? "Private subframe" : "Subframe"
-                tasks.append(TaskManagerTask(id: "\(pid)/frame/\(id)", title: site.isEmpty ? prefix : "\(prefix): \(site)", icon: .tab(id)))
+                tasks.append(TaskManagerTask(
+                    id: "\(pid)/frame/\(id)", title: details.site.isEmpty ? prefix : "\(prefix): \(details.site)", icon: .tab(id)
+                ))
             }
         }
         if !tasks.isEmpty { return (tasks, .tabsAndExtensions, tabTitles) }

@@ -1,6 +1,6 @@
 # ReArc engine C ABI
 
-ABI **1.64** (major remains 1 for existing hosts), bridge **0.72.0**, compiled Chromium **156.0.8078.100**. Public header:
+ABI **1.65** (major remains 1 for existing hosts), bridge **0.75.0**, compiled Chromium **156.0.8078.100**. Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2577,3 +2577,44 @@ download source CONTEXT_MENU. The save path comes through the file chooser
 channel (1.19) as a save request, as Save Image As (action 6) does. Without a
 link it returns `invalid_state`. No struct or earlier action changed. Hosts
 gate the menu item on the feature.
+
+## Process details for a task manager (ABI 1.65, bridge 0.75.0)
+
+Patch `tab/094-task-manager-process-details`, feature `task_manager`.
+`ReArcEngineGetProcessDetails(completion, context)` returns the rows of
+`ReArcEngineGetProcesses` (1.44) and `details_json`, a UTF-8 JSON object keyed
+by decimal pid with what a task manager shows besides. Every row has an entry.
+A key that does not apply is left out, and a host ignores keys it does not
+know. 64-bit numbers are decimal strings.
+
+| Key | For | Meaning |
+| --- | --- | --- |
+| `network_bytes` | every process | Bytes received plus sent, a running total. Requests no frame made are the browser's, as in Chrome's task manager. |
+| `main_frame_tabs` | renderers | The `tab_ids` whose page (primary main frame) is in this process: Chrome's "Tab:" rows. |
+| `subframe_tabs` | renderers | The `tab_ids` with only a frame of another site of their page here: Chrome's "Subframe:" rows. |
+| `site` | renderers | The site URL of the first such frame. |
+| `extension_id`, `extension_name` | renderers | The enabled extension this process runs. |
+| `spare` | renderers | `true` for the spare renderer. |
+| `title` | browser child processes | Chrome's display name ("Network Service"). |
+
+A `tab_id` in neither list has a page kept for Back in the process, or one
+loading ahead. Deferred, exactly once. `details_json` is borrowed and never
+null with `ok`.
+
+Network bytes are the network service's data-use reports
+(`ChromeContentBrowserClient::OnNetworkServiceDataUseUpdate`), which Chrome's
+task manager counts too. The reports are off until a host asks: each details
+request switches them on, and the first report more than 5 s after the last
+request switches them off. A host takes a rate from two successive answers and
+none across a pause. A renderer that is gone takes its count with it.
+
+Ending a process needs no call. The processes are the host's own children,
+and Chrome's task manager on macOS signals them as well (`Task::Kill`,
+SIGTERM). A tab whose renderer was killed reports `is_crashed`, as after a
+crash. `ReArcEngineGetProcesses` and `ReArcProcessInfo` did not change.
+
+**Tests:** `engine/tests/c_abi_perf_host.mm` (run_c_abi.py `perf`), step 5: an
+entry per row, the tab's page in exactly one renderer's `main_frame_tabs`, a
+`title` on every child process, `network_bytes` a count. Not run yet: the
+patch was written without an engine build (see its header). The network count
+itself has no engine test.

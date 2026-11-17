@@ -114,11 +114,12 @@ final class TaskManagerTests: XCTestCase {
     func testDetailsTellPagesFromFramesAndNameTheRest() {
         let detailed = [
             Process(pid: 300, kind: .renderer, profileID: 10, tabIDs: [1, 2],
-                    details: .init(mainFrameTabIDs: [1], site: "https://ads.example/")),
-            Process(pid: 310, kind: .renderer, tabIDs: [3], details: .init(mainFrameTabIDs: [], site: "")),
+                    details: .init(mainFrameTabIDs: [1], subframeTabIDs: [2], site: "https://ads.example/")),
+            Process(pid: 310, kind: .renderer, tabIDs: [3], details: .init(subframeTabIDs: [3])),
             Process(pid: 320, kind: .renderer, isExtension: true, details: .init(extensionID: "zzzz", extensionName: "Dark Pages")),
             Process(pid: 330, kind: .renderer, details: .init(isSpare: true)),
-            Process(pid: 340, kind: .renderer, details: .init()),
+            // A page kept for Back: a frame of tab 1, but nothing the person sees.
+            Process(pid: 340, kind: .renderer, tabIDs: [1], details: .init()),
             Process(pid: 250, kind: .utility, name: "network.mojom.NetworkService", details: .init(title: "Network Service")),
             Process(pid: 260, kind: .utility, name: "audio.mojom.AudioService", details: .init()),
         ]
@@ -140,8 +141,8 @@ final class TaskManagerTests: XCTestCase {
 
     func testDetailsJSON() {
         let json = """
-        {"300": {"main_frame_tabs": ["1", "18446744073709551615"], "site": "https://a.example/", "network_bytes": "5000000000",
-                 "later_key": [1, 2]},
+        {"300": {"main_frame_tabs": ["1", "18446744073709551615"], "subframe_tabs": ["2"], "site": "https://a.example/",
+                 "network_bytes": "5000000000", "later_key": [1, 2]},
          "320": {"extension_id": "abcd", "extension_name": "Reader Mode"},
          "330": {"spare": true},
          "250": {"title": "Network Service"},
@@ -149,7 +150,8 @@ final class TaskManagerTests: XCTestCase {
         """
         let details = Process.Details.byProcess(json: json)
         XCTAssertEqual(details.count, 4)
-        XCTAssertEqual(details[300], .init(mainFrameTabIDs: [1, .max], site: "https://a.example/", networkBytes: 5_000_000_000))
+        XCTAssertEqual(details[300], .init(mainFrameTabIDs: [1, .max], subframeTabIDs: [2], site: "https://a.example/",
+                                           networkBytes: 5_000_000_000))
         XCTAssertEqual(details[320], .init(extensionID: "abcd", extensionName: "Reader Mode"))
         XCTAssertEqual(details[330], .init(isSpare: true))
         XCTAssertEqual(details[250], .init(title: "Network Service"))
