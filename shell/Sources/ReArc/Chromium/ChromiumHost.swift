@@ -366,6 +366,10 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             adopt(model)
         }
         model.presentAirTrafficControl = { [weak self] in self?.presentAirTrafficControl() }
+        if runtime.capabilities.perfMetrics {
+            // Window › Task Manager lists the engine's processes; before ABI 1.44 it shows ReArc alone.
+            model.taskManager.source = ChromiumTaskManagerSource(runtime: runtime, model: model)
+        }
         model.presentSettings = { [weak self] pane in MainActor.assumeIsolated { self?.presentSettings(pane) } }
         model.onShortcutOverridesChanged = { [weak self, weak model] in
             guard let self, let model, let menu = NSApp.mainMenu else { return }
@@ -1356,6 +1360,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
+        target.add(ShellMenus.taskManager(model), to: windowMenu)
         windowMenu.addItem(.separator())
         target.add(ShellMenus.littleArcs(model), to: windowMenu)
         windowMenu.addItem(.separator())

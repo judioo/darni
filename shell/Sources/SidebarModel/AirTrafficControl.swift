@@ -157,6 +157,8 @@ extension ExternalLinkRouting {
         switch route {
         case .littleArc(_, let profileID):
             return "Little ReArc (\(store.profile(withID: profileID)?.name ?? "profile"))"
+        case .focusLittleArc(let id):
+            return "The open Little ReArc “\(store.littleArcWindow(withID: id)?.title ?? "window")”"
         case .newTab(_, let spaceID):
             return "New tab in \(store.space(withID: spaceID)?.name ?? "a space")"
         case .focusTab(let id):

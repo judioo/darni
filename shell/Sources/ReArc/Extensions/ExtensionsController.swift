@@ -47,6 +47,12 @@ final class ExtensionsController {
         pins.pinned(actions(for: engine))
     }
 
+    /// An extension matching `isWanted` has an action in some tab: it is
+    /// installed and enabled in a profile in use.
+    func hasAction(where isWanted: (String) -> Bool) -> Bool {
+        actionsByEngine.values.contains { $0.contains { isWanted($0.id) } }
+    }
+
     func setActions(_ items: [ExtensionActionItem], for engine: AnyObject) {
         let key = ObjectIdentifier(engine)
         if actionsByEngine[key] != items { actionsByEngine[key] = items }

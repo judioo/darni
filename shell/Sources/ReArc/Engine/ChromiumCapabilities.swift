@@ -70,6 +70,7 @@ struct ChromiumCapabilities: Equatable {
     static let downloadEventBatchesFeature = "download_event_batches"
     static let extensionTabGroupsFeature = "extension_tab_groups"
     static let pageThemeColorFeature = "page_theme_color"
+    static let taskManagerFeature = "task_manager"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -129,6 +130,7 @@ struct ChromiumCapabilities: Equatable {
         downloadEventBatchesFeature: 49,
         extensionTabGroupsFeature: 50,
         pageThemeColorFeature: 51,
+        taskManagerFeature: 65,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -259,6 +261,10 @@ struct ChromiumCapabilities: Equatable {
     /// extensions open their pages unselected. Requires `extensionWindows`.
     var extensionBackgroundTabs: Bool
     var pageThemeColor: Bool
+    /// `ReArcEngineGetProcessDetails`: what the Task Manager shows besides
+    /// the process list (pages and frames apart, extension and service
+    /// names, the spare renderer, network bytes). Requires `perfMetrics`.
+    var taskManager: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -323,6 +329,7 @@ struct ChromiumCapabilities: Equatable {
         downloadEventBatches = downloads && adopted(Self.downloadEventBatchesFeature)
         extensionTabGroups = extensionWindows && adopted(Self.extensionTabGroupsFeature)
         pageThemeColor = adopted(Self.pageThemeColorFeature)
+        taskManager = perfMetrics && adopted(Self.taskManagerFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -408,6 +415,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.downloadHistoryFeature, downloadHistory),
             (Self.downloadEventBatchesFeature, downloadEventBatches),
             (Self.extensionTabGroupsFeature, extensionTabGroups),
+            (Self.taskManagerFeature, taskManager),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),

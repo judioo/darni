@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SidebarModel
 
@@ -416,5 +417,25 @@ struct SpaceProfileMenu: View {
     var body: some View {
         Menu("Change Profile") { SpaceProfileChoices(model: model, space: space) }
             .help("Choose the cookies, sign-ins and site storage used by this space")
+    }
+}
+
+/// A right-click on the sidebar's empty space, under the last row. As the
+/// menu on Chrome's vertical tab strip: what a tab list offers with no tab
+/// under the pointer, then Task Manager last, after a divider. New Tab
+/// Group is there while Settings › General › Tab groups is on; it makes the
+/// group in `spaceID`, the list's space.
+enum SidebarEmptySpaceMenu {
+    static func menu(model: BrowserViewModel, spaceID: Space.ID) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem("New Tab") { model.newTab() })
+        menu.addItem(ClosureMenuItem("New Folder") { model.newFolder() })
+        if model.tabGroupsEnabled {
+            menu.addItem(ClosureMenuItem("New Tab Group") { model.newTabGroup(in: spaceID) })
+        }
+        menu.addItem(ClosureMenuItem("Reopen Closed Tab") { model.reopenClosedTab() })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem("Task Manager") { model.showTaskManager() })
+        return menu
     }
 }

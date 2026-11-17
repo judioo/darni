@@ -52,6 +52,20 @@ final class TabGroupShellTests: XCTestCase {
                                    toGroup: row.groupID), "an existing group still takes tabs (a drop on its row)")
     }
 
+    func testTheBlankSidebarsMenuOffersNewTabGroupOnlyWhileTheSettingIsOn() throws {
+        let model = makeModel(enabled: false)
+        let home = model.store.activeSpaceID
+        func titles() -> [String] { SidebarEmptySpaceMenu.menu(model: model, spaceID: home).items.filter { !$0.isSeparatorItem }.map(\.title) }
+        XCTAssertFalse(titles().contains("New Tab Group"))
+        model.tabGroupsEnabled = true
+        XCTAssertEqual(titles(), ["New Tab", "New Folder", "New Tab Group", "Reopen Closed Tab", "Task Manager"])
+
+        let item = try XCTUnwrap(SidebarEmptySpaceMenu.menu(model: model, spaceID: work(model)).items.first { $0.title == "New Tab Group" })
+        _ = item.target?.perform(item.action, with: item)
+        let row = try XCTUnwrap(SidebarTree.tabGroups(model.store.content(for: work(model)).today).first, "in the list's own space")
+        XCTAssertEqual(model.tabGroupEditor?.anchorID, row.id)
+    }
+
     // MARK: Creating and editing
 
     func testANewGroupOpensItsEditorAtOnce() throws {

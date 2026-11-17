@@ -411,6 +411,11 @@ enum ShellMenus {
         ]]
     }
 
+    /// Window menu: Chrome's Task Manager (it binds no key on macOS).
+    static func taskManager(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
+        [[ShellMenuItem("Task Manager") { model.showTaskManager() }]]
+    }
+
     static func library(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
         [
             [ShellMenuItem("View Library", "l", [.command, .shift]) { model.openLibrary(nil) }],

@@ -209,11 +209,10 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         emptySpaceClick.delaysPrimaryMouseButtonEvents = false
         emptySpaceClick.delegate = self
         scroll.addGestureRecognizer(emptySpaceClick)
+        scroll.emptySpaceMenu = { [weak self] event in self?.emptySpaceMenu(for: event) }
         rebuild(animated: false, reloadAll: true)
         trackSelection()
         observeInteraction(scroll)
-        table.emptySpaceMenu = { [weak self] in self?.emptySpaceMenu() }
-        scroll.emptySpaceMenu = { [weak self] in self?.emptySpaceMenu() }
         selectionKeys.bind(to: model) { [weak self] in self?.context.window }
         scroll.addSubview(selectionKeys)
         trackMultiSelection()
@@ -234,19 +233,14 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         model.newTab()
     }
 
-    /// The menu of the list's blank space, below its last row: New Tab
-    /// Group, while Settings › General › Tab groups is on. Nil shows none.
-    private func emptySpaceMenu() -> NSMenu? {
-        guard model.tabGroupsEnabled else { return nil }
-        let menu = NSMenu()
-        let item = NSMenuItem(title: "New Tab Group", action: #selector(newTabGroupFromEmptySpace), keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
-        return menu
-    }
-
-    @objc private func newTabGroupFromEmptySpace() {
-        model.newTabGroup(in: spaceID)
+    /// A right-click under the last row: the sidebar's own menu. A row's
+    /// SwiftUI menu takes a right-click on the row before it gets here.
+    private func emptySpaceMenu(for event: NSEvent) -> NSMenu? {
+        guard let tableView else { return nil }
+        let point = tableView.convert(event.locationInWindow, from: nil)
+        let bottom = tableView.numberOfRows > 0 ? tableView.rect(ofRow: tableView.numberOfRows - 1).maxY : 0
+        guard SidebarEmptySpaceClick.opensMenu(rowIndex: tableView.row(at: point), y: point.y, rowsBottom: bottom) else { return nil }
+        return SidebarEmptySpaceMenu.menu(model: model, spaceID: spaceID)
     }
 
     func invalidate() {
@@ -625,26 +619,21 @@ final class SidebarSelectionKeyView: NSView, NSMenuItemValidation {
 /// the queue, past `sendEvent`, so the space-swipe monitor (a local event
 /// monitor) only ever saw a swipe begin and the pager was left mid-swipe.
 private final class SidebarScrollView: NSScrollView {
-    /// The menu for a right-click under the table, where it does not fill the list.
-    var emptySpaceMenu: () -> NSMenu? = { nil }
-
     override class var isCompatibleWithResponsiveScrolling: Bool { false }
-    /// A right-click a row passed on (the Today divider has no menu) shows none.
+
+    /// The menu for a right-click no row took (the table and the clip view
+    /// have none, so the click comes up to here); nil for none.
+    var emptySpaceMenu: ((NSEvent) -> NSMenu?)?
+
     override func menu(for event: NSEvent) -> NSMenu? {
-        if let table = documentView as? NSTableView, table.row(at: table.convert(event.locationInWindow, from: nil)) >= 0 { return nil }
-        return emptySpaceMenu()
+        emptySpaceMenu?(event) ?? super.menu(for: event)
     }
 }
 
 private final class SidebarTableView: NSTableView {
-    /// The menu for a right-click on no row; the rows bring their own.
-    var emptySpaceMenu: () -> NSMenu? = { nil }
-
     override var acceptsFirstResponder: Bool { false }
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool { true }
-    override func menu(for event: NSEvent) -> NSMenu? {
-        row(at: convert(event.locationInWindow, from: nil)) < 0 ? emptySpaceMenu() : nil
-    }
+    override func menu(for event: NSEvent) -> NSMenu? { nil }
 }
 
 /// A row view with nothing of its own to draw: the SwiftUI row draws its

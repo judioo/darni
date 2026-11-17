@@ -39,8 +39,11 @@ struct FinishSetupCard: View {
             .accessibilityLabel("Finish setup. Bring over your tabs from Arc, Chrome or Brave.")
             .accessibilityIdentifier("finishSetupButton")
 
-            FinishSetupDismissButton { model.dismissOnboardingCard() }
-                .padding(4)
+            SidebarCardDismissButton(help: "Hide — Finish Setting Up ReArc stays in the ReArc menu",
+                                     label: "Dismiss setup reminder", identifier: "dismissSetupReminder") {
+                model.dismissOnboardingCard()
+            }
+            .padding(4)
         }
         .background(MediaStripBackground())
         .animation(.easeOut(duration: 0.12), value: isHovering)
@@ -49,8 +52,12 @@ struct FinishSetupCard: View {
     }
 }
 
-/// The strips' glyph button: a soft disc on hover.
-private struct FinishSetupDismissButton: View {
+/// The strips' glyph button: a soft disc on hover. Closes a card above the
+/// bottom bar (Finish setup, Connect 1Password).
+struct SidebarCardDismissButton: View {
+    let help: String
+    let label: String
+    let identifier: String
     let action: () -> Void
     @State private var isHovering = false
     @Environment(\.themeChrome) private var chrome
@@ -67,8 +74,8 @@ private struct FinishSetupDismissButton: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
-        .help("Hide — Finish Setting Up ReArc stays in the ReArc menu")
-        .accessibilityLabel("Dismiss setup reminder")
-        .accessibilityIdentifier("dismissSetupReminder")
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
     }
 }

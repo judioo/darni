@@ -485,8 +485,8 @@ private struct MiniRenameField: View {
 // MARK: The list's other rows
 
 /// The space header at mini width: the space's icon, which opens the space
-/// menu. Finish setup and sync trouble are a dot on it; with more than one
-/// profile, the profile's badge sits on its corner.
+/// menu. Finish setup, Connect 1Password and sync trouble are a dot on it;
+/// with more than one profile, the profile's badge sits on its corner.
 struct MiniSpaceHeaderView: View {
     let model: BrowserViewModel
     let space: Space
@@ -498,7 +498,7 @@ struct MiniSpaceHeaderView: View {
 
     private var badge: Color? {
         if SyncStatusPresentation(model.syncStatus).indicator == .red { return model.syncStatusColor }
-        if model.onboardingSetupState.showsCard || model.availableUpdate != nil { return .accentColor }
+        if model.onboardingSetupState.showsCard || model.availableUpdate != nil || model.showsOnePasswordPrompt { return .accentColor }
         return nil
     }
 
@@ -549,6 +549,11 @@ struct MiniSpaceHeaderView: View {
         }
         if model.availableUpdate != nil {
             Button(AvailableUpdate.title) { model.installUpdate?() }
+        }
+        // The card's steps and buttons are in Settings › General.
+        if model.showsOnePasswordPrompt {
+            Button(OnePasswordConnect.menuTitle) { model.showSettings(.general) }
+            Button(OnePasswordConnect.menuHide) { model.dismissOnePasswordPrompt() }
         }
         if SyncStatusPresentation(model.syncStatus).indicator == .red {
             Text(model.syncStatusHelp)

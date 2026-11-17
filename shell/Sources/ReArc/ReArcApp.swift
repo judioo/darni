@@ -133,6 +133,8 @@ struct ReArcApp: App {
             }
             CommandGroup(after: .windowArrangement) {
                 Divider()
+                ShellMenuButtons(groups: ShellMenus.taskManager(model), overrides: model.shortcutOverrides)
+                Divider()
                 ShellMenuButtons(groups: ShellMenus.littleArcs(model), overrides: model.shortcutOverrides)
             }
         }
