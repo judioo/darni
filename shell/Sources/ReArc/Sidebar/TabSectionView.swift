@@ -84,7 +84,7 @@ struct SidebarEntryRow: View, Equatable {
 
     private var isDropInto: Bool { dropPosition == .into }
 
-    private func isSelected(_ id: UUID) -> Bool { model.store.isSelected(id, inSpace: spaceID) }
+    private func isSelected(_ id: UUID) -> Bool { model.store.isSelected(id, inSpace: spaceID, in: window) }
 
     /// In this window's ⇧/⌘-click selection, drawn grey unless it is the active row.
     private func isMultiSelected(_ id: UUID) -> Bool { model.store.isMultiSelected(id, in: window) }
