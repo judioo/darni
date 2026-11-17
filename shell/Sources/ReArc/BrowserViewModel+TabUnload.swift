@@ -71,12 +71,13 @@ extension BrowserViewModel {
         }
     }
 
-    /// Tabs a window may be showing: every space's selected item (a split's
-    /// panes too), and the peeked page's tab is not one of them.
+    /// Tabs a window may be showing: every space's selected item and every
+    /// window's own (a split's panes too); the peeked page's tab is not one of them.
     var visibleTabIDs: Set<Tab.ID> {
         var visible: Set<Tab.ID> = []
-        for space in store.visibleSpaces {
-            guard let id = store.selectedItemID(inSpace: space.id) else { continue }
+        let selected = store.visibleSpaces.map { store.selectedItemID(inSpace: $0.id) }
+            + store.focusedSpaceByWindow.keys.map { store.selectedItemID(in: $0) }
+        for case let id? in selected {
             if let split = store.split(withID: id) {
                 split.tabs.forEach { visible.insert($0.id) }
             } else {

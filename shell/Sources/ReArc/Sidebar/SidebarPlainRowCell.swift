@@ -503,7 +503,7 @@ struct PlainRowState: Equatable {
             state.customIcon = tab.customIcon
             state.favicon = model.favicon(for: tab)
             state.token = tab.faviconToken
-            state.isSelected = model.store.isSelected(tab.id, inSpace: spaceID)
+            state.isSelected = model.store.isSelected(tab.id, inSpace: spaceID, in: window)
             state.isUnloaded = model.isTabUnloaded(tab.id)
             state.isUnread = tab.isUnread
             state.groupColor = model.store.tabGroupColor(holding: tab.id)
@@ -595,7 +595,12 @@ struct SidebarHostedRow: View {
 }
 
 /// A hosting view counted by the bench (perf-6): how often cells lay out.
+/// It takes the click that brings its window forward, as the plain rows do:
+/// a live row (a tab playing a video) in a window behind otherwise only
+/// raised the window, so choosing that tab there needed a second click.
 final class SidebarCountingHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func layout() {
         SidebarListCellCounters.layouts += 1
         super.layout()

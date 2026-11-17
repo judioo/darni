@@ -397,7 +397,7 @@ final class Wave19SidebarTests: XCTestCase {
         store.selectTab(workTab.id)
         XCTAssertEqual(store.focusedSpaceID(in: two), work)
         XCTAssertEqual(store.focusedSpaceID(in: one), personal, "window one keeps its space")
-        XCTAssertEqual(store.selectedTab(inSpace: store.focusedSpaceID(in: one))?.id, personalTab.id)
+        XCTAssertEqual(store.selectedTab(in: one)?.id, personalTab.id, "window one keeps its own tab")
 
         store.windowBecameKey(one)
         XCTAssertEqual(store.activeSpaceID, personal)
