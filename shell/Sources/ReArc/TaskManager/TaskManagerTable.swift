@@ -149,13 +149,18 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         column.isSharedByGroup ? .right : .left
     }
 
+    /// The stock pictures, made once: a cell keeps its picture from one
+    /// reading to the next when it is the same object.
+    private static let pageSymbol = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+    private static let helperSymbol = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
+
     private func image(for icon: TaskManagerTask.Icon) -> NSImage? {
         if let image = controller.source.icon(for: icon) { return image }
         switch icon {
         case .browser: return NSApp.applicationIconImage
-        case .tab: return NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        case .tab: return Self.pageSymbol
         // Chrome's puzzle piece, for extensions and for the engine's helpers.
-        case .browserExtension, .system: return NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
+        case .browserExtension, .system: return Self.helperSymbol
         }
     }
 
