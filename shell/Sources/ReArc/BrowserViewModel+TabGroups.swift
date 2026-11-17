@@ -34,6 +34,14 @@ extension BrowserViewModel {
         reconcileEngineOwnership()
         loadSelectedIfNeeded()
         editTabGroup(reference.groupID, from: reference.id)
+        // The page takes the keyboard back as the menu closes, and that
+        // dismisses the editor's popover at once (seen on screen 2026-11-17).
+        // Ask again once focus has settled, unless the user closed it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self, self.tabGroupEditor == nil,
+                  self.store.tabGroup(withID: reference.groupID) != nil else { return }
+            self.editTabGroup(reference.groupID, from: reference.id)
+        }
         return reference
     }
 

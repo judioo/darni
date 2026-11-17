@@ -19,6 +19,27 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1117.849 — 2026-11-17
+
+**New**
+- Task Manager, as in Chrome: Window › Task Manager, or right-click empty space in the sidebar.
+  It lists every tab, extension and engine process with its memory, CPU, network use and
+  process ID, in three views (tabs and extensions, browser, all tasks), with search, sortable
+  columns and a column chooser. End task stops a stuck page; its tab shows "This page crashed"
+  with a Reload button.
+- Tab groups, as in Chrome, off until you turn them on in Settings › General. A group is a
+  coloured, named set of tabs that more than one space can show: change it in one space and
+  every space that shows it sees the change. Make one by right-clicking "+ New Tab", empty
+  sidebar space or a tab. ⌘T lists the groups this space doesn't show yet, and picking one adds
+  it. Rename, recolour, ungroup, remove from a space or delete it from its right-click menu;
+  deleting asks first, as Chrome does. A group's tabs never auto-archive.
+- 1Password: a one-time card explains how to let 1Password unlock in ReArc (in 1Password,
+  Settings › Browser › Add Browser, then choose ReArc). The same steps are in Settings › General.
+
+**Fixes**
+- Links from other apps set to open in Little ReArc always open in Little ReArc, as in Arc,
+  even when the page is already a tab in one of your spaces.
+
 ## ReArc 2026.1116.820 — 2026-11-16
 
 **Fixes**
