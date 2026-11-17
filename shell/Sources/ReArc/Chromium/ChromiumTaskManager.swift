@@ -55,7 +55,7 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
 
     private func engineProcesses() async -> [ChromiumProcessInfo] {
         guard runtime.isReady, !runtime.isStopping else { return [] }
-        return await ChromiumPerfMetrics.shared.processes()
+        return await ChromiumPerfMetrics.shared.processes(withDetails: runtime.capabilities.taskManager)
     }
 
     private static func process(_ info: ChromiumProcessInfo) -> TaskManagerProcess {

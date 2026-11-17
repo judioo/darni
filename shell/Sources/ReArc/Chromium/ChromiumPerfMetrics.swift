@@ -83,25 +83,19 @@ final class ChromiumPerfMetrics {
         }
     }
 
-    /// `ReArcEngineGetProcessDetails` (ABI 1.65): the same list with a JSON
-    /// object of what the Task Manager shows besides. Looked up by name, so
-    /// the shell builds and runs against an engine without it.
-    private typealias ProcessDetailsCallback = @convention(c) (
-        UnsafeMutableRawPointer?, ReArcStatus, UnsafePointer<ReArcProcessInfo>?, Int, UnsafePointer<CChar>?
-    ) -> Void
+    /// `ReArcEngineGetProcessDetails` (ABI 1.65, `task_manager`): the same
+    /// list with a JSON object of what the Task Manager shows besides.
+    /// Looked up by name, so the shell builds against a header without it.
     private typealias GetProcessDetails = @convention(c) (ProcessDetailsCallback?, UnsafeMutableRawPointer?) -> ReArcStatus
 
-    /// True when the engine's list carries `ChromiumProcessInfo.details`.
-    var hasProcessDetails: Bool { getProcessDetails != nil }
-
-    private var getProcessDetails: GetProcessDetails? {
-        guard ReArcEngineHasFeature("task_manager"),
-              let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "ReArcEngineGetProcessDetails") else { return nil }
-        return unsafeBitCast(symbol, to: GetProcessDetails.self)
-    }
-
-    func processes() async -> [ChromiumProcessInfo] {
-        let getProcessDetails = getProcessDetails
+    /// The engine's processes. `withDetails` (pass `capabilities.taskManager`)
+    /// asks for `ChromiumProcessInfo.details` too, which also makes the
+    /// engine count network bytes for the next few seconds; the bench does
+    /// not ask.
+    func processes(withDetails: Bool = false) async -> [ChromiumProcessInfo] {
+        let getProcessDetails = withDetails
+            ? dlsym(UnsafeMutableRawPointer(bitPattern: -2), "ReArcEngineGetProcessDetails").map { unsafeBitCast($0, to: GetProcessDetails.self) }
+            : nil
         return await withCheckedContinuation { continuation in
             let box = Unmanaged.passRetained(Box(continuation)).toOpaque()
             let status = getProcessDetails.map { $0(processDetailsCallback, box) } ?? ReArcEngineGetProcesses(processesCallback, box)
@@ -152,9 +146,12 @@ private let processesCallback: ReArcProcessListCallback = { context, status, pro
     resumeProcesses(context, status, processes, count, detailsJSON: nil)
 }
 
-private let processDetailsCallback: @convention(c) (
+/// `ReArcProcessDetailsCallback`, declared here for a header without it.
+private typealias ProcessDetailsCallback = @convention(c) (
     UnsafeMutableRawPointer?, ReArcStatus, UnsafePointer<ReArcProcessInfo>?, Int, UnsafePointer<CChar>?
-) -> Void = { context, status, processes, count, json in
+) -> Void
+
+private let processDetailsCallback: ProcessDetailsCallback = { context, status, processes, count, json in
     resumeProcesses(context, status, processes, count, detailsJSON: json.map { String(cString: $0) } ?? "{}")
 }
 
