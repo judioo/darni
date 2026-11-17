@@ -249,9 +249,9 @@ shell, with `check-upgrade-data.py` passing against the release on the feed.
   so an install of 677 or 608 is offered 741 whatever either display version says
   (`release/tests/test_sparkle_feed_order.py`). Never put the date in it. Cut releases from
   one branch (main).
-- `ReArcEngineVersion` = the Chromium version (156.0.8078.100), `ReArcEngineRevision` = the
+- `ReArcEngineVersion` = the Chromium version (156.0.8078.109), `ReArcEngineRevision` = the
   overlay commit, `ReArcSourceRevision` = the outer commit (`-dirty` for `--worktree`).
-- The framework keeps `Versions/156.0.8078.100` and its own plist. Never rename it.
+- The framework keeps `Versions/156.0.8078.109` and its own plist. Never rename it.
 - Chromium's upgrade detector would compare the outer `CFBundleShortVersionString` with
   the running Chromium version (`updater::CurrentlyInstalledVersion` in
   `browser_updater_client_util_mac.mm`) and report an update when the outer one is higher,
