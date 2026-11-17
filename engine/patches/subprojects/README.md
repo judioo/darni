@@ -5,7 +5,8 @@ under `third_party/`. `engine/patches/series` is applied inside `chromium/src`
 and cannot change a file in one of them.
 
 Patches here are for those checkouts. Each folder is named after the checkout
-under `third_party/`, and each patch's paths are relative to it.
+(`third_party/ffmpeg`, `third_party/angle`, and `v8` at the top of `src`), and each
+patch's paths are relative to it.
 
 **`engine/scripts/fetch.sh` does not apply these yet.** Until it does, a patch
 here is not in the engine. What the script needs:
@@ -30,6 +31,8 @@ Order for the list, most urgent first:
 | `angle/002-cve-2026-130954-switch-variable-rename.patch` | High (two CVEs) | Any page with WebGL, Metal shader translator |
 | `angle/001-cve-2026-130910-switch-folding-order.patch` | High | Any page with WebGL |
 | `angle/003-cve-2026-121037-constructor-size-after-inference.patch` | High | Any page with WebGL |
+| `v8/001-cve-2026-125344-iterator-close-termination.patch` | High | Any page's script |
+| `v8/002-cve-2026-131042-regexp-flush-errors.patch` | High | Any page's script. One upstream hunk left out; see its header. |
 
 The security reviewer owns the patches in this folder, as with
 `engine/patches/security`. The ledger is `security/BACKPORTS.md` on branch
