@@ -35,7 +35,7 @@ extension SidebarStore {
     /// order the sidebar shows them with every folder open.
     public func outlineOrder(in spaceID: Space.ID) -> [UUID] {
         func walk(_ nodes: [SidebarOutlineNode]) -> [UUID] {
-            nodes.flatMap { [$0.id] + ($0.kind == .folder ? walk($0.children) : []) }
+            nodes.flatMap { [$0.id] + ($0.kind.isContainer ? walk($0.children) : []) }
         }
         let outline = outline(for: spaceID)
         return walk(outline.pinned) + walk(outline.today)
@@ -282,7 +282,10 @@ extension SidebarStore {
         let tabs = plainTabIDs(ids)
         guard tabs.count == ids.count, (2 ... 4).contains(tabs.count), let first = tabs.first,
               let space = spaceContaining(tabID: first) else { return false }
-        return tabs.allSatisfy { splitContaining(tabID: $0) == nil && kind(of: $0) != .favorite && spaceContaining(tabID: $0) == space }
+        return tabs.allSatisfy {
+            splitContaining(tabID: $0) == nil && kind(of: $0) != .favorite && spaceContaining(tabID: $0) == space
+                && tabGroupID(holding: $0) == nil
+        }
     }
 
     /// Open in Split View: the first tab's place becomes a split of all of

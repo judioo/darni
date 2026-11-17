@@ -189,17 +189,23 @@ public enum TabGroupDeleteConfirmation {
     public static let cancelTitle = "Cancel"
     public static let dontAskTitle = "Don't ask again"
 
-    /// `spaceCount`: the spaces that show the group now.
-    public static func message(groupName: String, tabCount: Int, spaceCount: Int) -> String {
-        let tabs = tabCount == 1 ? "its tab" : "its \(tabCount) tabs"
+    /// `spaceCount`: the spaces that show the group now. `syncOn`: iCloud
+    /// sync carries the delete to the person's other Macs.
+    public static func message(groupName: String, tabCount: Int, spaceCount: Int, syncOn: Bool = false) -> String {
         let named = groupName.isEmpty ? "This group" : "“\(groupName)”"
         let spaces: String
         switch spaceCount {
-        case 0: spaces = "It is not in any space now."
-        case 1: spaces = "It is removed from the space that shows it."
-        default: spaces = "It is removed from every space that shows it (\(spaceCount) spaces)."
+        case 0: spaces = "\(named) is deleted."
+        case 1: spaces = "\(named) is removed from the space that shows it."
+        default: spaces = "\(named) is removed from every space that shows it (\(spaceCount) spaces)."
         }
-        return "\(named) is deleted and \(tabs) closed. \(spaces) With iCloud sync on, it is deleted on your other Macs too."
+        let tabs: String
+        switch tabCount {
+        case 0: tabs = ""
+        case 1: tabs = " Its tab closes and goes to the Archive."
+        default: tabs = " Its \(tabCount) tabs close and go to the Archive."
+        }
+        return spaces + tabs + (syncOn ? " It is deleted on your other Macs too." : "")
     }
 }
 

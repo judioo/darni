@@ -915,9 +915,15 @@ public final class SidebarStore {
         return moveItem(id, to: destination(for: parent), index: after ? targetIndex + 1 : targetIndex)
     }
 
+    /// A tab group's tab leaves its group to be pinned, in the space it is shown in.
     @discardableResult
     public func pinTab(_ id: Tab.ID) -> Bool {
-        guard case .today(let spaceID) = locate(id), case .tab = entry(withID: id) else { return false }
+        let spaceID: Space.ID
+        switch locate(id) {
+        case .today(let space), .tabGroup(let space, _): spaceID = space
+        default: return false
+        }
+        guard case .tab = entry(withID: id) else { return false }
         let count = sectionEntries(for: .pinned, spaceID: spaceID).count
         return moveItem(id, to: .section(spaceID: spaceID, section: .pinned), index: count)
     }

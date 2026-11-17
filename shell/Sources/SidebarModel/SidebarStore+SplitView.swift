@@ -15,27 +15,6 @@ extension SidebarStore {
         var tabs: [Tab] = []
         var placements: [Tab.ID: TabPlacement] = [:]
 
-        // A split sits at section level, so a tab group's tab leaves its group
-        // to join one, landing below the group's row. Checked for every tab
-        // first: a split that cannot be made leaves the groups as they were.
-        let grouped = tabIDs.filter { tabGroupID(holding: $0) != nil }
-        if !grouped.isEmpty {
-            var sections = Set<ItemContainerKind.SpaceSection>()
-            for tabID in tabIDs {
-                switch indexed(tabID)?.place {
-                case .groupTab(let groupID):
-                    guard let place = tabGroupPlaces(of: groupID).first(where: { $0.spaceID == sid }) else { return nil }
-                    sections.insert(place.section)
-                case .tree(let spaceID, let section, nil) where spaceID == sid:
-                    sections.insert(section)
-                default:
-                    return nil
-                }
-            }
-            guard sections.count == 1 else { return nil }
-            for tabID in grouped { removeTabFromGroup(tabID, in: sid) }
-        }
-
         for tabID in tabIDs {
             guard let location = locate(tabID),
                   tabLocationSpace(location) == sid,
@@ -47,6 +26,7 @@ extension SidebarStore {
             case .today:
                 resolvedSection = .unpinned
             case .favorite, .splitPane, .tabGroup:
+                // A tab group's tab leaves its group before it can join a split.
                 return nil
             }
             if let section, section != resolvedSection { return nil }
@@ -230,6 +210,7 @@ extension SidebarStore {
     @discardableResult
     public func splitTab(_ tabID: Tab.ID, with anchorID: Tab.ID, orientation: SplitLayoutOrientation = .horizontal) -> SplitViewItem? {
         guard tabID != anchorID, splitContaining(tabID: tabID) == nil,
+              tabGroupID(holding: tabID) == nil, tabGroupID(holding: anchorID) == nil,
               case .tab = entry(withID: tabID),
               let tabSpace = spaceContaining(tabID: tabID),
               let anchorSpace = spaceContaining(tabID: anchorID), tabSpace == anchorSpace else { return nil }
