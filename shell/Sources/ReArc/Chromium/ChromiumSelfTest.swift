@@ -3312,7 +3312,7 @@ extension ChromiumSelfTest {
         let url = URL(string: "\(serverBase)/search")!
         let pageTitle = "search results"
         let previous = store.selectedTab?.id
-        let tab = store.addTab(kind: .today, title: "Task Manager", url: url)
+        let tab = store.addTab(kind: .today, title: "Task manager page", url: url)
         model.selectTab(tab.id)
         let engine = try shellEngine(model, tab)
         loadShellTab(model, tab, engine, url)
@@ -3333,7 +3333,8 @@ extension ChromiumSelfTest {
         try check(!manager.isPolling, "the Task Manager reads the engine before its window is shown")
         model.showTaskManager()
         model.showTaskManager()
-        let shown = NSApp.windows.filter { $0.title == "Task Manager" && $0.isVisible }
+        // Its own windows only: a browser window can carry a page's title.
+        let shown = NSApp.windows.filter { $0.isVisible && $0.windowController is TaskManagerWindowController }
         try check(shown.count == 1 && manager.isPolling, "Task Manager opened twice: \(shown.count) windows, reading \(manager.isPolling)")
         manager.category = .all
         manager.search = ""
