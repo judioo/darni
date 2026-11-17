@@ -271,6 +271,16 @@ final class BrowserViewModel {
     /// Bumped when the default-browser state may have changed (menus re-read it).
     var defaultBrowserRevision = 0
     var defaultBrowserMessage: String?
+    /// "Connect 1Password to ReArc" (BrowserViewModel+OnePassword.swift).
+    @ObservationIgnored var onePasswordApp: any OnePasswordAppLocating = SystemOnePasswordApp()
+    /// The 1Password app, once a look has found it.
+    var onePasswordAppURL: URL?
+    @ObservationIgnored var isLocatingOnePasswordApp = false
+    var onePasswordPreference: OnePasswordConnectPreference = .load(from: .standard) {
+        didSet { if onePasswordPreference != oldValue { onePasswordPreference.save(to: externalLinkDefaults) } }
+    }
+    /// The card's close button was pressed in this launch.
+    var onePasswordDismissedThisLaunch = false
     /// Space being edited in the Edit Space sheet (name, theme, icon).
     var spaceEditorID: Space.ID?
     /// Edit Theme Color: the space whose header shows the theme editor popover.
@@ -821,6 +831,7 @@ final class BrowserViewModel {
         startAutoArchiveTimer()
         // The first launch with a card sets ReArc's start date.
         membershipCard.loadInBackground()
+        locateOnePasswordAppIfPromptMayShow()
         loadSelectedIfNeeded()
         if wasDeferred { restoreLittleArcWindowsIfNeeded() }
         MainActor.assumeIsolated { livePanel.track() }
