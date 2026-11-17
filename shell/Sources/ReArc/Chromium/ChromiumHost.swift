@@ -354,6 +354,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         if runtime.capabilities.searchEngines {
             model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
         }
+        // Before startup's first reading of 1Password's connection.
+        model.onePasswordHelperPath = runtime.onePasswordHelperPath
     }
 
     /// At ready. `model` must come from `makeModel` (or name the Default owner

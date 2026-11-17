@@ -173,4 +173,50 @@ final class NativeMessagingHostsTests: XCTestCase {
 
         XCTAssertEqual(mirror(data, [arc]), ["com.1password.ok.json"])
     }
+
+    // The helper's path, for the 1Password connection check (pre-review of 2026-11-17, B-2)
+
+    func testTheCopiedManifestGivesTheHelpersPath() throws {
+        let arc = try dir("arc"), data = try dir("data")
+        try manifest("com.1password.1password", path: "/Applications/1Password.app/helper", in: arc)
+        mirror(data, [arc])
+
+        XCTAssertEqual(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password", in: data, isExecutable: { _ in true }),
+                       "/Applications/1Password.app/helper")
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password7", in: data, isExecutable: { _ in true }),
+                     "no such manifest")
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password", in: data, isExecutable: { _ in false }),
+                     "the helper is no longer installed")
+    }
+
+    func testAManifestReArcDidNotCopyGivesNoPath() throws {
+        let data = try dir("data")
+        try FileManager.default.createDirectory(at: hosts(data), withIntermediateDirectories: true)
+        try manifest("com.1password.1password", in: hosts(data))
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password", in: data, isExecutable: { _ in true }),
+                     "no ledger")
+
+        try Data(#"["com.dropbox.nmh.json"]"#.utf8).write(to: hosts(data).appendingPathComponent(".rearc-copied.json"))
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password", in: data, isExecutable: { _ in true }),
+                     "not in the ledger")
+    }
+
+    func testOnlyAnAllowedAndValidManifestGivesAPath() throws {
+        let data = try dir("data")
+        try FileManager.default.createDirectory(at: hosts(data), withIntermediateDirectories: true)
+        try Data(#"["com.dropbox.nmh.json", "com.1password.1password.json", "../com.1password.x.json"]"#.utf8)
+            .write(to: hosts(data).appendingPathComponent(".rearc-copied.json"))
+        try manifest("com.dropbox.nmh", in: hosts(data))
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.dropbox.nmh", in: data, isExecutable: { _ in true }),
+                     "not on the allowlist")
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "../com.1password.x", in: data, isExecutable: { _ in true }),
+                     "not a plain name")
+
+        try write(manifestJSON("com.1password.1password", path: "relative/helper"), as: "com.1password.1password.json", in: hosts(data))
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password", in: data, isExecutable: { _ in true }),
+                     "the path must be absolute")
+        try write(manifestJSON("com.1password.other", path: "/x"), as: "com.1password.1password.json", in: hosts(data))
+        XCTAssertNil(ChromiumNativeMessagingHosts.copiedHostPath(named: "com.1password.1password", in: data, isExecutable: { _ in true }),
+                     "the name must be the file's")
+    }
 }

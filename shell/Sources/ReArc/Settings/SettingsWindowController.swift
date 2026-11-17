@@ -6,7 +6,7 @@ import SwiftUI
 /// icon-over-label items, the selected pane's name as the title (the account
 /// item's is the profile's), and a fixed 684 × 650 pt frame whose panes
 /// scroll inside it (FEATURE-SPECS/SETTINGS.md §1).
-final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
+final class SettingsWindowController: NSWindowController, NSToolbarDelegate, NSWindowDelegate {
     private let model: BrowserViewModel
     private let capabilities: () -> SettingsCapabilities
     private let hosting: NSHostingController<AnyView>
@@ -37,6 +37,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         if !window.setFrameUsingName(Self.frameName) { window.center() }
         fixSize()
         window.setFrameAutosaveName(Self.frameName)
+        window.delegate = self
         showPane()
         observePane()
     }
@@ -48,8 +49,18 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     func show(_ pane: SettingsPane?) {
         if let pane { model.settingsPane = pane }
+        // A closed window keeps its pane's views, so the 1Password row may
+        // not appear again by itself: its status is read before it shows.
+        if model.settingsPane == .general, model.showsOnePasswordSettingsRow { model.onePasswordSettingsRowAppeared() }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: NSWindowDelegate
+
+    /// Nothing reads 1Password's status for a closed window.
+    func windowWillClose(_ notification: Notification) {
+        model.onePasswordSettingsRowDisappeared()
     }
 
     /// 684 × 650 whatever the pane, as Arc's (and whatever an old saved frame said).

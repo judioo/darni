@@ -19,10 +19,16 @@ final class OnePasswordConnectTests: XCTestCase {
     }
 
     private func shows(app: Bool = true, extension installed: Bool = true, done: Bool = false, dismissals: Int = 0,
-                       dismissedThisLaunch: Bool = false) -> Bool {
+                       dismissedThisLaunch: Bool = false, connectionHidesPrompt: Bool = false) -> Bool {
         OnePasswordConnect.showsPrompt(appInstalled: app, extensionInstalled: installed,
                                        preference: OnePasswordConnectPreference(isDone: done, dismissals: dismissals),
-                                       dismissedThisLaunch: dismissedThisLaunch)
+                                       dismissedThisLaunch: dismissedThisLaunch, connectionHidesPrompt: connectionHidesPrompt)
+    }
+
+    private func watches(done: Bool = false, dismissals: Int = 0, dismissedThisLaunch: Bool = false,
+                         _ connection: OnePasswordConnectionState = OnePasswordConnectionState()) -> Bool {
+        OnePasswordConnect.watchesConnection(preference: OnePasswordConnectPreference(isDone: done, dismissals: dismissals),
+                                             connection: connection, dismissedThisLaunch: dismissedThisLaunch)
     }
 
     // MARK: The decision
@@ -59,15 +65,55 @@ final class OnePasswordConnectTests: XCTestCase {
                 for done in [false, true] {
                     for dismissals in 0 ... 3 {
                         for thisLaunch in [false, true] {
-                            let expected = app && installed && !done && !thisLaunch && dismissals < 2
-                            XCTAssertEqual(shows(app: app, extension: installed, done: done, dismissals: dismissals,
-                                                 dismissedThisLaunch: thisLaunch), expected,
-                                           "app \(app) extension \(installed) done \(done) dismissals \(dismissals) this launch \(thisLaunch)")
+                            for connected in [false, true] {
+                                let expected = app && installed && !done && !thisLaunch && dismissals < 2 && !connected
+                                XCTAssertEqual(shows(app: app, extension: installed, done: done, dismissals: dismissals,
+                                                     dismissedThisLaunch: thisLaunch, connectionHidesPrompt: connected), expected,
+                                               "app \(app) extension \(installed) done \(done) dismissals \(dismissals) this launch \(thisLaunch) connected \(connected)")
+                            }
                         }
                     }
                 }
             }
         }
+    }
+
+    func testAWorkingConnectionHidesThePrompt() {
+        XCTAssertFalse(shows(connectionHidesPrompt: true))
+        XCTAssertFalse(shows(dismissals: 1, connectionHidesPrompt: true))
+    }
+
+    // MARK: When readings are worth taking
+
+    func testReadsWhileThePromptCouldShow() {
+        XCTAssertTrue(watches())
+        XCTAssertTrue(watches(dismissals: 1))
+        XCTAssertTrue(watches(OnePasswordConnectionState(stored: true)), "The stored value still needs this launch's verdict")
+    }
+
+    func testStopsOnceThePromptIsClosedForTheLaunchOrForGood() {
+        XCTAssertFalse(watches(dismissals: 1, dismissedThisLaunch: true))
+        XCTAssertFalse(watches(dismissals: 2))
+        XCTAssertFalse(watches(dismissals: 2, OnePasswordConnectionState(stored: true)))
+    }
+
+    func testStopsOnceAHelperWasSeenAttached() {
+        var connection = OnePasswordConnectionState()
+        connection.record(.attached, uptime: 40)
+        XCTAssertFalse(watches(connection))
+        connection.record(.absent, uptime: 60)
+        XCTAssertFalse(watches(connection), "The prompt does not come back in this launch")
+    }
+
+    func testAfterDoneOnlyALostConnectionIsWatchedForAndOnlyUntilTheVerdict() {
+        XCTAssertFalse(watches(done: true), "Done with no connection ever seen: nothing to lose")
+
+        var connection = OnePasswordConnectionState(stored: true)
+        XCTAssertTrue(watches(done: true, connection))
+        connection.record(.unknown, uptime: 0)
+        connection.record(.unknown, uptime: OnePasswordConnection.verdictDelay)
+        XCTAssertTrue(connection.hasVerdict)
+        XCTAssertFalse(watches(done: true, connection), "This launch could not tell, and stops asking")
     }
 
     func testTheSettingsRowFollowsTheAppAlone() {
@@ -103,6 +149,19 @@ final class OnePasswordConnectTests: XCTestCase {
         XCTAssertEqual(OnePasswordConnect.settingsLabel, "1Password")
     }
 
+    func testSettingsSaysConnectedAndKeepsTheSteps() {
+        XCTAssertEqual(OnePasswordConnect.connected, "Connected")
+        XCTAssertEqual(OnePasswordConnect.settingsMessage(connected: false), OnePasswordConnect.message)
+        XCTAssertEqual(OnePasswordConnect.settingsMessage(connected: true),
+                       "If 1Password stays locked in ReArc, add ReArc as a browser in 1Password: Settings › Browser › Add Browser, then choose ReArc. Restart ReArc afterwards.")
+        // The steps are in both, and neither says that 1Password trusts ReArc.
+        for connected in [false, true] {
+            let words = OnePasswordConnect.settingsMessage(connected: connected)
+            XCTAssertTrue(words.contains("Settings › Browser › Add Browser"), words)
+            XCTAssertFalse(words.localizedCaseInsensitiveContains("trust"), words)
+        }
+    }
+
     // MARK: The preference
 
     func testNothingSavedIsNotDoneAndNeverClosed() {
@@ -122,6 +181,36 @@ final class OnePasswordConnectTests: XCTestCase {
         OnePasswordConnectPreference(isDone: true, dismissals: 2).save(to: defaults)
         XCTAssertEqual(defaults.object(forKey: "rearc.onePasswordConnectDone") as? Bool, true)
         XCTAssertEqual(defaults.object(forKey: "rearc.onePasswordConnectDismissals") as? Int, 2)
+    }
+
+    // MARK: A lost connection
+
+    func testALostConnectionAfterDoneBringsThePromptBackForOneClose() {
+        var preference = OnePasswordConnectPreference(isDone: true, dismissals: 0)
+        preference.connectionLost()
+        XCTAssertEqual(preference, OnePasswordConnectPreference(isDone: false, dismissals: 1))
+        XCTAssertTrue(OnePasswordConnect.showsPrompt(appInstalled: true, extensionInstalled: true, preference: preference))
+
+        // One close and it stops.
+        preference.dismissals += 1
+        XCTAssertFalse(OnePasswordConnect.showsPrompt(appInstalled: true, extensionInstalled: true, preference: preference))
+    }
+
+    func testALostConnectionKeepsTheCloseLimit() {
+        var closedOnce = OnePasswordConnectPreference(isDone: true, dismissals: 1)
+        closedOnce.connectionLost()
+        XCTAssertEqual(closedOnce, OnePasswordConnectPreference(isDone: false, dismissals: 1))
+
+        var closedForGood = OnePasswordConnectPreference(isDone: true, dismissals: 2)
+        closedForGood.connectionLost()
+        XCTAssertFalse(OnePasswordConnect.showsPrompt(appInstalled: true, extensionInstalled: true, preference: closedForGood),
+                       "Closed twice, it stays closed")
+    }
+
+    func testALostConnectionWithoutDoneChangesNothing() {
+        var preference = OnePasswordConnectPreference(isDone: false, dismissals: 0)
+        preference.connectionLost()
+        XCTAssertEqual(preference, OnePasswordConnectPreference(isDone: false, dismissals: 0))
     }
 
     func testANegativeCountReadsAsZero() {

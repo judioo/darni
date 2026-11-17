@@ -227,20 +227,36 @@ struct GeneralSettingsPane: View {
 }
 
 /// 1Password: the sidebar card's one-time step and buttons, kept here for as
-/// long as the app is installed (`OnePasswordConnect`). ReArc cannot see
-/// whether 1Password trusts it, so the row states the step, not a status.
+/// long as the app is installed (`OnePasswordConnect`). While 1Password's
+/// helper is seen attached to ReArc the row says "Connected"
+/// (`OnePasswordConnection`). That is all ReArc can see: it is not
+/// 1Password's word that it trusts ReArc, so the steps and Open 1Password
+/// stay in every state.
 struct OnePasswordSettingsRow: View {
     let model: BrowserViewModel
 
     var body: some View {
-        SettingsLabeledRow(label: OnePasswordConnect.settingsLabel, detail: OnePasswordConnect.message) {
+        let connected = model.isOnePasswordConnected
+        SettingsLabeledRow(label: OnePasswordConnect.settingsLabel,
+                           detail: OnePasswordConnect.settingsMessage(connected: connected)) {
             HStack(spacing: 8) {
+                if connected {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        Text(OnePasswordConnect.connected).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("onePasswordConnected")
+                }
                 Button(OnePasswordConnect.open) { model.openOnePassword() }
-                if !model.onePasswordPreference.isDone {
+                if !connected, !model.onePasswordPreference.isDone {
                     Button(OnePasswordConnect.done) { model.markOnePasswordConnected() }
                 }
             }
         }
+        // Read now, and for as long as the row shows.
+        .onAppear { model.onePasswordSettingsRowAppeared() }
+        .onDisappear { model.onePasswordSettingsRowDisappeared() }
     }
 }
 

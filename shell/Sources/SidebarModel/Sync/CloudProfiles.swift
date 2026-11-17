@@ -544,9 +544,15 @@ public enum ProfileCloudText {
 
     /// The Profiles pane's Sync Sidebar row, under the switch.
     public static func syncSwitchNote(on: Bool) -> String {
-        on ? "On for every profile. Turning it off stops syncing and changes nothing in iCloud."
-            : "Off for every profile: nothing on this Mac goes to iCloud. Turning it on looks at iCloud first."
+        on ? "On for every profile. Turning it off stops syncing and changes nothing in iCloud. "
+            + tabGroupAddressesNote
+            : "Off for every profile: nothing on this Mac goes to iCloud. Turning it on looks at iCloud first. "
+            + tabGroupAddressesNote
     }
+
+    /// Security RC-849 AE-01: a tab group's tabs are working tabs whose
+    /// addresses sync as they change, unlike other Today tabs.
+    public static let tabGroupAddressesNote = "The addresses of tabs in a tab group sync as they change."
 
     /// The line pointing at the account tab, named after the person.
     public static func accountTabNote(_ tab: String) -> String {
