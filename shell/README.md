@@ -79,7 +79,10 @@ Both bundle scripts install the ReArc icon (`Resources/ReArc.icns`, rendered
 from `brand/app-icon.svg`) as `Contents/Resources/ReArc.icns` with
 `CFBundleIconFile=ReArc`. The Chromium bundle also drops `CFBundleIconName`,
 whose `AppIcon` in Chromium's `Assets.car` would otherwise win; `Assets.car`
-stays for its other assets. After rebuilding an installed copy, `touch` it
+stays for its other assets. `scripts/release/rebrand-bundle.py` then gives the
+two alerts helpers, which macOS shows as the app that sends a web notification,
+the same icon and the name ReArc, and puts ReArc's name in the localized
+permission reasons. After rebuilding an installed copy, `touch` it
 and re-register it with `lsregister -f` so Finder and the Dock refresh.
 
 The framework's `@loader_path/../../../../../..` rpath resolves to the

@@ -22,6 +22,10 @@ import sys
 from pathlib import Path
 
 NAME = "ReArc"
+# The engine's name as its translations write it. Hindi spells it in Devanagari; the other
+# translations keep the Latin word (the 57 locales of the 156.0.8078.100 engine; the en_XA
+# test locale accents it and is left).
+ENGINE_NAMES = ("Chromium", "क्रोमियम")
 HELPERS = "Contents/Frameworks/Chromium Framework.framework/Versions/Current/Helpers"
 ALERT_HELPERS = ("Chromium Helper (Alerts).app", "Chromium Helper (Aperitif Alerts).app")
 # Only the strings people read as the app's name; "The Chromium Authors" in the copyright
@@ -30,13 +34,19 @@ NAMED_KEY = re.compile(r"^(CFBundleDisplayName|CFBundleName|NS\w+UsageDescriptio
 LINE = re.compile(r'^(\s*"?([A-Za-z0-9_ ]+?)"?\s*=\s*")(.*)(";\s*)$')
 
 
+def renamed(value: str) -> str:
+    for name in ENGINE_NAMES:
+        value = value.replace(name, NAME)
+    return value
+
+
 def rebrand_strings_text(text: str) -> str:
     """Old-style .strings text: replaces Chromium with ReArc in the named keys' values."""
     out = []
     for line in text.splitlines(keepends=True):
         m = LINE.match(line)
         if m and NAMED_KEY.match(m.group(2)):
-            line = m.group(1) + m.group(3).replace("Chromium", NAME) + m.group(4)
+            line = m.group(1) + renamed(m.group(3)) + m.group(4)
         out.append(line)
     return "".join(out)
 
@@ -46,8 +56,8 @@ def rebrand_strings_file(path: Path) -> bool:
     if raw.startswith(b"bplist") or raw.lstrip().startswith(b"<?xml"):
         fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
         data = plistlib.loads(raw)
-        changed = {k: v.replace("Chromium", NAME) for k, v in data.items()
-                   if NAMED_KEY.match(k) and isinstance(v, str) and "Chromium" in v}
+        changed = {k: renamed(v) for k, v in data.items()
+                   if NAMED_KEY.match(k) and isinstance(v, str) and renamed(v) != v}
         if not changed:
             return False
         data.update(changed)

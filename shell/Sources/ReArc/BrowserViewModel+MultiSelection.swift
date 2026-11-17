@@ -61,7 +61,7 @@ extension BrowserViewModel {
             expanded: store.expandedFolderIDs,
             pinnedCollapsed: isPinnedSectionCollapsed(spaceID: spaceID, in: window),
             isDragging: false,
-            selection: { store.selection(among: $0, inSpace: spaceID) }
+            selection: { store.selection(among: $0, inSpace: spaceID, in: window) }
         ).compactMap { row in
             guard case .item(let item, _) = row, item.node.kind != .easel else { return nil }
             return item.id

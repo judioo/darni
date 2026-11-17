@@ -237,12 +237,13 @@ if [[ $DEV_MOCK_KEYCHAIN == 1 ]]; then
   plutil -replace ReArcDevUseMockKeychain -bool YES "$PLIST"
   echo "==> DEVELOPMENT bundle: --use-mock-keychain enabled (cookies are not Keychain-encrypted)"
 fi
-# Only the replaced browser executable is re-signed; it is the process that reads the
+# Only the replaced browser executable is re-signed here; it is the process that reads the
 # "ReArc Safe Storage" Keychain item. Nested framework/helper code keeps the engine
-# build's signatures. Ad-hoc: the identity changes on every build, so macOS may ask again
-# for Safe Storage access. With REARC_SIGN_IDENTITY the designated requirement (bundle id
-# + certificate) is stable, so one "Always Allow" survives rebuilds. Distribution still
-# needs a Developer ID identity, hardened runtime, full nested signing and notarization.
+# build's signatures, except the two alerts helpers re-signed ad hoc above. Ad-hoc: the
+# identity changes on every build, so macOS may ask again for Safe Storage access. With
+# REARC_SIGN_IDENTITY the designated requirement (bundle id + certificate) is stable, so
+# one "Always Allow" survives rebuilds. Distribution still needs a Developer ID identity,
+# hardened runtime, full nested signing and notarization.
 BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw "$PLIST")"
 if [[ -n $REARC_ICLOUD_CONTAINER ]]; then
   # Restricted entitlements: profile, marker and entitlements first, then the whole

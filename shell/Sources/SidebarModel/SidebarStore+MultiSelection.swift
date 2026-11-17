@@ -84,12 +84,14 @@ extension SidebarStore {
 
     /// After a mutation or a selection change: a window whose space or
     /// active item changed loses its selection; rows that were closed,
-    /// archived or moved to another space leave it.
+    /// archived or moved to another space leave it. The active item is the
+    /// window's own (`selectedItemID(in:)`): another window on the same
+    /// space showing a different tab changes nothing here.
     func validateMultiSelections() {
         guard !multiSelectionByWindow.isEmpty else { return }
         for (window, selection) in multiSelectionByWindow {
             guard focusedSpaceID(in: window) == selection.spaceID,
-                  selectedItemID(inSpace: selection.spaceID) == selection.activeID else {
+                  selectedItemID(in: window) == selection.activeID else {
                 setMultiSelection(nil, in: window)
                 continue
             }

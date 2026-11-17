@@ -28,7 +28,8 @@ lines and this section starts empty again.
   sideways instead.
 - Swiping between spaces in the sidebar moves the way your scroll direction setting moves
   content, as in Arc. With natural scrolling off it used to run the other way.
-- A space swipe works over the sidebar of a window behind another, without clicking first.
+- A space swipe works over the sidebar while another app is in front, without clicking first.
+  A second ReArc window behind the first still needs a click.
 - A space swipe moves only sideways: the space's list no longer drifts up or down or shows its
   scroll bar at the start of a swipe.
 

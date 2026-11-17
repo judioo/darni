@@ -629,8 +629,9 @@ public final class SidebarSyncCoordinator {
     /// A group tab whose address changed keeps its captured address and title
     /// until the new address has been seen for `groupAddressSettle`. A tab
     /// new to the group goes up with its first address: there is no older
-    /// one to keep. Edits run a capture and the cycle 3 s later another, so a
-    /// settled address goes up with the next cycle.
+    /// one to keep. An edit runs a capture, and its cycle runs another
+    /// `SidebarSyncScheduler.editDebounce` later. That is longer than the
+    /// settle time, so a settled address goes up with the edit's own cycle.
     private func holdUnsettledAddress(_ name: String, _ body: inout SyncRecordBody, known: SyncShadowRecord?, at: Date) {
         guard body.kind == .item,
               case .group? = body.values["parent"]?.stringValue.flatMap(SidebarSyncProjection.Parent.init(key:)),

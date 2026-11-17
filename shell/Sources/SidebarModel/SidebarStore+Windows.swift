@@ -97,6 +97,15 @@ extension SidebarStore {
         return selectedItemID(in: window) == id
     }
 
+    /// The selection `window`'s sidebar shows for `spaceID` if it is one of
+    /// `candidates` (a collapsed folder's or section's rows): its own for a
+    /// window that is not key, as `isSelected(_:inSpace:in:)` has it.
+    public func selection(among candidates: [UUID], inSpace spaceID: Space.ID, in window: SidebarWindowID?) -> UUID? {
+        guard let window, isOtherWindow(window) else { return selection(among: candidates, inSpace: spaceID) }
+        guard let selected = selectedItemID(in: window), candidates.contains(selected) else { return nil }
+        return selected
+    }
+
     /// A registered window that is not the key window.
     private func isOtherWindow(_ window: SidebarWindowID) -> Bool {
         guard let keyWindowID, window != keyWindowID else { return false }

@@ -774,6 +774,7 @@ private struct MiniSpaceSwitcher: View {
     let model: BrowserViewModel
     let current: Space
     @Environment(\.themeChrome) private var chrome
+    @Environment(\.sidebarWindow) private var window
 
     var body: some View {
         let spaces = model.store.spaces(listedIn: current.profileID)
@@ -794,8 +795,9 @@ private struct MiniSpaceSwitcher: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .background(MiniScrollStepper { forward in
-            guard spaces.count > 1 else { return }
+        .background(MiniScrollStepper { [window] forward in
+            // `cycleSpace` switches the key window's space: not from a window behind it.
+            guard spaces.count > 1, model.isKeyBrowserWindow(window) else { return }
             model.cycleSpace(forward: forward)
         })
         .contextMenu { SpaceContextMenu(model: model, space: current) }

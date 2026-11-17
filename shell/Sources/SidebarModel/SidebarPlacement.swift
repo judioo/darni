@@ -67,7 +67,7 @@ public struct SidebarPlacement: Equatable, Sendable {
     public var hoverPreviewEdge: SidebarSide { side.opposite }
 
     /// A two-finger swipe pages spaces the same way on either side: the
-    /// gesture follows the fingers, not the sidebar.
+    /// gesture follows the scroll direction setting, not the sidebar.
     public var mirrorsSpaceSwipe: Bool { false }
 
     /// The sidebar's x offset at `reveal` (1 shown, 0 hidden): it leaves
