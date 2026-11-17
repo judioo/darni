@@ -137,8 +137,11 @@ public struct TabSwitcherItem: Equatable, Identifiable, Sendable {
 extension SidebarStore {
     /// The active profile's tabs, most recently shown first (`lastActiveAt`),
     /// across its spaces and favorites. A split counts once, as its pane that
-    /// was shown last. The selected tab comes first.
-    public func recentTabSwitcherItems(limit: Int = 12) -> [TabSwitcherItem] {
+    /// was shown last. The selected tab comes first. `onScreenOnly` leaves out
+    /// the tabs of closed tab groups, for the keys that step through tabs
+    /// (⌃Tab, ⌃⌘← and →): they pass a closed group, as Chrome's do. The ⌘T
+    /// bar lists them, and choosing one there opens its group.
+    public func recentTabSwitcherItems(limit: Int = 12, onScreenOnly: Bool = false) -> [TabSwitcherItem] {
         var items: [TabSwitcherItem] = []
         var seenSplits = Set<UUID>()
         // A tab group's tab is in every space that shows the group: listed once.
@@ -148,6 +151,7 @@ extension SidebarStore {
                 switch entry {
                 case .tab(let tab):
                     guard seenTabs.insert(tab.id).inserted else { continue }
+                    if onScreenOnly, isInClosedTabGroupWhereShown(tab.id) { continue }
                     items.append(TabSwitcherItem(id: tab.id, title: tab.displayTitle, url: tab.url,
                                                  spaceName: space?.name, lastActiveAt: tab.lastActiveAt))
                 case .split(let split):

@@ -19,8 +19,9 @@ extension SidebarStore {
             // A saved pin is not an open-tab successor. In a folder Arc selects
             // nothing, Today tabs or not: the page goes blank and a collapsed
             // folder shows no tab (checked in Arc, 2026-11-15). At the top
-            // level only Today can take focus.
-            selectedItemID = parentFolderID(of: id) == nil ? content(for: activeSpaceID).todayLeaves.first?.id : nil
+            // level only Today can take focus (a closed tab group's tabs are not on screen).
+            let today = content(for: activeSpaceID).todayLeaves.first(where: { !isInClosedTabGroup($0.id) })
+            selectedItemID = parentFolderID(of: id) == nil ? today?.id : nil
         }
         resetTabToSavedURL(id)
         notifyMutation()
@@ -67,12 +68,15 @@ extension SidebarStore {
 
     /// Arc/Chrome "Switch to Nth Tab": 1…8 select that row in display order
     /// (favorites, pinned, Today; a split or easel is one row), 9 the last.
+    /// The rows are the ones on screen: a closed tab group's tabs do not count.
     /// Returns the selected entry id, nil when there is no such row.
     @discardableResult
     public func selectItem(atPosition number: Int, includingFavorites: Bool = true) -> UUID? {
         let profileID = activeSpace.profileID
         let favoriteIDs = Set(favorites(in: profileID).map(\.id))
-        let rows = displayEntries().filter { includingFavorites || !favoriteIDs.contains($0.id) }
+        let rows = displayEntries().filter {
+            (includingFavorites || !favoriteIDs.contains($0.id)) && !isInClosedTabGroup($0.id)
+        }
         guard (1 ... 9).contains(number), !rows.isEmpty else { return nil }
         let index = number == 9 ? rows.count - 1 : number - 1
         guard rows.indices.contains(index) else { return nil }

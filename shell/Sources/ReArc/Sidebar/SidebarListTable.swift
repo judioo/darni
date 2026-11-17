@@ -366,9 +366,10 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     /// Accessibility's press on a plain row: what a click on the row does.
     func press(_ id: UUID, kind: SidebarOutlineNode.Kind) {
         switch kind {
-        case .folder, .tabGroup:
-            // A tab group's row opens and closes through the same call.
+        case .folder:
             model.store.toggleFolderExpanded(id)
+        case .tabGroup:
+            model.toggleTabGroupExpanded(id)
         default:
             model.selectTab(id)
         }

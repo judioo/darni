@@ -252,9 +252,14 @@ extension BrowserViewModel {
         let space = store.spaceContaining(tabID: id).flatMap { store.space(withID: $0) }?.name ?? ""
         switch store.kind(of: id) {
         case .today:
-            store.pinTab(id)
-            let undo = noteMove(of: id, was: .today)
-            showKeptToast("Pinned Tab to “\(space)”", systemImage: "pin.fill", titleUndo: undo)
+            // A tab group's tab leaves its group to be pinned.
+            takingFromTabGroups([id]) { [self] in
+                store.pinTab(id)
+                let undo = noteMove(of: id, was: .today)
+                showKeptToast("Pinned Tab to “\(space)”", systemImage: "pin.fill", titleUndo: undo)
+                loadSelectedIfNeeded()
+            }
+            return
         case .pinned:
             store.unpinTab(id)
             showToast("Un-Pinned Tab from “\(space)”", systemImage: "pin.slash")
@@ -268,11 +273,13 @@ extension BrowserViewModel {
         guard let id = tabID ?? store.selectedTabID else { return }
         // The engine follows the favorite's profile, which is the space's profile.
         let kind = store.kind(of: id)
-        store.addToFavorites(id)
-        if kind == .today || kind == .pinned, let undo = tidyTitleIfNeeded(id) {
-            showUndoToast("Added to Favorites · Title tidied", systemImage: "star.fill", undo: undo)
+        takingFromTabGroups([id]) { [self] in
+            store.addToFavorites(id)
+            if kind == .today || kind == .pinned, let undo = tidyTitleIfNeeded(id) {
+                showUndoToast("Added to Favorites · Title tidied", systemImage: "star.fill", undo: undo)
+            }
+            loadSelectedIfNeeded()
         }
-        loadSelectedIfNeeded()
     }
 
     /// Unfavorite into the active space's pinned section.
@@ -293,10 +300,12 @@ extension BrowserViewModel {
     func moveEntry(_ id: UUID, toSpace spaceID: Space.ID) {
         // A container's space in the strip is another session: confirmed first.
         if store.crossesProfile([id], toSpace: spaceID) { return requestProfileMove([id], toSpace: spaceID) }
-        guard store.moveEntry(id, toSpace: spaceID) else { return }
-        // A space in another profile means another engine profile: drop the old engine.
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        takingFromTabGroups([id]) { [self] in
+            guard store.moveEntry(id, toSpace: spaceID) else { return }
+            // A space in another profile means another engine profile: drop the old engine.
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     // MARK: - Drag to split (wave 21)
@@ -413,20 +422,26 @@ extension BrowserViewModel {
 
     // MARK: - Drag and drop
 
+    /// A drag that takes a tab group's last tab out asks first
+    /// (`takingFromTabGroups`); a move inside the group does not.
     func moveItem(_ id: UUID, relativeTo targetID: UUID, after: Bool) {
         let kind = store.kind(of: id)
-        guard store.moveItem(id, relativeTo: targetID, after: after) else { return }
-        noteDrag(of: id, was: kind)
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        takingFromTabGroups([id], to: store.parent(of: targetID)) { [self] in
+            guard store.moveItem(id, relativeTo: targetID, after: after) else { return }
+            noteDrag(of: id, was: kind)
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     func moveItem(_ id: UUID, to destination: SidebarStore.ItemDestination, index: Int) {
         let kind = store.kind(of: id)
-        guard store.moveItem(id, to: destination, index: index) else { return }
-        noteDrag(of: id, was: kind)
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        takingFromTabGroups([id], to: store.resolvedParent(destination)) { [self] in
+            guard store.moveItem(id, to: destination, index: index) else { return }
+            noteDrag(of: id, was: kind)
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     /// Links dropped on a sidebar row from a page or another app: Today tabs
@@ -471,10 +486,12 @@ extension BrowserViewModel {
     func moveItem(_ id: UUID, intoFolder folderID: UUID) {
         let count = store.folder(withID: folderID)?.children.count ?? 0
         let kind = store.kind(of: id)
-        guard store.moveItem(id, to: .folder(folderID), index: count) else { return }
-        noteDrag(of: id, was: kind)
-        store.setFolderExpanded(folderID, true)
-        loadSelectedIfNeeded()
+        takingFromTabGroups([id]) { [self] in
+            guard store.moveItem(id, to: .folder(folderID), index: count) else { return }
+            noteDrag(of: id, was: kind)
+            store.setFolderExpanded(folderID, true)
+            loadSelectedIfNeeded()
+        }
     }
 
     // MARK: - Folders
@@ -504,9 +521,12 @@ extension BrowserViewModel {
     /// Archive Tab (Arc keywords "Exit Tab; Unload; Close").
     func archiveTab(_ tabID: Tab.ID? = nil) {
         if tabID == nil, let ids = keySelectionIDs { return archiveTabs(ids) }
-        guard let id = tabID ?? store.selectedTabID, store.archiveTab(id) != nil else { return }
-        releaseEngine(for: id)
-        loadSelectedIfNeeded()
+        guard let id = tabID ?? store.selectedTabID else { return }
+        takingFromTabGroups([id], closing: true) { [self] in
+            guard store.archiveTab(id) != nil else { return }
+            releaseEngine(for: id)
+            loadSelectedIfNeeded()
+        }
     }
 
     // MARK: - Rename and delete prompts

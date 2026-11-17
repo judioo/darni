@@ -108,7 +108,7 @@ extension BrowserViewModel {
             if !controlHeld { commitTabSwitcher() }
             return
         }
-        guard let session = TabSwitcherSession(items: store.recentTabSwitcherItems(), forward: forward),
+        guard let session = TabSwitcherSession(items: store.recentTabSwitcherItems(onScreenOnly: true), forward: forward),
               session.items.count > 1 else { return }
         tabSwitcher = session
         if !controlHeld { commitTabSwitcher() }
@@ -147,6 +147,7 @@ extension BrowserViewModel {
             }
             if self.handleFullscreenEscape(event) { return nil }
             if self.handlePeekEscape(event) { return nil }
+            if self.handleCommandBarKey(event) { return nil }
             if self.handleTabSwitcherEvent(event) { return nil }
             if self.handleDownloadsTrayEscape(event) { return nil }
             if self.handleLibraryEscape(event, pageHasFocus: self.shortcutRouter.pageHasFocus(event)) { return nil }

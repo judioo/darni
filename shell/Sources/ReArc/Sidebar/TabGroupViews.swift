@@ -283,7 +283,7 @@ struct TabGroupContextMenu: View {
                 model.moveItem(reference.id, to: .section(spaceID: spaceID, section: target), index: index)
             }
         }
-        Button(expanded ? "Collapse Group" : "Expand Group") { store.setTabGroupExpanded(reference.id, !expanded) }
+        Button(expanded ? "Collapse Group" : "Expand Group") { model.setTabGroupExpanded(reference.id, !expanded) }
         Divider()
         Button("Remove from This Space") { model.removeTabGroupFromSpace(reference.id) }
             .help("The group and its tabs stay in the other spaces that show it, and in the ⌘T bar")

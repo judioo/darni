@@ -2,7 +2,7 @@ import Foundation
 
 /// One visible row of a space's outline and its folder depth. A collapsed
 /// folder still shows its selected descendant (Arc's "peeked" expansion
-/// state).
+/// state). A tab group does not: closed, it shows none of its tabs.
 public struct SidebarOutlineRow: Identifiable, Equatable {
     public let node: SidebarOutlineNode
     public let depth: Int
@@ -20,18 +20,21 @@ public struct SidebarOutlineRow: Identifiable, Equatable {
             if expanded.contains(node.id) {
                 return [header] + rows(node.children, depth: depth + 1, expanded: expanded, selected: selected)
             }
-            if let selected, let leaf = SidebarOutlineNode.leaves(node.children).first(where: { $0.id == selected }) {
+            if node.kind == .folder, let selected,
+               let leaf = SidebarOutlineNode.leaves(node.children).first(where: { $0.id == selected }) {
                 return [header, SidebarOutlineRow(node: leaf, depth: depth + 1)]
             }
             return [header]
         }
     }
 
-    /// Rows shown only while selected: the leaves of collapsed folders.
+    /// Rows shown only while selected: the leaves of collapsed folders. A
+    /// closed tab group has none.
     public static func peekCandidates(_ nodes: [SidebarOutlineNode], expanded: Set<UUID>) -> [UUID] {
         nodes.flatMap { node -> [UUID] in
             guard node.kind.isContainer else { return [] }
             if expanded.contains(node.id) { return peekCandidates(node.children, expanded: expanded) }
+            guard node.kind == .folder else { return [] }
             return SidebarOutlineNode.leaves(node.children).map(\.id)
         }
     }
