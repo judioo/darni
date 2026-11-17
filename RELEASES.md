@@ -19,6 +19,14 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- On first launch macOS no longer shows a "Chromium" notifications banner beside ReArc's: the
+  helper that delivers website notifications now carries ReArc's name and icon. Camera,
+  microphone, location and Bluetooth prompts say ReArc instead of Chromium, in every language.
+- A two-finger swipe goes back or forward a page in any ReArc window under the pointer, as in
+  Arc, not only in the active one. Before, a swipe in a window behind another nudged the page
+  sideways instead.
+
 ## ReArc 2026.1117.864 — 2026-11-17
 
 **Fixes**

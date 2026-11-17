@@ -35,7 +35,9 @@ final class ChromiumHistorySwipe {
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
-        guard let host, event.window === host.window, host.window?.isKeyWindow == true,
+        // Not only the key window: macOS sends a swipe to the window under the pointer even
+        // when another window or app is active, and Arc goes back there too (owner, 2026-11-17).
+        guard let host, event.window === host.window, host.window?.isVisible == true,
               !host.isHiddenOrHasHiddenAncestor, host.pickerOverlay == nil, host.leaseAttachmentID != nil else { return event }
         let point = host.convert(event.locationInWindow, from: nil)
         guard event.hasPreciseScrollingDeltas else { return event }
