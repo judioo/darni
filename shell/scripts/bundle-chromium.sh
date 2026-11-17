@@ -222,6 +222,17 @@ cp -R "$SHELL_DIR/Resources/AppIcons" "$APP/Contents/Resources/AppIcons"
 cp "$SHELL_DIR/Resources/AboutSting.gif" "$APP/Contents/Resources/AboutSting.gif"
 plutil -replace CFBundleIconFile -string ReArc "$PLIST"
 plutil -remove CFBundleIconName "$PLIST" 2>/dev/null || true
+# ReArc's name instead of Chromium's where the engine's localized strings still say
+# Chromium: the alerts helpers macOS shows as the notifying app, and the permission reasons.
+# The changed helpers are re-signed ad hoc so their seal covers the new strings and icon
+# (sign-release.sh signs them again for a release).
+rebranded="$(python3 -I "$SHELL_DIR/scripts/release/rebrand-bundle.py" "$APP" "$SHELL_DIR/Resources/ReArc.icns")" \
+  || die "rebranding the app's strings and alerts helpers failed"
+while IFS= read -r helper; do
+  [[ -n $helper ]] || continue
+  codesign --force --sign - --preserve-metadata=identifier,entitlements,flags --timestamp=none "$helper" \
+    || die "re-signing $helper failed"
+done <<<"$rebranded"
 if [[ $DEV_MOCK_KEYCHAIN == 1 ]]; then
   plutil -replace ReArcDevUseMockKeychain -bool YES "$PLIST"
   echo "==> DEVELOPMENT bundle: --use-mock-keychain enabled (cookies are not Keychain-encrypted)"
