@@ -17,8 +17,9 @@ enum ChromiumNativeMessagingHosts {
 
     /// Hosts copied without asking. The bar for a name here: the host
     /// authenticates its caller itself (1Password checks the browser's
-    /// signature and asks the person to trust ReArc once). Anything else
-    /// waits for a per-host switch in Settings, off by default.
+    /// signature and talks only to browsers the person has added in its
+    /// settings: `OnePasswordConnect` shows that step). Anything else waits
+    /// for a per-host switch in Settings, off by default.
     static let allowedNamePrefixes = ["com.1password."]
 
     /// Arc first (ReArc's people come from it), then Chrome.
