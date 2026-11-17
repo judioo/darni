@@ -1,6 +1,7 @@
 #if REARC_CHROMIUM
 import Foundation
 import ReArcEngine
+import SidebarModel
 
 /// Owned copy of `ReArcPageTimingEvent` (ABI 1.44): a main-frame milestone
 /// of one navigation, on the engine's clock (microseconds of mach time, the
@@ -47,6 +48,8 @@ struct ChromiumProcessInfo: Equatable {
     var tabIDs: [UInt64]
     var physFootprint, residentSize: UInt64
     var cpuMicros: Int64
+    /// What `task_manager` (ABI 1.65) adds for the Task Manager; nil from an engine without it.
+    var details: TaskManagerProcess.Details?
 }
 
 /// The bench's engine measurement channels. `install` registers both
@@ -80,10 +83,29 @@ final class ChromiumPerfMetrics {
         }
     }
 
+    /// `ReArcEngineGetProcessDetails` (ABI 1.65): the same list with a JSON
+    /// object of what the Task Manager shows besides. Looked up by name, so
+    /// the shell builds and runs against an engine without it.
+    private typealias ProcessDetailsCallback = @convention(c) (
+        UnsafeMutableRawPointer?, ReArcStatus, UnsafePointer<ReArcProcessInfo>?, Int, UnsafePointer<CChar>?
+    ) -> Void
+    private typealias GetProcessDetails = @convention(c) (ProcessDetailsCallback?, UnsafeMutableRawPointer?) -> ReArcStatus
+
+    /// True when the engine's list carries `ChromiumProcessInfo.details`.
+    var hasProcessDetails: Bool { getProcessDetails != nil }
+
+    private var getProcessDetails: GetProcessDetails? {
+        guard ReArcEngineHasFeature("task_manager"),
+              let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "ReArcEngineGetProcessDetails") else { return nil }
+        return unsafeBitCast(symbol, to: GetProcessDetails.self)
+    }
+
     func processes() async -> [ChromiumProcessInfo] {
-        await withCheckedContinuation { continuation in
+        let getProcessDetails = getProcessDetails
+        return await withCheckedContinuation { continuation in
             let box = Unmanaged.passRetained(Box(continuation)).toOpaque()
-            if ReArcEngineGetProcesses(processesCallback, box) != .rearcOK {
+            let status = getProcessDetails.map { $0(processDetailsCallback, box) } ?? ReArcEngineGetProcesses(processesCallback, box)
+            if status != .rearcOK {
                 Unmanaged<Box<[ChromiumProcessInfo]>>.fromOpaque(box).release()
                 continuation.resume(returning: [])
             }
@@ -127,14 +149,31 @@ private let histogramCallback: ReArcHistogramCallback = { context, status, histo
 }
 
 private let processesCallback: ReArcProcessListCallback = { context, status, processes, count in
+    resumeProcesses(context, status, processes, count, detailsJSON: nil)
+}
+
+private let processDetailsCallback: @convention(c) (
+    UnsafeMutableRawPointer?, ReArcStatus, UnsafePointer<ReArcProcessInfo>?, Int, UnsafePointer<CChar>?
+) -> Void = { context, status, processes, count, json in
+    resumeProcesses(context, status, processes, count, detailsJSON: json.map { String(cString: $0) } ?? "{}")
+}
+
+/// Both lists' completion. `detailsJSON` nil: the engine has no details;
+/// otherwise every process gets them, empty where the JSON names none.
+private func resumeProcesses(
+    _ context: UnsafeMutableRawPointer?, _ status: ReArcStatus, _ processes: UnsafePointer<ReArcProcessInfo>?, _ count: Int,
+    detailsJSON: String?
+) {
     let box = Unmanaged<ChromiumPerfMetrics.Box<[ChromiumProcessInfo]>>.fromOpaque(context!).takeRetainedValue()
     guard status == .rearcOK else { return box.continuation.resume(returning: []) }
+    let details = detailsJSON.map(TaskManagerProcess.Details.byProcess(json:))
     let rows = UnsafeBufferPointer(start: processes, count: count).map { p in
         ChromiumProcessInfo(
             pid: p.pid, kind: ChromiumProcessInfo.Kind(rawValue: p.type) ?? .other,
             name: p.name.map { String(cString: $0) } ?? "", profileID: p.profile_id, isExtension: p.is_extension,
             tabIDs: Array(UnsafeBufferPointer(start: p.tab_ids, count: p.tab_count)),
-            physFootprint: p.phys_footprint, residentSize: p.resident_size, cpuMicros: p.cpu_time_us
+            physFootprint: p.phys_footprint, residentSize: p.resident_size, cpuMicros: p.cpu_time_us,
+            details: details.map { $0[p.pid] ?? TaskManagerProcess.Details() }
         )
     }
     box.continuation.resume(returning: rows)

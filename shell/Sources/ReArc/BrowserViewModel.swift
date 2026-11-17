@@ -620,6 +620,10 @@ final class BrowserViewModel {
     let downloads: DownloadsController
     /// Extension actions and pins (Chromium only; hidden on WebKit).
     let extensions = ExtensionsController()
+    /// Window › Task Manager: the engine's processes and what they use (both
+    /// engines; WebKit lists ReArc itself). Its window is made when first shown.
+    let taskManager = TaskManagerController()
+    @ObservationIgnored var taskManagerWindow: TaskManagerWindowController?
     /// Permission answers per site (URL field indicator; WebKit's remembered answers).
     let sitePermissions: SitePermissionsController
     /// Command-bar visit history, saved next to the sidebar file.
