@@ -163,6 +163,17 @@ struct MiniSidebarEntryContent: View {
                 }
                 FolderContextMenu(model: model, folder: folder)
             }
+        case .tabGroup(let reference):
+            MiniTabGroupRowView(
+                name: reference.group.displayName,
+                color: reference.group.color,
+                tabCount: reference.group.tabs.count,
+                isExpanded: model.store.isTabGroupExpanded(reference.id),
+                isDropTarget: isDropTarget,
+                onToggle: click(reference.id) { model.store.toggleTabGroupExpanded(reference.id) }
+            ) {
+                TabGroupContextMenu(model: model, reference: reference)
+            }
         case .easel(let ref):
             MiniEaselRowView(
                 ref: ref,
@@ -292,6 +303,50 @@ struct MiniFolderRowView<Menu: View>: View {
         .contextMenu { menu() }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(folder.title)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+    }
+}
+
+/// A tab group at mini width: the stack glyph on a tile of the group's
+/// colour. Click opens and closes it; its tabs follow as icons with the
+/// colour's bar beside them. The name is in the tooltip and the menu.
+struct MiniTabGroupRowView<Menu: View>: View {
+    let name: String
+    let color: TabGroupColor
+    let tabCount: Int
+    let isExpanded: Bool
+    let isDropTarget: Bool
+    let onToggle: () -> Void
+    @ViewBuilder let menu: () -> Menu
+
+    @State private var isHovering = false
+    @Environment(\.themeChrome) private var chrome
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+
+    var body: some View {
+        MiniRowIcon(size: TabGroupMetrics.miniTile) {
+            Image(systemName: TabGroupMetrics.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(color.ink(dark: chrome.isDark))
+                .frame(width: TabGroupMetrics.miniTile, height: TabGroupMetrics.miniTile)
+                .background(color.color(dark: chrome.isDark), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        } top: {
+            EmptyView()
+        } bottom: {
+            EmptyView()
+        }
+        .modifier(MiniRowHighlight(isHovering: isHovering, isDropTarget: isDropTarget))
+        .help("\(name), \(TabGroup.countText(tabCount))")
+        .gesture(TapGesture().onEnded {
+            let duration = isExpanded ? SidebarListController.collapseDuration : SidebarListController.expandDuration
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: duration)) { onToggle() }
+        })
+        .onHover { isHovering = $0 }
+        .contextMenu { menu() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Tab group \(name), \(TabGroup.countText(tabCount))")
         .accessibilityAddTraits(.isButton)
         .accessibilityValue(isExpanded ? "expanded" : "collapsed")
     }
@@ -430,8 +485,8 @@ private struct MiniRenameField: View {
 // MARK: The list's other rows
 
 /// The space header at mini width: the space's icon, which opens the space
-/// menu. Finish setup and sync trouble are a dot on it; with more than one
-/// profile, the profile's badge sits on its corner.
+/// menu. Finish setup, Connect 1Password and sync trouble are a dot on it;
+/// with more than one profile, the profile's badge sits on its corner.
 struct MiniSpaceHeaderView: View {
     let model: BrowserViewModel
     let space: Space
@@ -443,7 +498,7 @@ struct MiniSpaceHeaderView: View {
 
     private var badge: Color? {
         if SyncStatusPresentation(model.syncStatus).indicator == .red { return model.syncStatusColor }
-        if model.onboardingSetupState.showsCard || model.availableUpdate != nil { return .accentColor }
+        if model.onboardingSetupState.showsCard || model.availableUpdate != nil || model.showsOnePasswordPrompt { return .accentColor }
         return nil
     }
 
@@ -494,6 +549,11 @@ struct MiniSpaceHeaderView: View {
         }
         if model.availableUpdate != nil {
             Button(AvailableUpdate.title) { model.installUpdate?() }
+        }
+        // The card's steps and buttons are in Settings › General.
+        if model.showsOnePasswordPrompt {
+            Button(OnePasswordConnect.menuTitle) { model.showSettings(.general) }
+            Button(OnePasswordConnect.menuHide) { model.dismissOnePasswordPrompt() }
         }
         if SyncStatusPresentation(model.syncStatus).indicator == .red {
             Text(model.syncStatusHelp)

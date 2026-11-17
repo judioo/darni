@@ -3,11 +3,23 @@ import Foundation
 /// Recursive helpers over a section's entry tree (folders nest arbitrarily,
 /// SIDEBAR-SPEC "Serialized schema": lists-in-lists observed 8 deep).
 public enum SidebarTree {
-    /// Every non-folder entry in display order, descending into folders.
+    /// Every entry that is not a folder or a tab group in display order,
+    /// descending into both.
     public static func leaves(_ entries: [SidebarEntry]) -> [SidebarEntry] {
         entries.flatMap { entry -> [SidebarEntry] in
-            if case .folder(let folder) = entry { return leaves(folder.children) }
-            return [entry]
+            switch entry {
+            case .folder(let folder): return leaves(folder.children)
+            case .tabGroup(let reference): return reference.group.tabs.map { .tab($0) }
+            case .tab, .split, .easel: return [entry]
+            }
+        }
+    }
+
+    /// Every tab group reference in the tree (they sit at section level).
+    public static func tabGroups(_ entries: [SidebarEntry]) -> [TabGroupReference] {
+        entries.compactMap { entry in
+            if case .tabGroup(let reference) = entry { return reference }
+            return nil
         }
     }
 
@@ -23,11 +35,15 @@ public enum SidebarTree {
         find(id, in: entries) != nil
     }
 
+    /// The entry with `id`: a row, or a tab inside a folder or a tab group.
     public static func find(_ id: UUID, in entries: [SidebarEntry]) -> SidebarEntry? {
         for entry in entries {
             if entry.id == id { return entry }
             if case .folder(let folder) = entry, let found = find(id, in: folder.children) {
                 return found
+            }
+            if case .tabGroup(let reference) = entry, let tab = reference.group.tabs.first(where: { $0.id == id }) {
+                return .tab(tab)
             }
         }
         return nil
@@ -50,7 +66,8 @@ public enum SidebarTree {
         return nil
     }
 
-    /// Folder ids from the section root down to the folder holding `id`.
+    /// Folder ids from the section root down to the folder holding `id`; for
+    /// a tab group's tab, the group's row.
     public static func ancestorFolderIDs(of id: UUID, in entries: [SidebarEntry]) -> [UUID]? {
         for entry in entries {
             if entry.id == id { return [] }
@@ -58,11 +75,16 @@ public enum SidebarTree {
                let path = ancestorFolderIDs(of: id, in: folder.children) {
                 return [folder.id] + path
             }
+            if case .tabGroup(let reference) = entry, reference.group.tabs.contains(where: { $0.id == id }) {
+                return [reference.id]
+            }
         }
         return nil
     }
 
-    /// Removes `id` wherever it is in the tree and returns it.
+    /// Removes `id` wherever it is in the tree and returns it. A tab group's
+    /// tabs are not in the tree: they change through the group's record
+    /// (`SidebarStore+TabGroups`), as with `update` and `setChildren`.
     @discardableResult
     public static func remove(_ id: UUID, from entries: inout [SidebarEntry]) -> SidebarEntry? {
         if let index = entries.firstIndex(where: { $0.id == id }) {
@@ -113,7 +135,8 @@ public enum SidebarTree {
         }
     }
 
-    /// Sorts every level by LexoRank (folder children included).
+    /// Sorts every level by LexoRank (folder children included; a tab
+    /// group's tabs are kept in order by the store).
     public static func sortedRecursively(_ entries: [SidebarEntry]) -> [SidebarEntry] {
         RankedSortable.sortedEntries(entries).map { entry in
             guard case .folder(var folder) = entry else { return entry }
@@ -128,12 +151,13 @@ public enum SidebarTree {
             switch entry {
             case .tab(let tab): return [tab]
             case .split(let split): return split.tabs
-            case .easel, .folder: return []
+            case .easel, .folder, .tabGroup: return []
             }
         }
     }
 
-    /// Sets `kind` on every tab in `entry` (including folder descendants and split panes).
+    /// Sets `kind` on every tab in `entry` (including folder descendants and
+    /// split panes). A tab group's tabs stay as they are, wherever its row sits.
     public static func settingKind(_ kind: Tab.Kind, on entry: SidebarEntry) -> SidebarEntry {
         switch entry {
         case .tab(var tab):
@@ -142,7 +166,7 @@ public enum SidebarTree {
         case .split(var split):
             split.tabs = split.tabs.map { var tab = $0; tab.setKind(kind); return tab }
             return .split(split)
-        case .easel:
+        case .easel, .tabGroup:
             return entry
         case .folder(var folder):
             folder.children = folder.children.map { settingKind(kind, on: $0) }

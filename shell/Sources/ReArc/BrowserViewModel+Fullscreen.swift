@@ -91,7 +91,7 @@ extension BrowserViewModel {
         let consumed = isCommandBarPresented || peekSession != nil || tabSwitcher != nil
             || keyLittleArcID != nil || keyPrivateWindow != nil || window is NSPanel
             || window.attachedSheet != nil || inlineRename != nil || pendingRename != nil
-            || renamingSplitID != nil || themePopoverSpaceID != nil || itemIconEditorID != nil
+            || renamingSplitID != nil || themePopoverSpaceID != nil || itemIconEditorID != nil || tabGroupEditor != nil
             || spaceEditorID != nil || profileEditorRequest != nil || isAirTrafficControlPresented
             || downloads.isTrayPresented || librarySection(in: store.keyWindowID) != nil
             || (focus == .text && !findBar.isPresented)

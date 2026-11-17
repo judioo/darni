@@ -161,6 +161,22 @@ final class BrowserViewModel {
     var warnBeforeQuitting = QuitWarning.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(warnBeforeQuitting, forKey: QuitWarning.defaultsKey) }
     }
+    /// Settings › General › Tab groups: off, nothing offers to make a group
+    /// and the command bar lists none (`BrowserViewModel+TabGroups`).
+    var tabGroupsEnabled = TabGroupsPreference.isEnabled(in: .standard) {
+        didSet { TabGroupsPreference.setEnabled(tabGroupsEnabled, in: externalLinkDefaults) }
+    }
+    /// Delete Group asks first; its "Don't ask again" turns this off.
+    var asksBeforeDeletingTabGroup = TabGroupDeleteConfirmation.asks(in: .standard) {
+        didSet { TabGroupDeleteConfirmation.setAsks(asksBeforeDeletingTabGroup, in: externalLinkDefaults) }
+    }
+    /// The tab group whose name and colour editor is open.
+    var tabGroupEditor: TabGroupEditorRequest?
+    /// New Tab in Group: the group ⌘T's new tab joins.
+    var commandBarNewTabGroupID: TabGroup.ID?
+    /// Answers Delete Group's question in the alert's place (tests); the
+    /// arguments are the group and how many spaces show it.
+    @ObservationIgnored var answerTabGroupDeletion: ((TabGroup, Int) -> TabGroupDeletionAnswer)?
     /// Settings › Advanced: reopen every window of the last session at launch.
     var restoresWindows = WindowRestorePreference.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(restoresWindows, forKey: WindowRestorePreference.defaultsKey) }
@@ -271,6 +287,16 @@ final class BrowserViewModel {
     /// Bumped when the default-browser state may have changed (menus re-read it).
     var defaultBrowserRevision = 0
     var defaultBrowserMessage: String?
+    /// "Connect 1Password to ReArc" (BrowserViewModel+OnePassword.swift).
+    @ObservationIgnored var onePasswordApp: any OnePasswordAppLocating = SystemOnePasswordApp()
+    /// The 1Password app, once a look has found it.
+    var onePasswordAppURL: URL?
+    @ObservationIgnored var isLocatingOnePasswordApp = false
+    var onePasswordPreference: OnePasswordConnectPreference = .load(from: .standard) {
+        didSet { if onePasswordPreference != oldValue { onePasswordPreference.save(to: externalLinkDefaults) } }
+    }
+    /// The card's close button was pressed in this launch.
+    var onePasswordDismissedThisLaunch = false
     /// Space being edited in the Edit Space sheet (name, theme, icon).
     var spaceEditorID: Space.ID?
     /// Edit Theme Color: the space whose header shows the theme editor popover.
@@ -620,6 +646,10 @@ final class BrowserViewModel {
     let downloads: DownloadsController
     /// Extension actions and pins (Chromium only; hidden on WebKit).
     let extensions = ExtensionsController()
+    /// Window › Task Manager: the engine's processes and what they use (both
+    /// engines; WebKit lists ReArc itself). Its window is made when first shown.
+    let taskManager = TaskManagerController()
+    @ObservationIgnored var taskManagerWindow: TaskManagerWindowController?
     /// Permission answers per site (URL field indicator; WebKit's remembered answers).
     let sitePermissions: SitePermissionsController
     /// Command-bar visit history, saved next to the sidebar file.
@@ -821,6 +851,7 @@ final class BrowserViewModel {
         startAutoArchiveTimer()
         // The first launch with a card sets ReArc's start date.
         membershipCard.loadInBackground()
+        locateOnePasswordAppIfPromptMayShow()
         loadSelectedIfNeeded()
         if wasDeferred { restoreLittleArcWindowsIfNeeded() }
         MainActor.assumeIsolated { livePanel.track() }
@@ -1570,6 +1601,7 @@ final class BrowserViewModel {
     @discardableResult
     func openInNewTab(_ url: URL) -> Tab {
         let tab = store.addTab(kind: .today, title: url.host() ?? "New Tab", url: url)
+        joinCommandBarTabGroup(tab.id)
         store.selectTab(tab.id)
         engineHost.engine(for: tab, profileID: profileID(for: tab)).load(url)
         loadSelectedIfNeeded()
@@ -1831,6 +1863,7 @@ final class BrowserViewModel {
 
     func dismissCommandBar() {
         commandBarCreatesNewTab = false
+        commandBarNewTabGroupID = nil
         isCommandBarPresented = false
         commandBarMenuSnapshot = nil
         cancelCommandBarLive()
@@ -1984,6 +2017,7 @@ final class BrowserViewModel {
     private func openCommandBar(target: Tab.ID?, text: String) {
         commandBarMenuSnapshot = nil
         commandBarCreatesNewTab = false
+        commandBarNewTabGroupID = nil
         resetCommandBarSiteSearch()
         commandBarSplitAnchorID = nil
         commandBarTargetID = target

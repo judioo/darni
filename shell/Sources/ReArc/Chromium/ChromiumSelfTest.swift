@@ -1289,6 +1289,7 @@ final class ChromiumSelfTest {
         }
         try await codecChecks(model: model, store: store)
         try await prerenderChecks(model: model, store: store)
+        try await taskManagerChecks(model: model, store: store, window: first)
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3321,6 +3322,114 @@ extension ChromiumSelfTest {
                 log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
             }
         }
+    }
+
+    /// Window › Task Manager (docs/briefs/2026-11-17-chrome-features.md).
+    /// Opening it twice shows one window. Its reading lists ReArc first, the
+    /// GPU process and a page of this step as "Tab: <title>" in a process
+    /// of its own; the next reading has CPU figures; the segments and the
+    /// search narrow the rows as Chrome's do. Closing the window stops the
+    /// readings. End task on the page's renderer leaves the tab crashed, as
+    /// in Chrome, and takes the process off the list. An engine without
+    /// `task_manager` logs what the rows lack.
+    @MainActor
+    private func taskManagerChecks(model: BrowserViewModel, store: SidebarStore, window: NSWindow) async throws {
+        let url = URL(string: "\(serverBase)/search")!
+        let pageTitle = "search results"
+        let previous = store.selectedTab?.id
+        let tab = store.addTab(kind: .today, title: "Task Manager", url: url)
+        model.selectTab(tab.id)
+        let engine = try shellEngine(model, tab)
+        loadShellTab(model, tab, engine, url)
+        let manager = model.taskManager
+        let saved = (category: manager.category, search: manager.search, sort: manager.sort)
+        defer {
+            model.taskManagerWindow?.close()
+            manager.category = saved.category
+            manager.search = saved.search
+            manager.sort = saved.sort
+            manager.selection = []
+            model.closeTab(tab.id)
+            if let previous { model.selectTab(previous) }
+            window.makeKeyAndOrderFront(nil)
+        }
+        try await wait("task manager page loaded", timeout: 15) { engine.pageTitle == pageTitle && !engine.isLoading }
+
+        try check(!manager.isPolling, "the Task Manager reads the engine before its window is shown")
+        model.showTaskManager()
+        model.showTaskManager()
+        let shown = NSApp.windows.filter { $0.title == "Task Manager" && $0.isVisible }
+        try check(shown.count == 1 && manager.isPolling, "Task Manager opened twice: \(shown.count) windows, reading \(manager.isPolling)")
+        manager.category = .all
+        manager.search = ""
+        manager.sort = nil
+        func rows() -> String { manager.rows.map { "\($0.pid) \($0.title)" }.joined(separator: " | ") }
+        // By its engine tab, not its title: another page of this run may be called the same.
+        func pageRow() -> TaskManagerRow? { manager.rows.first { $0.icon == .tab(engine.tabID) } }
+        try await wait("the Task Manager's reading with the page", timeout: 10) { pageRow()?.title == "Tab: \(pageTitle)" }
+        guard let row = pageRow(), let group = manager.groups.first(where: { $0.pid == row.pid }) else {
+            throw Failure(description: "no row for the page: \(rows())")
+        }
+        try check(manager.rows.filter { $0.icon == .tab(engine.tabID) }.count == 1, "a page of one frame has more than one row: \(rows())")
+        try check(manager.rows.first?.title == "Browser" && manager.rows.first?.pid == getpid() && manager.rows.first?.isKillable == false,
+                  "All tasks starts with ReArc itself: \(rows())")
+        try check(manager.rows.contains { $0.title == "GPU Process" }, "All tasks has no GPU process: \(rows())")
+        try check(row.pid != getpid() && row.isKillable && row.memoryFootprint > 0,
+                  "the page's row: pid \(row.pid) killable \(row.isKillable) memory \(row.memoryFootprint)")
+        try await wait("CPU figures from the second reading", timeout: 10) {
+            manager.rows.first?.usage.cpuPercent != nil && manager.groups.first { $0.pid == row.pid }?.usage.cpuPercent != nil
+        }
+
+        manager.category = .tabsAndExtensions
+        try check(manager.rows.contains { $0.id == row.id } && !manager.rows.contains { $0.title == "Browser" || $0.title == "GPU Process" },
+                  "Tabs and extensions: \(rows())")
+        manager.category = .browser
+        try check(manager.rows.first?.title == "Browser" && !manager.rows.contains { $0.title.hasPrefix("Tab: ") }, "Browser: \(rows())")
+        manager.category = .all
+        manager.search = "SEARCH res"
+        try check(manager.rows.contains { $0.id == row.id } && !manager.rows.contains { $0.title == "Browser" || $0.title == "GPU Process" },
+                  "search for the page's title: \(rows())")
+        manager.search = ""
+
+        if runtime.capabilities.taskManager {
+            try await wait("network figures", timeout: 10) { manager.rows.first?.usage.networkBytesPerSecond != nil }
+            try check(manager.rows.contains { $0.title.hasPrefix("Utility: ") }, "no utility process is named: \(rows())")
+        } else {
+            try check(manager.rows.first?.text(for: .network) == "–", "Network without task_manager shows \(manager.rows.first?.text(for: .network) ?? "nil")")
+            log("ABI-GAP task_manager not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 65): "
+                + "the Task Manager's Network column shows –, a tab is listed in every process with one of its frames, "
+                + "and extensions and the spare renderer have no names")
+        }
+
+        // Closed, the window reads nothing; opened again, it reads again.
+        model.taskManagerWindow?.close()
+        try check(!manager.isPolling, "the Task Manager still reads the engine after its window closed")
+        model.showTaskManager()
+        try check(manager.isPolling, "the Task Manager does not read after its window opened again")
+
+        // End task, only when the page has its renderer to itself: the other
+        // pages of this run must stay up.
+        guard group.tabTitles == [pageTitle] else {
+            log("NOTE task manager: the page shares process \(row.pid) with \(group.tabTitles); End task not exercised")
+            log("PASS task manager: one window, ReArc first, GPU process, the page's row with memory and CPU, segments, search, no reading while closed")
+            return
+        }
+        try await wait("the page's process listed again", timeout: 10) { manager.groups.contains { $0.pid == row.pid } }
+        manager.selection = [getpid()]
+        try check(!manager.canEndSelection, "End task is on for ReArc itself")
+        manager.selection = [row.pid]
+        try check(manager.canEndSelection, "End task is off for the page's process")
+        var asked = false
+        manager.endSelection { _, answer in
+            asked = true
+            answer(false)
+        }
+        try check(!asked, "End task asked before ending a process with one tab")
+        try await wait("the page crashed after End task", timeout: 10) { engine.isCrashed }
+        try await wait("the ended process off the list", timeout: 10) { !manager.groups.contains { $0.pid == row.pid } }
+        try check(manager.selection.isEmpty, "the ended process is still selected")
+        log("PASS task manager: one window, ReArc first, GPU process, the page's row with memory and CPU, segments, search, "
+            + "no reading while closed, End task left the tab crashed and took process \(row.pid) off the list")
     }
 
     /// H.264/AAC (media/001, security RC-811 AD-02): a clip the page records

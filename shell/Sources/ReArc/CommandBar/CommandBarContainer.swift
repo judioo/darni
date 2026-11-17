@@ -41,8 +41,16 @@ struct CommandBarContainer: View {
             width: width,
             spaceName: { id in id == model.store.activeSpaceID ? nil : model.store.space(withID: id)?.name },
             favicon: { model.faviconStore.image(for: $0) },
-            instantLinks: model.isMaxFeatureOn(.instantLinks)
+            instantLinks: model.isMaxFeatureOn(.instantLinks),
+            // There while the setting is on, so its rows can fold away when typing begins.
+            underField: model.tabGroupsEnabled
+                ? AnyView(CommandBarTabGroupsSection(model: model, rows: model.commandBarTabGroups, dark: themeChrome.isWindowDark))
+                : nil
         )
+        // The field takes the keyboard back when a group's editor closes.
+        .onChange(of: model.tabGroupEditor == nil) { _, closed in
+            if closed, model.isCommandBarPresented { model.commandBarFocusRequest += 1 }
+        }
     }
 
 }

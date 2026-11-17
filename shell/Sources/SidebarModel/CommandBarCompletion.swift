@@ -141,10 +141,13 @@ extension SidebarStore {
     public func recentTabSwitcherItems(limit: Int = 12) -> [TabSwitcherItem] {
         var items: [TabSwitcherItem] = []
         var seenSplits = Set<UUID>()
+        // A tab group's tab is in every space that shows the group: listed once.
+        var seenTabs = Set<Tab.ID>()
         func add(_ entries: [SidebarEntry], space: Space?) {
             for entry in entries {
                 switch entry {
                 case .tab(let tab):
+                    guard seenTabs.insert(tab.id).inserted else { continue }
                     items.append(TabSwitcherItem(id: tab.id, title: tab.displayTitle, url: tab.url,
                                                  spaceName: space?.name, lastActiveAt: tab.lastActiveAt))
                 case .split(let split):
@@ -153,7 +156,7 @@ extension SidebarStore {
                     else { continue }
                     items.append(TabSwitcherItem(id: pane.id, title: split.tabs.map(\.displayTitle).joined(separator: " | "),
                                                  url: pane.url, spaceName: space?.name, lastActiveAt: pane.lastActiveAt))
-                case .easel, .folder:
+                case .easel, .folder, .tabGroup:
                     continue
                 }
             }

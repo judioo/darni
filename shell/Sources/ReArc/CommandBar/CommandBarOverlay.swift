@@ -56,6 +56,9 @@ struct CommandBarOverlay: View {
     var favicon: (URL) -> NSImage? = { _ in nil }
     /// Max › Instant Links is on: ⇧↩ on a search row opens its top result.
     var instantLinks = false
+    /// What sits between the field and the results: Tab Groups, while
+    /// nothing is typed (`CommandBarTabGroupsSection`). It takes no room when empty.
+    var underField: AnyView?
 
     // Arc's card, measured on the 2026-11-12 recordings (1 px = 1 pt):
     // 765 × (64 + 13 + 50 per row), corners ≈ 10, a hairline edge.
@@ -114,6 +117,8 @@ struct CommandBarOverlay: View {
                     .padding(.leading, Self.textX)
                     .padding(.bottom, 8)
             }
+
+            if let underField { underField }
 
             if !results.isEmpty {
                 Rectangle()

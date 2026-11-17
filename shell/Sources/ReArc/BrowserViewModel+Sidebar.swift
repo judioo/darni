@@ -336,6 +336,7 @@ extension BrowserViewModel {
         guard let anchor = store.selectedTabID, anchor != tabID,
               store.kind(of: anchor) != .favorite, store.kind(of: tabID) != .favorite,
               store.splitContaining(tabID: tabID) == nil,
+              store.tabGroupID(holding: tabID) == nil, store.tabGroupID(holding: anchor) == nil,
               store.spaceContaining(tabID: tabID) == store.spaceContaining(tabID: anchor) else { return false }
         return (store.splitContaining(tabID: anchor)?.split.tabs.count ?? 1) < 4
     }

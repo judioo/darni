@@ -79,7 +79,8 @@ extension SidebarStore {
         var parentFolder: UUID?
         var insertIndex: Int?
         switch targetParent {
-        case .favorites:
+        case .favorites, .tabGroup:
+            // A tab group's tabs stay plain tabs; a drop on one joins the group.
             return nil
         case .section(let sid, let section):
             spaceID = sid
@@ -158,6 +159,8 @@ extension SidebarStore {
     }
 
     public func setFolderExpanded(_ id: UUID, _ expanded: Bool) {
+        // A tab group's row opens and closes the same way (`setTabGroupExpanded`).
+        if case .tabGroup = lookupIndex()[id]?.entry { return setTabGroupExpanded(id, expanded) }
         guard folder(withID: id) != nil, expandedFolderIDs.contains(id) != expanded else { return }
         if expanded {
             expandedFolderIDs.insert(id)

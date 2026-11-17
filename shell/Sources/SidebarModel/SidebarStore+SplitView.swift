@@ -25,7 +25,8 @@ extension SidebarStore {
                 resolvedSection = .pinned
             case .today:
                 resolvedSection = .unpinned
-            case .favorite, .splitPane:
+            case .favorite, .splitPane, .tabGroup:
+                // A tab group's tab leaves its group before it can join a split.
                 return nil
             }
             if let section, section != resolvedSection { return nil }
@@ -183,6 +184,7 @@ extension SidebarStore {
         case .pinned(let spaceID): return .pinned(spaceID: spaceID, index: index)
         case .today(let spaceID): return .today(spaceID: spaceID, index: index)
         case .splitPane: return .today(spaceID: activeSpaceID, index: index)
+        case .tabGroup(let spaceID, _): return .today(spaceID: spaceID, index: index)
         }
     }
 
@@ -208,6 +210,7 @@ extension SidebarStore {
     @discardableResult
     public func splitTab(_ tabID: Tab.ID, with anchorID: Tab.ID, orientation: SplitLayoutOrientation = .horizontal) -> SplitViewItem? {
         guard tabID != anchorID, splitContaining(tabID: tabID) == nil,
+              tabGroupID(holding: tabID) == nil, tabGroupID(holding: anchorID) == nil,
               case .tab = entry(withID: tabID),
               let tabSpace = spaceContaining(tabID: tabID),
               let anchorSpace = spaceContaining(tabID: anchorID), tabSpace == anchorSpace else { return nil }

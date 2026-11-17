@@ -28,6 +28,11 @@ public struct SidebarFolderRecord: Equatable, Codable {
 /// Schema 10 adds folders, favorites keyed by profile, folder expansion, the
 /// tab archive and per-profile auto-archive thresholds. Optional customIcon
 /// fields are additive; older schema 10 files decode them as nil.
+///
+/// Tab groups are additive too, under their own `tabGroups` key with its own
+/// version, and the schema version stays 10: a build that meets a higher one
+/// refuses the file and starts from an empty sidebar. `TabGroupShadow` says
+/// what such a build sees of the groups instead.
 public struct SidebarSnapshot: Equatable, Codable {
     public static let schemaVersion = 10
 
@@ -70,6 +75,8 @@ public struct SidebarSnapshot: Equatable, Codable {
     public var expandedFolderIDs: [UUID] = []
     public var archivedTabs: [ArchivedTabRecord] = []
     public var autoArchiveThresholdByProfile: [Profile.ID: AutoArchiveThreshold] = [:]
+    /// Tab groups and the spaces' rows for them; not in the tables above.
+    public var tabGroups = TabGroupsSnapshot()
 
     public struct SpaceContainerBundle: Equatable, Codable {
         public var pinned: ItemContainerRecord
@@ -107,7 +114,8 @@ public struct SidebarSnapshot: Equatable, Codable {
         foldersByID: [UUID: SidebarFolderRecord] = [:],
         expandedFolderIDs: [UUID] = [],
         archivedTabs: [ArchivedTabRecord] = [],
-        autoArchiveThresholdByProfile: [Profile.ID: AutoArchiveThreshold] = [:]
+        autoArchiveThresholdByProfile: [Profile.ID: AutoArchiveThreshold] = [:],
+        tabGroups: TabGroupsSnapshot = TabGroupsSnapshot()
     ) {
         self.schemaVersion = schemaVersion
         self.lastFlushedSequence = lastFlushedSequence
@@ -135,6 +143,7 @@ public struct SidebarSnapshot: Equatable, Codable {
         self.expandedFolderIDs = expandedFolderIDs
         self.archivedTabs = archivedTabs
         self.autoArchiveThresholdByProfile = autoArchiveThresholdByProfile
+        self.tabGroups = tabGroups
     }
 
     public init(from store: SidebarStore) {
@@ -156,6 +165,7 @@ public struct SidebarSnapshot: Equatable, Codable {
         case easelRefsByID, capturesByID
         case topAppsContainersByProfileID, foldersByID, expandedFolderIDs
         case archivedTabs, autoArchiveThresholdByProfile
+        case tabGroups
         case favorites, contentBySpace
     }
 
@@ -403,6 +413,13 @@ public struct SidebarSnapshot: Equatable, Codable {
         } else {
             self = Self.applyV9ToV10Migration(self)
         }
+        // Files from before tab groups have no such key. One this build cannot
+        // read is treated the same way: the groups then load as the folders
+        // an older build sees (`TabGroupShadow`).
+        if let saved = try? c.decodeIfPresent(TabGroupsSnapshot.self, forKey: .tabGroups) {
+            tabGroups = saved
+            TabGroupShadow.remove(from: &self)
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -418,6 +435,12 @@ public struct SidebarSnapshot: Equatable, Codable {
         try c.encode(selectedItemID, forKey: .selectedItemID)
         try c.encode(selectionBySpace, forKey: .selectionBySpace)
         try c.encode(topAppsContainer, forKey: .topAppsContainer)
+        // With tab groups, the tables also carry what an older build shows of them.
+        let tables = tabGroups.isEmpty ? nil : TabGroupShadow.adding(to: self)
+        let spaceContainers = tables?.spaceContainers ?? spaceContainers
+        let tabsByID = tables?.tabsByID ?? tabsByID
+        let foldersByID = tables?.foldersByID ?? foldersByID
+        if !tabGroups.isEmpty { try c.encode(tabGroups, forKey: .tabGroups) }
         try c.encode(spaceContainers, forKey: .spaceContainers)
         try c.encode(tabsByID, forKey: .tabsByID)
         try c.encode(splitsByID, forKey: .splitsByID)

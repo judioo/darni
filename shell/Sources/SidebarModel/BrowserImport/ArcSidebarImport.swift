@@ -303,7 +303,7 @@ extension SidebarStore {
                 let tabs = remapArcEntries(split.tabs.map(SidebarEntry.tab), mapping: mapping).compactMap { if case .tab(let tab) = $0 { return tab }; return nil }
                 return .split(SplitViewItem(id: mapping[split.id] ?? split.id, orientation: split.orientation,
                     tabs: tabs, sortRank: split.sortRank, customIcon: split.customIcon, title: split.title))
-            case .easel: return entry
+            case .easel, .tabGroup: return entry
             }
         }
     }
@@ -347,7 +347,7 @@ extension SidebarStore {
             case .split(let split):
                 for tab in split.tabs { known.insert(tab.id) }
                 summary.pinnedTabs += split.tabs.count
-            case .easel: break
+            case .easel, .tabGroup: break
             }
             out.append(entry)
         }
@@ -359,6 +359,7 @@ extension SidebarStore {
             case .tab(var tab): tab.sortRank = rank; entry = .tab(tab)
             case .folder(var folder): folder.sortRank = rank; entry = .folder(folder)
             case .split(var split): split.sortRank = rank; entry = .split(split)
+            case .tabGroup(var reference): reference.sortRank = rank; entry = .tabGroup(reference)
             case .easel: break
             }
             return entry

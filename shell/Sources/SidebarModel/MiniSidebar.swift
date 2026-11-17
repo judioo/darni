@@ -134,6 +134,9 @@ public enum MiniSidebarRepresentation: Equatable, Sendable {
     case favicon
     /// The folder glyph (open, closed, with the dots of a live page).
     case folderGlyph
+    /// The tab group's glyph on a tile of the group's colour; its tabs keep
+    /// the colour's bar beside their favicons.
+    case tabGroupTile
     /// The split's own icon, else its first pane's favicon with a split mark.
     case splitGlyph
     /// The easel or note glyph.
@@ -160,6 +163,7 @@ public enum MiniSidebarRepresentation: Equatable, Sendable {
         case trafficLights, sidebarToggle, navigationButtons, urlField, profileSwitcher
         case favorite
         case spaceHeader, pinnedTab, todayTab, folder, folderChild, split, easel
+        case tabGroup
         case todayDivider, newTab, sectionDrop
         case liveVideo, mediaStrip, call
         case finishSetup, updateBanner
@@ -174,6 +178,7 @@ public enum MiniSidebarRepresentation: Equatable, Sendable {
         case .favorite, .pinnedTab, .todayTab, .folderChild: .favicon
         case .spaceHeader: .spaceIconMenu
         case .folder: .folderGlyph
+        case .tabGroup: .tabGroupTile
         case .split: .splitGlyph
         case .easel: .easelGlyph
         case .todayDivider: .divider
@@ -198,6 +203,7 @@ public enum MiniSidebarRepresentation: Equatable, Sendable {
             switch item.node.kind {
             case .tab: of(item.depth > 0 ? Part.folderChild : section == .pinned ? Part.pinnedTab : Part.todayTab)
             case .folder: of(Part.folder)
+            case .tabGroup: of(Part.tabGroup)
             case .split: of(Part.split)
             case .easel: of(Part.easel)
             }

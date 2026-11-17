@@ -11,7 +11,8 @@
 // presentation feedback (shown, resized), histogram snapshots and the process
 // list. Steps: 0 load /perf -> response, FCP, DCL, load, LCP events; 1 hide,
 // show -> shown event (TotalSwitchDuration3); 2 resize -> resized event;
-// 3 histograms; 4 processes; then shutdown. No input.
+// 3 histograms; 4 processes; 5 process details (task_manager, ABI 1.65); then
+// shutdown. No input.
 static uint64_t tab, profile;
 static NSWindow* window;
 static ReArcAttachment lease{};
@@ -33,6 +34,44 @@ static void finish() {
   assert(ReArcEngineShutdown(true, [](void*, ReArcStatus s, bool c) { assert(s == 0 && !c); stopped = true;
     puts("PERF page timing + shown/resized presentation + histograms + processes PASS"); }, nullptr) == 0);
 }
+// task_manager (ABI 1.65): the same rows with a JSON entry per pid. The tab's
+// page is in exactly one renderer's main_frame_tabs, and every child process
+// has Chrome's display name. Network bytes are only checked to be a count:
+// the page loaded before the first request switched the counting on.
+static void details() {
+  step = 5;
+  assert(ReArcEngineHasFeature("task_manager") && ReArcEngineABIMinorVersion() >= 65);
+  assert(ReArcEngineGetProcessDetails(nullptr, nullptr) == REARC_INVALID_ARGUMENT);
+  assert(ReArcEngineGetProcessDetails([](void*, ReArcStatus s, const ReArcProcessInfo* p, size_t n, const char* json) {
+    assert(s == REARC_OK && n >= 2 && p[0].type == 0 && p[0].pid == getpid() && json);
+    NSDictionary* all = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:json length:strlen(json)] options:0 error:nil];
+    assert([all isKindOfClass:[NSDictionary class]] && all.count == n);
+    NSString* wanted = [NSString stringWithFormat:@"%llu", tab];
+    int pages = 0;
+    for (size_t i = 0; i < n; ++i) {
+      NSDictionary* entry = all[[NSString stringWithFormat:@"%d", p[i].pid]];
+      assert([entry isKindOfClass:[NSDictionary class]]);
+      NSString* bytes = entry[@"network_bytes"];
+      assert([bytes isKindOfClass:[NSString class]] && bytes.length && bytes.longLongValue >= 0);
+      printf("PERF details pid=%d type=%u network=%s title=%s spare=%d main=%lu sub=%lu site=%s\n", p[i].pid, p[i].type, bytes.UTF8String,
+             [entry[@"title"] UTF8String] ?: "-", [entry[@"spare"] boolValue], (unsigned long)[entry[@"main_frame_tabs"] count],
+             (unsigned long)[entry[@"subframe_tabs"] count], [entry[@"site"] UTF8String] ?: "-");
+      if (p[i].type == 1) {
+        assert([entry[@"main_frame_tabs"] isKindOfClass:[NSArray class]] && [entry[@"subframe_tabs"] isKindOfClass:[NSArray class]]);
+        assert(!entry[@"title"]);
+        if ([entry[@"main_frame_tabs"] containsObject:wanted]) {
+          assert(![entry[@"spare"] boolValue] && ![entry[@"subframe_tabs"] containsObject:wanted]);
+          ++pages;
+        }
+      } else if (p[i].type != 0) {
+        assert([entry[@"title"] isKindOfClass:[NSString class]] && [entry[@"title"] length] && !entry[@"main_frame_tabs"]);
+      }
+    }
+    assert(pages == 1);
+    puts("PERF process details: an entry per process, the tab's page in one renderer, child titles PASS");
+    after(0.2, finish);
+  }, nullptr) == REARC_OK);
+}
 static void processes() {
   step = 4;
   assert(ReArcEngineGetProcesses(nullptr, nullptr) == REARC_INVALID_ARGUMENT);
@@ -52,7 +91,7 @@ static void processes() {
     }
     assert(renderer);
     puts("PERF process list: browser first, the tab's renderer with footprint and CPU PASS");
-    after(0.2, finish);
+    after(0.2, details);
   }, nullptr) == REARC_OK);
 }
 static void histogram(const char* name, ReArcStatus expected) {

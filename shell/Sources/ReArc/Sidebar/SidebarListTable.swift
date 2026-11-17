@@ -137,6 +137,10 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     private var shownReveal: SidebarReveal?
     private var externalDrag = false
     private var externalDragTimer: Timer?
+    /// The empty-space menu last shown. Its items target themselves weakly
+    /// (ClosureMenuItem), and AppKit sends the chosen item's action after the
+    /// menu closes: without this the menu was gone by then and no item ran.
+    private var shownEmptySpaceMenu: NSMenu?
     private var observers: [NSObjectProtocol] = []
     /// A scroll gesture is moving the list: rows passing under a still
     /// pointer stay plain until it ends.
@@ -209,6 +213,7 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         emptySpaceClick.delaysPrimaryMouseButtonEvents = false
         emptySpaceClick.delegate = self
         scroll.addGestureRecognizer(emptySpaceClick)
+        scroll.emptySpaceMenu = { [weak self] event in self?.emptySpaceMenu(for: event) }
         rebuild(animated: false, reloadAll: true)
         trackSelection()
         observeInteraction(scroll)
@@ -230,6 +235,18 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     @objc private func openTabFromEmptySpace(_ recognizer: NSClickGestureRecognizer) {
         guard gestureRecognizerShouldBegin(recognizer) else { return }
         model.newTab()
+    }
+
+    /// A right-click under the last row: the sidebar's own menu. A row's
+    /// SwiftUI menu takes a right-click on the row before it gets here.
+    private func emptySpaceMenu(for event: NSEvent) -> NSMenu? {
+        guard let tableView else { return nil }
+        let point = tableView.convert(event.locationInWindow, from: nil)
+        let bottom = tableView.numberOfRows > 0 ? tableView.rect(ofRow: tableView.numberOfRows - 1).maxY : 0
+        guard SidebarEmptySpaceClick.opensMenu(rowIndex: tableView.row(at: point), y: point.y, rowsBottom: bottom) else { return nil }
+        let menu = SidebarEmptySpaceMenu.menu(model: model, spaceID: spaceID)
+        shownEmptySpaceMenu = menu
+        return menu
     }
 
     func invalidate() {
@@ -349,7 +366,8 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     /// Accessibility's press on a plain row: what a click on the row does.
     func press(_ id: UUID, kind: SidebarOutlineNode.Kind) {
         switch kind {
-        case .folder:
+        case .folder, .tabGroup:
+            // A tab group's row opens and closes through the same call.
             model.store.toggleFolderExpanded(id)
         default:
             model.selectTab(id)
@@ -608,6 +626,14 @@ final class SidebarSelectionKeyView: NSView, NSMenuItemValidation {
 /// monitor) only ever saw a swipe begin and the pager was left mid-swipe.
 private final class SidebarScrollView: NSScrollView {
     override class var isCompatibleWithResponsiveScrolling: Bool { false }
+
+    /// The menu for a right-click no row took (the table and the clip view
+    /// have none, so the click comes up to here); nil for none.
+    var emptySpaceMenu: ((NSEvent) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        emptySpaceMenu?(event) ?? super.menu(for: event)
+    }
 }
 
 private final class SidebarTableView: NSTableView {
@@ -716,11 +742,14 @@ struct SidebarListCell: View {
                 SidebarTodayCell(model: model, spaceID: spaceID)
             }
         case .newTab:
-            if context.isMini {
-                MiniNewTabRowView { model.newTab() }
-            } else {
-                NewTabRowView { model.newTab() }
+            Group {
+                if context.isMini {
+                    MiniNewTabRowView { model.newTab() }
+                } else {
+                    NewTabRowView { model.newTab() }
+                }
             }
+            .contextMenu { NewTabGroupMenuItem(model: model, spaceID: spaceID) }
         case .sectionEnd(let section, let isEmpty):
             SectionEndDropZone(
                 destination: .section(spaceID: spaceID, section: section),

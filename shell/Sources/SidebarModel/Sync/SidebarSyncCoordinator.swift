@@ -618,24 +618,28 @@ public final class SidebarSyncCoordinator {
     }
 
     /// The record names of `profiles` in `snapshot`: each profile, its
-    /// favorites and Boosts, its spaces with their styles and pinned rows.
+    /// favorites, Boosts and tab groups, its spaces with their styles and pinned rows.
     static func records(of profiles: Set<Profile.ID>, in snapshot: SidebarSnapshot) -> Set<String> {
         guard !profiles.isEmpty else { return [] }
         let spaces = Set(snapshot.spaces.filter { profiles.contains($0.profileID) }.map { $0.id.uuidString.lowercased() })
         func owned(_ value: SyncValue?) -> Bool {
             value?.stringValue.flatMap(UUID.init(uuidString:)).map(profiles.contains) == true
         }
+        let groups = Set(snapshot.tabGroups.groups.filter { profiles.contains($0.profileID) }.map(\.id))
         return Set(SidebarSyncProjection.extract(snapshot).compactMap { name, body -> String? in
             guard let (kind, id) = SyncRecordKind.parse(recordName: name) else { return nil }
             switch kind {
             case .profile: return profiles.contains(id) ? name : nil
             case .space: return owned(body.values["profileID"]) ? name : nil
             case .spaceStyle, .spaceArchive: return spaces.contains(id.uuidString.lowercased()) ? name : nil
-            case .boost: return owned(body.values["profileID"]) ? name : nil
+            case .boost, .tabGroup: return owned(body.values["profileID"]) ? name : nil
             case .item:
                 if let space = body.values["space"]?.stringValue, spaces.contains(space.lowercased()) { return name }
-                guard case .favorites(let profile)? = body.values["parent"]?.stringValue.flatMap(SidebarSyncProjection.Parent.init(key:)) else { return nil }
-                return profiles.contains(profile) ? name : nil
+                switch body.values["parent"]?.stringValue.flatMap(SidebarSyncProjection.Parent.init(key:)) {
+                case .favorites(let profile)?: return profiles.contains(profile) ? name : nil
+                case .group(let group)?: return groups.contains(group) ? name : nil
+                default: return nil
+                }
             }
         })
     }

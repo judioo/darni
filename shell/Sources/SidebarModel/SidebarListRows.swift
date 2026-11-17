@@ -15,7 +15,7 @@ public struct SidebarOutlineRow: Identifiable, Equatable {
 
     public static func rows(_ nodes: [SidebarOutlineNode], depth: Int = 0, expanded: Set<UUID>, selected: UUID?) -> [SidebarOutlineRow] {
         nodes.flatMap { node -> [SidebarOutlineRow] in
-            guard node.kind == .folder else { return [SidebarOutlineRow(node: node, depth: depth)] }
+            guard node.kind.isContainer else { return [SidebarOutlineRow(node: node, depth: depth)] }
             let header = SidebarOutlineRow(node: node, depth: depth)
             if expanded.contains(node.id) {
                 return [header] + rows(node.children, depth: depth + 1, expanded: expanded, selected: selected)
@@ -30,7 +30,7 @@ public struct SidebarOutlineRow: Identifiable, Equatable {
     /// Rows shown only while selected: the leaves of collapsed folders.
     public static func peekCandidates(_ nodes: [SidebarOutlineNode], expanded: Set<UUID>) -> [UUID] {
         nodes.flatMap { node -> [UUID] in
-            guard node.kind == .folder else { return [] }
+            guard node.kind.isContainer else { return [] }
             if expanded.contains(node.id) { return peekCandidates(node.children, expanded: expanded) }
             return SidebarOutlineNode.leaves(node.children).map(\.id)
         }
@@ -119,7 +119,7 @@ public struct SidebarListHeights: Equatable {
         case .item(let item, _):
             switch item.node.kind {
             // A split is one row, stacked in place like Arc's.
-            case .tab, .folder, .split: rowPitch
+            case .tab, .folder, .split, .tabGroup: rowPitch
             case .easel: nil
             }
         }

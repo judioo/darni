@@ -134,12 +134,14 @@ public struct SidebarFolder: Identifiable, Equatable, Codable {
     }
 }
 
-/// One row in a sidebar section: a plain tab, split item, easel reference, or folder.
+/// One row in a sidebar section: a plain tab, split item, easel reference,
+/// folder, or a tab group's reference (section level only, never in a folder).
 public enum SidebarEntry: Identifiable, Equatable, Codable {
     case tab(Tab)
     case split(SplitViewItem)
     case easel(SidebarEaselRef)
     case folder(SidebarFolder)
+    case tabGroup(TabGroupReference)
 
     public var id: UUID {
         switch self {
@@ -147,6 +149,7 @@ public enum SidebarEntry: Identifiable, Equatable, Codable {
         case .split(let split): return split.id
         case .easel(let ref): return ref.id
         case .folder(let folder): return folder.id
+        case .tabGroup(let reference): return reference.id
         }
     }
 
@@ -157,6 +160,8 @@ public enum SidebarEntry: Identifiable, Equatable, Codable {
             case .folder(let folder): return folder.customIcon
             case .split(let split): return split.customIcon
             case .easel(let ref): return ref.customIcon
+            // A group's look is its colour.
+            case .tabGroup: return nil
             }
         }
         set {
@@ -165,12 +170,18 @@ public enum SidebarEntry: Identifiable, Equatable, Codable {
             case .folder(var folder): folder.customIcon = newValue; self = .folder(folder)
             case .split(var split): split.customIcon = newValue; self = .split(split)
             case .easel(var ref): ref.customIcon = newValue; self = .easel(ref)
+            case .tabGroup: break
             }
         }
     }
 
     public var isFolder: Bool {
         if case .folder = self { return true }
+        return false
+    }
+
+    public var isTabGroup: Bool {
+        if case .tabGroup = self { return true }
         return false
     }
 }

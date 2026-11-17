@@ -175,6 +175,7 @@ struct GeneralSettingsPane: View {
             SettingsGroup {
                 SettingsSwitchRow(label: "Warn before quitting", isOn: $model.warnBeforeQuitting)
                 DefaultBrowserRow(model: model)
+                if model.showsOnePasswordSettingsRow { OnePasswordSettingsRow(model: model) }
             }
             #if REARC_CHROMIUM
             if AppUpdater.shared.isEnabled { UpdateSettingsSection() }
@@ -207,8 +208,36 @@ struct GeneralSettingsPane: View {
                 }
             }
             SettingsGroup {
+                SettingsSwitchRow(label: "Tab groups",
+                                  detail: "Keep tabs together under a named, coloured header, as in Chrome. One group can show in several spaces. To make one, right-click a tab or “+ New Tab”.",
+                                  isOn: $model.tabGroupsEnabled)
+                if model.tabGroupsEnabled {
+                    SettingsSwitchRow(label: "Ask before deleting a tab group", isOn: $model.asksBeforeDeletingTabGroup)
+                }
+            }
+            SettingsGroup {
                 SettingsLabeledRow(label: "Manage your default search engine, Auto-Archive, and downloads in Profile Settings.") {
                     Button("Profile Settings…") { model.settingsPane = .profiles }
+                }
+            }
+        }
+        // 1Password may have been installed or removed since launch.
+        .onAppear { model.locateOnePasswordApp() }
+    }
+}
+
+/// 1Password: the sidebar card's one-time step and buttons, kept here for as
+/// long as the app is installed (`OnePasswordConnect`). ReArc cannot see
+/// whether 1Password trusts it, so the row states the step, not a status.
+struct OnePasswordSettingsRow: View {
+    let model: BrowserViewModel
+
+    var body: some View {
+        SettingsLabeledRow(label: OnePasswordConnect.settingsLabel, detail: OnePasswordConnect.message) {
+            HStack(spacing: 8) {
+                Button(OnePasswordConnect.open) { model.openOnePassword() }
+                if !model.onePasswordPreference.isDone {
+                    Button(OnePasswordConnect.done) { model.markOnePasswordConnected() }
                 }
             }
         }

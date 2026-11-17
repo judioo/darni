@@ -109,7 +109,7 @@ private struct LibrarySpaceColumn: View {
     }
 
     private func entries(_ entries: [SidebarEntry]) -> some View {
-        let expanded = Set(SidebarTree.folders(entries).map(\.id)).subtracting(collapsed)
+        let expanded = Set(SidebarTree.folders(entries).map(\.id) + SidebarTree.tabGroups(entries).map(\.id)).subtracting(collapsed)
         return ForEach(SidebarRowItem.rows(entries, expanded: expanded, selected: nil)) { item in
             Button { open(item.entry) } label: {
                 HStack(spacing: 8) {
@@ -129,6 +129,10 @@ private struct LibrarySpaceColumn: View {
     @ViewBuilder private func glyph(_ entry: SidebarEntry) -> some View {
         if case .tab(let tab) = entry {
             SiteIconView(image: model.favicon(for: tab), token: tab.faviconToken, customIcon: tab.customIcon)
+        } else if case .tabGroup(let reference) = entry {
+            Image(systemName: TabGroupMetrics.symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(reference.group.color.color(dark: SystemAppearance.isDark(colorScheme)))
         } else {
             SidebarGlyphView(icon: entry.customIcon, fallback: entry.isFolder ? "folder" : "square.split.2x1")
         }
@@ -140,11 +144,12 @@ private struct LibrarySpaceColumn: View {
         case .folder(let folder): return folder.title
         case .split(let split): return split.displayTitle
         case .easel(let ref): return model.easelTitle(for: ref)
+        case .tabGroup(let reference): return reference.group.displayName
         }
     }
 
     private func open(_ entry: SidebarEntry) {
-        if case .folder = entry {
+        if entry.isFolder || entry.isTabGroup {
             if !collapsed.insert(entry.id).inserted { collapsed.remove(entry.id) }
             return
         }
@@ -153,7 +158,7 @@ private struct LibrarySpaceColumn: View {
         case .tab(let tab): model.selectTab(tab.id)
         case .split(let split): model.selectSplit(split.id)
         case .easel(let ref): model.openLibraryDocument(ref.id)
-        case .folder: break
+        case .folder, .tabGroup: break
         }
     }
 }
