@@ -116,6 +116,7 @@ security/005-cve-2026-121140-passthrough-context-restore.patch # upstream 776099
 security/006-cve-2026-121181-range-expand-shadow.patch # upstream ae56f8394 (Chrome 157.0.8103.38): Editing
 security/007-cve-2026-121185-pip-document-child.patch # upstream 726155039 (Chrome 157.0.8103.38): PictureInPicture
 security/008-cve-2026-126845-graphite-snap-failure.patch # upstream 55d51d9ae (Chrome 157.0.8103.78): GPU
+security/009-cve-2026-131031-transfer-cache-context.patch # upstream 0960c42b6 (Chrome 158.0.8127.36): GPU, Critical
 #
 # Planned inventory (see README.md and engine/docs/ENGINE.md §4);
 # uncomment as patches land:
