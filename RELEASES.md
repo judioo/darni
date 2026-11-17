@@ -19,6 +19,26 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1117.862 — 2026-11-17
+
+**Fixes**
+- Tab groups are either open or closed. A closed group hides all its tabs; closing a group while
+  one of its tabs is showing leaves a blank page, and the tabs stay loaded.
+- Taking the last tab out of a tab group (closing, removing or dragging it) asks whether to delete
+  the group, as Chrome does, with "Don't ask again".
+- The ⌘T bar shows tab groups as coloured chips across the bar, so many groups fit. Tab moves into
+  them and Return adds the chosen group to the space.
+- Tab in the ⌘T bar accepts the suggested completion ("post" becomes "posthog.com") and keys typed
+  in the bar never reach the page behind it.
+- The "Connect 1Password to ReArc" card goes away by itself once 1Password is connected, and
+  Settings › General says "Connected". ReArc only checks that 1Password's helper stays attached;
+  it never reads what passes between them.
+- A new tab group opens its name and colour editor straight away.
+
+**Settings**
+- Settings now say that, with Sync Sidebar on, the addresses of a tab group's tabs sync to your
+  other Macs as they change.
+
 ## ReArc 2026.1117.849 — 2026-11-17
 
 **New**
