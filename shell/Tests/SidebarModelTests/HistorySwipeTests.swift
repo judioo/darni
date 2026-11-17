@@ -78,6 +78,24 @@ struct HistorySwipeTests {
         #expect(!next.consumes && !next.replay, "the page keeps the gesture; the held events go back once")
     }
 
+    /// Sideways, but toward the side with nowhere to go: the page gets the held events too.
+    @Test func aSidewaysSwipeTheWrongWayGivesTheHeldEventsToThePage() {
+        var swipe = HistorySwipe()
+        #expect(swipe.handle(phase: .began, x: -1, y: 2, edges: edges, canGoBack: true, canGoForward: false).holds)
+        let forward = swipe.handle(phase: .changed, x: -18, y: 0, edges: edges, canGoBack: true, canGoForward: false)
+        #expect(!forward.consumes && !forward.holds && forward.replay && forward.direction == nil)
+        let next = swipe.handle(phase: .changed, x: -18, y: 0, edges: edges, canGoBack: true, canGoForward: false)
+        #expect(!next.consumes && !next.replay)
+    }
+
+    /// The held travel counts for a forward swipe as for a back one.
+    @Test func aHeldForwardSwipeStartsWhereTheFingersAre() {
+        var swipe = HistorySwipe()
+        #expect(swipe.handle(phase: .began, x: -1, y: 2, edges: edges, canGoBack: false, canGoForward: true).holds)
+        let second = swipe.handle(phase: .changed, x: -18, y: 0, edges: edges, canGoBack: false, canGoForward: true)
+        #expect(second.consumes && second.direction == .forward && second.progress == 0.19)
+    }
+
     @Test func aGestureThatEndsUndecidedGoesToThePage() {
         var swipe = HistorySwipe()
         _ = swipe.handle(phase: .began, x: 2, y: 0, edges: edges, canGoBack: true, canGoForward: true)
