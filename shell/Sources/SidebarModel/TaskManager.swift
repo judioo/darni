@@ -493,6 +493,23 @@ public enum TaskManagerRows {
     }
 }
 
+/// Which rows a click selects. A process is selected whole, as in Chrome:
+/// a click on any of its tasks takes them all.
+public enum TaskManagerSelection {
+    /// `pids` is the process of each row on screen. `proposed` is what the
+    /// table would select by itself, `current` what is selected now.
+    /// `toggles`: a ⌘-click, which adds a row or takes one away; taking
+    /// one row of a process away lets the whole process go.
+    public static func rows(proposed: IndexSet, current: IndexSet, pids: [Int32], toggles: Bool) -> IndexSet {
+        func processes(_ rows: IndexSet) -> Set<Int32> {
+            Set(rows.filter(pids.indices.contains).map { pids[$0] })
+        }
+        var wanted = processes(proposed)
+        if toggles { wanted.subtract(processes(current.subtracting(proposed))) }
+        return IndexSet(pids.indices.filter { wanted.contains(pids[$0]) })
+    }
+}
+
 /// The table's cell text, as Chrome on macOS writes it.
 public enum TaskManagerFormat {
     /// Chrome's cell for a figure it does not have.
@@ -500,7 +517,7 @@ public enum TaskManagerFormat {
 
     /// "512 B", "84.5 MB", "1.2 GB": 1024 to a unit, one decimal under 100.
     public static func memory(_ bytes: UInt64) -> String {
-        amount(Double(bytes), units: ["B", "kB", "MB", "GB", "TB"])
+        amount(Double(bytes), units: ["B", "KB", "MB", "GB", "TB"])
     }
 
     /// One decimal, "–" when not known.
@@ -513,7 +530,7 @@ public enum TaskManagerFormat {
     public static func network(_ bytesPerSecond: Double?) -> String {
         guard let bytesPerSecond else { return notAvailable }
         guard bytesPerSecond >= 0.5 else { return "0" }
-        return amount(bytesPerSecond, units: ["B/s", "kB/s", "MB/s", "GB/s"])
+        return amount(bytesPerSecond, units: ["B/s", "KB/s", "MB/s", "GB/s"])
     }
 
     private static func amount(_ value: Double, units: [String]) -> String {
@@ -538,7 +555,7 @@ public struct TaskManagerEndConfirmation: Equatable, Sendable {
         let shared = groups.filter { $0.isKillable && $0.tabTitles.count > 1 }
         guard !shared.isEmpty else { return nil }
         let titles = shared.flatMap(\.tabTitles)
-        title = "End the process behind \(titles.count) tabs?"
+        title = "End the \(shared.count == 1 ? "process" : "processes") behind \(titles.count) tabs?"
         let listed = titles.prefix(Self.listedTabs).map { "“\($0)”" }
         let rest = titles.count - listed.count
         let names = rest > 0

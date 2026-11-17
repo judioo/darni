@@ -196,14 +196,12 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         if controller.sort != sort { controller.sort = sort }
     }
 
-    /// A process is selected whole: a click on one of its tasks takes them
-    /// all, and a ⌘-click on a selected one lets them all go.
+    /// A process is selected whole (`TaskManagerSelection`).
     func tableView(_ tableView: NSTableView, selectionIndexesForProposedSelection proposed: IndexSet) -> IndexSet {
-        func pids(_ indexes: IndexSet) -> Set<Int32> {
-            Set(indexes.compactMap { rows.indices.contains($0) ? rows[$0].pid : nil })
-        }
-        let wanted = pids(proposed).subtracting(pids(tableView.selectedRowIndexes.subtracting(proposed)))
-        return IndexSet(rows.indices.filter { wanted.contains(rows[$0].pid) })
+        TaskManagerSelection.rows(
+            proposed: proposed, current: tableView.selectedRowIndexes, pids: rows.map(\.pid),
+            toggles: NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
+        )
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
