@@ -316,8 +316,11 @@ public struct SpaceOverscroll: Equatable, Sendable {
     }
 }
 
-/// Decides whether a two-finger scroll on the sidebar is a horizontal space
-/// swipe or ordinary vertical scrolling, from its first few points of travel.
+/// Decides whether a two-finger scroll is a horizontal swipe or ordinary
+/// vertical scrolling, from its first few points of travel. Two gestures use
+/// it and hold their events until it decides: the sidebar's space swipe
+/// (`SidebarSwipeMonitor`) and the page's history swipe (`HistorySwipe`). A
+/// change to the distance or the ratio changes both.
 public struct SwipeAxisLock: Equatable, Sendable {
     /// A horizontal scroll delta as content travel (negative shows the next
     /// space). It is the delta macOS reports, so the pages move the way the
