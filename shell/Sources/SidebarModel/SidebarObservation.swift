@@ -63,6 +63,8 @@ enum SidebarObservationKey: Hashable {
     case multiSelection(SidebarWindowID?, UUID)
     /// Whether a window has a multi-row selection at all.
     case multiSelectionPresence(SidebarWindowID?)
+    /// The tab groups: which exist, and each one's name, colour and tabs.
+    case tabGroups
 }
 
 /// One row of a space's outline: what it is and, for a folder, what it holds.
@@ -71,6 +73,11 @@ enum SidebarObservationKey: Hashable {
 public struct SidebarOutlineNode: Identifiable, Equatable {
     public enum Kind: Equatable {
         case tab, split, easel, folder
+        /// A tab group's row; its children are the group's tabs.
+        case tabGroup
+
+        /// A row that holds other rows and opens and closes.
+        public var isContainer: Bool { self == .folder || self == .tabGroup }
     }
 
     public let id: UUID
@@ -89,12 +96,14 @@ public struct SidebarOutlineNode: Identifiable, Equatable {
         case .split(let split): self.init(id: split.id, kind: .split)
         case .easel(let ref): self.init(id: ref.id, kind: .easel)
         case .folder(let folder): self.init(id: folder.id, kind: .folder, children: folder.children.map(SidebarOutlineNode.init))
+        case .tabGroup(let reference):
+            self.init(id: reference.id, kind: .tabGroup, children: reference.group.tabs.map { SidebarOutlineNode(id: $0.id, kind: .tab) })
         }
     }
 
-    /// Every non-folder node in display order, descending into folders.
+    /// Every node that is not a folder or a tab group in display order, descending into both.
     public static func leaves(_ nodes: [SidebarOutlineNode]) -> [SidebarOutlineNode] {
-        nodes.flatMap { $0.kind == .folder ? leaves($0.children) : [$0] }
+        nodes.flatMap { $0.kind.isContainer ? leaves($0.children) : [$0] }
     }
 }
 
@@ -123,6 +132,9 @@ final class SidebarLookupCache {
         case tree(spaceID: Space.ID, section: ItemContainerKind.SpaceSection, folderID: UUID?)
         /// A split's pane; `section` is the split's own.
         case splitPane(spaceID: Space.ID, section: ItemContainerKind.SpaceSection, splitID: UUID)
+        /// A tab group's tab. It has no one space: every space with a
+        /// reference to the group shows it (`SidebarStore.shownReference`).
+        case groupTab(groupID: TabGroup.ID)
     }
 
     struct Item {
@@ -137,6 +149,8 @@ final class SidebarLookupCache {
     var sortedFavorites: [Profile.ID: [Tab]] = [:]
     /// Every entry, favorites first, then spaces in `spaces` order (the first id wins).
     var index: [UUID: Item]?
+    /// Where each tab group is referenced, in `spaces` order; built with `index`.
+    var groupReferences: [TabGroup.ID: [TabGroupPlace]] = [:]
     /// `displayEntries(in:)` per space, and its ids.
     var display: [Space.ID: (entries: [SidebarEntry], ids: Set<UUID>)] = [:]
     /// Each observed space's last summary, to tell which entries changed.
@@ -180,6 +194,7 @@ struct SpaceSummary {
         case .split(let split): return split.sortRank
         case .easel(let ref): return ref.sortRank
         case .folder(let folder): return folder.sortRank
+        case .tabGroup(let reference): return reference.sortRank
         }
     }
 
@@ -198,9 +213,25 @@ struct SpaceSummary {
                 for pane in split.tabs where items[pane.id] == nil {
                     items[pane.id] = Item(value: .tab(pane), place: .splitPane(spaceID: spaceID, section: section, splitID: split.id))
                 }
+            case .tabGroup(var reference):
+                // The row without its tabs (they are items of their own): its name, colour and rank.
+                let tabs = reference.group.tabs
+                reference.group.tabs = []
+                items[reference.id] = items[reference.id] ?? Item(value: .tabGroup(reference), place: place)
+                for tab in tabs {
+                    signature.append(Row(id: tab.id, parent: reference.id, pinned: section == .pinned, rank: tab.sortRank))
+                    items[tab.id] = items[tab.id] ?? Item(value: .tab(tab), place: .groupTab(groupID: reference.groupID))
+                }
             case .tab, .easel:
                 items[entry.id] = items[entry.id] ?? Item(value: entry, place: place)
             }
         }
     }
+}
+
+/// One reference to a tab group: the space and section its row is in.
+struct TabGroupPlace: Equatable {
+    let spaceID: Space.ID
+    let section: ItemContainerKind.SpaceSection
+    let referenceID: UUID
 }

@@ -200,6 +200,8 @@ final class MiniSidebarTests: XCTestCase {
             (.item(SidebarOutlineRow(node: tab, depth: 2), section: .pinned), .favicon),
             (.item(SidebarOutlineRow(node: SidebarOutlineNode(id: UUID(), kind: .folder), depth: 0), section: .pinned), .folderGlyph),
             (.item(SidebarOutlineRow(node: SidebarOutlineNode(id: UUID(), kind: .split), depth: 0), section: .unpinned), .splitGlyph),
+            (.item(SidebarOutlineRow(node: SidebarOutlineNode(id: UUID(), kind: .tabGroup), depth: 0), section: .unpinned), .tabGroupTile),
+            (.item(SidebarOutlineRow(node: tab, depth: 1), section: .unpinned), .favicon),
             (.item(SidebarOutlineRow(node: SidebarOutlineNode(id: UUID(), kind: .easel), depth: 0), section: .unpinned), .easelGlyph),
             (.todayDivider, .divider),
             (.newTab, .plus),
@@ -225,7 +227,8 @@ final class MiniSidebarTests: XCTestCase {
             XCTAssertEqual(MiniSidebarRepresentation.of(part), representation, "\(part)")
         }
         // `of(_:)` switches over every part, so each has a form; this pins the count.
-        XCTAssertEqual(MiniSidebarRepresentation.Part.allCases.count, 26)
+        XCTAssertEqual(MiniSidebarRepresentation.of(.tabGroup), .tabGroupTile)
+        XCTAssertEqual(MiniSidebarRepresentation.Part.allCases.count, 27)
     }
 
     func testTheTooltipNamesTheTitleThenTheSite() {

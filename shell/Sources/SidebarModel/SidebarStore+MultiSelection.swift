@@ -35,7 +35,7 @@ extension SidebarStore {
     /// order the sidebar shows them with every folder open.
     public func outlineOrder(in spaceID: Space.ID) -> [UUID] {
         func walk(_ nodes: [SidebarOutlineNode]) -> [UUID] {
-            nodes.flatMap { [$0.id] + ($0.kind == .folder ? walk($0.children) : []) }
+            nodes.flatMap { [$0.id] + ($0.kind.isContainer ? walk($0.children) : []) }
         }
         let outline = outline(for: spaceID)
         return walk(outline.pinned) + walk(outline.today)
@@ -94,18 +94,21 @@ extension SidebarStore {
                 continue
             }
             var pruned = selection
-            pruned.prune { spaceContaining(entryID: $0) == selection.spaceID }
+            pruned.prune { isEntry($0, shownIn: selection.spaceID) }
             setMultiSelection(pruned, in: window)
         }
     }
 
     // MARK: - Commands on a selection
 
-    /// The ids without those inside a selected folder: moving the folder
-    /// moves them.
+    /// The ids without those inside a selected folder or tab group: moving
+    /// the folder moves them, and the group's row shows them wherever it is.
     public func topmostEntries(_ ids: [UUID]) -> [UUID] {
         let set = Set(ids)
         return ids.filter { id in
+            if let groupID = tabGroupID(holding: id), tabGroupPlaces(of: groupID).contains(where: { set.contains($0.referenceID) }) {
+                return false
+            }
             var folder = parentFolderID(of: id)
             while let current = folder {
                 if set.contains(current) { return false }
@@ -124,6 +127,7 @@ extension SidebarStore {
             case .tab(let tab): return [tab.id]
             case .split(let split): return split.tabs.map(\.id)
             case .folder(let folder): return SidebarTree.tabs(folder.children).map(\.id)
+            case .tabGroup(let reference): return reference.group.tabs.map(\.id)
             case .easel, nil: return []
             }
         }
@@ -278,7 +282,10 @@ extension SidebarStore {
         let tabs = plainTabIDs(ids)
         guard tabs.count == ids.count, (2 ... 4).contains(tabs.count), let first = tabs.first,
               let space = spaceContaining(tabID: first) else { return false }
-        return tabs.allSatisfy { splitContaining(tabID: $0) == nil && kind(of: $0) != .favorite && spaceContaining(tabID: $0) == space }
+        return tabs.allSatisfy {
+            splitContaining(tabID: $0) == nil && kind(of: $0) != .favorite && spaceContaining(tabID: $0) == space
+                && tabGroupID(holding: $0) == nil
+        }
     }
 
     /// Open in Split View: the first tab's place becomes a split of all of

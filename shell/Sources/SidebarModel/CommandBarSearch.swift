@@ -365,6 +365,7 @@ public enum CommandBarSearch {
         case .split(let split): return split.tabs
         case .easel: return []
         case .folder(let folder): return SidebarTree.tabs(folder.children)
+        case .tabGroup(let reference): return reference.group.tabs
         }
     }
 

@@ -178,6 +178,10 @@ public enum SyncRecordKind: String, Codable, CaseIterable, Sendable {
     /// is archived. Its own record for the same reason as `spaceStyle`: older
     /// builds drop it instead of writing the space back unarchived.
     case spaceArchive = "SidebarSpaceArchiveRecord"
+    /// A tab group's name, colour and profile (Tab Groups). Its tabs and the
+    /// spaces' pinned rows for it are item records. A record of its own
+    /// kind, so builds from before tab groups drop it and never write it.
+    case tabGroup = "SidebarTabGroupRecord"
 
     var namePrefix: String {
         switch self {
@@ -187,6 +191,7 @@ public enum SyncRecordKind: String, Codable, CaseIterable, Sendable {
         case .boost: return "boost_"
         case .spaceStyle: return "spacestyle_"
         case .spaceArchive: return "spacearchive_"
+        case .tabGroup: return "tabgroup_"
         }
     }
 

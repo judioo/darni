@@ -17,19 +17,23 @@ extension SidebarStore {
     }
 
     /// Archive Tab: removes a pinned or Today tab (folders included) and keeps
-    /// it in the archive. Favorites and split panes are not archived.
+    /// it in the archive. Favorites and split panes are not archived. A tab
+    /// group's tab is archived only by hand (it then leaves the group in
+    /// every space), never by the auto-archive.
     @discardableResult
     public func archiveTab(_ id: Tab.ID, reason: TabArchiveReason = .manual) -> ArchivedTabRecord? {
         guard case .tab(let tab) = entry(withID: id), let spaceID = spaceContaining(tabID: id) else { return nil }
+        var groupID: TabGroup.ID?
         switch locate(id) {
         case .pinned, .today: break
+        case .tabGroup(_, let group) where reason == .manual: groupID = group
         default: return nil
         }
         let priorIndex = displayEntries().firstIndex(where: { $0.id == id })
         removeFromContainer(id)
         appendArchiveRecord(tab, spaceID: spaceID, reason: reason)
         reconcileSelectionAfterRemoval(removedID: id, priorIndex: priorIndex)
-        notifyMutation(.deleteItem(id: id))
+        notifyMutation(groupID.map { .upsertItem(id: $0) } ?? .deleteItem(id: id))
         // Blank tabs leave the sidebar without an archive entry.
         return archivedTabs.last(where: { $0.id == id })
             ?? ArchivedTabRecord(tab: tab, spaceID: spaceID, archivedAt: now(), reason: reason)
@@ -38,7 +42,9 @@ extension SidebarStore {
     /// Archives Today tabs (not splits or easels) not selected within their
     /// profile's threshold. The selected tab is never archived, nor a `spared`
     /// one (playing media or a call: archiving would stop it), nor one in an
-    /// archived space, which waits as it was. Returns the ids.
+    /// archived space, which waits as it was, nor a tab group's tab, in either
+    /// section: it would vanish from every space that shows the group.
+    /// Returns the ids.
     @discardableResult
     public func autoArchiveIdleTodayTabs(sparing spared: Set<Tab.ID> = []) -> [Tab.ID] {
         let reference = now()

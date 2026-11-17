@@ -282,7 +282,7 @@ final class TaskManagerControllerTests: XCTestCase {
             faviconStore: FaviconStore(directory: nil)
         )
         XCTAssertEqual(ShellMenus.taskManager(model).map { $0.map(\.title) }, [["Task Manager"]])
-        let menu = SidebarEmptySpaceMenu.menu(model: model)
+        let menu = SidebarEmptySpaceMenu.menu(model: model, spaceID: model.store.activeSpaceID)
         let items = menu.items
         XCTAssertEqual(items.last?.title, "Task Manager", "Chrome's place for it: the last item")
         XCTAssertEqual(items.dropLast().last?.isSeparatorItem, true, "after a divider")

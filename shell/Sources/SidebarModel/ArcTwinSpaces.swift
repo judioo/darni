@@ -182,6 +182,12 @@ extension SidebarSnapshot {
     mutating func rename(space from: Space.ID, to: Space.ID, profile: Profile.ID) {
         guard let index = spaces.firstIndex(where: { $0.id == from }), !spaces.contains(where: { $0.id == to }) else { return }
         if !profiles.contains(where: { $0.id == profile }) { profiles.append(Profile.recovered(profile, from: profiles)) }
+        // A tab group only this space shows goes to the new profile with it, as its own tabs do.
+        for group in tabGroups.groups.indices
+        where tabGroups.references.contains(where: { $0.groupID == tabGroups.groups[group].id })
+            && tabGroups.references.allSatisfy({ $0.groupID != tabGroups.groups[group].id || $0.spaceID == from }) {
+            tabGroups.groups[group].profileID = profile
+        }
         spaces[index] = spaces[index].withID(to)
         spaces[index].profileID = profile
         if var bundle = spaceContainers.removeValue(forKey: from) {
@@ -202,6 +208,10 @@ extension SidebarSnapshot {
             lastActiveSpaceByProfile[owner] = owner == profile ? to : spaces.first { $0.profileID == owner }?.id
         }
         if let selection = selectionBySpace.removeValue(forKey: from), selectionBySpace[to] == nil { selectionBySpace[to] = selection }
+        // The space's rows for tab groups follow; loading keeps one per space and group.
+        for index in tabGroups.references.indices where tabGroups.references[index].spaceID == from {
+            tabGroups.references[index].spaceID = to
+        }
         for index in archivedTabs.indices where archivedTabs[index].spaceID == from { archivedTabs[index].spaceID = to }
         for index in closedTabStack.records.indices where closedTabStack.records[index].spaceID == from {
             closedTabStack.records[index].spaceID = to
@@ -225,6 +235,7 @@ extension SidebarSnapshot {
         topAppsContainersByProfileID[into] = target
         topAppsContainersByProfileID[from] = nil
         for index in spaces.indices where spaces[index].profileID == from { spaces[index].profileID = into }
+        for index in tabGroups.groups.indices where tabGroups.groups[index].profileID == from { tabGroups.groups[index].profileID = into }
         profiles.removeAll { $0.id == from }
         if activeProfileID == from { activeProfileID = into }
         if let space = lastActiveSpaceByProfile.removeValue(forKey: from), lastActiveSpaceByProfile[into] == nil {

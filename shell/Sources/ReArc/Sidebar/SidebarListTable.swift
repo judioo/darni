@@ -244,7 +244,7 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         let point = tableView.convert(event.locationInWindow, from: nil)
         let bottom = tableView.numberOfRows > 0 ? tableView.rect(ofRow: tableView.numberOfRows - 1).maxY : 0
         guard SidebarEmptySpaceClick.opensMenu(rowIndex: tableView.row(at: point), y: point.y, rowsBottom: bottom) else { return nil }
-        let menu = SidebarEmptySpaceMenu.menu(model: model)
+        let menu = SidebarEmptySpaceMenu.menu(model: model, spaceID: spaceID)
         shownEmptySpaceMenu = menu
         return menu
     }
@@ -366,7 +366,8 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     /// Accessibility's press on a plain row: what a click on the row does.
     func press(_ id: UUID, kind: SidebarOutlineNode.Kind) {
         switch kind {
-        case .folder:
+        case .folder, .tabGroup:
+            // A tab group's row opens and closes through the same call.
             model.store.toggleFolderExpanded(id)
         default:
             model.selectTab(id)
@@ -741,11 +742,14 @@ struct SidebarListCell: View {
                 SidebarTodayCell(model: model, spaceID: spaceID)
             }
         case .newTab:
-            if context.isMini {
-                MiniNewTabRowView { model.newTab() }
-            } else {
-                NewTabRowView { model.newTab() }
+            Group {
+                if context.isMini {
+                    MiniNewTabRowView { model.newTab() }
+                } else {
+                    NewTabRowView { model.newTab() }
+                }
             }
+            .contextMenu { NewTabGroupMenuItem(model: model, spaceID: spaceID) }
         case .sectionEnd(let section, let isEmpty):
             SectionEndDropZone(
                 destination: .section(spaceID: spaceID, section: section),

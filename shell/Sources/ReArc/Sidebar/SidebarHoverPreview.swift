@@ -354,7 +354,7 @@ private struct FolderHoverList: View {
             model.store.setFolderExpanded(child.id, true)
         case .split(let split):
             model.selectSplit(split.id)
-        case .easel:
+        case .easel, .tabGroup:
             break
         }
     }
@@ -393,6 +393,7 @@ private struct FolderHoverListRow: View {
         case .folder(let folder): return folder.title
         case .split(let split): return split.tabs.map(\.displayTitle).joined(separator: " | ")
         case .easel: return "Easel"
+        case .tabGroup(let reference): return reference.group.displayName
         }
     }
 
@@ -413,6 +414,8 @@ private struct FolderHoverListRow: View {
             Image(systemName: "rectangle.split.2x1").foregroundStyle(.secondary)
         case .easel:
             Image(systemName: "scribble").foregroundStyle(.secondary)
+        case .tabGroup:
+            Image(systemName: TabGroupMetrics.symbol).foregroundStyle(.secondary)
         }
     }
 }

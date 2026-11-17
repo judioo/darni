@@ -14,9 +14,11 @@ public struct SyncRecordBody: Equatable, Sendable {
 /// Maps the sidebar to sync records and back (docs/SYNC-RECORDS.md).
 ///
 /// Synced: profiles, spaces (with their themes and archived state), favorites, pinned tabs,
-/// folders, splits in Favorites or Pinned, and Boosts. Not synced: Today
-/// (unpinned) tabs, easels, selection, archive, closed-tab stack, Little Arc
-/// windows and other per-Mac state; `apply` leaves those where they are.
+/// folders, splits in Favorites or Pinned, Boosts, and tab groups (each
+/// group, its tabs, and the spaces' pinned rows for it). Not synced: Today
+/// (unpinned) tabs and a space's Today row for a tab group, easels,
+/// selection, archive, closed-tab stack, Little Arc windows and other
+/// per-Mac state; `apply` leaves those where they are.
 ///
 /// `apply` is a pure function of the merged records plus the local-only
 /// state, and rescues rows whose parent is gone or forms a cycle the same way
@@ -30,12 +32,16 @@ public enum SidebarSyncProjection {
         case favorites(UUID)
         case pinned(UUID)
         case folder(UUID)
+        /// A tab group's tabs. Builds from before tab groups cannot read
+        /// the key, so they leave such a row alone (`canMaterialize`).
+        case group(UUID)
 
         var key: String {
             switch self {
             case .favorites(let id): return "favorites:\(id.uuidString.lowercased())"
             case .pinned(let id): return "pinned:\(id.uuidString.lowercased())"
             case .folder(let id): return "folder:\(id.uuidString.lowercased())"
+            case .group(let id): return "group:\(id.uuidString.lowercased())"
             }
         }
 
@@ -46,6 +52,7 @@ public enum SidebarSyncProjection {
             case "favorites": self = .favorites(id)
             case "pinned": self = .pinned(id)
             case "folder": self = .folder(id)
+            case "group": self = .group(id)
             default: return nil
             }
         }
@@ -81,6 +88,11 @@ public enum SidebarSyncProjection {
             }
         }
 
+        // A group of a profile that is gone has no place: it is not written.
+        let groups = Dictionary(
+            snapshot.tabGroups.groups.filter { group in snapshot.profiles.contains { $0.id == group.profileID } }.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         let spaceRanks = SyncRanks.normalized(snapshot.spaces.map(\.sortRank))
         for (space, rank) in zip(snapshot.spaces, spaceRanks) {
             // Archived state has its own record, which older builds never see or overwrite.
@@ -111,9 +123,26 @@ public enum SidebarSyncProjection {
                 ])
             }
             var visited = Set<UUID>()
-            let pinned = (snapshot.spaceContainers[space.id]?.pinned.childIDs ?? [])
+            var pinned = (snapshot.spaceContainers[space.id]?.pinned.childIDs ?? [])
                 .compactMap { resolve($0, in: snapshot, visited: &visited) }
+            // The space's pinned rows for tab groups rank among its other pinned rows.
+            for reference in snapshot.tabGroups.references where reference.pinned && reference.spaceID == space.id {
+                guard let group = groups[reference.groupID], group.profileID == space.profileID else { continue }
+                let row = SidebarEntry.tabGroup(TabGroupReference(id: reference.id, sortRank: reference.sortRank, group: group))
+                pinned.insert(row, at: pinned.firstIndex { Self.rank(of: $0) > reference.sortRank } ?? pinned.count)
+            }
             extractEntries(pinned, parent: .pinned(space.id), spaceID: space.id, into: &records)
+        }
+        for group in groups.values {
+            records[SyncRecordKind.tabGroup.recordName(for: group.id)] = SyncRecordBody(kind: .tabGroup, values: [
+                "profileID": .string(group.profileID.uuidString),
+                "name": .string(group.name),
+                "color": .string(group.color.rawValue),
+            ])
+            let ranks = SyncRanks.normalized(group.tabs.map(\.sortRank))
+            for (tab, rank) in zip(group.tabs, ranks) {
+                records[SyncRecordKind.item.recordName(for: tab.id)] = tabBody(tab, parent: .group(group.id), spaceID: nil, rank: rank)
+            }
         }
         return records
     }
@@ -141,10 +170,33 @@ public enum SidebarSyncProjection {
                 values["customIcon"] = iconValue(folder.customIcon)
                 records[name] = SyncRecordBody(kind: .item, values: values)
                 extractEntries(folder.children, parent: .folder(folder.id), spaceID: spaceID, into: &records)
+            case .tabGroup(let reference):
+                // The row only: the group and its tabs are records of their own.
+                var values = placement(type: tabGroupRowType, parent: parent, spaceID: spaceID, rank: rank)
+                values["group"] = .string(reference.groupID.uuidString.lowercased())
+                records[name] = SyncRecordBody(kind: .item, values: values)
             case .easel:
                 break
             }
         }
+    }
+
+    /// The item `type` of a space's row for a tab group; its `group` field names the group.
+    static let tabGroupRowType = "tabGroup"
+
+    static func tabGroupID(ofRow values: [String: SyncValue]) -> UUID? {
+        values["group"]?.stringValue.flatMap(UUID.init(uuidString:))
+    }
+
+    /// A tab group record's group, without its tabs; nil when it holds no usable profile.
+    static func tabGroup(id: UUID, values: [String: SyncValue]) -> TabGroup? {
+        guard let profileID = values["profileID"]?.stringValue.flatMap(UUID.init(uuidString:)) else { return nil }
+        return TabGroup(
+            id: id,
+            profileID: profileID,
+            name: values["name"]?.stringValue ?? "",
+            color: values["color"]?.stringValue.flatMap(TabGroupColor.init(rawValue:)) ?? .grey
+        )
     }
 
     private static func tabBody(_ tab: Tab, parent: Parent, spaceID: UUID?, rank: String) -> SyncRecordBody {
@@ -215,6 +267,7 @@ public enum SidebarSyncProjection {
         var boosts: [UUID: [String: SyncValue]] = [:]
         var styles: [UUID: SpaceThemeStyle] = [:]
         var archives: [UUID: Date] = [:]
+        var groups: [UUID: TabGroup] = [:]
         for (name, payload) in records where payload.isAlive {
             guard let (kind, id) = SyncRecordKind.parse(recordName: name) else { continue }
             switch kind {
@@ -223,6 +276,7 @@ public enum SidebarSyncProjection {
             case .boost: boosts[id] = payload.values
             case .spaceStyle: styles[id] = spaceStyle(payload.values)
             case .spaceArchive: archives[id] = archiveDate(payload.values)
+            case .tabGroup: groups[id] = tabGroup(id: id, values: payload.values)
             case .item:
                 guard let parentKey = payload.values["parent"]?.stringValue, let parent = Parent(key: parentKey) else { continue }
                 items[id] = ItemRecord(
@@ -276,6 +330,8 @@ public enum SidebarSyncProjection {
         }
         let spaceIDs = Set(spaces.map(\.id))
         let firstSpaceID = spaces[0].id
+        // A group lives in one profile's storage: with the profile gone, so is the group.
+        groups = groups.filter { profileIDs.contains($0.value.profileID) }
 
         // Effective parents: orphans and cycle members go to their space's
         // pinned root (SYNC-DESIGN §5.3 rules 3 and 4).
@@ -308,7 +364,11 @@ public enum SidebarSyncProjection {
             case .pinned(let sid):
                 parents[item.id] = spaceIDs.contains(sid) ? .pinned(sid) : pinnedRoot(for: item)
             case .folder(let fid):
-                parents[item.id] = items[fid]?.type == "folder" ? .folder(fid) : pinnedRoot(for: item)
+                // A group's row sits at section level.
+                parents[item.id] = items[fid]?.type == "folder" && item.type != tabGroupRowType ? .folder(fid) : pinnedRoot(for: item)
+            case .group(let gid):
+                // Only tabs are in a group. One whose group is gone stays where it is: unshown.
+                parents[item.id] = item.type == "tab" ? .group(gid) : pinnedRoot(for: item)
             }
         }
         breakCycles(items: items, parents: &parents, root: pinnedRoot)
@@ -331,9 +391,30 @@ public enum SidebarSyncProjection {
             easels[target, default: []].append(.easel(ref))
         }
 
+        // Each group's tabs, in order, with this Mac's per-tab state.
+        for (id, group) in groups {
+            var group = group
+            group.tabs = (children[.group(id)] ?? []).compactMap { item -> Tab? in
+                guard case .tab(var tab)? = makeEntry(item, local: local, claimed: claimed, children: { _ in [] }) else { return nil }
+                tab.setKind(.today)
+                tab.sortRank = item.rank
+                return tab
+            }
+            groups[id] = group
+        }
+        let spaceProfile = Dictionary(spaces.map { ($0.id, $0.profileID) }, uniquingKeysWith: { first, _ in first })
+
         func entries(under parent: Parent) -> [SidebarEntry] {
             var built: [SidebarEntry] = []
+            var shownGroups = Set<UUID>()
             for item in children[parent] ?? [] {
+                if item.type == tabGroupRowType {
+                    // A space of the group's profile, once per space; any other row is left unshown.
+                    guard case .pinned(let spaceID) = parent, let group = tabGroupID(ofRow: item.values).flatMap({ groups[$0] }),
+                          spaceProfile[spaceID] == group.profileID, shownGroups.insert(group.id).inserted else { continue }
+                    built.append(.tabGroup(TabGroupReference(id: item.id, sortRank: item.rank, group: group)))
+                    continue
+                }
                 if let entry = makeEntry(item, local: local, claimed: claimed, children: entries(under:)) { built.append(entry) }
             }
             for easel in easels[parent] ?? [] {
@@ -367,7 +448,7 @@ public enum SidebarSyncProjection {
                     case .tab(let tab): archived.append(ArchivedTabRecord(tab: tab, spaceID: space.id, archivedAt: now, reason: .manual))
                     case .split(let split):
                         archived += split.tabs.map { ArchivedTabRecord(tab: $0, spaceID: space.id, archivedAt: now, reason: .manual) }
-                    case .folder, .easel:
+                    case .folder, .easel, .tabGroup:
                         today[firstSpaceID, default: []].append(row)
                     }
                 }
@@ -388,6 +469,9 @@ public enum SidebarSyncProjection {
             case .folder(let folder):
                 foldersByID[folder.id] = SidebarFolderRecord(folder)
                 folder.children.forEach(ingest)
+            case .tabGroup:
+                // Kept apart from the tables (`SidebarSnapshot.tabGroups`).
+                break
             }
         }
 
@@ -404,8 +488,19 @@ public enum SidebarSyncProjection {
             )
         }
         var containers: [Space.ID: SidebarSnapshot.SpaceContainerBundle] = [:]
+        var groupRows: [TabGroupsSnapshot.Reference] = []
         for space in spaces {
-            let pinned = entries(under: .pinned(space.id))
+            let pinnedRows = entries(under: .pinned(space.id))
+            let pinned = pinnedRows.filter { !$0.isTabGroup }
+            let pinnedGroups = SidebarTree.tabGroups(pinnedRows)
+            groupRows += pinnedGroups.map {
+                TabGroupsSnapshot.Reference(id: $0.id, groupID: $0.groupID, spaceID: space.id, pinned: true, sortRank: $0.sortRank)
+            }
+            // This Mac's Today rows for groups stay, unless the group is gone or now pinned here.
+            groupRows += snapshot.tabGroups.references.filter { row in
+                !row.pinned && row.spaceID == space.id && groups[row.groupID]?.profileID == space.profileID
+                    && !pinnedGroups.contains { $0.groupID == row.groupID }
+            }
             let rows = today[space.id] ?? []
             pinned.forEach(ingest)
             rows.forEach(ingest)
@@ -457,11 +552,24 @@ public enum SidebarSyncProjection {
         out.foldersByID = foldersByID
         out.easelRefsByID = easelRefsByID
         out.boostLibrariesByProfileID = libraries
+        var seenRows = Set<UUID>()
+        out.tabGroups = TabGroupsSnapshot(
+            groups: groups.values.sorted { $0.id.uuidString < $1.id.uuidString },
+            references: groupRows.filter { seenRows.insert($0.id).inserted }
+        )
+        // A group deleted on another Mac closes its tabs here as Delete Group
+        // does: into the archive, never lost without a trace.
+        let shown = Set(tabsByID.keys).union(groups.values.flatMap { $0.tabs.map(\.id) })
+        for group in snapshot.tabGroups.groups where groups[group.id] == nil {
+            let spaceID = snapshot.tabGroups.references.first { $0.groupID == group.id }?.spaceID
+            archived += group.tabs.filter { !shown.contains($0.id) && $0.url.absoluteString != "about:blank" }
+                .map { ArchivedTabRecord(tab: $0, spaceID: spaceID, archivedAt: now, reason: .manual) }
+        }
         let archivedIDs = Set(snapshot.archivedTabs.map(\.id))
         out.archivedTabs = snapshot.archivedTabs + archived.filter { !archivedIDs.contains($0.id) }
         out.lastActiveSpaceByProfile = snapshot.lastActiveSpaceByProfile.filter { profileIDs.contains($0.key) && spaceIDs.contains($0.value) }
         out.selectionBySpace = snapshot.selectionBySpace.filter { spaceIDs.contains($0.key) }
-        out.expandedFolderIDs = snapshot.expandedFolderIDs.filter { foldersByID[$0] != nil }
+        out.expandedFolderIDs = snapshot.expandedFolderIDs.filter { foldersByID[$0] != nil || seenRows.contains($0) }
         if !spaceIDs.contains(out.activeSpaceID) { out.activeSpaceID = firstSpaceID }
         if !profileIDs.contains(out.activeProfileID) { out.activeProfileID = profiles[0].id }
         return out
@@ -517,9 +625,13 @@ public enum SidebarSyncProjection {
             return spaceStyle(values) != nil
         case .spaceArchive:
             return archiveDate(values) != nil
+        case .tabGroup:
+            return tabGroup(id: id, values: values) != nil
         case .item:
             guard values["parent"]?.stringValue.flatMap(Parent.init(key:)) != nil else { return false }
             switch values["type"]?.stringValue {
+            case tabGroupRowType?:
+                return tabGroupID(ofRow: values) != nil
             case "tab"?:
                 return values["url"]?.stringValue.flatMap(URL.init(string:)).map(NavigationURLPolicy.isImportableWebPage) ?? false
             case "folder"?:
@@ -647,6 +759,10 @@ public enum SidebarSyncProjection {
                 entries[split.id] = .split(split)
             }
             for (id, tab) in snapshot.tabsByID { entries[id] = .tab(tab) }
+            for tab in snapshot.tabGroups.groups.flatMap(\.tabs) where tabs[tab.id] == nil {
+                tabs[tab.id] = tab
+                entries[tab.id] = .tab(tab)
+            }
             for (index, profile) in snapshot.profiles.enumerated() {
                 topAppsContainerID[profile.id] = snapshot.topAppsContainersByProfileID[profile.id]?.id
                     ?? (index == 0 ? snapshot.topAppsContainer.id : nil)
@@ -817,6 +933,7 @@ public enum SidebarSyncProjection {
         case .split(let split): return split.sortRank
         case .easel(let ref): return ref.sortRank
         case .folder(let folder): return folder.sortRank
+        case .tabGroup(let reference): return reference.sortRank
         }
     }
 

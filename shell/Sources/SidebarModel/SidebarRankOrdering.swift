@@ -25,6 +25,7 @@ public enum RankedSortable {
         case .split(let split): return sortRank(split)
         case .easel(let ref): return sortRank(ref)
         case .folder(let folder): return sortRank(folder)
+        case .tabGroup(let reference): return sortRank(reference)
         }
     }
 }
@@ -63,6 +64,9 @@ extension SidebarStore {
             case .folder(var folder):
                 if folder.sortRank.isEmpty { folder.sortRank = ranks[index] }
                 sorted[index] = .folder(folder)
+            case .tabGroup(var reference):
+                if reference.sortRank.isEmpty { reference.sortRank = ranks[index] }
+                sorted[index] = .tabGroup(reference)
             }
         }
         return sorted
@@ -74,6 +78,7 @@ extension SidebarStore {
         case .split(let split): return split.sortRank
         case .easel(let ref): return ref.sortRank
         case .folder(let folder): return folder.sortRank
+        case .tabGroup(let reference): return reference.sortRank
         }
     }
 
@@ -92,6 +97,9 @@ extension SidebarStore {
         case .folder(var folder):
             folder.sortRank = newRank
             entries[index] = .folder(folder)
+        case .tabGroup(var reference):
+            reference.sortRank = newRank
+            entries[index] = .tabGroup(reference)
         }
     }
 
@@ -113,7 +121,7 @@ extension SidebarStore {
         case .favorite: return .favorite
         case .pinned: return .pinned
         case .today: return .unpinned
-        case .splitPane: return nil
+        case .splitPane, .tabGroup: return nil
         }
     }
 
@@ -122,6 +130,7 @@ extension SidebarStore {
         case .favorite: return nil
         case .pinned(let id), .today(let id): return id
         case .splitPane(let spaceID, _): return spaceID
+        case .tabGroup(let spaceID, _): return spaceID
         }
     }
 }

@@ -21,13 +21,22 @@ public struct ClosedTabRecord: Equatable, Codable {
     /// selection's ⌘W): ⇧⌘T reopens them together. Optional, so records
     /// saved before it decode, and older builds ignore it.
     public var batchID: UUID?
+    /// The tab group the tab was in, and its place among the group's tabs.
+    /// Optional, as `batchID` is: older builds reopen it by `placement`.
+    public var tabGroupID: TabGroup.ID?
+    public var tabGroupIndex: Int?
 
-    public init(tab: Tab, spaceID: Space.ID, placement: ClosedTabPlacement? = nil, split: SplitViewItem? = nil, batchID: UUID? = nil) {
+    public init(
+        tab: Tab, spaceID: Space.ID, placement: ClosedTabPlacement? = nil, split: SplitViewItem? = nil, batchID: UUID? = nil,
+        tabGroupID: TabGroup.ID? = nil, tabGroupIndex: Int? = nil
+    ) {
         self.tab = tab
         self.spaceID = spaceID
         self.placement = placement
         self.split = split
         self.batchID = batchID
+        self.tabGroupID = tabGroupID
+        self.tabGroupIndex = tabGroupIndex
     }
 }
 

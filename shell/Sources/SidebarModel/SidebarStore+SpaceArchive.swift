@@ -77,6 +77,9 @@ extension SidebarStore {
         switch indexed(id)?.place {
         case .tree(let spaceID, _, _), .splitPane(let spaceID, _, _):
             return listedSpace(withID: spaceID)?.id
+        case .groupTab(let groupID):
+            // A tab group's tab: a listed space that shows the group.
+            return shownPlace(ofTabGroup: groupID).flatMap { listedSpace(withID: $0.spaceID)?.id }
         case .favorite, nil:
             return nil
         }

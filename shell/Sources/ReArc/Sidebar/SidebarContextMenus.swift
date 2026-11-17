@@ -24,7 +24,9 @@ struct TabContextMenu: View {
         let store = model.store
         let kind = store.kind(of: tab.id)
         let inSplit = store.splitContaining(tabID: tab.id) != nil
-        let isSpaceTab = (kind == .pinned || kind == .today) && !inSplit
+        // A tab group's tab is the group's, not one space's: it has the group's items in place of a space tab's.
+        let inGroup = store.tabGroupID(holding: tab.id) != nil
+        let isSpaceTab = (kind == .pinned || kind == .today) && !inSplit && !inGroup
 
         if kind == .favorite {
             Button("Remove from Favorites") { model.removeFavorite(tab.id) }
@@ -32,6 +34,9 @@ struct TabContextMenu: View {
         } else if isSpaceTab {
             Button(kind == .pinned ? "Unpin Tab" : "Pin Tab") { model.togglePin(tab.id) }
             Button("Add to Favorites") { model.addToFavorites(tab.id) }
+        }
+        if kind != .favorite, !inSplit {
+            TabGroupTabMenuItems(model: model, tabID: tab.id)
         }
         if kind == .pinned, !inSplit {
             Divider()
@@ -98,7 +103,7 @@ struct TabContextMenu: View {
             }
         }
         Divider()
-        if isSpaceTab {
+        if isSpaceTab || inGroup {
             Button("Archive Tab") { model.archiveTab(tab.id) }
         }
         if kind == .pinned, !inSplit {
@@ -211,7 +216,7 @@ struct SectionItemContextMenu: View {
         case .easel(let ref):
             Divider()
             Button("Delete") { model.deleteEaselSidebarItem(ref.id) }
-        case .tab, .folder:
+        case .tab, .folder, .tabGroup:
             EmptyView()
         }
     }
@@ -249,6 +254,12 @@ struct SelectionContextMenu: View {
         }
         if model.canOpenInSplitView(ids) {
             Button("Open in Split View") { model.openInSplitView(ids) }
+        }
+        if model.tabGroupsEnabled, !tabs.isEmpty, let spaceID {
+            Button(tabs.count == 1 ? "Add Tab to New Group" : "Add \(tabs.count) Tabs to New Group") {
+                model.store.clearMultiSelection(in: model.store.keyWindowID)
+                model.newTabGroup(in: spaceID, containing: tabs)
+            }
         }
         Divider()
         if let spaceID {
@@ -411,12 +422,17 @@ struct SpaceProfileMenu: View {
 
 /// A right-click on the sidebar's empty space, under the last row. As the
 /// menu on Chrome's vertical tab strip: what a tab list offers with no tab
-/// under the pointer, then Task Manager last, after a divider.
+/// under the pointer, then Task Manager last, after a divider. New Tab
+/// Group is there while Settings › General › Tab groups is on; it makes the
+/// group in `spaceID`, the list's space.
 enum SidebarEmptySpaceMenu {
-    static func menu(model: BrowserViewModel) -> NSMenu {
+    static func menu(model: BrowserViewModel, spaceID: Space.ID) -> NSMenu {
         let menu = NSMenu()
         menu.addItem(ClosureMenuItem("New Tab") { model.newTab() })
         menu.addItem(ClosureMenuItem("New Folder") { model.newFolder() })
+        if model.tabGroupsEnabled {
+            menu.addItem(ClosureMenuItem("New Tab Group") { model.newTabGroup(in: spaceID) })
+        }
         menu.addItem(ClosureMenuItem("Reopen Closed Tab") { model.reopenClosedTab() })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Task Manager") { model.showTaskManager() })

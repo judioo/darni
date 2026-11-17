@@ -52,9 +52,12 @@ extension SidebarStore {
         return kind(of: anchorID) == .pinned || kind(of: anchorID) == .today
     }
 
-    /// A plain tab of the anchor's space, not a favorite or another split's pane.
+    /// A plain tab of the anchor's space, not a favorite or another split's
+    /// pane. A tab group's tab is not one, on either side: a split is a row
+    /// of one space, and the group's tabs show in every space with the group.
     func isSplitCandidate(_ tabID: Tab.ID, joining anchorID: Tab.ID) -> Bool {
         tabID != anchorID
+            && tabGroupID(holding: tabID) == nil && tabGroupID(holding: anchorID) == nil
             && entry(withID: tabID).map { if case .tab = $0 { true } else { false } } == true
             && kind(of: tabID) != .favorite && kind(of: tabID) != nil
             && splitContaining(tabID: tabID) == nil

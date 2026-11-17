@@ -203,7 +203,8 @@ final class BrowserImportTests: XCTestCase {
         let work = try XCTUnwrap(restored.spaces.first { $0.name == "Work" })
         func describe(_ e: [SidebarEntry]) -> String { e.map { entry -> String in
             switch entry { case .tab(let t): return t.title; case .folder(let f): return "[\(f.title): \(describe(f.children))]"
-            case .split(let s): return "{\(s.tabs.map(\.title))}"; case .easel: return "easel" } }.joined(separator: ", ") }
+            case .split(let s): return "{\(s.tabs.map(\.title))}"; case .easel: return "easel"
+            case .tabGroup(let g): return "<\(g.group.displayName)>" } }.joined(separator: ", ") }
         XCTAssertEqual(describe(restored.content(for: work.id).pinned), describe(store.content(for: work.id).pinned))
         XCTAssertEqual(restored.content(for: work.id).pinnedLeaves.count, 4, "a split is one row")
     }

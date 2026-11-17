@@ -238,10 +238,17 @@ public struct CloudProfileDeletion: Equatable, Sendable {
             case .profile where id == profileID, .space where doomed.contains(id), .spaceStyle where doomed.contains(id),
                  .spaceArchive where doomed.contains(id):
                 changes[name] = .delete
-            case .boost where Index.uuid(values["profileID"]) == profileID:
+            case .boost where Index.uuid(values["profileID"]) == profileID,
+                 .tabGroup where Index.uuid(values["profileID"]) == profileID:
                 changes[name] = .delete
             case .item where index.favoriteOwner[id] == profileID:
                 favorites.append((name, values["url"]?.stringValue))
+            case .item where index.groupOfTab[id] != nil:
+                // A tab group's tabs go with their group; another profile's space cannot take them.
+                if index.groupOfTab[id].flatMap({ index.groupProfile[$0] }) == profileID { changes[name] = .delete }
+            case .item where values["type"]?.stringValue == SidebarSyncProjection.tabGroupRowType:
+                // A space's row for a group never moves to a copy of the space: the group is this profile's.
+                if let home = index.homes[id], doomed.contains(home.space) { changes[name] = .delete }
             case .item:
                 guard let home = index.homes[id], doomed.contains(home.space) else { continue }
                 let tabs = ["tab", "split"].contains(values["type"]?.stringValue ?? "") ? 1 : 0
@@ -286,7 +293,7 @@ public struct CloudProfileDeletion: Equatable, Sendable {
     /// without their space. Every stamp comes from `clock`, which must have
     /// seen the records' stamps, so the change wins over each of them.
     public func writes(clock: inout HybridLogicalClock, now: Date) -> [SyncWireRecord] {
-        let order: [SyncRecordKind] = [.item, .boost, .spaceStyle, .spaceArchive, .space, .profile]
+        let order: [SyncRecordKind] = [.item, .boost, .tabGroup, .spaceStyle, .spaceArchive, .space, .profile]
         func rank(_ name: String) -> Int {
             SyncRecordKind.parse(recordName: name).flatMap { order.firstIndex(of: $0.kind) } ?? order.count
         }
@@ -336,6 +343,9 @@ public struct CloudProfileDeletion: Equatable, Sendable {
         /// Favorites (tabs whose parent is a profile's favorites), and their addresses.
         var favoriteOwner: [UUID: Profile.ID] = [:]
         var favoriteKeys: [UUID: String] = [:]
+        /// Tab groups' profiles, and the group each group tab is in.
+        var groupProfile: [UUID: Profile.ID] = [:]
+        var groupOfTab: [UUID: UUID] = [:]
 
         static func uuid(_ value: SyncValue?) -> UUID? {
             value?.stringValue.flatMap(UUID.init(uuidString:))
@@ -351,8 +361,13 @@ public struct CloudProfileDeletion: Equatable, Sendable {
                 case .space:
                     if let profile = Self.uuid(values["profileID"]) { spaceProfile[id] = profile }
                     if let source = values["arcSourceID"]?.stringValue { spaceSource[id] = source }
+                case .tabGroup:
+                    if let profile = Self.uuid(values["profileID"]) { groupProfile[id] = profile }
                 case .item:
                     items[id] = values
+                    if case .group(let group)? = values["parent"]?.stringValue.flatMap(SidebarSyncProjection.Parent.init(key:)) {
+                        groupOfTab[id] = group
+                    }
                 default:
                     break
                 }

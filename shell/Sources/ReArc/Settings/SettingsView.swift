@@ -208,6 +208,14 @@ struct GeneralSettingsPane: View {
                 }
             }
             SettingsGroup {
+                SettingsSwitchRow(label: "Tab groups",
+                                  detail: "Keep tabs together under a named, coloured header, as in Chrome. One group can show in several spaces. To make one, right-click a tab or “+ New Tab”.",
+                                  isOn: $model.tabGroupsEnabled)
+                if model.tabGroupsEnabled {
+                    SettingsSwitchRow(label: "Ask before deleting a tab group", isOn: $model.asksBeforeDeletingTabGroup)
+                }
+            }
+            SettingsGroup {
                 SettingsLabeledRow(label: "Manage your default search engine, Auto-Archive, and downloads in Profile Settings.") {
                     Button("Profile Settings…") { model.settingsPane = .profiles }
                 }

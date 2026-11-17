@@ -47,6 +47,9 @@ public final class SidebarStore {
         case pinned(Space.ID)
         case today(Space.ID)
         case splitPane(spaceID: Space.ID, splitID: SplitViewItem.ID)
+        /// A tab group's tab. `spaceID` is the space it is shown in for now:
+        /// the active one when it shows the group (`shownPlace(ofTabGroup:)`).
+        case tabGroup(spaceID: Space.ID, groupID: TabGroup.ID)
     }
 
     /// Where `moveItem` places an entry.
@@ -55,6 +58,8 @@ public final class SidebarStore {
         case favorites(Profile.ID?)
         case section(spaceID: Space.ID, section: ItemContainerKind.SpaceSection)
         case folder(UUID)
+        /// Among a tab group's tabs (plain tabs only).
+        case tabGroup(TabGroup.ID)
     }
 
     /// The container directly holding an entry.
@@ -62,6 +67,7 @@ public final class SidebarStore {
         case favorites(Profile.ID)
         case section(spaceID: Space.ID, section: ItemContainerKind.SpaceSection)
         case folder(UUID)
+        case tabGroup(TabGroup.ID)
     }
 
     public internal(set) var profiles: [Profile]
@@ -85,6 +91,12 @@ public final class SidebarStore {
     /// Observed per space and per entry through `observation`, not as a whole.
     @ObservationIgnored public private(set) var contentBySpace: [Space.ID: SpaceContent] {
         didSet { contentDidChange(from: oldValue) }
+    }
+    /// Every tab group, one record each (`SidebarStore+TabGroups`). The
+    /// `.tabGroup` rows in `contentBySpace` mirror these; write a group
+    /// through `writeTabGroup`, never here or in a row.
+    @ObservationIgnored public internal(set) var tabGroupsByID: [TabGroup.ID: TabGroup] = [:] {
+        didSet { if tabGroupsByID != oldValue { observation.invalidate(.tabGroups) } }
     }
     public internal(set) var selectedItemID: UUID? {
         didSet {
@@ -265,6 +277,11 @@ public final class SidebarStore {
             favoritesByProfile[id] = nil
             topAppsContainerIDByProfile[id] = nil
             autoArchiveThresholdByProfile[id] = nil
+            // Its tab groups' pages were in its storage.
+            for group in tabGroupsByID.values where group.profileID == id {
+                tabGroupsByID[group.id] = nil
+                mutationJournal.record(.deleteItem(id: group.id))
+            }
         }
         // Archived spaces of other profiles stay archived; one listed space is needed.
         if visibleSpaces.isEmpty {
@@ -440,6 +457,8 @@ public final class SidebarStore {
     private func dropSpaceState(_ id: Space.ID) {
         if let content = contentBySpace[id] {
             for folder in SidebarTree.folders(content.pinned) { expandedFolderIDs.remove(folder.id) }
+            // The space's rows for tab groups go; the groups stay (the command bar lists them).
+            for reference in SidebarTree.tabGroups(content.pinned + content.today) { expandedFolderIDs.remove(reference.id) }
         }
         contentBySpace[id] = nil
         selectionBySpace[id] = nil
@@ -512,8 +531,10 @@ public final class SidebarStore {
     func reassignSpaceProfile(at index: Int, to profileID: Profile.ID, sortRank: String) {
         let id = spaces[index].id
         let source = owningProfileID(of: spaces[index].profileID)
+        let storage = spaces[index].profileID
         spaces[index].profileID = profileID
         spaces[index].sortRank = sortRank
+        if storage != profileID { tabGroupsFollowSpace(id, to: profileID) }
         let destination = owningProfileID(of: profileID)
         if source != destination, lastActiveSpaceByProfile[source] == id {
             lastActiveSpaceByProfile[source] = spaces(listedIn: source).first?.id
@@ -580,7 +601,7 @@ public final class SidebarStore {
             switch entry {
             case .tab(let tab): return [tab]
             case .split(let split): return split.tabs
-            case .easel, .folder: return []
+            case .easel, .folder, .tabGroup: return []
             }
         }
     }
@@ -610,7 +631,7 @@ public final class SidebarStore {
         switch locate(id) {
         case .favorite: return .favorite
         case .pinned: return .pinned
-        case .today: return .today
+        case .today, .tabGroup: return .today
         case .splitPane: return nil
         case nil: return nil
         }
@@ -621,10 +642,13 @@ public final class SidebarStore {
         guard let item = indexed(id) else { return nil }
         switch item.place {
         case .favorite, .tree:
-            // A folder's value includes its children, which change without its own cell.
-            if case .folder = item.entry, case .tree(let spaceID, _, _) = item.place {
+            // A folder's value includes its children, which change without its own cell;
+            // so does a tab group's row.
+            if item.entry.isFolder || item.entry.isTabGroup, case .tree(let spaceID, _, _) = item.place {
                 observation.access(.spaceContent(spaceID))
             }
+            return item.entry
+        case .groupTab:
             return item.entry
         case .splitPane:
             return nil
@@ -637,6 +661,7 @@ public final class SidebarStore {
         case .favorite(let owner): return .favorites(owner)
         case .tree(let spaceID, let section, let folderID):
             return folderID.map { .folder($0) } ?? .section(spaceID: spaceID, section: section)
+        case .groupTab(let groupID): return .tabGroup(groupID)
         case .splitPane, nil: return nil
         }
     }
@@ -650,6 +675,8 @@ public final class SidebarStore {
             return sectionEntries(for: section, spaceID: spaceID)
         case .folder(let folderID):
             return folder(withID: folderID)?.children ?? []
+        case .tabGroup(let groupID):
+            return (tabGroup(withID: groupID)?.tabs ?? []).map { .tab($0) }
         }
     }
 
@@ -756,12 +783,19 @@ public final class SidebarStore {
             appendArchiveRecord(tab, spaceID: spaceID, reason: .manual)
         } else if let tab = tab(withID: id), case .today(let spaceID) = location {
             appendArchiveRecord(tab, spaceID: spaceID, reason: .manual)
+        } else if let tab = tab(withID: id), case .tabGroup(let spaceID, _) = location {
+            // Closing a group's tab takes it out of the group, in every space that shows it.
+            appendArchiveRecord(tab, spaceID: spaceID, reason: .manual)
         }
         let ordered = displayEntries()
         let index = ordered.firstIndex(where: { $0.id == id })
         removeFromContainer(id)
         reconcileSelectionAfterRemoval(removedID: id, priorIndex: index)
-        notifyMutation(.deleteItem(id: id))
+        if case .tabGroup(_, let groupID) = location {
+            notifyMutation(.upsertItem(id: groupID))
+        } else {
+            notifyMutation(.deleteItem(id: id))
+        }
     }
 
     /// Cmd+W on a favorite: Arc unloads it and keeps it in the strip. The model
@@ -811,8 +845,10 @@ public final class SidebarStore {
     /// favorite/unfavorite, into or out of folders, or to another space.
     /// Rules: favorites hold plain tabs; folders hold tabs and folders and live
     /// in the pinned section; Today holds no folders; split panes move with
-    /// their split. Tab kinds follow the destination. `index` counts the
-    /// destination's children after the entry is removed.
+    /// their split; a tab group holds plain tabs of its own profile, and its
+    /// row stays in its own space, in either section. Tab kinds follow the
+    /// destination. `index` counts the destination's children after the entry
+    /// is removed.
     @discardableResult
     public func moveItem(_ id: UUID, to destination: ItemDestination, index: Int) -> Bool {
         guard let source = parent(of: id), let entry = entry(withID: id) else { return false }
@@ -830,7 +866,7 @@ public final class SidebarStore {
         switch target {
         case .favorites: kind = .favorite
         case .section(_, .pinned), .folder: kind = .pinned
-        case .section(_, .unpinned): kind = .today
+        case .section(_, .unpinned), .tabGroup: kind = .today
         }
         removed = SidebarTree.settingKind(kind, on: removed)
 
@@ -855,7 +891,13 @@ public final class SidebarStore {
         case .folder(let folderID):
             insertIntoFolder(removed, folderID: folderID)
             notifyMutation(.placeItemInFolder(id: id, folderID: folderID, sortRank: rank))
+        case .tabGroup(let groupID):
+            guard case .tab(let tab) = removed else { return false }
+            insertIntoTabGroup(tab, groupID: groupID)
+            notifyMutation(.upsertItem(id: groupID))
         }
+        // The group a tab left changed too.
+        if case .tabGroup(let groupID) = source, target != source { mutationJournal.record(.upsertItem(id: groupID)) }
 
         if let selected = selectedItemID, !displayEntries().contains(where: { $0.id == selected }) {
             selectedItemID = restoredSelection(for: activeSpaceID)
@@ -873,9 +915,15 @@ public final class SidebarStore {
         return moveItem(id, to: destination(for: parent), index: after ? targetIndex + 1 : targetIndex)
     }
 
+    /// A tab group's tab leaves its group to be pinned, in the space it is shown in.
     @discardableResult
     public func pinTab(_ id: Tab.ID) -> Bool {
-        guard case .today(let spaceID) = locate(id), case .tab = entry(withID: id) else { return false }
+        let spaceID: Space.ID
+        switch locate(id) {
+        case .today(let space), .tabGroup(let space, _): spaceID = space
+        default: return false
+        }
+        guard case .tab = entry(withID: id) else { return false }
         let count = sectionEntries(for: .pinned, spaceID: spaceID).count
         return moveItem(id, to: .section(spaceID: spaceID, section: .pinned), index: count)
     }
@@ -964,6 +1012,9 @@ public final class SidebarStore {
         case .folder(let folderID):
             insertIntoFolder(.tab(copy), folderID: folderID)
             notifyMutation(.placeItemInFolder(id: copy.id, folderID: folderID, sortRank: rank))
+        case .tabGroup(let groupID):
+            insertIntoTabGroup(copy, groupID: groupID)
+            notifyMutation(.upsertItem(id: groupID))
         }
         return copy
     }
@@ -1008,7 +1059,7 @@ public final class SidebarStore {
         }
         guard let location = locate(id) else { return false }
         switch location {
-        case .pinned(let spaceID), .today(let spaceID):
+        case .pinned(let spaceID), .today(let spaceID), .tabGroup(let spaceID, _):
             // A tab in an archived space waits there; nothing brings the space back but Restore.
             if listedSpace(withID: spaceID) == nil { return false }
         default: break
@@ -1020,6 +1071,10 @@ public final class SidebarStore {
         case .pinned(let spaceID), .today(let spaceID):
             if activeSpaceID != spaceID { selectSpace(spaceID) }
             revealInFolders(id)
+            selectTab(id)
+        case .tabGroup(let spaceID, let groupID):
+            if activeSpaceID != spaceID { selectSpace(spaceID) }
+            if let row = tabGroupReference(ofGroup: groupID, in: spaceID) { expandedFolderIDs.insert(row.id) }
             selectTab(id)
         case .splitPane:
             break
@@ -1063,8 +1118,19 @@ public final class SidebarStore {
             switch parent {
             case .folder(let folderID): placement = .folder(folderID, index: index)
             case .section(_, let section): placement = .section(section, index: index)
-            case .favorites: return
+            case .favorites, .tabGroup: return
             }
+        case .tabGroup(let sid, let groupID):
+            // Older builds read `placement`: beside the group's row.
+            guard let place = tabGroupPlaces(of: groupID).first(where: { $0.spaceID == sid }) else { return }
+            spaceID = sid
+            placement = .section(place.section, index: sectionEntries(for: place.section, spaceID: sid).firstIndex(where: { $0.id == place.referenceID }) ?? 0)
+            closedTabStack.push(ClosedTabRecord(
+                tab: tab, spaceID: spaceID, placement: placement, batchID: closedTabBatchID,
+                tabGroupID: groupID, tabGroupIndex: tabGroup(withID: groupID)?.tabs.firstIndex(where: { $0.id == tabID })
+            ))
+            notifyMutation()
+            return
         }
         closedTabStack.push(ClosedTabRecord(tab: tab, spaceID: spaceID, placement: placement, batchID: closedTabBatchID))
         notifyMutation()
@@ -1108,6 +1174,11 @@ public final class SidebarStore {
     }
 
     private func reopenTarget(for record: ClosedTabRecord, spaceID: Space.ID) -> (ItemParent, Int) {
+        // Back into its tab group while a listed space still shows the group.
+        if let groupID = record.tabGroupID, let group = tabGroupsByID[groupID],
+           tabGroupPlaces(of: groupID).contains(where: { listedSpace(withID: $0.spaceID) != nil }) {
+            return (.tabGroup(groupID), record.tabGroupIndex ?? group.tabs.count)
+        }
         switch record.placement {
         case .favorite(let profileID, let index):
             let owner = profiles.contains(where: { $0.id == profileID }) ? profileID : activeProfileID
@@ -1125,7 +1196,7 @@ public final class SidebarStore {
     }
 
     /// A fresh id, so the engine and sync treat the reopened tab as new.
-    private func reopenedCopy(of tab: Tab, kind: Tab.Kind, sortRank: String = "") -> Tab {
+    func reopenedCopy(of tab: Tab, kind: Tab.Kind, sortRank: String = "") -> Tab {
         var copy = Tab(
             kind: kind,
             title: tab.title,
@@ -1165,6 +1236,11 @@ public final class SidebarStore {
             let copy = reopenedCopy(of: tab, kind: .pinned, sortRank: rankForNewItem(in: siblings, atIndex: clamped))
             insertIntoFolder(.tab(copy), folderID: folderID)
             notifyMutation(.placeItemInFolder(id: copy.id, folderID: folderID, sortRank: copy.sortRank))
+            return copy
+        case .tabGroup(let groupID):
+            let copy = reopenedCopy(of: tab, kind: .today, sortRank: rankForNewItem(in: siblings, atIndex: clamped))
+            insertIntoTabGroup(copy, groupID: groupID)
+            notifyMutation(.upsertItem(id: groupID))
             return copy
         }
     }
@@ -1218,6 +1294,9 @@ public final class SidebarStore {
             return false
         case .pinned(let sid), .today(let sid):
             guard sid != destinationSpaceID else { return false }
+        case .tabGroup:
+            // Out of its group, wherever the group shows: it becomes the destination's own tab.
+            break
         }
         guard moveItem(id, to: .section(spaceID: destinationSpaceID, section: .unpinned), index: 0) else {
             return false
@@ -1515,7 +1594,8 @@ public final class SidebarStore {
             foldersByID: foldersByID,
             expandedFolderIDs: expandedFolderIDs.sorted { $0.uuidString < $1.uuidString },
             archivedTabs: archivedTabs,
-            autoArchiveThresholdByProfile: autoArchiveThresholdByProfile
+            autoArchiveThresholdByProfile: autoArchiveThresholdByProfile,
+            tabGroups: tabGroupsSnapshot()
         )
     }
 
@@ -1561,14 +1641,17 @@ public final class SidebarStore {
         // of an Arc space, up to 608) shows it in the first only, so a later
         // move or close never leaves a second, stale copy behind.
         var visited = Set(favoritesByProfile.values.flatMap { $0.map(\.id) })
+        // A tab group's tabs are in its record, and only there.
+        let groupRows = restoreTabGroups(from: snapshot.tabGroups, visited: &visited)
         for space in spaces {
+            let rows = groupRows[space.id] ?? SpaceContent()
             guard let bundle = snapshot.spaceContainers[space.id] else {
-                contentBySpace[space.id] = SpaceContent()
+                contentBySpace[space.id] = rows
                 continue
             }
             let pinned = bundle.pinned.childIDs.compactMap { resolveEntry(id: $0, snapshot: snapshot, visited: &visited) }
             let today = bundle.unpinned.childIDs.compactMap { resolveEntry(id: $0, snapshot: snapshot, visited: &visited) }
-            contentBySpace[space.id] = SpaceContent(pinned: pinned, today: today)
+            contentBySpace[space.id] = SpaceContent(pinned: pinned + rows.pinned, today: today + rows.today)
             if let index = spaces.firstIndex(where: { $0.id == space.id }) {
                 spaces[index].pinnedContainerID = bundle.pinned.id
                 spaces[index].unpinnedContainerID = bundle.unpinned.id
@@ -1606,7 +1689,9 @@ public final class SidebarStore {
         }
         easelRefsByID = snapshot.easelRefsByID
         capturesByID = snapshot.capturesByID
-        let liveFolderIDs = Set(spaces.flatMap { SidebarTree.folders(contentBySpace[$0.id]?.pinned ?? []).map(\.id) })
+        var liveFolderIDs = Set(spaces.flatMap { SidebarTree.folders(contentBySpace[$0.id]?.pinned ?? []).map(\.id) })
+        // A tab group's row opens and closes as a folder does.
+        liveFolderIDs.formUnion(contentBySpace.values.flatMap { SidebarTree.tabGroups($0.pinned + $0.today).map(\.id) })
         expandedFolderIDs = Set(snapshot.expandedFolderIDs).intersection(liveFolderIDs)
         archivedTabs = TabArchivePolicy.pruned(snapshot.archivedTabs, now: now())
         autoArchiveThresholdByProfile = snapshot.autoArchiveThresholdByProfile
@@ -1669,7 +1754,7 @@ public final class SidebarStore {
                         return copy
                     }
                     return .split(split)
-                case .easel:
+                case .easel, .tabGroup:
                     return entry
                 case .folder(var folder):
                     folder.children = stamped(folder.children)
@@ -1702,16 +1787,18 @@ public final class SidebarStore {
         switch locate(tabID) {
         case .pinned(let spaceID), .today(let spaceID): return spaceID
         case .splitPane(let spaceID, _): return spaceID
+        case .tabGroup(let spaceID, _): return spaceID
         case .favorite, nil: return nil
         }
     }
 
-    /// The space holding any entry (tab, split, easel or folder) at any depth.
+    /// The space holding any entry (tab, split, easel, folder or tab group's
+    /// row) at any depth. A tab group's tab: the space it is shown in for now.
     public func spaceContaining(entryID: UUID) -> Space.ID? {
         switch parent(of: entryID) {
         case .section(let spaceID, _): return spaceID
         case .folder(let folderID): return spaceContaining(entryID: folderID)
-        case .favorites, nil: return spaceContaining(tabID: entryID)
+        case .favorites, .tabGroup, nil: return spaceContaining(tabID: entryID)
         }
     }
 
@@ -1742,6 +1829,8 @@ public final class SidebarStore {
         case .tree(let spaceID, .pinned, _): return .pinned(spaceID)
         case .tree(let spaceID, .unpinned, _): return .today(spaceID)
         case .splitPane(let spaceID, _, let splitID): return .splitPane(spaceID: spaceID, splitID: splitID)
+        case .groupTab(let groupID):
+            return shownPlace(ofTabGroup: groupID).map { .tabGroup(spaceID: $0.spaceID, groupID: groupID) }
         case nil: return nil
         }
     }
@@ -1776,6 +1865,13 @@ public final class SidebarStore {
         contentBySpace[spaceID] = content
     }
 
+    /// Several spaces' trees in one write, so their observers hear of it once.
+    func updateContent(_ change: (inout [Space.ID: SpaceContent]) -> Void) {
+        var content = contentBySpace
+        change(&content)
+        contentBySpace = content
+    }
+
     func replaceSplit(_ split: SplitViewItem) {
         guard let location = locateSplit(split.id) else { return }
         var entries = sectionEntries(for: location.section, spaceID: location.spaceID)
@@ -1791,6 +1887,9 @@ public final class SidebarStore {
            let index = favoritesByProfile[owner]?.firstIndex(where: { $0.id == id }) {
             guard let removed = favoritesByProfile[owner]?.remove(at: index) else { return nil }
             return .tab(removed)
+        }
+        if case .groupTab(let groupID) = lookupIndex()[id]?.place {
+            return removeFromTabGroup(id, groupID: groupID).map { .tab($0) }
         }
         for space in spaces {
             var content = contentBySpace[space.id] ?? SpaceContent()
@@ -1842,7 +1941,7 @@ public final class SidebarStore {
         case .split(let split):
             markActive(split.focusTabID)
             setUnread(false, for: split.focusTabID)
-        case .easel, .folder:
+        case .easel, .folder, .tabGroup:
             break
         }
         notifyMutation()
@@ -1854,6 +1953,12 @@ public final class SidebarStore {
         if let owner = favoriteOwner(of: id),
            let index = favoritesByProfile[owner]?.firstIndex(where: { $0.id == id }) {
             change(&favoritesByProfile[owner]![index])
+            return true
+        }
+        if case .groupTab(let groupID) = lookupIndex()[id]?.place {
+            guard var group = tabGroupsByID[groupID], let index = group.tabs.firstIndex(where: { $0.id == id }) else { return false }
+            change(&group.tabs[index])
+            writeTabGroup(group)
             return true
         }
         for space in spaces {
@@ -1885,7 +1990,7 @@ public final class SidebarStore {
                     entries[index] = .folder(folder)
                     return true
                 }
-            case .tab, .easel:
+            case .tab, .easel, .tabGroup:
                 continue
             }
         }
@@ -1912,6 +2017,9 @@ public final class SidebarStore {
             for child in folder.children {
                 ingest(child, tabsByID: &tabsByID, splitsByID: &splitsByID, easelRefsByID: &easelRefsByID, foldersByID: &foldersByID)
             }
+        case .tabGroup:
+            // Saved apart from the trees (`tabGroupsSnapshot`).
+            break
         }
     }
 
@@ -1943,6 +2051,7 @@ public final class SidebarStore {
         case .favorites(let profileID): return .favorites(profileID ?? activeProfileID)
         case .section(let spaceID, let section): return .section(spaceID: spaceID, section: section)
         case .folder(let folderID): return .folder(folderID)
+        case .tabGroup(let groupID): return .tabGroup(groupID)
         }
     }
 
@@ -1951,6 +2060,7 @@ public final class SidebarStore {
         case .favorites(let profileID): return .favorites(profileID)
         case .section(let spaceID, let section): return .section(spaceID: spaceID, section: section)
         case .folder(let folderID): return .folder(folderID)
+        case .tabGroup(let groupID): return .tabGroup(groupID)
         }
     }
 
@@ -1963,7 +2073,15 @@ public final class SidebarStore {
             return false
         case .section(let spaceID, let section):
             guard listedSpace(withID: spaceID) != nil else { return false }
+            // A group's row moves within its own space only (another space adds its own row).
+            if case .tabGroup = entry { return spaceContaining(entryID: entry.id) == spaceID }
             return section == .pinned || !entry.isFolder
+        case .tabGroup(let groupID):
+            // Plain tabs whose pages are in the group's profile already.
+            guard case .tab(let tab) = entry, let group = tabGroupsByID[groupID] else { return false }
+            if tabGroupID(holding: tab.id) == groupID { return true }
+            let profileID = favoriteOwner(of: tab.id) ?? spaceContaining(tabID: tab.id).flatMap { space(withID: $0)?.profileID }
+            return profileID == group.profileID && splitContaining(tabID: tab.id) == nil
         case .folder(let folderID):
             guard folder(withID: folderID) != nil, listedSpaceID(holding: folderID) != nil, folderID != entry.id else { return false }
             switch entry {
@@ -1972,7 +2090,7 @@ public final class SidebarStore {
             case .folder(let moving):
                 // A folder cannot go inside itself or one of its descendants.
                 return !SidebarTree.contains(folderID, in: moving.children)
-            case .split, .easel:
+            case .split, .easel, .tabGroup:
                 return false
             }
         }

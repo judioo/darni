@@ -36,6 +36,7 @@ extension SidebarStore {
     func lookupIndex() -> [UUID: SidebarLookupCache.Item] {
         if let index = lookup.index { return index }
         var index: [UUID: SidebarLookupCache.Item] = [:]
+        var groupReferences: [TabGroup.ID: [TabGroupPlace]] = [:]
         for (profileID, favorites) in favoritesByProfile {
             for tab in favorites where index[tab.id] == nil {
                 index[tab.id] = .init(entry: .tab(tab), place: .favorite(profileID))
@@ -53,6 +54,13 @@ extension SidebarStore {
                     for pane in split.tabs where index[pane.id] == nil {
                         index[pane.id] = .init(entry: .tab(pane), place: .splitPane(spaceID: spaceID, section: section, splitID: split.id))
                     }
+                case .tabGroup(let reference):
+                    groupReferences[reference.groupID, default: []].append(
+                        TabGroupPlace(spaceID: spaceID, section: section, referenceID: reference.id)
+                    )
+                    for tab in reference.group.tabs where index[tab.id] == nil {
+                        index[tab.id] = .init(entry: .tab(tab), place: .groupTab(groupID: reference.groupID))
+                    }
                 case .tab, .easel:
                     break
                 }
@@ -64,7 +72,14 @@ extension SidebarStore {
             add(content.today, spaceID: space.id, section: .unpinned, folderID: nil)
         }
         lookup.index = index
+        lookup.groupReferences = groupReferences
         return index
+    }
+
+    /// The rows that show a tab group, in `spaces` order.
+    func tabGroupPlaces(of groupID: TabGroup.ID) -> [TabGroupPlace] {
+        _ = lookupIndex()
+        return lookup.groupReferences[groupID] ?? []
     }
 
     /// The indexed entry, observing it (or, when absent, the set of ids).
