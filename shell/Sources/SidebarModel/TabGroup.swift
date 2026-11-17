@@ -172,8 +172,21 @@ public enum TabGroupsPreference {
     }
 }
 
-/// Delete Group's confirmation (Chrome's "Delete tab group?").
+/// Delete Group's confirmation (Chrome's "Delete tab group?"), and the same
+/// question when a group's last tab is closed or moved out (Chrome's "Close
+/// tab and delete group?"). One "Don't ask again" covers both, as Chrome's does.
 public enum TabGroupDeleteConfirmation {
+    /// Why the group is about to be deleted.
+    public enum Reason: Equatable, Sendable {
+        /// Delete Group…
+        case deleteGroup
+        /// ⌘W, Close Tab or Archive Tab on the group's last tabs (how many).
+        case closingLastTabs(Int)
+        /// The last tabs leave the group and stay open: Remove from Group, a
+        /// drag out, a pin, another group, another space.
+        case removingLastTabs(Int)
+    }
+
     /// "Don't ask again" was ticked.
     public static let defaultsKey = "rearc.tabGroupDeleteWithoutAsking"
 
@@ -186,6 +199,14 @@ public enum TabGroupDeleteConfirmation {
     }
 
     public static let title = "Delete tab group?"
+
+    public static func title(for reason: Reason) -> String {
+        switch reason {
+        case .deleteGroup: title
+        case .closingLastTabs(let count): count == 1 ? "Close tab and delete group?" : "Close tabs and delete group?"
+        case .removingLastTabs(let count): count == 1 ? "Remove tab and delete group?" : "Remove tabs and delete group?"
+        }
+    }
     public static let confirmTitle = "Delete Group"
     public static let cancelTitle = "Cancel"
     public static let dontAskTitle = "Don't ask again"
@@ -207,6 +228,28 @@ public enum TabGroupDeleteConfirmation {
         default: tabs = " Its \(tabCount) tabs close and go to the Archive."
         }
         return spaces + tabs + (syncOn ? " It is deleted on your other Macs too." : "")
+    }
+
+    /// The words under `title(for:)`. For the last tabs: the group has no tab
+    /// left, so it is deleted from every space that shows it.
+    public static func message(for reason: Reason, groupName: String, tabCount: Int, spaceCount: Int, syncOn: Bool = false) -> String {
+        let count: Int, closing: Bool
+        switch reason {
+        case .deleteGroup: return message(groupName: groupName, tabCount: tabCount, spaceCount: spaceCount, syncOn: syncOn)
+        case .closingLastTabs(let tabs): (count, closing) = (tabs, true)
+        case .removingLastTabs(let tabs): (count, closing) = (tabs, false)
+        }
+        let named = groupName.isEmpty ? "this group" : "“\(groupName)”"
+        let last = count == 1 ? "This is the last tab of \(named)." : "These are the last tabs of \(named)."
+        let it = count == 1 ? "it" : "them"
+        let spaces: String
+        switch spaceCount {
+        case 0: spaces = "deletes the group."
+        case 1: spaces = "deletes the group from the space that shows it."
+        default: spaces = "deletes the group from every space that shows it (\(spaceCount) spaces)."
+        }
+        let stays = closing ? "" : (count == 1 ? " The tab stays open." : " The tabs stay open.")
+        return "\(last) \(closing ? "Closing" : "Removing") \(it) \(spaces)\(stays)" + (syncOn ? " The group is deleted on your other Macs too." : "")
     }
 }
 

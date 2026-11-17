@@ -9,6 +9,21 @@ struct TabGroupEditorRequest: Equatable {
     let groupID: TabGroup.ID
 }
 
+/// What "Delete tab group?" is asked about: Delete Group…, or a close or a
+/// move that takes the group's last tabs.
+struct TabGroupDeletionQuestion: Equatable {
+    var group: TabGroup
+    /// The spaces that show the group now.
+    var spaceCount: Int
+    var reason: TabGroupDeleteConfirmation.Reason = .deleteGroup
+
+    var title: String { TabGroupDeleteConfirmation.title(for: reason) }
+
+    func message(syncOn: Bool) -> String {
+        TabGroupDeleteConfirmation.message(for: reason, groupName: group.name, tabCount: group.tabs.count, spaceCount: spaceCount, syncOn: syncOn)
+    }
+}
+
 /// What the person answered to "Delete tab group?".
 struct TabGroupDeletionAnswer: Equatable {
     var delete: Bool
@@ -28,9 +43,18 @@ extension BrowserViewModel {
     /// New Tab Group (the "+ New Tab" row's and the blank sidebar's menu) and
     /// Add Tab to New Group: a group in `spaceID` holding `tabIDs`, with its
     /// editor open so it can be named at once, as Chrome's is.
+    /// A tab that was another group's last one asks first; nil is returned
+    /// while that question is open, and after Cancel.
     @discardableResult
     func newTabGroup(in spaceID: Space.ID? = nil, containing tabIDs: [Tab.ID] = []) -> TabGroupReference? {
-        guard tabGroupsEnabled, let reference = store.createTabGroup(in: spaceID, containing: tabIDs) else { return nil }
+        guard tabGroupsEnabled else { return nil }
+        var made: TabGroupReference?
+        takingFromTabGroups(tabIDs) { [self] in made = makeTabGroup(in: spaceID, containing: tabIDs) }
+        return made
+    }
+
+    private func makeTabGroup(in spaceID: Space.ID?, containing tabIDs: [Tab.ID]) -> TabGroupReference? {
+        guard let reference = store.createTabGroup(in: spaceID, containing: tabIDs) else { return nil }
         reconcileEngineOwnership()
         loadSelectedIfNeeded()
         editTabGroup(reference.groupID, from: reference.id)
@@ -46,33 +70,40 @@ extension BrowserViewModel {
     }
 
     /// Add Tab to Group ▸ and a drop on a group's row: the tab joins the end
-    /// of the group, in every space that shows it.
+    /// of the group, in every space that shows it. False when it did not
+    /// join, or has not yet: a tab that was another group's last one asks first.
     @discardableResult
     func addTab(_ tabID: Tab.ID, toGroup groupID: TabGroup.ID) -> Bool {
-        guard let group = store.tabGroup(withID: groupID),
-              store.moveItem(tabID, to: .tabGroup(groupID), index: group.tabs.count) else { return false }
-        revealTabGroup(groupID)
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
-        // The tab left the sidebar on screen: say where it went.
-        if store.tabGroupReference(ofGroup: groupID) == nil {
-            showToast("Added to “\(group.displayName)”", systemImage: "square.stack.3d.up.fill")
+        var joined = false
+        takingFromTabGroups([tabID], to: .tabGroup(groupID)) { [self] in
+            guard let group = store.tabGroup(withID: groupID),
+                  store.moveItem(tabID, to: .tabGroup(groupID), index: group.tabs.count) else { return }
+            joined = true
+            revealTabGroup(groupID)
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+            // The tab left the sidebar on screen: say where it went.
+            if store.tabGroupReference(ofGroup: groupID) == nil {
+                showToast("Added to “\(group.displayName)”", systemImage: "square.stack.3d.up.fill")
+            }
         }
-        return true
+        return joined
     }
 
     /// A dragged selection dropped on a group's row: its plain tabs join, in order.
     func addTabs(_ ids: [UUID], toGroup groupID: TabGroup.ID) {
         let tabs = store.plainTabIDs(ids)
         guard !tabs.isEmpty else { return }
-        store.clearMultiSelection(in: store.keyWindowID)
-        for id in tabs {
-            let count = store.tabGroup(withID: groupID)?.tabs.count ?? 0
-            store.moveItem(id, to: .tabGroup(groupID), index: count)
+        takingFromTabGroups(tabs, to: .tabGroup(groupID)) { [self] in
+            store.clearMultiSelection(in: store.keyWindowID)
+            for id in tabs {
+                let count = store.tabGroup(withID: groupID)?.tabs.count ?? 0
+                store.moveItem(id, to: .tabGroup(groupID), index: count)
+            }
+            revealTabGroup(groupID)
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
         }
-        revealTabGroup(groupID)
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
     }
 
     /// Opens the group's row in the active space, so a tab that just joined shows.
@@ -83,9 +114,12 @@ extension BrowserViewModel {
 
     /// Remove from Group: the tab becomes a row of its own below the group's.
     func removeTabFromGroup(_ tabID: Tab.ID, in window: SidebarWindowID? = nil) {
-        guard store.removeTabFromGroup(tabID, in: space(in: window).id) else { return }
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        let spaceID = space(in: window).id
+        takingFromTabGroups([tabID]) { [self] in
+            guard store.removeTabFromGroup(tabID, in: spaceID) else { return }
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     /// New Tab in Group: ⌘T's bar; the tab it opens joins the group.
@@ -187,16 +221,90 @@ extension BrowserViewModel {
     /// Delete Group: asks first (Chrome's "Delete tab group?") unless
     /// "Don't ask again" was ticked, then closes the group's tabs everywhere.
     func requestTabGroupDeletion(_ groupID: TabGroup.ID) {
-        guard let group = store.tabGroup(withID: groupID) else { return }
-        if asksBeforeDeletingTabGroup {
-            let spaces = store.spaces(showingTabGroup: groupID).count
-            let answer = answerTabGroupDeletion?(group, spaces) ?? MainActor.assumeIsolated {
-                Self.runTabGroupDeletionAlert(group: group, spaceCount: spaces, syncOn: isSyncEnabled)
-            }
-            guard answer.delete else { return }
-            if answer.dontAskAgain { asksBeforeDeletingTabGroup = false }
-        }
+        guard let group = store.tabGroup(withID: groupID), confirmsTabGroupDeletion(of: group, reason: .deleteGroup) else { return }
         deleteTabGroup(groupID)
+    }
+
+    /// The one question, for Delete Group and for a group's last tab: true
+    /// when the group may go. "Don't ask again" is remembered for both, and
+    /// once it is ticked nothing is asked.
+    private func confirmsTabGroupDeletion(of group: TabGroup, reason: TabGroupDeleteConfirmation.Reason) -> Bool {
+        guard asksBeforeDeletingTabGroup else { return true }
+        let question = TabGroupDeletionQuestion(group: group, spaceCount: store.spaces(showingTabGroup: group.id).count, reason: reason)
+        let answer = answerTabGroupDeletion?(question) ?? MainActor.assumeIsolated {
+            Self.runTabGroupDeletionAlert(question, syncOn: isSyncEnabled)
+        }
+        guard answer.delete else { return false }
+        if answer.dontAskAgain { asksBeforeDeletingTabGroup = false }
+        return true
+    }
+
+    // MARK: - The last tab
+
+    /// Before an action that takes `ids` out of their tab groups: a close or
+    /// an archive (`closing`), or a move out (Remove from Group, a drag, a
+    /// pin, another group, another space; `destination` is where they go).
+    /// When that would leave a group without a tab the person is asked
+    /// first, as in Chrome: "Close tab and delete group?", or "Remove tab and
+    /// delete group?" for a move. Cancel: `run` is not called, so the tab and
+    /// the group are untouched. Delete Group, or "Don't ask again" ticked
+    /// earlier: `run` gets the groups to delete once the tabs have gone
+    /// (`deleteTabGroupsLeftEmpty`). An action that empties no group runs at once.
+    ///
+    /// The alert is put off to the next turn of the main queue: a drop and a
+    /// key handler return before a modal alert runs. Returns whether `run`
+    /// was called before this returned.
+    @discardableResult
+    func confirmEmptyingTabGroups(
+        byTaking ids: [UUID],
+        to destination: SidebarStore.ItemParent? = nil,
+        closing: Bool,
+        then run: @escaping (_ emptied: [TabGroup.ID]) -> Void
+    ) -> Bool {
+        let groups = store.tabGroupsEmptied(byTaking: ids, to: destination)
+        guard !groups.isEmpty, asksBeforeDeletingTabGroup else {
+            run(groups.map(\.id))
+            return true
+        }
+        var ran = false
+        let ask = { [self] in
+            for group in groups {
+                // As the group is now: an earlier answer in this loop may have changed nothing, but time has passed.
+                guard let group = store.tabGroup(withID: group.id) else { continue }
+                let count = ids.filter { store.tabGroupID(holding: $0) == group.id }.count
+                guard confirmsTabGroupDeletion(of: group, reason: closing ? .closingLastTabs(count) : .removingLastTabs(count)) else { return }
+            }
+            ran = true
+            run(groups.map(\.id))
+        }
+        if answerTabGroupDeletion != nil {
+            ask()
+        } else {
+            DispatchQueue.main.async(execute: ask)
+        }
+        return ran
+    }
+
+    /// Runs `action`, which takes `ids` out of their tab groups, once
+    /// `confirmEmptyingTabGroups` allows it, then deletes the groups it left empty.
+    @discardableResult
+    func takingFromTabGroups(
+        _ ids: [UUID],
+        to destination: SidebarStore.ItemParent? = nil,
+        closing: Bool = false,
+        _ action: @escaping () -> Void
+    ) -> Bool {
+        confirmEmptyingTabGroups(byTaking: ids, to: destination, closing: closing) { [weak self] emptied in
+            action()
+            self?.deleteTabGroupsLeftEmpty(emptied)
+        }
+    }
+
+    /// After the action: each group the person agreed to delete goes, from
+    /// every space, if it now has no tab. One that still has a tab (the page
+    /// said Stay, the move was refused) is left as it is.
+    func deleteTabGroupsLeftEmpty(_ ids: [TabGroup.ID]) {
+        for id in ids where store.tabGroup(withID: id)?.tabs.isEmpty == true { deleteTabGroup(id) }
     }
 
     func deleteTabGroup(_ groupID: TabGroup.ID) {
@@ -210,13 +318,11 @@ extension BrowserViewModel {
 
     /// The question as an alert with Chrome's wording and its checkbox.
     @MainActor
-    static func runTabGroupDeletionAlert(group: TabGroup, spaceCount: Int, syncOn: Bool) -> TabGroupDeletionAnswer {
+    static func runTabGroupDeletionAlert(_ question: TabGroupDeletionQuestion, syncOn: Bool) -> TabGroupDeletionAnswer {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = TabGroupDeleteConfirmation.title
-        alert.informativeText = TabGroupDeleteConfirmation.message(
-            groupName: group.name, tabCount: group.tabs.count, spaceCount: spaceCount, syncOn: syncOn
-        )
+        alert.messageText = question.title
+        alert.informativeText = question.message(syncOn: syncOn)
         // Cancel is the default button, so Return never deletes.
         alert.addButton(withTitle: TabGroupDeleteConfirmation.cancelTitle)
         let delete = alert.addButton(withTitle: TabGroupDeleteConfirmation.confirmTitle)

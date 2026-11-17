@@ -300,6 +300,39 @@ final class TabGroupTests: XCTestCase {
         XCTAssertFalse(TabGroupDeleteConfirmation.asks(in: defaults))
     }
 
+    func testTheLastTabsQuestionSaysWhatHappensToTheTabAndTheGroup() {
+        typealias Words = TabGroupDeleteConfirmation
+        XCTAssertEqual(Words.title(for: .deleteGroup), "Delete tab group?")
+        XCTAssertEqual(Words.title(for: .closingLastTabs(1)), "Close tab and delete group?")
+        XCTAssertEqual(Words.title(for: .closingLastTabs(3)), "Close tabs and delete group?")
+        XCTAssertEqual(Words.title(for: .removingLastTabs(1)), "Remove tab and delete group?")
+        XCTAssertEqual(Words.title(for: .removingLastTabs(2)), "Remove tabs and delete group?")
+        XCTAssertEqual(Words.message(for: .closingLastTabs(1), groupName: "Work", tabCount: 1, spaceCount: 3),
+                       "This is the last tab of “Work”. Closing it deletes the group from every space that shows it (3 spaces).")
+        XCTAssertEqual(Words.message(for: .removingLastTabs(2), groupName: "", tabCount: 2, spaceCount: 1, syncOn: true),
+                       "These are the last tabs of this group. Removing them deletes the group from the space that shows it."
+                           + " The tabs stay open. The group is deleted on your other Macs too.")
+        XCTAssertEqual(Words.message(for: .deleteGroup, groupName: "Work", tabCount: 3, spaceCount: 2),
+                       Words.message(groupName: "Work", tabCount: 3, spaceCount: 2), "Delete Group keeps its words")
+    }
+
+    func testWhichGroupsAnActionWouldLeaveEmpty() throws {
+        let f = makeStore()
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        let single = try XCTUnwrap(f.store.createTabGroup(containing: [f.mail]))
+        func emptied(_ ids: [UUID], to destination: SidebarStore.ItemParent? = nil) -> [TabGroup.ID] {
+            f.store.tabGroupsEmptied(byTaking: ids, to: destination).map(\.id)
+        }
+        XCTAssertEqual(emptied([f.docs]), [], "one of two")
+        XCTAssertEqual(emptied([f.docs, f.news]), [row.groupID])
+        XCTAssertEqual(emptied([f.mail, f.news, f.docs]), [single.groupID, row.groupID], "in the order met")
+        XCTAssertEqual(emptied([f.mail], to: .tabGroup(single.groupID)), [], "a move inside its own group")
+        XCTAssertEqual(emptied([f.mail], to: .tabGroup(row.groupID)), [single.groupID])
+        XCTAssertEqual(emptied([row.id, UUID()]), [], "rows and unknown ids take no tab")
+        let empty = try XCTUnwrap(f.store.createTabGroup())
+        XCTAssertEqual(emptied([f.mail]).contains(empty.groupID), false, "an empty group is not emptied by anything")
+    }
+
     // MARK: Spaces and profiles
 
     func testADeletedOrArchivedSpaceTakesItsRowNotTheGroup() throws {

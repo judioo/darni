@@ -114,26 +114,31 @@ extension BrowserViewModel {
     /// ⌘W on a selection: each tab as its own ✕ would (a Today tab to the
     /// archive, a pinned one back to its saved URL, unloaded), splits closed.
     /// ⇧⌘T brings back everything this closed at once.
+    /// A selection that holds every tab of a tab group asks once, before any
+    /// of them closes ("Close tabs and delete group?").
     func closeItems(_ ids: [UUID]) {
-        store.clearMultiSelection(in: store.keyWindowID)
-        store.closingAsOneBatch {
-            for id in ids {
-                switch store.entry(withID: id) {
-                case .tab: closeTab(id)
-                case .split(let split): closeSplit(split.id)
-                default: break
+        confirmEmptyingTabGroups(byTaking: ids, closing: true) { [self] emptied in
+            store.clearMultiSelection(in: store.keyWindowID)
+            store.closingAsOneBatch {
+                for id in ids {
+                    switch store.entry(withID: id) {
+                    case .tab: closeTabWithoutAsking(id, leaving: emptied)
+                    case .split(let split): closeSplit(split.id)
+                    default: break
+                    }
                 }
             }
+            loadSelectedIfNeeded()
         }
-        loadSelectedIfNeeded()
     }
 
     /// Archive Tabs (row menu): the pinned and Today tabs, as Archive Tab does to one.
     func archiveTabs(_ ids: [UUID]) {
-        for id in store.plainTabIDs(ids) where store.splitContaining(tabID: id) == nil {
-            if store.archiveTab(id) != nil { releaseEngine(for: id) }
+        let tabs = store.plainTabIDs(ids).filter { store.splitContaining(tabID: $0) == nil }
+        takingFromTabGroups(tabs, closing: true) { [self] in
+            for id in tabs where store.archiveTab(id) != nil { releaseEngine(for: id) }
+            loadSelectedIfNeeded()
         }
-        loadSelectedIfNeeded()
     }
 
     /// The ⌘W item's title on a selection.
@@ -155,12 +160,14 @@ extension BrowserViewModel {
     }
 
     func pinTabs(_ ids: [UUID]) {
-        let pinned = store.pinTabs(ids)
-        guard !pinned.isEmpty else { return }
-        let space = store.spaceContaining(tabID: pinned[0]).flatMap { store.space(withID: $0) }?.name ?? ""
-        showKeptToast(pinned.count == 1 ? "Pinned Tab to “\(space)”" : "Pinned \(pinned.count) Tabs to “\(space)”", systemImage: "pin.fill",
-                      count: pinned.count, titleUndo: tidyTitlesIfNeeded(pinned))
-        loadSelectedIfNeeded()
+        takingFromTabGroups(ids) { [self] in
+            let pinned = store.pinTabs(ids)
+            guard !pinned.isEmpty else { return }
+            let space = store.spaceContaining(tabID: pinned[0]).flatMap { store.space(withID: $0) }?.name ?? ""
+            showKeptToast(pinned.count == 1 ? "Pinned Tab to “\(space)”" : "Pinned \(pinned.count) Tabs to “\(space)”", systemImage: "pin.fill",
+                          count: pinned.count, titleUndo: tidyTitlesIfNeeded(pinned))
+            loadSelectedIfNeeded()
+        }
     }
 
     func unpinTabs(_ ids: [UUID]) {
@@ -173,14 +180,16 @@ extension BrowserViewModel {
     }
 
     func addTabsToFavorites(_ ids: [UUID]) {
-        let added = store.addTabsToFavorites(ids)
-        guard !added.isEmpty else { return }
-        if let undo = tidyTitlesIfNeeded(added) {
-            showUndoToast(added.count == 1 ? "Added to Favorites · Title tidied" : "Added to Favorites · Titles tidied",
-                          systemImage: "star.fill", undo: undo)
+        takingFromTabGroups(ids) { [self] in
+            let added = store.addTabsToFavorites(ids)
+            guard !added.isEmpty else { return }
+            if let undo = tidyTitlesIfNeeded(added) {
+                showUndoToast(added.count == 1 ? "Added to Favorites · Title tidied" : "Added to Favorites · Titles tidied",
+                              systemImage: "star.fill", undo: undo)
+            }
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
         }
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
     }
 
     func duplicateTabs(_ ids: [UUID]) {
@@ -195,9 +204,11 @@ extension BrowserViewModel {
     /// space in the same strip) changes the rows' session, so it asks first.
     func moveItems(_ ids: [UUID], toSpace spaceID: Space.ID) {
         if store.crossesProfile(ids, toSpace: spaceID) { return requestProfileMove(ids, toSpace: spaceID) }
-        guard !store.moveEntries(ids, toSpace: spaceID).isEmpty else { return }
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        takingFromTabGroups(ids) { [self] in
+            guard !store.moveEntries(ids, toSpace: spaceID).isEmpty else { return }
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     // MARK: - Move to another profile
@@ -235,25 +246,31 @@ extension BrowserViewModel {
     func moveItemsToProfile(_ ids: [UUID], toSpace spaceID: Space.ID) {
         let carried = store.carriedTabIDs(ids)
         let live = Set(engineHost.allTabEngines().map(\.0))
-        guard !store.moveEntries(ids, toSpace: spaceID).isEmpty else { return }
-        reloadTabsInTheirProfile(carried.compactMap { store.tab(withID: $0) }, live: live)
+        takingFromTabGroups(ids) { [self] in
+            guard !store.moveEntries(ids, toSpace: spaceID).isEmpty else { return }
+            reloadTabsInTheirProfile(carried.compactMap { store.tab(withID: $0) }, live: live)
+        }
     }
 
     func moveItems(_ ids: [UUID], intoFolder folderID: UUID) {
-        guard !store.moveEntries(ids, intoFolder: folderID).isEmpty else { return }
-        store.setFolderExpanded(folderID, true)
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        takingFromTabGroups(ids) { [self] in
+            guard !store.moveEntries(ids, intoFolder: folderID).isEmpty else { return }
+            store.setFolderExpanded(folderID, true)
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     /// New Folder with Selection: the rows go into a new folder, named in place.
     func newFolder(withSelection ids: [UUID]) {
-        guard let first = ids.first, let spaceID = store.spaceContaining(entryID: first),
-              let folder = store.createFolder(withSelection: ids, in: spaceID) else { return }
-        store.clearMultiSelection(in: store.keyWindowID)
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
-        beginRename(.folder(folder.id))
+        guard let first = ids.first, let spaceID = store.spaceContaining(entryID: first) else { return }
+        takingFromTabGroups(ids) { [self] in
+            guard let folder = store.createFolder(withSelection: ids, in: spaceID) else { return }
+            store.clearMultiSelection(in: store.keyWindowID)
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+            beginRename(.folder(folder.id))
+        }
     }
 
     // MARK: - Drag
@@ -268,19 +285,28 @@ extension BrowserViewModel {
     }
 
     /// Reorder: the dragged selection lands before or after `targetID`.
+    /// False: nothing moved and nothing was asked, so the caller moves the
+    /// dragged row alone. A drag that takes a tab group's last tabs out asks
+    /// first; the move then follows the answer, and this returns true.
     @discardableResult
     func moveDraggedSelection(_ ids: [UUID], relativeTo targetID: UUID, after: Bool) -> Bool {
-        guard let moved = store.moveEntries(ids, relativeTo: targetID, after: after), !moved.isEmpty else { return false }
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
-        return true
+        var moved = false
+        let ran = takingFromTabGroups(ids, to: store.parent(of: targetID)) { [self] in
+            guard let rows = store.moveEntries(ids, relativeTo: targetID, after: after), !rows.isEmpty else { return }
+            moved = true
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
+        return moved || !ran
     }
 
     /// After a section's last row (pins into Pinned, unpins into Today).
     func moveDraggedSelection(_ ids: [UUID], appendingTo destination: SidebarStore.ItemDestination) {
-        guard !store.moveEntries(ids, appendingTo: destination).isEmpty else { return }
-        reconcileEngineOwnership()
-        loadSelectedIfNeeded()
+        takingFromTabGroups(ids, to: store.resolvedParent(destination)) { [self] in
+            guard !store.moveEntries(ids, appendingTo: destination).isEmpty else { return }
+            reconcileEngineOwnership()
+            loadSelectedIfNeeded()
+        }
     }
 
     // MARK: - Split View

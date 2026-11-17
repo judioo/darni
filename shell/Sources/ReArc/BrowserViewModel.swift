@@ -166,7 +166,8 @@ final class BrowserViewModel {
     var tabGroupsEnabled = TabGroupsPreference.isEnabled(in: .standard) {
         didSet { TabGroupsPreference.setEnabled(tabGroupsEnabled, in: externalLinkDefaults) }
     }
-    /// Delete Group asks first; its "Don't ask again" turns this off.
+    /// Delete Group asks first, and so does closing or moving out a group's
+    /// last tab; the question's "Don't ask again" turns this off for both.
     var asksBeforeDeletingTabGroup = TabGroupDeleteConfirmation.asks(in: .standard) {
         didSet { TabGroupDeleteConfirmation.setAsks(asksBeforeDeletingTabGroup, in: externalLinkDefaults) }
     }
@@ -174,9 +175,9 @@ final class BrowserViewModel {
     var tabGroupEditor: TabGroupEditorRequest?
     /// New Tab in Group: the group ⌘T's new tab joins.
     var commandBarNewTabGroupID: TabGroup.ID?
-    /// Answers Delete Group's question in the alert's place (tests); the
-    /// arguments are the group and how many spaces show it.
-    @ObservationIgnored var answerTabGroupDeletion: ((TabGroup, Int) -> TabGroupDeletionAnswer)?
+    /// Answers "Delete tab group?" and "Close tab and delete group?" in the
+    /// alert's place (tests).
+    @ObservationIgnored var answerTabGroupDeletion: ((TabGroupDeletionQuestion) -> TabGroupDeletionAnswer)?
     /// Settings › Advanced: reopen every window of the last session at launch.
     var restoresWindows = WindowRestorePreference.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(restoresWindows, forKey: WindowRestorePreference.defaultsKey) }
@@ -952,8 +953,21 @@ final class BrowserViewModel {
     /// Arc; anything else is closed and archived. The row's ✕ on an unloaded
     /// pinned tab removes it instead (`closeTabFromRow`).
     func closeTab(_ id: Tab.ID) {
-        // The page may ask "Leave site?" first (Chromium beforeunload); Stay keeps the tab.
-        closeThroughPage(id) { [weak self] in self?.closeTabNow(id) }
+        // A tab group's last tab: "Close tab and delete group?" first.
+        confirmEmptyingTabGroups(byTaking: [id], closing: true) { [weak self] emptied in
+            self?.closeTabWithoutAsking(id, leaving: emptied)
+        }
+    }
+
+    /// `closeTab` once the question about the tab's group is answered, or
+    /// for a caller that asked it for several tabs at once. The groups in
+    /// `emptied` are deleted when the tab has gone and left them empty.
+    func closeTabWithoutAsking(_ id: Tab.ID, leaving emptied: [TabGroup.ID] = []) {
+        // The page may ask "Leave site?" first (Chromium beforeunload); Stay keeps the tab, and its group.
+        closeThroughPage(id) { [weak self] in
+            self?.closeTabNow(id)
+            self?.deleteTabGroupsLeftEmpty(emptied)
+        }
     }
 
     private func closeTabNow(_ id: Tab.ID) {
@@ -966,11 +980,15 @@ final class BrowserViewModel {
             unloadPinnedTab(id)
             return
         }
-        deleteTab(id)
+        deleteTabNow(id)
     }
 
     /// Removes a tab from the sidebar (to the archive), pinned tabs included.
     func deleteTab(_ id: Tab.ID) {
+        takingFromTabGroups([id], closing: true) { [weak self] in self?.deleteTabNow(id) }
+    }
+
+    private func deleteTabNow(_ id: Tab.ID) {
         store.closeTab(id)
         releaseEngine(for: id)
         loadSelectedIfNeeded()
@@ -2178,6 +2196,11 @@ final class BrowserViewModel {
             guard store.closedTabStack.canReopen else { return "No closed tabs to reopen" }
             reopenClosedTab()
         case .pinTab:
+            if let id = store.selectedTabID, store.tabGroupID(holding: id) != nil {
+                // Out of its group: asks first when it is the group's last tab.
+                togglePin(id)
+                return nil
+            }
             guard let id = store.selectedTabID, store.pinTab(id) else { return "Cannot pin this tab" }
             tidyTitleIfNeeded(id)
             loadSelectedIfNeeded()
@@ -2189,6 +2212,10 @@ final class BrowserViewModel {
             // Into or out of a container: another session, so it asks first.
             if store.crossesProfile([id], toSpace: spaceID) {
                 requestProfileMove([id], toSpace: spaceID)
+                return nil
+            }
+            if store.tabGroupID(holding: id) != nil {
+                moveEntry(id, toSpace: spaceID)
                 return nil
             }
             guard store.moveTab(id, toSpace: spaceID) else { return "Cannot move this tab" }
@@ -2395,6 +2422,10 @@ final class BrowserViewModel {
         case .duplicateTab:
             duplicateTab()
         case .archiveTab:
+            if let id = store.selectedTabID, store.tabGroupID(holding: id) != nil {
+                archiveTab(id)
+                return nil
+            }
             guard let id = store.selectedTabID, store.archiveTab(id) != nil else { return "Cannot archive this tab" }
             releaseEngine(for: id)
             loadSelectedIfNeeded()

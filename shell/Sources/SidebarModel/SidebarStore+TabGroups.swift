@@ -102,6 +102,22 @@ extension SidebarStore {
         return canPlace(entry, in: .tabGroup(groupID))
     }
 
+    /// The groups that taking `ids` away would leave without a tab: every tab
+    /// of the group is among them. A tab going to `destination` does not
+    /// leave the group it is going into (a reorder inside the group).
+    public func tabGroupsEmptied(byTaking ids: [UUID], to destination: ItemParent? = nil) -> [TabGroup] {
+        var taken: [TabGroup.ID: Set<Tab.ID>] = [:]
+        var order: [TabGroup.ID] = []
+        for id in ids {
+            guard let groupID = tabGroupID(holding: id), destination != .tabGroup(groupID) else { continue }
+            if taken[groupID] == nil { order.append(groupID) }
+            taken[groupID, default: []].insert(id)
+        }
+        return order.compactMap { tabGroupsByID[$0] }.filter { group in
+            group.tabs.allSatisfy { taken[group.id]?.contains($0.id) == true }
+        }
+    }
+
     /// The colour of the group a tab is in: the bar beside its row.
     public func tabGroupColor(holding tabID: Tab.ID) -> TabGroupColor? {
         guard let groupID = tabGroupID(holding: tabID) else { return nil }
