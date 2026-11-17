@@ -341,7 +341,7 @@ final class Wave21ModelTests: XCTestCase {
 
     // MARK: External links
 
-    func testExternalLinksRouteByPreferenceAndReuseOpenTabs() {
+    func testExternalLinksRouteByPreference() {
         let store = SidebarStore(spaces: [Space(name: "A", sortRank: "a"), Space(name: "B", sortRank: "b")])
         let b = store.spaces(in: store.activeProfileID)[1]
         store.selectSpace(b.id)
@@ -352,8 +352,10 @@ final class Wave21ModelTests: XCTestCase {
                        .newTab(page, spaceID: b.id), "a new tab lands in the space in front")
 
         let open = store.addTab(kind: .today, title: "A", url: page)
-        XCTAssertEqual(ExternalLinkRouting.route(page, destination: .littleArc, in: store), .focusTab(open.id),
+        XCTAssertEqual(ExternalLinkRouting.route(page, destination: .activeSpace, in: store), .focusTab(open.id),
                        "a page already open is focused, not opened twice")
+        XCTAssertEqual(ExternalLinkRouting.route(page, destination: .littleArc, in: store),
+                       .littleArc(page, profileID: store.activeProfileID), "as Arc: Little ReArc links never go to a space's tab")
 
         XCTAssertEqual(ExternalLinkRouting.route(url("javascript:alert(1)"), destination: .activeSpace, in: store), .rejected)
         XCTAssertEqual(ExternalLinkRouting.route(url("mailto:a@b.c"), destination: .activeSpace, in: store), .rejected)

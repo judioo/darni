@@ -137,8 +137,8 @@ struct SystemDefaultBrowser: DefaultBrowserSetting {
 extension BrowserViewModel {
 
     /// A link from another app: an Air Traffic Control rule's space or Little
-    /// Arc profile, else focus it if already open, else Little Arc or a new
-    /// tab in the current space, per the user's choice.
+    /// Arc profile, else Little Arc or the current space, per the user's
+    /// choice (`ExternalLinkRouting.route`).
     func openExternalURL(_ url: URL) {
         let route = ExternalLinkRouting.route(url, destination: externalLinkDestination, in: store,
                                               engine: engineHost.navigationSchemes, rules: linkRouting)
@@ -152,6 +152,8 @@ extension BrowserViewModel {
         switch route {
         case .littleArc(let url, let profileID):
             openLittleArc(url: url, profileID: profileID)
+        case .focusLittleArc(let id):
+            requestLittleArcWindow(id)
         case .newTab(let url, let spaceID):
             if spaceID == store.activeSpaceID {
                 openInNewTab(url)
@@ -177,7 +179,7 @@ extension BrowserViewModel {
         switch route {
         case .newTab(_, let id): spaceID = id
         case .focusTab(let id): spaceID = store.spaceContaining(tabID: id)
-        case .littleArc, .rejected: spaceID = nil
+        case .littleArc, .focusLittleArc, .rejected: spaceID = nil
         }
         guard let spaceID, store.space(withID: spaceID)?.isArchived == true else { return true }
         guard store.restoreArchivedSpace(spaceID) == nil else {
