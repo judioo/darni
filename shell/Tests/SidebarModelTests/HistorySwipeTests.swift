@@ -106,6 +106,17 @@ struct HistorySwipeTests {
         #expect(!cancelled.consumes && cancelled.replay)
     }
 
+    @Test func aWobbleThatNeverDecidesGoesToThePageAfterTheCap() {
+        var swipe = HistorySwipe()
+        _ = swipe.handle(phase: .began, x: 0, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+        var last = HistorySwipe.Update(consumes: true, progress: 0)
+        for i in 1..<HistorySwipe.maxHeld + 1 {
+            last = swipe.handle(phase: .changed, x: i % 2 == 0 ? 1 : -1, y: 0, edges: edges, canGoBack: true, canGoForward: true)
+            if !last.holds { break }
+        }
+        #expect(!last.consumes && last.replay)
+    }
+
     @Test func nothingIsHeldWhenThereIsNowhereToGo() {
         var swipe = HistorySwipe()
         let first = swipe.handle(phase: .began, x: 1, y: 0, edges: edges, canGoBack: false, canGoForward: false)

@@ -31,6 +31,10 @@ public struct HistorySwipe {
     /// (owner, 2026-11-18: a Pinterest swipe went to the page because its first event was 1, 2).
     private var lock = SwipeAxisLock()
     private var holding = false
+    private var heldCount = 0
+    /// A wobble that never travels 6 pt would hold the page's scroll until the fingers lift;
+    /// after this many events (about 0.15 s on a trackpad) the gesture is the page's.
+    static let maxHeld = 20
     private var edges = Edges(back: false, forward: false)
     public init() {}
 
@@ -40,6 +44,7 @@ public struct HistorySwipe {
             distance = 0
             lock = SwipeAxisLock()
             holding = false
+            heldCount = 0
             self.edges = edges
             // Nothing to go to: the gesture is the page's from the first event, nothing held.
             let possible = edges.back && canGoBack || edges.forward && canGoForward
@@ -60,9 +65,10 @@ public struct HistorySwipe {
         }
         if case .deciding = state {
             switch lock.add(dx: x, dy: y) {
-            case .undecided where phase != .ended:
+            case .undecided where phase != .ended && heldCount < Self.maxHeld:
                 // Zero-travel events too: the page must still see the gesture's began.
                 holding = true
+                heldCount += 1
                 return Update(consumes: true, progress: 0, holds: true)
             case .horizontal:
                 let direction: Direction = lock.dx > 0 ? .back : .forward
