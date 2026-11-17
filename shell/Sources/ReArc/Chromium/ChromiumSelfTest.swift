@@ -3334,13 +3334,9 @@ extension ChromiumSelfTest {
     /// `task_manager` logs what the rows lack.
     @MainActor
     private func taskManagerChecks(model: BrowserViewModel, store: SidebarStore, window: NSWindow) async throws {
-        let url = URL(string: "\(serverBase)/search")!
         let pageTitle = "search results"
         let previous = store.selectedTab?.id
-        let tab = store.addTab(kind: .today, title: "Task Manager", url: url)
-        model.selectTab(tab.id)
-        let engine = try shellEngine(model, tab)
-        loadShellTab(model, tab, engine, url)
+        let (tab, engine) = try openFixtureTab(model, store, title: "Task Manager", path: "/search")
         let manager = model.taskManager
         let saved = (category: manager.category, search: manager.search, sort: manager.sort)
         defer {
