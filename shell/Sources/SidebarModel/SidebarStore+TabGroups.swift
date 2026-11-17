@@ -432,23 +432,78 @@ extension SidebarStore {
 
     // MARK: - Open and closed
 
-    /// A group's row opens and closes as a folder does; the state is the row's, so per space.
+    /// A group's row is open or closed, nothing in between: open shows every
+    /// tab of the group, closed shows none, not even a selected one (a
+    /// folder keeps its selected tab on show; a group does not). The state is
+    /// the row's, so per space.
     public func isTabGroupExpanded(_ referenceID: UUID) -> Bool {
         expandedFolderIDs.contains(referenceID)
     }
 
+    /// Closing a row whose space has one of the group's tabs selected
+    /// deselects it: the windows on that space show the blank page. The tab
+    /// keeps its page, and stays selected in the other spaces that show the
+    /// group open. Opening the row selects nothing.
     public func setTabGroupExpanded(_ referenceID: UUID, _ expanded: Bool) {
         guard case .tabGroup = lookupIndex()[referenceID]?.entry, expandedFolderIDs.contains(referenceID) != expanded else { return }
         if expanded {
             expandedFolderIDs.insert(referenceID)
         } else {
             expandedFolderIDs.remove(referenceID)
+            deselectTabs(ofClosedTabGroupRow: referenceID)
         }
+        // A space's fallback selection skips a closed group's tabs.
+        refreshSelectionObservers()
         notifyMutation()
     }
 
     public func toggleTabGroupExpanded(_ referenceID: UUID) {
         setTabGroupExpanded(referenceID, !isTabGroupExpanded(referenceID))
+    }
+
+    /// Whether `id` is a tab of a group whose row is closed in a space (the
+    /// active one unless given): it is not on screen there, so it cannot be
+    /// that space's selection, and the keys that step through tabs pass it.
+    public func isInClosedTabGroup(_ id: UUID, in spaceID: Space.ID? = nil) -> Bool {
+        guard case .groupTab(let groupID) = lookupIndex()[id]?.place else { return false }
+        let spaceID = spaceID ?? activeSpaceID
+        guard let place = tabGroupPlaces(of: groupID).first(where: { $0.spaceID == spaceID }) else { return false }
+        return !expandedFolderIDs.contains(place.referenceID)
+    }
+
+    /// The same for the space `focusTab` would show the tab in
+    /// (`shownPlace(ofTabGroup:)`).
+    func isInClosedTabGroupWhereShown(_ tabID: Tab.ID) -> Bool {
+        guard let groupID = tabGroupID(holding: tabID), let place = shownPlace(ofTabGroup: groupID) else { return false }
+        return !expandedFolderIDs.contains(place.referenceID)
+    }
+
+    /// Opens the row that shows a tab's group in a space, so the tab is on
+    /// screen there. Selecting a tab does this: Switch to Tab on a closed
+    /// group's tab opens the group.
+    func openTabGroupRow(holding tabID: Tab.ID, in spaceID: Space.ID? = nil) {
+        guard let groupID = tabGroupID(holding: tabID),
+              let row = tabGroupReference(ofGroup: groupID, in: spaceID) else { return }
+        expandedFolderIDs.insert(row.id)
+    }
+
+    /// The space of a row that was just closed shows none of the group's
+    /// tabs: one that was its selection is deselected and the space is
+    /// blank, as after a pinned tab unloads. Nothing remembers the tab, so
+    /// opening the row again selects nothing.
+    private func deselectTabs(ofClosedTabGroupRow referenceID: UUID) {
+        guard let item = lookupIndex()[referenceID], case .tabGroup(let reference) = item.entry,
+              case .tree(let spaceID, _, _) = item.place else { return }
+        let tabs = Set(reference.group.tabs.map(\.id))
+        let remembered = selectionBySpace[spaceID].map(tabs.contains) ?? false
+        if spaceID == activeSpaceID {
+            guard let selected = selectedItemID, tabs.contains(selected) else { return }
+            if remembered { selectionBySpace[spaceID] = nil }
+            selectedItemID = nil
+        } else if remembered {
+            selectionBySpace[spaceID] = nil
+            spacesLeftBlank.insert(spaceID)
+        }
     }
 
     // MARK: - Saving

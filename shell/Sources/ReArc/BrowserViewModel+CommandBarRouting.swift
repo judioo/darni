@@ -108,7 +108,7 @@ extension BrowserViewModel {
             if !controlHeld { commitTabSwitcher() }
             return
         }
-        guard let session = TabSwitcherSession(items: store.recentTabSwitcherItems(), forward: forward),
+        guard let session = TabSwitcherSession(items: store.recentTabSwitcherItems(onScreenOnly: true), forward: forward),
               session.items.count > 1 else { return }
         tabSwitcher = session
         if !controlHeld { commitTabSwitcher() }

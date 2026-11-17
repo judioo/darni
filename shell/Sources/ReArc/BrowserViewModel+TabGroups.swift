@@ -78,7 +78,7 @@ extension BrowserViewModel {
     /// Opens the group's row in the active space, so a tab that just joined shows.
     private func revealTabGroup(_ groupID: TabGroup.ID) {
         guard let row = store.tabGroupReference(ofGroup: groupID) else { return }
-        store.setTabGroupExpanded(row.id, true)
+        setTabGroupExpanded(row.id, true)
     }
 
     /// Remove from Group: the tab becomes a row of its own below the group's.
@@ -101,6 +101,22 @@ extension BrowserViewModel {
         commandBarNewTabGroupID = nil
         guard store.moveItem(tabID, to: .tabGroup(groupID), index: group.tabs.count) else { return }
         revealTabGroup(groupID)
+    }
+
+    // MARK: - Open and closed
+
+    /// A click on a group's row, and Collapse or Expand Group. Closed, the
+    /// group shows none of its tabs: one that was selected in the row's
+    /// space is deselected and the windows on that space show the blank
+    /// page (the owner's choice, 2026-11-17; Chrome moves to the nearest tab
+    /// outside the group instead). The tab keeps its page.
+    func setTabGroupExpanded(_ referenceID: UUID, _ expanded: Bool) {
+        store.setTabGroupExpanded(referenceID, expanded)
+        if !expanded { loadSelectedIfNeeded() }
+    }
+
+    func toggleTabGroupExpanded(_ referenceID: UUID) {
+        setTabGroupExpanded(referenceID, !store.isTabGroupExpanded(referenceID))
     }
 
     // MARK: - Showing

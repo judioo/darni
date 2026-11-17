@@ -899,6 +899,8 @@ public final class SidebarStore {
         // The group a tab left changed too.
         if case .tabGroup(let groupID) = source, target != source { mutationJournal.record(.upsertItem(id: groupID)) }
 
+        // The selected tab joined a group that is closed here: the group opens, so the page on screen keeps its row.
+        if id == selectedItemID, case .tabGroup = target { openTabGroupRow(holding: id) }
         if let selected = selectedItemID, !displayEntries().contains(where: { $0.id == selected }) {
             selectedItemID = restoredSelection(for: activeSpaceID)
         }
@@ -1028,6 +1030,8 @@ public final class SidebarStore {
             return
         }
         guard displayEntries().contains(where: { $0.id == id }) else { return }
+        // A closed tab group shows none of its tabs: selecting one opens the group here.
+        openTabGroupRow(holding: id)
         selectedItemID = id
         markActive(id)
         setUnread(false, for: id)
@@ -1072,9 +1076,9 @@ public final class SidebarStore {
             if activeSpaceID != spaceID { selectSpace(spaceID) }
             revealInFolders(id)
             selectTab(id)
-        case .tabGroup(let spaceID, let groupID):
+        case .tabGroup(let spaceID, _):
             if activeSpaceID != spaceID { selectSpace(spaceID) }
-            if let row = tabGroupReference(ofGroup: groupID, in: spaceID) { expandedFolderIDs.insert(row.id) }
+            // `selectTab` opens the group's row when it is closed.
             selectTab(id)
         case .splitPane:
             break
@@ -1668,9 +1672,20 @@ public final class SidebarStore {
             activeSpaceID = (owner.flatMap { spaces(listedIn: $0).first } ?? visibleSpaces[0]).id
             activeProfileID = space(withID: activeSpaceID)?.profileID ?? activeProfileID
         }
+        var liveFolderIDs = Set(spaces.flatMap { SidebarTree.folders(contentBySpace[$0.id]?.pinned ?? []).map(\.id) })
+        // A tab group's row opens and closes as a folder does.
+        liveFolderIDs.formUnion(contentBySpace.values.flatMap { SidebarTree.tabGroups($0.pinned + $0.today).map(\.id) })
+        expandedFolderIDs = Set(snapshot.expandedFolderIDs).intersection(liveFolderIDs)
+        // ReArc 2026.1117.849 kept a closed tab group's selected tab on show, so its file can
+        // have one selected or remembered. A closed group shows no tab: such a space is blank,
+        // and opening the group selects nothing.
+        for (spaceID, remembered) in selectionBySpace where isInClosedTabGroup(remembered, in: spaceID) {
+            selectionBySpace[spaceID] = nil
+            if spaceID != activeSpaceID { spacesLeftBlank.insert(spaceID) }
+        }
         if let selected = snapshot.selectedItemID,
            displayEntries().contains(where: { $0.id == selected }) {
-            selectedItemID = selected
+            selectedItemID = isInClosedTabGroup(selected) ? nil : selected
         } else {
             selectedItemID = restoredSelection(for: activeSpaceID)
         }
@@ -1689,10 +1704,6 @@ public final class SidebarStore {
         }
         easelRefsByID = snapshot.easelRefsByID
         capturesByID = snapshot.capturesByID
-        var liveFolderIDs = Set(spaces.flatMap { SidebarTree.folders(contentBySpace[$0.id]?.pinned ?? []).map(\.id) })
-        // A tab group's row opens and closes as a folder does.
-        liveFolderIDs.formUnion(contentBySpace.values.flatMap { SidebarTree.tabGroups($0.pinned + $0.today).map(\.id) })
-        expandedFolderIDs = Set(snapshot.expandedFolderIDs).intersection(liveFolderIDs)
         archivedTabs = TabArchivePolicy.pruned(snapshot.archivedTabs, now: now())
         autoArchiveThresholdByProfile = snapshot.autoArchiveThresholdByProfile
         for profile in profiles where boostLibrariesByProfileID[profile.id] == nil {
@@ -1778,9 +1789,10 @@ public final class SidebarStore {
         guard !spacesLeftBlank.contains(spaceID) else { return nil }
         let rows = displayRows(in: spaceID)
         if let remembered = selectionBySpace[spaceID], rows.ids.contains(remembered) {
-            return remembered
+            // A closed tab group shows none of its tabs: the space is blank, as when the group was closed.
+            return isInClosedTabGroup(remembered, in: spaceID) ? nil : remembered
         }
-        return rows.entries.first?.id
+        return rows.entries.first(where: { !isInClosedTabGroup($0.id, in: spaceID) })?.id
     }
 
     public func spaceContaining(tabID: Tab.ID) -> Space.ID? {
@@ -1918,12 +1930,15 @@ public final class SidebarStore {
     }
 
     private func isOpenSuccessor(_ entry: SidebarEntry) -> Bool {
+        // A closed tab group's tabs are not on screen.
+        if isInClosedTabGroup(entry.id) { return false }
         guard case .tab(let tab) = entry, tab.kind != .today else { return true }
         return isTabOpen(tab.id)
     }
 
     private func advanceSelection(by delta: Int) {
-        let ordered = displayEntries()
+        // Next Tab and Previous Tab step through the rows on screen: a closed tab group's tabs are passed.
+        let ordered = displayEntries().filter { !isInClosedTabGroup($0.id) }
         guard !ordered.isEmpty else { selectedItemID = nil; return }
         guard let selectedItemID,
               let index = ordered.firstIndex(where: { $0.id == selectedItemID }) else {

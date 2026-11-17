@@ -170,7 +170,7 @@ struct MiniSidebarEntryContent: View {
                 tabCount: reference.group.tabs.count,
                 isExpanded: model.store.isTabGroupExpanded(reference.id),
                 isDropTarget: isDropTarget,
-                onToggle: click(reference.id) { model.store.toggleTabGroupExpanded(reference.id) }
+                onToggle: click(reference.id) { model.toggleTabGroupExpanded(reference.id) }
             ) {
                 TabGroupContextMenu(model: model, reference: reference)
             }

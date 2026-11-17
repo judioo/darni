@@ -402,24 +402,188 @@ final class TabGroupTests: XCTestCase {
 
     // MARK: Rows
 
-    func testAGroupsRowsOpenCloseAndPeekLikeAFolders() throws {
+    private func rows(_ f: Fixture, in spaceID: Space.ID? = nil) -> [UUID] {
+        let spaceID = spaceID ?? f.home
+        return SidebarListRow.rows(outline: f.store.outline(for: spaceID), expanded: f.store.expandedFolderIDs, pinnedCollapsed: false,
+                                   isDragging: false, selection: { f.store.selection(among: $0, inSpace: spaceID) })
+            .compactMap { if case .item(let item, _) = $0 { return item.id } else { return nil } }
+    }
+
+    func testAGroupsRowIsOpenOrClosedWithNothingInBetween() throws {
         let f = makeStore()
         let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
-        func rows() -> [UUID] {
-            SidebarListRow.rows(outline: f.store.outline(for: f.home), expanded: f.store.expandedFolderIDs, pinnedCollapsed: false,
-                                isDragging: false, selection: { f.store.selection(among: $0, inSpace: f.home) })
-                .compactMap { if case .item(let item, _) = $0 { return item.id } else { return nil } }
-        }
         f.store.selectTab(f.mail)
-        XCTAssertEqual(rows(), [f.mail, row.id, f.docs, f.news])
+        XCTAssertEqual(rows(f), [f.mail, row.id, f.docs, f.news], "open: every tab")
         f.store.toggleFolderExpanded(row.id)
         XCTAssertFalse(f.store.isTabGroupExpanded(row.id), "the folder call closes a group's row too")
-        XCTAssertEqual(rows(), [f.mail, row.id])
-        f.store.selectTab(f.news)
-        XCTAssertEqual(rows(), [f.mail, row.id, f.news], "a closed group still shows its selected tab")
+        XCTAssertEqual(rows(f), [f.mail, row.id], "closed: none")
         XCTAssertEqual(f.store.outline(for: f.home).today.map(\.kind), [.tab, .tabGroup])
         XCTAssertEqual(f.store.outlineOrder(in: f.home), [f.mail, row.id, f.docs, f.news])
         XCTAssertEqual(f.store.tabGroupColor(holding: f.docs), row.group.color)
         XCTAssertNil(f.store.tabGroupColor(holding: f.mail))
+    }
+
+    func testAClosedGroupShowsNoTabEvenASelectedOneAndAFolderStillDoes() throws {
+        let tab = UUID(), other = UUID()
+        let children = [SidebarOutlineNode(id: tab, kind: .tab), SidebarOutlineNode(id: other, kind: .tab)]
+        let group = SidebarOutlineNode(id: UUID(), kind: .tabGroup, children: children)
+        let folder = SidebarOutlineNode(id: UUID(), kind: .folder, children: children)
+
+        // Asked with the tab selected, as a file from ReArc 2026.1117.849 could have it.
+        XCTAssertEqual(SidebarOutlineRow.rows([group], expanded: [], selected: tab).map(\.id), [group.id])
+        XCTAssertEqual(SidebarOutlineRow.peekCandidates([group], expanded: []), [], "none of its tabs shows while selected")
+        XCTAssertEqual(SidebarOutlineRow.rows([group], expanded: [group.id], selected: tab).map(\.id), [group.id, tab, other])
+
+        XCTAssertEqual(SidebarOutlineRow.rows([folder], expanded: [], selected: tab).map(\.id), [folder.id, tab], "a folder keeps its peek")
+        XCTAssertEqual(SidebarOutlineRow.peekCandidates([folder], expanded: []), [tab, other])
+    }
+
+    // MARK: Open and closed
+
+    func testClosingAGroupDeselectsItsTabAndOpeningItSelectsNothing() throws {
+        let f = makeStore()
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        f.store.selectTab(f.news)
+        XCTAssertEqual(f.store.selectedItemID, f.news)
+
+        f.store.setTabGroupExpanded(row.id, false)
+        XCTAssertNil(f.store.selectedItemID, "the space is blank: no other tab takes the selection")
+        XCTAssertNil(f.store.selectedTab)
+        XCTAssertEqual(rows(f), [f.mail, row.id])
+        XCTAssertNotNil(f.store.tab(withID: f.news), "the tab stays in the group")
+
+        f.store.setTabGroupExpanded(row.id, true)
+        XCTAssertNil(f.store.selectedItemID, "opening the group selects nothing")
+        XCTAssertEqual(rows(f), [f.mail, row.id, f.docs, f.news])
+
+        // Away and back: still blank, not the tab the space had before.
+        f.store.selectSpace(f.work)
+        f.store.selectSpace(f.home)
+        XCTAssertNil(f.store.selectedItemID)
+    }
+
+    func testClosingAGroupLeavesAnotherTabsSelectionAlone() throws {
+        let f = makeStore()
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        f.store.selectTab(f.mail)
+        f.store.setTabGroupExpanded(row.id, false)
+        XCTAssertEqual(f.store.selectedItemID, f.mail)
+    }
+
+    func testClosingAGroupDeselectsOnlyInTheSpaceOfTheRowThatClosed() throws {
+        let f = makeStore()
+        let homeRow = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        let workRow = try f.store.addTabGroup(homeRow.groupID, to: f.work).get()
+        // Two windows: one on Home, one on Work, both showing News.
+        let homeWindow = SidebarWindowID(), workWindow = SidebarWindowID()
+        f.store.registerWindow(homeWindow, spaceID: f.home)
+        f.store.registerWindow(workWindow, spaceID: f.work)
+        f.store.windowBecameKey(workWindow)
+        f.store.selectTab(f.news)
+        f.store.windowBecameKey(homeWindow)
+        f.store.selectTab(f.news)
+        func shown(_ window: SidebarWindowID) -> UUID? { f.store.selectedItemID(inSpace: f.store.focusedSpaceID(in: window)) }
+        XCTAssertEqual([shown(homeWindow), shown(workWindow)], [f.news, f.news])
+
+        // Home's row closes (the key window's): Home is blank, Work keeps the tab.
+        f.store.setTabGroupExpanded(homeRow.id, false)
+        XCTAssertEqual([shown(homeWindow), shown(workWindow)], [nil, f.news])
+        XCTAssertTrue(f.store.isTabGroupExpanded(workRow.id), "open and closed is each row's own")
+        XCTAssertEqual(rows(f, in: f.work), [workRow.id, f.docs, f.news])
+
+        // Work's row closes while Home's window is key: Work is blank too, and stays so when its row opens.
+        f.store.setTabGroupExpanded(workRow.id, false)
+        XCTAssertEqual([shown(homeWindow), shown(workWindow)], [nil, nil])
+        f.store.setTabGroupExpanded(workRow.id, true)
+        XCTAssertNil(shown(workWindow), "opening the group selects nothing")
+        f.store.windowBecameKey(workWindow)
+        XCTAssertNil(f.store.selectedItemID)
+    }
+
+    func testSelectingAClosedGroupsTabOpensTheGroup() throws {
+        let f = makeStore()
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        f.store.selectTab(f.mail)
+        f.store.setTabGroupExpanded(row.id, false)
+
+        // The command bar's Switch to Tab and every other jump to a tab go through `focusTab`.
+        XCTAssertTrue(f.store.focusTab(f.news))
+        XCTAssertEqual(f.store.selectedItemID, f.news)
+        XCTAssertTrue(f.store.isTabGroupExpanded(row.id))
+        XCTAssertEqual(rows(f), [f.mail, row.id, f.docs, f.news])
+
+        // From another space that does not show the group: its first space opens it.
+        f.store.setTabGroupExpanded(row.id, false)
+        f.store.selectSpace(f.work)
+        XCTAssertTrue(f.store.focusTab(f.docs))
+        XCTAssertEqual(f.store.activeSpaceID, f.home)
+        XCTAssertEqual(f.store.selectedItemID, f.docs)
+        XCTAssertTrue(f.store.isTabGroupExpanded(row.id))
+    }
+
+    func testTheKeysThatStepThroughTabsPassAClosedGroup() throws {
+        let f = makeStore()
+        let extra = f.store.appendTodayTab(title: "Extra", url: url("extra.test"), in: f.home).id
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        XCTAssertEqual(f.store.displayEntries().map(\.id), [f.mail, f.docs, f.news, extra])
+        f.store.selectTab(f.docs)
+        f.store.selectTab(f.mail)
+        f.store.setTabGroupExpanded(row.id, false)
+
+        // Next Tab and Previous Tab.
+        f.store.selectNextTab()
+        XCTAssertEqual(f.store.selectedItemID, extra)
+        f.store.selectNextTab()
+        XCTAssertEqual(f.store.selectedItemID, f.mail)
+        f.store.selectPreviousTab()
+        XCTAssertEqual(f.store.selectedItemID, extra)
+        XCTAssertFalse(f.store.isTabGroupExpanded(row.id))
+
+        // ⌘1…9 count the rows on screen.
+        XCTAssertEqual(f.store.selectItem(atPosition: 2), extra)
+        XCTAssertNil(f.store.selectItem(atPosition: 3))
+        XCTAssertEqual(f.store.selectItem(atPosition: 9), extra)
+        XCTAssertFalse(f.store.isTabGroupExpanded(row.id))
+
+        // ⌃Tab and ⌃⌘←/→ list no tab of a closed group; the ⌘T bar still does.
+        XCTAssertEqual(Set(f.store.recentTabSwitcherItems(onScreenOnly: true).map(\.id)), [f.mail, extra])
+        XCTAssertEqual(Set(f.store.recentTabSwitcherItems().map(\.id)), [f.mail, f.docs, f.news, extra])
+        XCTAssertTrue(CommandBarSearch.recentTabResults(in: f.store).contains { $0.tabID == f.docs })
+
+        f.store.setTabGroupExpanded(row.id, true)
+        XCTAssertEqual(f.store.selectItem(atPosition: 2), f.docs, "open: its tabs count again")
+        XCTAssertEqual(Set(f.store.recentTabSwitcherItems(onScreenOnly: true).map(\.id)), [f.mail, f.docs, f.news, extra])
+    }
+
+    func testAClosedTabsSelectionNeverLandsInAClosedGroup() throws {
+        let f = makeStore()
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs, f.news]))
+        f.store.selectTab(f.mail)
+        f.store.setTabGroupExpanded(row.id, false)
+        f.store.closeTab(f.mail)
+        XCTAssertNil(f.store.selectedItemID, "only the closed group's tabs are left: blank")
+        XCTAssertFalse(f.store.isTabGroupExpanded(row.id))
+
+        // A space shown for the first time picks its first row on screen.
+        let pin = f.store.addTab(kind: .pinned, title: "Pin", url: url("pin.test"), in: f.work).id
+        let workRow = try f.store.addTabGroup(row.groupID, to: f.work, section: .pinned).get()
+        f.store.setTabGroupExpanded(workRow.id, false)
+        XCTAssertEqual(f.store.displayEntries(in: f.work).map(\.id), [f.docs, f.news, pin])
+        XCTAssertEqual(f.store.selectedItemID(inSpace: f.work), pin)
+    }
+
+    func testTheSelectedTabJoiningAClosedGroupOpensIt() throws {
+        let f = makeStore()
+        let row = try XCTUnwrap(f.store.createTabGroup(containing: [f.docs]))
+        f.store.setTabGroupExpanded(row.id, false)
+        f.store.selectTab(f.mail)
+        XCTAssertTrue(f.store.moveItem(f.mail, to: .tabGroup(row.groupID), index: 1))
+        XCTAssertEqual(f.store.selectedItemID, f.mail, "the page on screen stays on screen")
+        XCTAssertTrue(f.store.isTabGroupExpanded(row.id))
+
+        f.store.setTabGroupExpanded(row.id, false)
+        f.store.selectTab(f.news)
+        XCTAssertTrue(f.store.moveItem(f.mail, to: .section(spaceID: f.home, section: .unpinned), index: 0))
+        XCTAssertFalse(f.store.isTabGroupExpanded(row.id), "another tab's move opens nothing")
     }
 }

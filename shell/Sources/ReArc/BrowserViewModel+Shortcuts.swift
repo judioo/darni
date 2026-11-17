@@ -14,7 +14,7 @@ extension BrowserViewModel {
     func cycleTabHistory(forward: Bool) {
         guard let selected = store.selectedTabID else { return }
         if tabVisitCycle?.current != selected {
-            tabVisitCycle = TabVisitCycle(order: store.recentTabSwitcherItems(limit: 50).map(\.id))
+            tabVisitCycle = TabVisitCycle(order: store.recentTabSwitcherItems(limit: 50, onScreenOnly: true).map(\.id))
         }
         guard let next = tabVisitCycle?.step(forward: forward) else { return }
         if store.focusTab(next) { loadSelectedIfNeeded() }

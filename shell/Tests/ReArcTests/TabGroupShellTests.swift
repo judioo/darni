@@ -204,6 +204,67 @@ final class TabGroupShellTests: XCTestCase {
         XCTAssertTrue(SidebarTree.tabGroups(model.store.content(for: work(model)).today).isEmpty)
     }
 
+    // MARK: Open and closed
+
+    func testClosingAGroupBlanksTheWindowAndKeepsThePage() throws {
+        let model = makeModel()
+        let home = model.store.activeSpaceID
+        let profile = model.store.activeProfileID
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        model.selectTab(docs.id)
+        let engine = try XCTUnwrap(model.engineHost.engine(forTabID: docs.id, profileID: profile))
+
+        model.toggleTabGroupExpanded(row.id)
+        XCTAssertFalse(model.store.isTabGroupExpanded(row.id))
+        XCTAssertNil(model.store.selectedItemID, "nothing is selected")
+        XCTAssertNil(model.selectedTab(in: nil), "the window shows the blank page, not the nearest tab")
+        XCTAssertNil(model.focusedEngine(in: nil))
+        XCTAssertTrue(model.engineHost.engine(forTabID: docs.id, profileID: profile) === engine, "the tab keeps its page")
+        XCTAssertEqual(model.visibleRowIDs(spaceID: home, in: nil), [plain.id, row.id], "no row for its tab")
+
+        model.toggleTabGroupExpanded(row.id)
+        XCTAssertNil(model.store.selectedItemID, "opening it selects nothing")
+        XCTAssertEqual(model.visibleRowIDs(spaceID: home, in: nil), [plain.id, row.id, docs.id])
+        model.selectTab(docs.id)
+        XCTAssertTrue(model.focusedEngine(in: nil) === engine, "the same page when the tab is chosen again")
+    }
+
+    func testAClosedGroupsRowsShowNoTabEvenASelectedOne() throws {
+        let model = makeModel()
+        let home = model.store.activeSpaceID
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        let pinned = model.store.addTab(kind: .pinned, title: "Pin", url: url("pin.test"))
+        let folder = try XCTUnwrap(model.store.createFolder(containing: [pinned.id]))
+        model.store.setFolderExpanded(folder.id, false)
+
+        let today = model.store.content(for: home).today
+        XCTAssertEqual(SidebarRowItem.rows(today, expanded: [], selected: docs.id).map(\.id), [row.id], "closed: the header alone")
+        XCTAssertEqual(SidebarRowItem.rows(today, expanded: [row.id], selected: docs.id).map(\.id), [row.id, docs.id])
+        XCTAssertEqual(SidebarRowItem.rows(model.store.content(for: home).pinned, expanded: [], selected: pinned.id).map(\.id),
+                       [folder.id, pinned.id], "a folder still shows its selected tab")
+    }
+
+    func testSwitchToTabFromTheCommandBarOpensAClosedGroup() throws {
+        let model = makeModel()
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        model.tabGroupEditor = nil
+        model.selectTab(plain.id)
+        model.setTabGroupExpanded(row.id, false)
+
+        model.focusLocation()
+        model.commandBarText = "Docs"
+        let index = try XCTUnwrap(model.commandBarResults.firstIndex { $0.kind == .openTab && $0.tabID == docs.id })
+        model.commandBarHighlightedIndex = index
+        model.submitCommandBar()
+        XCTAssertEqual(model.store.selectedItemID, docs.id)
+        XCTAssertTrue(model.store.isTabGroupExpanded(row.id), "the group opens to show the tab")
+    }
+
     // MARK: One tab, one page
 
     func testAGroupsTabHasOnePageWhicheverSpacesShowIt() throws {

@@ -71,6 +71,38 @@ final class TabGroupPersistenceTests: XCTestCase {
         XCTAssertEqual(restored.tabGroup(withID: f.group)?.color, .purple)
     }
 
+    /// ReArc 2026.1117.849 kept a closed group's selected tab on show, so its
+    /// file can have one selected. This build shows the blank page for it.
+    func testAFileWithAClosedGroupsTabSelectedRestoresBlank() throws {
+        let f = try GroupFixture()
+        f.store.selectTab(f.news)
+        f.store.selectSpace(f.work)
+        f.store.selectTab(f.docs)
+        var saved = f.store.makeSnapshot()
+        XCTAssertEqual(saved.selectedItemID, f.docs)
+        XCTAssertEqual(saved.selectionBySpace[f.home], f.news)
+        saved.expandedFolderIDs = []
+
+        let restored = try reload(saved)
+        XCTAssertEqual(restored.activeSpaceID, f.work)
+        XCTAssertNil(restored.selectedItemID, "blank, not the closed group's tab")
+        XCTAssertNil(restored.selectedItemID(inSpace: f.home), "nor in the space that only remembered one")
+        XCTAssertFalse(restored.isTabGroupExpanded(f.workRow), "the group stays closed")
+
+        restored.setTabGroupExpanded(f.workRow, true)
+        restored.setTabGroupExpanded(f.homeRow, true)
+        XCTAssertNil(restored.selectedItemID, "opening the group selects nothing")
+        XCTAssertNil(restored.selectedItemID(inSpace: f.home))
+    }
+
+    func testAnOpenGroupsSelectedTabRestoresSelected() throws {
+        let f = try GroupFixture()
+        f.store.selectTab(f.news)
+        let restored = try reload(f.store.makeSnapshot())
+        XCTAssertEqual(restored.selectedItemID, f.news)
+        XCTAssertTrue(restored.isTabGroupExpanded(f.homeRow))
+    }
+
     /// The file a build with tab groups writes also reads back without the
     /// stand-in folders: they never reach the store.
     func testTheStandInFoldersNeverReachTheStore() throws {
