@@ -137,6 +137,10 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     private var shownReveal: SidebarReveal?
     private var externalDrag = false
     private var externalDragTimer: Timer?
+    /// The empty-space menu last shown. Its items target themselves weakly
+    /// (ClosureMenuItem), and AppKit sends the chosen item's action after the
+    /// menu closes: without this the menu was gone by then and no item ran.
+    private var shownEmptySpaceMenu: NSMenu?
     private var observers: [NSObjectProtocol] = []
     /// A scroll gesture is moving the list: rows passing under a still
     /// pointer stay plain until it ends.
@@ -240,7 +244,9 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         let point = tableView.convert(event.locationInWindow, from: nil)
         let bottom = tableView.numberOfRows > 0 ? tableView.rect(ofRow: tableView.numberOfRows - 1).maxY : 0
         guard SidebarEmptySpaceClick.opensMenu(rowIndex: tableView.row(at: point), y: point.y, rowsBottom: bottom) else { return nil }
-        return SidebarEmptySpaceMenu.menu(model: model)
+        let menu = SidebarEmptySpaceMenu.menu(model: model)
+        shownEmptySpaceMenu = menu
+        return menu
     }
 
     func invalidate() {
