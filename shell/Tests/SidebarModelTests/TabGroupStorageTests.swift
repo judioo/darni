@@ -421,6 +421,13 @@ final class TabGroupSyncTests: XCTestCase {
                        "a tab new to the group goes up with its first address")
     }
 
+    /// The edit's own cycle carries the settled address only while the
+    /// settle time is shorter than the scheduler's wait after an edit. Were
+    /// it longer, the address would wait for the next edit or the poll.
+    func testAGroupAddressSettlesBeforeTheEditsOwnCycle() {
+        XCTAssertLessThan(SidebarSyncCoordinator.groupAddressSettle, SidebarSyncScheduler.editDebounce)
+    }
+
     func testARowPinnedOnAnotherMacReplacesThisMacsTodayRow() throws {
         let f = try GroupFixture()
         let stamp = SyncStamp(millis: 1_800_000_000_000, device: "a")
