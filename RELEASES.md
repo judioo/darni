@@ -23,6 +23,9 @@ lines and this section starts empty again.
 - On first launch macOS no longer shows a "Chromium" notifications banner beside ReArc's: the
   helper that delivers website notifications now carries ReArc's name and icon. Camera,
   microphone, location and Bluetooth prompts say ReArc instead of Chromium, in every language.
+- A two-finger swipe goes back or forward a page even when your fingers start slightly up or
+  down, as they nearly always do. Before, ReArc judged the swipe by its first tiny movement, so
+  most real swipes nudged the page sideways (on Pinterest, for one) instead of going back.
 - A two-finger swipe goes back or forward a page in any ReArc window under the pointer, as in
   Arc, not only in the active one. Before, a swipe in a window behind another nudged the page
   sideways instead.
