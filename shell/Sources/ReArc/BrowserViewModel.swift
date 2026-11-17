@@ -297,6 +297,19 @@ final class BrowserViewModel {
     }
     /// The card's close button was pressed in this launch.
     var onePasswordDismissedThisLaunch = false
+    /// Whether 1Password's helper is seen attached (`OnePasswordConnection`).
+    /// Only `stored` outlives the launch.
+    var onePasswordConnection: OnePasswordConnectionState = .load(from: .standard) {
+        didSet { if onePasswordConnection.stored != oldValue.stored { onePasswordConnection.save(to: externalLinkDefaults) } }
+    }
+    @ObservationIgnored var onePasswordProcesses: any ChildProcessListing = SystemChildProcesses()
+    /// The `path` of the 1Password host manifest ReArc copied at this launch
+    /// (`ChromiumNativeMessagingHosts.copiedHostPath`); nil when it copied none.
+    @ObservationIgnored var onePasswordHelperPath: String?
+    /// Time awake since boot, for the readings.
+    @ObservationIgnored var onePasswordUptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    @ObservationIgnored var onePasswordConnectionTimer: Timer?
+    @ObservationIgnored var isOnePasswordSettingsRowShown = false
     /// Space being edited in the Edit Space sheet (name, theme, icon).
     var spaceEditorID: Space.ID?
     /// Edit Theme Color: the space whose header shows the theme editor popover.
@@ -1805,6 +1818,7 @@ final class BrowserViewModel {
 
     func prepareForQuit() {
         autoArchiveTimer?.invalidate()
+        onePasswordConnectionTimer?.invalidate()
         store.autoArchiveIdleLittleArcWindows(threshold: littleArcArchiveAfter.interval, keeping: Set([keyLittleArcID].compactMap { $0 }))
         boostLiveDebounceWorkItem?.cancel()
         for (_, draft) in boostEditorDraftByTab {

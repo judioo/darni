@@ -697,6 +697,9 @@ final class ChromiumRuntime {
 
     /// `--user-data-dir` and `--profile-directory` the engine runs with.
     private(set) var userDataDir: URL?
+    /// 1Password's helper, from the host manifest this launch copied and
+    /// checked; nil when the hosts were not mirrored (`OnePasswordConnection`).
+    private(set) var onePasswordHelperPath: String?
     private(set) var startupDirectory = ChromiumProfileStorageMap.defaultDirectory
     /// Directory mappings and the Default decision, persisted in the user-data-dir.
     private(set) var storageMap = ChromiumProfileStorageMap()
@@ -770,6 +773,7 @@ final class ChromiumRuntime {
             if ChromiumNativeMessagingHosts.runs(testSwitches: testSwitches, userDataDir: userDataDir) {
                 let hosts = ChromiumNativeMessagingHosts.mirror(into: userDataDir)
                 if !hosts.isEmpty { ChromiumLog.info("native messaging hosts from Arc/Chrome: \(hosts.joined(separator: ", "))") }
+                onePasswordHelperPath = ChromiumNativeMessagingHosts.copiedHostPath(named: OnePasswordConnection.hostName, in: userDataDir)
             }
         }
         if let url = storageMapURL { storageMap = ChromiumProfileStorageMap.load(from: url) }
