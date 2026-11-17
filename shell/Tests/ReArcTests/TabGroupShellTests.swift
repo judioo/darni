@@ -23,7 +23,27 @@ final class TabGroupShellTests: XCTestCase {
         model.externalLinkDefaults = UserDefaults(suiteName: "TabGroupShellTests.\(UUID().uuidString)")!
         model.tabGroupsEnabled = enabled
         model.asksBeforeDeletingTabGroup = true
+        // No test may reach the real alert: one that expects the question sets its own answer.
+        model.answerTabGroupDeletion = { question in
+            XCTFail("asked “\(question.title)” where no question was expected")
+            return TabGroupDeletionAnswer(delete: false)
+        }
         return model
+    }
+
+    /// Records each question and gives `answer`.
+    private final class Asked {
+        var questions: [TabGroupDeletionQuestion] = []
+        var answer = TabGroupDeletionAnswer(delete: false)
+    }
+
+    private func recordQuestions(_ model: BrowserViewModel) -> Asked {
+        let asked = Asked()
+        model.answerTabGroupDeletion = { question in
+            asked.questions.append(question)
+            return asked.answer
+        }
+        return asked
     }
 
     private func work(_ model: BrowserViewModel) -> Space.ID { model.store.spaces.first { $0.name == "Work" }!.id }
@@ -153,13 +173,6 @@ final class TabGroupShellTests: XCTestCase {
         XCTAssertTrue(model.commandBarTabGroups.isEmpty, "⌘L is not the new-tab bar")
     }
 
-    func testTheSectionTakesNoRoomWithoutGroups() {
-        XCTAssertEqual(CommandBarTabGroupsSection.height(rows: 0), 0)
-        XCTAssertGreaterThan(CommandBarTabGroupsSection.height(rows: 1), 0)
-        XCTAssertEqual(CommandBarTabGroupsSection.height(rows: 9), CommandBarTabGroupsSection.height(rows: CommandBarTabGroupsSection.maxVisibleRows),
-                       "more than four scroll")
-    }
-
     // MARK: Delete, ungroup, remove
 
     func testDeleteGroupAsksFirstAndDontAskAgainIsRemembered() throws {
@@ -169,8 +182,9 @@ final class TabGroupShellTests: XCTestCase {
         _ = try model.store.addTabGroup(row.groupID, to: work(model)).get()
         var asked: [(name: String, spaces: Int)] = []
         var answer = TabGroupDeletionAnswer(delete: false)
-        model.answerTabGroupDeletion = { group, spaces in
-            asked.append((group.displayName, spaces))
+        model.answerTabGroupDeletion = { question in
+            asked.append((question.group.displayName, question.spaceCount))
+            XCTAssertEqual(question.title, "Delete tab group?")
             return answer
         }
 
@@ -202,6 +216,270 @@ final class TabGroupShellTests: XCTestCase {
         XCTAssertNil(model.store.tabGroup(withID: there.groupID))
         XCTAssertEqual(model.store.parent(of: tab.id), .section(spaceID: model.store.activeSpaceID, section: .unpinned))
         XCTAssertTrue(SidebarTree.tabGroups(model.store.content(for: work(model)).today).isEmpty)
+    }
+
+    // MARK: Open and closed
+
+    func testClosingAGroupBlanksTheWindowAndKeepsThePage() throws {
+        let model = makeModel()
+        let home = model.store.activeSpaceID
+        let profile = model.store.activeProfileID
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        model.selectTab(docs.id)
+        let engine = try XCTUnwrap(model.engineHost.engine(forTabID: docs.id, profileID: profile))
+
+        model.toggleTabGroupExpanded(row.id)
+        XCTAssertFalse(model.store.isTabGroupExpanded(row.id))
+        XCTAssertNil(model.store.selectedItemID, "nothing is selected")
+        XCTAssertNil(model.selectedTab(in: nil), "the window shows the blank page, not the nearest tab")
+        XCTAssertNil(model.focusedEngine(in: nil))
+        XCTAssertTrue(model.engineHost.engine(forTabID: docs.id, profileID: profile) === engine, "the tab keeps its page")
+        XCTAssertEqual(model.visibleRowIDs(spaceID: home, in: nil), [plain.id, row.id], "no row for its tab")
+
+        model.toggleTabGroupExpanded(row.id)
+        XCTAssertNil(model.store.selectedItemID, "opening it selects nothing")
+        XCTAssertEqual(model.visibleRowIDs(spaceID: home, in: nil), [plain.id, row.id, docs.id])
+        model.selectTab(docs.id)
+        XCTAssertTrue(model.focusedEngine(in: nil) === engine, "the same page when the tab is chosen again")
+    }
+
+    func testAClosedGroupsRowsShowNoTabEvenASelectedOne() throws {
+        let model = makeModel()
+        let home = model.store.activeSpaceID
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        let pinned = model.store.addTab(kind: .pinned, title: "Pin", url: url("pin.test"))
+        let folder = try XCTUnwrap(model.store.createFolder(containing: [pinned.id]))
+        model.store.setFolderExpanded(folder.id, false)
+
+        let today = model.store.content(for: home).today
+        XCTAssertEqual(SidebarRowItem.rows(today, expanded: [], selected: docs.id).map(\.id), [row.id], "closed: the header alone")
+        XCTAssertEqual(SidebarRowItem.rows(today, expanded: [row.id], selected: docs.id).map(\.id), [row.id, docs.id])
+        XCTAssertEqual(SidebarRowItem.rows(model.store.content(for: home).pinned, expanded: [], selected: pinned.id).map(\.id),
+                       [folder.id, pinned.id], "a folder still shows its selected tab")
+    }
+
+    func testSwitchToTabFromTheCommandBarOpensAClosedGroup() throws {
+        let model = makeModel()
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        model.tabGroupEditor = nil
+        model.selectTab(plain.id)
+        model.setTabGroupExpanded(row.id, false)
+
+        model.focusLocation()
+        model.commandBarText = "Docs"
+        let index = try XCTUnwrap(model.commandBarResults.firstIndex { $0.kind == .openTab && $0.tabID == docs.id })
+        model.commandBarHighlightedIndex = index
+        model.submitCommandBar()
+        XCTAssertEqual(model.store.selectedItemID, docs.id)
+        XCTAssertTrue(model.store.isTabGroupExpanded(row.id), "the group opens to show the tab")
+    }
+
+    // MARK: The last tab
+
+    func testClosingAGroupsLastTabAsksAndCancelLeavesEverythingAsItWas() throws {
+        let model = makeModel()
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let news = model.store.addTab(kind: .today, title: "News", url: url("news.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id, news.id]))
+        model.store.renameTabGroup(row.groupID, to: "Monitoring")
+        _ = try model.store.addTabGroup(row.groupID, to: work(model)).get()
+        let asked = recordQuestions(model)
+
+        // Not the last tab: ⌘W closes it and asks nothing.
+        model.selectTab(news.id)
+        model.closeSelectedTab()
+        XCTAssertTrue(asked.questions.isEmpty)
+        XCTAssertEqual(model.store.tabGroup(withID: row.groupID)?.tabs.map(\.id), [docs.id])
+
+        // The last one: asked first. Cancel: the tab, its selection and the group are untouched.
+        model.selectTab(docs.id)
+        model.closeSelectedTab()
+        XCTAssertEqual(asked.questions.count, 1)
+        XCTAssertEqual(asked.questions.first?.title, "Close tab and delete group?")
+        XCTAssertEqual(asked.questions.first?.message(syncOn: false),
+                       "This is the last tab of “Monitoring”. Closing it deletes the group from every space that shows it (2 spaces).")
+        XCTAssertEqual(model.store.tabGroup(withID: row.groupID)?.tabs.map(\.id), [docs.id])
+        XCTAssertEqual(model.store.selectedItemID, docs.id)
+        XCTAssertEqual(model.store.spaces(showingTabGroup: row.groupID).count, 2)
+        XCTAssertTrue(model.store.archivedTabs.filter { $0.id == docs.id }.isEmpty)
+
+        // Delete Group: the tab closes and the group goes from both spaces.
+        asked.answer = TabGroupDeletionAnswer(delete: true)
+        model.closeSelectedTab()
+        XCTAssertEqual(asked.questions.count, 2)
+        XCTAssertNil(model.store.tab(withID: docs.id))
+        XCTAssertTrue(model.store.archivedTabs.contains { $0.id == docs.id }, "closed as ⌘W closes a tab: to the Archive")
+        XCTAssertNil(model.store.tabGroup(withID: row.groupID))
+        XCTAssertTrue(SidebarTree.tabGroups(model.store.content(for: work(model)).today).isEmpty, "gone from the other space too")
+        XCTAssertTrue(model.asksBeforeDeletingTabGroup, "not ticked: asked again next time")
+    }
+
+    func testArchiveTabAndTheRowsCloseAskToo() throws {
+        let model = makeModel()
+        let asked = recordQuestions(model)
+        for close in [{ (model: BrowserViewModel, id: Tab.ID) in model.archiveTab(id) },
+                      { model, id in model.closeTabFromRow(id) },
+                      { model, id in model.deleteTab(id) }] {
+            let tab = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+            let row = try XCTUnwrap(model.newTabGroup(containing: [tab.id]))
+            asked.questions = []
+            asked.answer = TabGroupDeletionAnswer(delete: false)
+            close(model, tab.id)
+            XCTAssertEqual(asked.questions.map(\.reason), [.closingLastTabs(1)])
+            XCTAssertNotNil(model.store.tab(withID: tab.id), "Cancel")
+            asked.answer = TabGroupDeletionAnswer(delete: true)
+            close(model, tab.id)
+            XCTAssertNil(model.store.tab(withID: tab.id))
+            XCTAssertNil(model.store.tabGroup(withID: row.groupID))
+        }
+    }
+
+    func testRemovingTheLastTabFromItsGroupAsksAndKeepsTheTabOpen() throws {
+        let model = makeModel()
+        let home = model.store.activeSpaceID
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        let asked = recordQuestions(model)
+
+        model.removeTabFromGroup(docs.id)
+        XCTAssertEqual(asked.questions.map(\.title), ["Remove tab and delete group?"])
+        XCTAssertEqual(asked.questions.first?.message(syncOn: true),
+                       "This is the last tab of this group. Removing it deletes the group from the space that shows it. The tab stays open."
+                           + " The group is deleted on your other Macs too.")
+        XCTAssertEqual(model.store.tabGroupID(holding: docs.id), row.groupID, "Cancel: still in its group")
+
+        asked.answer = TabGroupDeletionAnswer(delete: true)
+        model.removeTabFromGroup(docs.id)
+        XCTAssertNil(model.store.tabGroup(withID: row.groupID))
+        XCTAssertEqual(model.store.content(for: home).today.map(\.id), [docs.id], "a plain tab where the group was")
+        XCTAssertTrue(model.store.archivedTabs.isEmpty, "moved out, not closed")
+    }
+
+    func testDraggingTheLastTabOutAsksAndAMoveInsideTheGroupDoesNot() throws {
+        let model = makeModel()
+        let home = model.store.activeSpaceID
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let news = model.store.addTab(kind: .today, title: "News", url: url("news.test"))
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id, news.id]))
+        let asked = recordQuestions(model)
+
+        // Reorder inside the group, and one of two tabs dragged out: nothing asked.
+        model.moveItem(news.id, relativeTo: docs.id, after: false)
+        XCTAssertEqual(model.store.tabGroup(withID: row.groupID)?.tabs.map(\.id), [news.id, docs.id])
+        model.moveItem(news.id, relativeTo: plain.id, after: true)
+        XCTAssertNil(model.store.tabGroupID(holding: news.id))
+        XCTAssertTrue(asked.questions.isEmpty)
+
+        // The last one beside a plain row, onto a section, into a folder: asked each time.
+        let folder = try XCTUnwrap(model.store.createFolder())
+        model.moveItem(docs.id, relativeTo: plain.id, after: false)
+        model.moveItem(docs.id, to: .section(spaceID: home, section: .pinned), index: 0)
+        model.moveItem(docs.id, intoFolder: folder.id)
+        model.moveEntry(docs.id, toSpace: work(model))
+        model.togglePin(docs.id)
+        model.addToFavorites(docs.id)
+        XCTAssertEqual(asked.questions.map(\.reason), Array(repeating: .removingLastTabs(1), count: 6))
+        XCTAssertEqual(model.store.tabGroup(withID: row.groupID)?.tabs.map(\.id), [docs.id], "every Cancel left it there")
+
+        asked.answer = TabGroupDeletionAnswer(delete: true)
+        model.moveItem(docs.id, relativeTo: plain.id, after: false)
+        XCTAssertNil(model.store.tabGroup(withID: row.groupID))
+        XCTAssertNil(model.store.tabGroupID(holding: docs.id))
+        XCTAssertNotNil(model.store.tab(withID: docs.id))
+    }
+
+    func testTheLastTabMovingToAnotherGroupAsksAboutTheGroupItLeaves() throws {
+        let model = makeModel()
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let news = model.store.addTab(kind: .today, title: "News", url: url("news.test"))
+        let from = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        let to = try XCTUnwrap(model.newTabGroup(containing: [news.id]))
+        let asked = recordQuestions(model)
+
+        XCTAssertFalse(model.addTab(docs.id, toGroup: to.groupID), "Cancel")
+        XCTAssertEqual(asked.questions.map(\.group.id), [from.groupID])
+        XCTAssertNil(model.newTabGroup(containing: [docs.id]), "Add Tab to New Group asks too")
+        XCTAssertEqual(asked.questions.count, 2)
+
+        asked.answer = TabGroupDeletionAnswer(delete: true)
+        XCTAssertTrue(model.addTab(docs.id, toGroup: to.groupID))
+        XCTAssertNil(model.store.tabGroup(withID: from.groupID))
+        XCTAssertEqual(model.store.tabGroup(withID: to.groupID)?.tabs.map(\.id), [news.id, docs.id])
+    }
+
+    func testASelectionHoldingAGroupsLastTabsAsksOnce() throws {
+        let model = makeModel()
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let news = model.store.addTab(kind: .today, title: "News", url: url("news.test"))
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        let row = try XCTUnwrap(model.newTabGroup(containing: [docs.id, news.id]))
+        let asked = recordQuestions(model)
+
+        model.closeItems([docs.id, plain.id])
+        XCTAssertTrue(asked.questions.isEmpty, "one of the group's tabs is left")
+        XCTAssertNil(model.store.tab(withID: docs.id))
+
+        let more = model.store.addTab(kind: .today, title: "More", url: url("more.test"))
+        XCTAssertTrue(model.addTab(more.id, toGroup: row.groupID))
+        model.closeItems([news.id, more.id])
+        XCTAssertEqual(asked.questions.map(\.title), ["Close tabs and delete group?"])
+        XCTAssertEqual(model.store.tabGroup(withID: row.groupID)?.tabs.count, 2, "Cancel: neither closed")
+
+        asked.answer = TabGroupDeletionAnswer(delete: true)
+        model.archiveTabs([news.id, more.id])
+        XCTAssertEqual(asked.questions.count, 2)
+        XCTAssertNil(model.store.tabGroup(withID: row.groupID))
+        XCTAssertEqual(Set(model.store.archivedTabs.map(\.id)).intersection([news.id, more.id]).count, 2)
+    }
+
+    func testDontAskAgainCoversDeleteGroupAndTheLastTab() throws {
+        let model = makeModel()
+        let asked = recordQuestions(model)
+        asked.answer = TabGroupDeletionAnswer(delete: true, dontAskAgain: true)
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        let first = try XCTUnwrap(model.newTabGroup(containing: [docs.id]))
+        model.closeTab(docs.id)
+        XCTAssertEqual(asked.questions.count, 1)
+        XCTAssertNil(model.store.tabGroup(withID: first.groupID))
+        XCTAssertFalse(model.asksBeforeDeletingTabGroup, "the one preference")
+        XCTAssertFalse(TabGroupDeleteConfirmation.asks(in: model.externalLinkDefaults))
+
+        // Not asked again: the empty group is deleted without a question, and so is a group by Delete Group.
+        let news = model.store.addTab(kind: .today, title: "News", url: url("news.test"))
+        let second = try XCTUnwrap(model.newTabGroup(containing: [news.id]))
+        model.removeTabFromGroup(news.id)
+        XCTAssertNil(model.store.tabGroup(withID: second.groupID))
+        XCTAssertNotNil(model.store.tab(withID: news.id))
+        let third = try XCTUnwrap(model.newTabGroup(containing: [news.id]))
+        model.requestTabGroupDeletion(third.groupID)
+        XCTAssertNil(model.store.tabGroup(withID: third.groupID))
+        XCTAssertEqual(asked.questions.count, 1)
+    }
+
+    func testAGroupMadeEmptyStaysUntilItsFirstTabLeaves() throws {
+        let model = makeModel()
+        let asked = recordQuestions(model)
+        let row = try XCTUnwrap(model.newTabGroup())
+        XCTAssertNotNil(model.store.tabGroup(withID: row.groupID), "New Tab Group: empty, and kept")
+
+        // A close elsewhere does not sweep it away.
+        let plain = model.store.addTab(kind: .today, title: "Plain", url: url("plain.test"))
+        model.closeTab(plain.id)
+        XCTAssertNotNil(model.store.tabGroup(withID: row.groupID))
+        XCTAssertTrue(asked.questions.isEmpty)
+
+        let docs = model.store.addTab(kind: .today, title: "Docs", url: url("docs.test"))
+        XCTAssertTrue(model.addTab(docs.id, toGroup: row.groupID))
+        asked.answer = TabGroupDeletionAnswer(delete: true)
+        model.closeTab(docs.id)
+        XCTAssertEqual(asked.questions.count, 1)
+        XCTAssertNil(model.store.tabGroup(withID: row.groupID))
     }
 
     // MARK: One tab, one page

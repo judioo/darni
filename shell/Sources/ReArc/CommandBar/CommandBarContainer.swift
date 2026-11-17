@@ -26,6 +26,7 @@ struct CommandBarContainer: View {
             },
             collapseCount: model.commandBarCollapseCount,
             onTab: { model.enterCommandBarSiteSearch() },
+            onTabKey: { model.performCommandBarKey($0 ? .backTab : .tab) },
             onDeleteBackward: { model.exitCommandBarSiteSearch() },
             onDeleteHighlighted: { model.deleteHighlightedCommandBarHistoryRow() },
             onRowAction: { model.performCommandBarRowAction($0, on: $1) },
@@ -44,9 +45,12 @@ struct CommandBarContainer: View {
             instantLinks: model.isMaxFeatureOn(.instantLinks),
             // There while the setting is on, so its rows can fold away when typing begins.
             underField: model.tabGroupsEnabled
-                ? AnyView(CommandBarTabGroupsSection(model: model, rows: model.commandBarTabGroups, dark: themeChrome.isWindowDark))
+                ? AnyView(CommandBarTabGroupsSection(model: model, rows: model.commandBarTabGroups, dark: themeChrome.isWindowDark,
+                                                     barWidth: width))
                 : nil
         )
+        // Where the Tab Groups chips wrap, for the keys that move between them.
+        .onChange(of: width, initial: true) { _, width in model.commandBarWidth = width }
         // The field takes the keyboard back when a group's editor closes.
         .onChange(of: model.tabGroupEditor == nil) { _, closed in
             if closed, model.isCommandBarPresented { model.commandBarFocusRequest += 1 }

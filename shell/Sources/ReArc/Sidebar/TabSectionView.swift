@@ -14,7 +14,8 @@ struct SidebarDropState: Equatable {
 }
 
 /// One visible row: an entry and its folder depth. A collapsed folder still
-/// shows its selected descendant (Arc's "peeked" expansion state).
+/// shows its selected descendant (Arc's "peeked" expansion state). A closed
+/// tab group shows none of its tabs.
 struct SidebarRowItem: Identifiable {
     let entry: SidebarEntry
     let depth: Int
@@ -32,7 +33,7 @@ struct SidebarRowItem: Identifiable {
             if expanded.contains(entry.id) {
                 return [header] + rows(children, depth: depth + 1, expanded: expanded, selected: selected)
             }
-            if let selected, let leaf = SidebarTree.leaves(children).first(where: { $0.id == selected }) {
+            if entry.isFolder, let selected, let leaf = SidebarTree.leaves(children).first(where: { $0.id == selected }) {
                 return [header, SidebarRowItem(entry: leaf, depth: depth + 1)]
             }
             return [header]
@@ -141,7 +142,7 @@ struct SidebarEntryRow: View, Equatable {
                 tabCount: reference.group.tabs.count,
                 isExpanded: model.store.isTabGroupExpanded(reference.id),
                 isDropTarget: isDropInto,
-                onToggle: click(reference.id) { model.store.toggleTabGroupExpanded(reference.id) },
+                onToggle: click(reference.id) { model.toggleTabGroupExpanded(reference.id) },
                 onNewTab: { model.newTab(inGroup: reference.groupID) }
             ) {
                 TabGroupContextMenu(model: model, reference: reference)

@@ -8,7 +8,9 @@ import SidebarModel
 /// results. A shortcut's keyword, or a site the field completes to, offers
 /// "Search cushwake" / "Ask ChatGPT" with a Tab keycap; Tab (or a click on
 /// the hint) puts its chip in the field, the list collapses to the field
-/// alone, and Delete on an empty query takes the chip off (§4.2). Rows offer
+/// alone, and Delete on an empty query takes the chip off (§4.2). Without a
+/// shortcut Tab takes the inline completion, and it never leaves the bar
+/// (`CommandBarKeys`). Rows offer
 /// Copy URL and, for history, Remove from History on hover or highlight and
 /// in their context menu; Shift+Delete removes the highlighted history row
 /// (§6.4). A typed domain or an earlier query completes inline (Right Arrow
@@ -33,8 +35,12 @@ struct CommandBarOverlay: View {
     var siteSearchFill: SpaceColor?
     /// Bumped as the list collapses to the field: the tint and pulse play.
     var collapseCount = 0
-    /// Tab: returns true when it entered a site search.
+    /// A click on the "Search …  Tab" hint: returns true when it entered a site search.
     var onTab: () -> Bool = { false }
+    /// Tab (false) and ⇧Tab (true), when the app's key monitor did not take
+    /// it first (`BrowserViewModel.handleCommandBarKey`). The bar owns the
+    /// key either way: it never moves focus out of the field.
+    var onTabKey: (_ shift: Bool) -> Void = { _ in }
     /// Delete on an empty field: returns true when it removed the chip.
     var onDeleteBackward: () -> Bool = { false }
     /// Shift+Delete: returns true when it removed the highlighted history row.
@@ -234,7 +240,15 @@ struct CommandBarOverlay: View {
                 .onKeyPress(.rightArrow, phases: .down) { press in
                     press.modifiers.isEmpty && onAcceptCompletion() ? .handled : .ignored
                 }
-                .onKeyPress(.tab) { onTab() ? .handled : .ignored }
+                .onKeyPress(.tab, phases: [.down, .repeat]) { press in
+                    onTabKey(press.modifiers.contains(.shift))
+                    return .handled
+                }
+                // ⇧Tab arrives as a back-tab character.
+                .onKeyPress(KeyEquivalent("\u{19}"), phases: [.down, .repeat]) { _ in
+                    onTabKey(true)
+                    return .handled
+                }
                 .onKeyPress(.delete) {
                     if NSEvent.modifierFlags.contains(.shift), onDeleteHighlighted() { return .handled }
                     return text.isEmpty && onDeleteBackward() ? .handled : .ignored
@@ -371,9 +385,13 @@ struct CommandBarOverlay: View {
         }
     }
 
-    private var placeholder: String {
+    private var placeholder: String { Self.placeholder(text: text, siteSearch: siteSearch) }
+
+    /// The field's placeholder, which also tells the bar's field from any
+    /// other in the window (`field(in:placeholder:)`).
+    static func placeholder(text: String, siteSearch: SiteSearchEngine?) -> String {
         if let siteSearch { return siteSearch.placeholder }
-        return isCommandMode ? "Type a command…" : "Search or Enter URL…"
+        return text.hasPrefix(">") ? "Type a command…" : "Search or Enter URL…"
     }
 }
 
