@@ -2649,6 +2649,7 @@ crash. `ReArcEngineGetProcesses` and `ReArcProcessInfo` did not change.
 
 **Tests:** `engine/tests/c_abi_perf_host.mm` (run_c_abi.py `perf`), step 5: an
 entry per row, the tab's page in exactly one renderer's `main_frame_tabs`, a
-`title` on every child process, `network_bytes` a count. Not run yet: the
-patch was written without an engine build (see its header). The network count
-itself has no engine test.
+`title` on every child process, `network_bytes` a count. That step has not run
+yet. The patch is built and shipped in 2026.1117.849, and the shell's self-test
+step for the Task Manager passes on it (see the patch header). The network
+count itself has no engine test.
