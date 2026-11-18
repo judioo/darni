@@ -184,22 +184,128 @@ private struct JavaScriptDialogSheet: View {
     }
 }
 
+// MARK: - ReArc look for the page's cards
+
+/// The page's top cards in the space's theme, like ReArc's toasts: the theme's
+/// pale tint (`toast`), its title and secondary inks, a hairline in the title
+/// ink, and the command bar's accent fill for the glyph and the main action
+/// (white on it clears 4.5:1, `CommandBarInk.selectionFill`).
+private struct PromptCardChrome: ViewModifier {
+    @Environment(\.themeChrome) private var chrome
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(chrome.title)
+            .background(chrome.toast, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(chrome.title.opacity(0.1)))
+            .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+    }
+}
+
+/// The card's glyph: white on the accent fill.
+private struct PromptGlyph: View {
+    let systemName: String
+    var size: CGFloat = 13
+    @Environment(\.themeChrome) private var chrome
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(Color(chrome.commandBarFill)))
+            .accessibilityHidden(true)
+    }
+}
+
+/// A toast's button, a little larger: the accent fill for the main action,
+/// a wash of the title ink for the others. Dimmed while the card is disabled
+/// (the permission card's interaction delay).
+private struct PromptButtonStyle: ButtonStyle {
+    var prominent = false
+    @Environment(\.themeChrome) private var chrome
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 22)
+            .foregroundStyle(prominent ? Color.white : chrome.title)
+            .background(prominent ? Color(chrome.commandBarFill) : chrome.title.opacity(0.08), in: shape)
+            .contentShape(shape)
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .opacity(isEnabled ? 1 : 0.45)
+    }
+}
+
+/// The card's ✕, as on the toasts' chips.
+private struct PromptCloseButton: View {
+    let help: String
+    let action: () -> Void
+    @Environment(\.themeChrome) private var chrome
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .frame(width: 18, height: 18)
+                .background(Circle().fill(chrome.title.opacity(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(chrome.secondaryText)
+        .help(help)
+        .accessibilityLabel("Close")
+    }
+}
+
+/// A checkbox in the theme's inks; VoiceOver still reads a toggle.
+private struct PromptCheckboxStyle: ToggleStyle {
+    @Environment(\.themeChrome) private var chrome
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let box = RoundedRectangle(cornerRadius: 3.5, style: .continuous)
+        Button { configuration.isOn.toggle() } label: {
+            HStack(spacing: 6) {
+                box.fill(configuration.isOn ? Color(chrome.commandBarFill) : chrome.title.opacity(0.06))
+                    .overlay(box.strokeBorder(configuration.isOn ? Color.clear : chrome.title.opacity(0.3)))
+                    .overlay {
+                        if configuration.isOn {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 8, weight: .heavy))
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: 13, height: 13)
+                configuration.label
+                    .font(.system(size: 12))
+                    .foregroundStyle(chrome.secondaryText)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.45)
+        .accessibilityRepresentation { Toggle(isOn: configuration.$isOn) { configuration.label } }
+    }
+}
+
 // MARK: - Permission prompt
 
 private struct PermissionPromptCard: View {
     @Bindable var prompts: PagePromptCenter
     let permission: PagePromptCenter.Permission
+    @Environment(\.themeChrome) private var chrome
 
     private var request: PermissionPromptRequest { permission.request }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: request.symbol)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.accentColor))
+                PromptGlyph(systemName: request.symbol)
                 VStack(alignment: .leading, spacing: 3) {
                     // The host keeps its end (the registrable domain) whatever its length (N-06).
                     Text("\(PageOrigin.shortenedHost(request.host)) wants to")
@@ -209,44 +315,33 @@ private struct PermissionPromptCard: View {
                     ForEach(request.phrases, id: \.self) { phrase in
                         Text(phrase)
                             .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(chrome.secondaryText)
                     }
                     if let note = request.embeddedNote {
-                        Text(note).font(.caption).foregroundStyle(.tertiary)
+                        Text(note).font(.caption).foregroundStyle(chrome.tertiaryText)
                     }
                 }
                 Spacer(minLength: 8)
-                Button { prompts.answerPermission(.dismiss) } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .frame(width: 18, height: 18)
-                        .background(Circle().fill(Color.primary.opacity(0.08)))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Dismiss — the site can ask again")
+                PromptCloseButton(help: "Dismiss — the site can ask again") { prompts.answerPermission(.dismiss) }
             }
             if request.needsSystemAuthorization {
                 Text("macOS may also ask to allow ReArc.")
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(chrome.tertiaryText)
             }
             HStack(spacing: 8) {
                 Toggle("Remember this decision", isOn: $prompts.rememberPermission)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 12))
+                    .toggleStyle(PromptCheckboxStyle())
                 Spacer(minLength: 12)
                 Button("Block") { prompts.answerPermission(.deny) }
+                    .buttonStyle(PromptButtonStyle())
                 Button("Allow") { prompts.answerPermission(.allow) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true))
             }
-            .controlSize(.small)
         }
         .padding(14)
         .frame(width: 340)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.2), radius: 16, y: 5)
+        .modifier(PromptCardChrome())
         .padding(.top, 10)
         .padding(.leading, 12)
         .accessibilityElement(children: .contain)
@@ -273,22 +368,19 @@ private struct PermissionPromptCard: View {
 private struct PasswordPromptCard: View {
     let prompts: PagePromptCenter
     let prompt: PasswordSavePrompt
+    @Environment(\.themeChrome) private var chrome
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "key.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.accentColor))
+                PromptGlyph(systemName: "key.fill")
                 VStack(alignment: .leading, spacing: 3) {
                     Text(prompt.title)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(2)
                     Label(prompt.displayUsername, systemImage: "person.crop.circle")
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(chrome.secondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -296,20 +388,19 @@ private struct PasswordPromptCard: View {
             HStack(spacing: 8) {
                 if !prompt.isUpdate {
                     Button("Never") { prompts.answerPassword(.never) }
+                        .buttonStyle(PromptButtonStyle())
                         .help("Never save passwords for this site")
                 }
                 Spacer(minLength: 12)
                 Button("Not Now") { prompts.answerPassword(.notNow) }
+                    .buttonStyle(PromptButtonStyle())
                 Button(prompt.saveTitle) { prompts.answerPassword(.save) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true))
             }
-            .controlSize(.small)
         }
         .padding(14)
         .frame(width: 320)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.2), radius: 16, y: 5)
+        .modifier(PromptCardChrome())
         .padding(.top, 10)
         .padding(.trailing, 12)
     }
@@ -320,53 +411,40 @@ private struct PasswordPromptCard: View {
 private struct AutofillSaveCard: View {
     let prompts: PagePromptCenter
     let offer: AutofillSaveOffer
+    @Environment(\.themeChrome) private var chrome
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: offer.symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(Color.accentColor))
+                PromptGlyph(systemName: offer.symbol, size: 12)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(offer.title)
                         .font(.system(size: 13, weight: .semibold))
                     ForEach(offer.summaryLines, id: \.self) { line in
                         Text(line)
                             .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(chrome.secondaryText)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
                     Text(offer.footnote)
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(chrome.tertiaryText)
                 }
                 Spacer(minLength: 8)
-                Button { prompts.answerAutofillSave(.ignore) } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .frame(width: 18, height: 18)
-                        .background(Circle().fill(Color.primary.opacity(0.08)))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Not now")
+                PromptCloseButton(help: "Not now") { prompts.answerAutofillSave(.ignore) }
             }
             HStack(spacing: 8) {
                 Spacer(minLength: 12)
                 Button("No Thanks") { prompts.answerAutofillSave(.decline) }
+                    .buttonStyle(PromptButtonStyle())
                 Button(offer.acceptTitle) { prompts.answerAutofillSave(.accept) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true))
             }
-            .controlSize(.small)
         }
         .padding(14)
         .frame(width: 320)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-        .shadow(color: .black.opacity(0.2), radius: 16, y: 5)
+        .modifier(PromptCardChrome())
         .padding(.top, 10)
         .padding(.trailing, 12)
         .accessibilityElement(children: .contain)

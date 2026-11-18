@@ -31,6 +31,9 @@ lines and this section starts empty again.
 
 **Changes**
 - The sidebar no longer shows a scroll bar. It still scrolls.
+- A site's permission request ("wants to use your camera…") and the offers to save a password,
+  card or address now use your space's colours, like ReArc's other notices, instead of plain
+  grey system controls.
 
 **Security**
 - The engine has the fixes for two bugs Chrome rates Critical, CVE-2026-131060 (MP4 video
