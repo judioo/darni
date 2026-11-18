@@ -220,6 +220,12 @@ rm -rf "$APP/Contents/Resources/AppIcons"
 cp -R "$SHELL_DIR/Resources/AppIcons" "$APP/Contents/Resources/AppIcons"
 # About ReArc's sting (media/out/deliver/rearc-sting-path, 720 px, plays once).
 cp "$SHELL_DIR/Resources/AboutSting.gif" "$APP/Contents/Resources/AboutSting.gif"
+# The built-in blocklists (docs/FEATURE-SPECS/CONTENT-BLOCKING.md, section 4): the signed
+# bundle the app starts with, checked against the lists key and copied without the raw upstream
+# lists. REARC_BLOCKLISTS_BUNDLE names a newer signed bundle to ship instead of the committed one.
+python3 -I "$SHELL_DIR/scripts/blocklists/build-blocklists.py" install \
+  "${REARC_BLOCKLISTS_BUNDLE:-$SHELL_DIR/Resources/Blocklists}" "$APP/Contents/Resources/Blocklists" \
+  || die "the built-in blocklists do not verify against scripts/blocklists/blocklists-public-key.txt"
 plutil -replace CFBundleIconFile -string ReArc "$PLIST"
 plutil -remove CFBundleIconName "$PLIST" 2>/dev/null || true
 # ReArc's name instead of Chromium's where the engine's localized strings still say

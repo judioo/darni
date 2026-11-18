@@ -22,6 +22,8 @@
 #                     --appcast). Both: engine/docs/RELEASE.md, "Critical and required updates"
 #   --notarize        notarize app before DMG and DMG before appcast (opt-in)
 #   --dmg             also make the signed DMG
+#   --blocklists DIR  also copy the blocklist mirror files (blocklists-<version>.tar.gz and
+#                     latest.json, always written to <dist>/blocklists) to DIR, outside the dist
 #   --allow-outdated-engine  override the Mac Stable/Extended security release gate
 #   --previous-app PATH  the ReArc.app of the release now on the feed; a DMG needs it for the
 #                     upgrade check (scripts/release/check-upgrade.sh). Also REARC_PREVIOUS_RELEASE_APP.
@@ -49,6 +51,7 @@ ALLOW_NO_SAFE_BROWSING=0
 ALLOW_NO_UPGRADE_CHECK=0
 PREVIOUS_APP="${REARC_PREVIOUS_RELEASE_APP:-}"
 APPCAST=""
+BLOCKLISTS_COPY=""
 CHANNEL=""
 CRITICAL=0
 REQUIRED_BELOW=""
@@ -73,9 +76,10 @@ while [[ $# -gt 0 ]]; do
     --critical) CRITICAL=1 ;;
     --required-below) REQUIRED_BELOW="$2"; [[ $REQUIRED_BELOW =~ ^[1-9][0-9]{0,8}$ ]] || die "--required-below needs a build number"; shift ;;
     --notarize) NOTARIZE=1 ;;
+    --blocklists) mkdir -p "$2"; BLOCKLISTS_COPY="$(cd "$2" && pwd)"; shift ;;
     --selftest-timeout) SELFTEST_TIMEOUT="$2"; shift ;;
     --qa) QA=1 ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -91,6 +95,9 @@ OVERRIDES=()
 [[ $VERIFY == 1 ]] || OVERRIDES+=(no-verify)
 [[ -z $APPCAST || ${#OVERRIDES[@]} == 0 ]] || die "--appcast refuses a build with gate overrides (${OVERRIDES[*]}); make it without them"
 [[ -z $APPCAST || $APPCAST != "$DIST" && $APPCAST != "$DIST/"* ]] || die "appcast archives must live outside the dist directory (which is replaced)"
+[[ -z $BLOCKLISTS_COPY || $BLOCKLISTS_COPY != "$DIST" && $BLOCKLISTS_COPY != "$DIST/"* ]] || die "--blocklists must name a directory outside the dist directory (which is replaced)"
+# generate_appcast reads every archive in the appcast directory, and the mirror file is a tar.gz.
+[[ -z $BLOCKLISTS_COPY || -z $APPCAST || $BLOCKLISTS_COPY != "$APPCAST" ]] || die "--blocklists must not be the appcast directory"
 [[ $DIST != "$SHELL_DIR/dist/icloud"* && $DIST != "$SHELL_DIR/dist/chromium"* ]] \
   || die "refusing to write $DIST (development bundles live there)"
 [[ -d "$OUT/Chromium.app" ]] || die "no release engine at $OUT (scripts/build-engine-release.sh)"
@@ -328,6 +335,19 @@ if [[ -n $APPCAST ]]; then
   [[ $CRITICAL == 0 ]] || levels+=(--critical)
   [[ -z $REQUIRED_BELOW ]] || levels+=(--required-below "$REQUIRED_BELOW")
   "$SHELL_DIR/scripts/release/generate-appcast.sh" "$APPCAST" "$CHANNEL" "${levels[@]}"
+fi
+
+# 7. The blocklist mirror files (docs/FEATURE-SPECS/CONTENT-BLOCKING.md, section 4): the bundle
+#    inside the app, checked against the lists key again, as blocklists-<version>.tar.gz and
+#    latest.json for https://rearc.imara.ae/blocklists/. Nothing is fetched and nothing uploads;
+#    the site thread publishes them with the appcast.
+python3 -I "$SHELL_DIR/scripts/blocklists/build-blocklists.py" pack "$APP/Contents/Resources/Blocklists" \
+  --out "$DIST/blocklists" >"$DIST/blocklists.log" \
+  || die "the app's blocklists do not verify or could not be packed (log $DIST/blocklists.log)"
+echo "==> blocklists for the mirror in $DIST/blocklists: $(cat "$DIST/blocklists.log")"
+if [[ -n $BLOCKLISTS_COPY ]]; then
+  cp "$DIST/blocklists/"*.tar.gz "$DIST/blocklists/latest.json" "$BLOCKLISTS_COPY/"
+  echo "==> blocklists copied to $BLOCKLISTS_COPY"
 fi
 
 # Summary: what this run did not check in full (overrides are also in Info.plist).
