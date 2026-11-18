@@ -105,7 +105,7 @@ tab/094-task-manager-process-details.patch      # P-TAB-001 ABI 1.65, bridge 0.7
 # Security backports: upstream fixes the pinned Chromium line does not have.
 # Drop each one when the pin moves to a build that contains the fix.
 # They stay the last applied block, after ReArc's own patches: a new ReArc patch
-# goes above this comment, a new backport at the end of this block. As of 008 no
+# goes above this comment, a new backport at the end of this block. As of 014 no
 # backport touches a file a ReArc patch touches, so the order between the two
 # blocks is free; say so here when one does.
 security/001-cve-2026-121203-resize-observer.patch # upstream 70bfe6689 (Chrome 157.0.8103.38): ResizeObserver gathers by pointer
@@ -116,6 +116,12 @@ security/005-cve-2026-121140-passthrough-context-restore.patch # upstream 776099
 security/006-cve-2026-121181-range-expand-shadow.patch # upstream ae56f8394 (Chrome 157.0.8103.38): Editing
 security/007-cve-2026-121185-pip-document-child.patch # upstream 726155039 (Chrome 157.0.8103.38): PictureInPicture
 security/008-cve-2026-126845-graphite-snap-failure.patch # upstream 55d51d9ae (Chrome 157.0.8103.78): GPU
+security/009-cve-2026-131031-transfer-cache-context.patch # upstream 0960c42b6 (Chrome 158.0.8127.36): GPU, Critical
+security/010-cve-2026-131002-graphite-insert-context-loss.patch # upstream e655a1ae8 (Chrome 158.0.8127.36): GPU (five CVEs)
+security/011-cve-2026-131068-attribute-value-copy.patch # upstream 7076eb7bd (Chrome 158.0.8127.36): DOM
+security/012-cve-2026-130940-gen-textures-check.patch # upstream f182e1b65 (Chrome 158.0.8127.36): GPU
+security/013-cve-2026-130980-display-locked-parent-frame.patch # upstream 2fc814f07 (Chrome 158.0.8127.36): Layout
+security/014-cve-2026-130909-extension-bindings-no-accessor.patch # upstream 033982527 (Chrome 158.0.8127.36): Extensions
 #
 # Planned inventory (see README.md and engine/docs/ENGINE.md §4);
 # uncomment as patches land:
