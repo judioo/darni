@@ -387,7 +387,33 @@ final class LoopbackFixtureServer {
         "/slow": """
         <!doctype html><html><head><title>slow-loaded</title></head><body>slow</body></html>
         """,
+        // Built-in blocking: asks a tracker's and an ad server's host for a script each.
+        SelfTestBlockingFixture.pagePath: SelfTestBlockingFixture.pageHTML,
     ]
+
+    // MARK: The blocking fixture's two scripts
+
+    /// How often each of the blocking fixture's scripts was asked for, by
+    /// the page load (`run`) that asked. Written on the fixture queue.
+    private static let blockingLock = NSLock()
+    nonisolated(unsafe) private static var blockingFetchCounts: [Int: (tracker: Int, ad: Int)] = [:]
+
+    /// What the server was asked for in page load `run`. A request the
+    /// engine blocked never arrives, so 0 is "not fetched" on the server's word.
+    static func blockingFetches(run: Int) -> (tracker: Int, ad: Int) {
+        blockingLock.withLock { blockingFetchCounts[run] ?? (0, 0) }
+    }
+
+    /// The script for a request to one of the two paths, counted; nil for any other path.
+    private static func blockingScript(_ pathAndQuery: String) -> (body: Data, type: String)? {
+        guard let request = SelfTestBlockingFixture.scriptRequest(pathAndQuery) else { return nil }
+        blockingLock.withLock {
+            var counts = blockingFetchCounts[request.run] ?? (0, 0)
+            if request.isTracker { counts.tracker += 1 } else { counts.ad += 1 }
+            blockingFetchCounts[request.run] = counts
+        }
+        return (Data("window.rearcBlockingFixture = (window.rearcBlockingFixture || 0) + 1;\n".utf8), "text/javascript; charset=utf-8")
+    }
 
     /// 16x16 PNG served at /favicon.png (same bytes as engine/tests/run_c_abi.py's fixture).
     static let faviconPNG = Data(base64Encoded:
@@ -507,7 +533,7 @@ final class LoopbackFixtureServer {
         if route == "/suggest" {
             return suggest(connection, path: path)
         }
-        let extra = route == "/image/tenor.gif" ? (body: linkedGIF, type: "image/gif") : settings.routes(route)
+        let extra = route == "/image/tenor.gif" ? (body: linkedGIF, type: "image/gif") : blockingScript(path) ?? settings.routes(route)
         let body = isIcon || extra != nil ? nil : pages[route]
         let found = isIcon || body != nil || extra != nil
         log("[fixture] GET \(path) -> \(found ? 200 : 404)")

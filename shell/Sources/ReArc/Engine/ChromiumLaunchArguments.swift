@@ -169,10 +169,15 @@ enum ChromiumLaunchArguments {
     /// background services, and every non-loopback name fails to resolve, so
     /// the run reaches no outside service (Google or otherwise). The leak
     /// check is also turned off by the test before any sign-in.
+    ///
+    /// Two names resolve, to the loopback address: the tracker's and the ad
+    /// server's of the blocking fixture (`SelfTestBlockingFixture`), which
+    /// the built-in lists block. Chromium takes the first rule that matches,
+    /// so they go before the rule for every other name.
     static let selfTestNoOutsideNetworkSwitches = [
         "--disable-background-networking",
         "--disable-component-update",
-        "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost",
+        "--host-resolver-rules=\(SelfTestBlockingFixture.resolverRules), MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost",
     ]
 
     /// Self-test only: Chromium shows autofill suggestions only while the

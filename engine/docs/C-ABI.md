@@ -2740,6 +2740,8 @@ checks that the header adds exactly these six functions and typechecks gated Swi
 adoption. It passes against the patched header (`REARC_TEST_ABI_HEADER_DIR`); it does not
 need a build. `engine/tests/check_content_blocker_manifest.py` reads the patch: the
 manifest's keys and its one permission, and that every rules file goes through the action
-check. No host test exists yet. The spec's self-test (a local page with known ad
-and tracker URLs: blocked at level 2, allowed with a site exception and at level 0, and
-the count) is the first check once an engine with the patch is built.
+check. No host test exists yet. The shell's self-test has the page checks (a fixture page
+with a tracker's and an ad server's host: blocked at level 2, the ad allowed at level 1, both
+allowed with a site exception and at level 0, and the count) and a cold launch with a
+restored tab on that page, which must not fetch the tracker. They are written and have not
+run: they are the first check once an engine with the patch is built.

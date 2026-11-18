@@ -60,10 +60,15 @@ enum ChromiumHost {
                 if let dir = ChromiumLaunchArguments.userDataDir(in: arguments) {
                     ChromiumLaunchArguments.prepareSelfTestUserDataDir(URL(fileURLWithPath: dir, isDirectory: true))
                 }
-                let extensions = SelfTestExtensionFixture.write()
+                // The cold launch for blocking is one restored tab and nothing else: no fixture
+                // extensions and no client certificates, as a person's launch has none.
+                let cold = SelfTestBlockingFixture.isColdLaunch(CommandLine.arguments)
+                let extensions = cold ? [] : SelfTestExtensionFixture.write()
                 // ABI 1.41's test-only certificate store needs the mock keychain; the real Keychain is never listed.
                 var mutualTLS: [String] = []
-                if keychain == .devMock {
+                if cold {
+                    test.mutualTLSNote = "the cold launch for blocking lists no client identities"
+                } else if keychain == .devMock {
                     let (fixture, note) = SelfTestMutualTLS.start()
                     mutualTLS = fixture?.switches ?? []
                     test.mutualTLSNote = note
