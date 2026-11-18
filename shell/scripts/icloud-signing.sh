@@ -9,8 +9,10 @@
 #   - the iCloud/CloudKit entitlements, merged into scripts/ReArc.entitlements,
 #   - Info.plist ReArcICloudContainer = the container, which the shell checks against
 #     its signed entitlements before it creates anything CloudKit,
-#   - keychain-access-groups with <team>.<bundle id>.webauthn, when the profile allows that
-#     group: "this Mac" passkeys (below). REARC_WEBAUTHN_KEYCHAIN_GROUP=0 leaves it out.
+#   - keychain-access-groups with <team>.<bundle id>.webauthn, only with
+#     REARC_WEBAUTHN_KEYCHAIN_GROUP=1 and when the profile allows that group: "this Mac"
+#     passkeys (below). Off by default: no published build gets the group until a release
+#     fails when a later one would lose it (security review PK-01, 2026-11-18).
 # iCloud entitlements are restricted: macOS kills an app at launch unless an embedded
 # profile allows them for this Mac, so the profile is checked first and the build stops
 # on any mismatch.
@@ -79,8 +81,10 @@ icloud_prepare() {
   # <team>.<bundle id>.webauthn and is offered only when the app is signed with that group
   # (device/fido/mac/touch_id_context.mm). It needs no Apple browser entitlement, but the
   # group is a restricted entitlement like iCloud's: only when the profile allows it.
+  # And only when asked for (PK-01): a passkey made with the group is lost to every later
+  # build signed without it, so the group ships once a release cannot drop it by accident.
   local webauthn_group="$TEAM_ID.$bundle_id.webauthn" has_webauthn_group=0
-  if [[ ${REARC_WEBAUTHN_KEYCHAIN_GROUP:-1} != 0 ]] \
+  if [[ ${REARC_WEBAUTHN_KEYCHAIN_GROUP:-0} == 1 ]] \
       && $pb -c "Print :Entitlements:keychain-access-groups" "$decoded" 2>/dev/null \
       | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | grep -qxF -e "$TEAM_ID.*" -e "$webauthn_group"; then
     has_webauthn_group=1
@@ -113,7 +117,7 @@ icloud_prepare() {
   if [[ $has_webauthn_group == 1 ]]; then
     echo "==> passkeys: keychain access group $webauthn_group (this Mac)"
   else
-    echo "==> passkeys: no keychain access group for this Mac (the profile does not allow $webauthn_group, or REARC_WEBAUTHN_KEYCHAIN_GROUP=0)"
+    echo "==> passkeys: no keychain access group for this Mac (REARC_WEBAUTHN_KEYCHAIN_GROUP is not 1, or the profile does not allow $webauthn_group)"
   fi
 }
 
