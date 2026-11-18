@@ -63,6 +63,7 @@ struct SplitPaneToolbarView: View, Equatable {
             // The pane's own container, from its engine: panes of one split can differ.
             HStack(spacing: 4) {
                 if let container = model.containerLabel(for: engine, tab: tab) { ContainerChip(label: container, ink: ink.ink) }
+                if let site = SiteControlCenter.site(for: url) { SiteInfoButton(model: model, engine: engine, site: site, ink: ink.quiet) }
                 address(url, ink: ink)
             }
             .layoutPriority(1)

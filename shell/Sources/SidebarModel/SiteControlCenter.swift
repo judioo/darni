@@ -188,9 +188,15 @@ extension SiteControlCenter {
         case allow, block, reset, snoozeOneHour, openSiteSettings
         /// "Block ads and trackers": a site exception on or off, and the way to the switch.
         case turnOffBlockingForSite, turnOnBlockingForSite, openBlockingSettings
+        /// A device chosen for the site (USB, HID, serial, Bluetooth) is taken from it again.
+        case removeDevice
+        /// After a permission change: the loaded page keeps what it had until it is reloaded.
+        case reloadPage
 
         public var title: String {
             switch self {
+            case .removeDevice: return "Remove Access"
+            case .reloadPage: return "Reload Page"
             case .turnOffBlockingForSite: return "Turn Off Blocking for This Site"
             case .turnOnBlockingForSite: return "Turn On Blocking for This Site"
             case .openBlockingSettings: return "Blocking Settings…"
@@ -206,7 +212,13 @@ extension SiteControlCenter {
     /// One Settings row: a round icon, a title and the site's state.
     public struct SettingRow: Equatable, Identifiable, Sendable {
         public enum Kind: Hashable, Sendable {
+            /// An answer in the shell's own record (`SitePermissionStore`), by prompt type key.
             case permission(String)
+            /// A setting the engine holds for the site, by Chromium's name (`SiteAccess`).
+            case sitePermission(String)
+            /// A device the person chose for the site.
+            case siteDevice(kind: String, key: String)
+            case reloadToApply
             case autoPictureInPicture
             case contentBlocking
         }
@@ -269,12 +281,20 @@ extension SiteControlCenter {
     /// Location, camera, microphone and notifications lead, as in Arc; other types follow by name.
     static let leadingPermissions = ["geolocation", "camera_stream", "mic_stream", "notifications"]
 
-    /// Blocking first (when the engine has it), then the site's answered
+    /// Blocking first (when the engine has it), then the site's
     /// permissions, then automatic Picture in Picture.
-    /// `permissionsInEngine`: Chromium keeps remembered answers, so a row
-    /// opens its Site Settings; on WebKit the shell's store is the answer.
+    /// `siteAccess`: the engine's own state for the site (Chromium ABI 1.67).
+    /// With it the rows are the engine's (every setting the site holds, the
+    /// devices chosen for it, what is in use) and the shell's record of its
+    /// prompts' answers is not shown: it can only repeat or contradict them.
+    /// `needsReload`: a setting was changed from the panel since the page loaded.
+    /// `permissionsInEngine`: an engine that keeps remembered answers but
+    /// does not report them (ABI before 1.67): a row opens its Site Settings.
+    /// On WebKit the shell's store is the answer.
     public static func settingRows(
         contentBlocking: SettingRow? = nil,
+        siteAccess: SiteAccess? = nil,
+        needsReload: Bool = false,
         permissions: [(type: PermissionType, entry: SitePermissionStore.Entry)],
         permissionsInEngine: Bool,
         autoPiP: AutoPiPHostPreference,
@@ -282,14 +302,20 @@ extension SiteControlCenter {
         now: Date = Date()
     ) -> [SettingRow] {
         func rank(_ type: PermissionType) -> Int { leadingPermissions.firstIndex(of: type.key) ?? leadingPermissions.count }
-        let sorted = permissions.sorted { (rank($0.type), $0.type.name) < (rank($1.type), $1.type.name) }
-        var rows = sorted.map { type, entry in
-            let blocked = entry.decision == .deny
-            let actions: [SettingAction] = permissionsInEngine
-                ? [.openSiteSettings]
-                : [blocked ? .allow : .block, .reset]
-            return SettingRow(kind: .permission(type.key), title: type.name, state: permissionState(entry),
-                              symbol: type.symbol, isBlocked: blocked, actions: actions)
+        var rows: [SettingRow]
+        if let siteAccess {
+            rows = siteAccessRows(siteAccess)
+            if needsReload { rows.insert(reloadToApplyRow, at: 0) }
+        } else {
+            let sorted = permissions.sorted { (rank($0.type), $0.type.name) < (rank($1.type), $1.type.name) }
+            rows = sorted.map { type, entry in
+                let blocked = entry.decision == .deny
+                let actions: [SettingAction] = permissionsInEngine
+                    ? [.openSiteSettings]
+                    : [blocked ? .allow : .block, .reset]
+                return SettingRow(kind: .permission(type.key), title: type.name, state: permissionState(entry),
+                                  symbol: type.symbol, isBlocked: blocked, actions: actions)
+            }
         }
         rows.append(autoPiPRow(autoPiP, enabled: autoPiPEnabled, now: now))
         if let contentBlocking { rows.insert(contentBlocking, at: 0) }

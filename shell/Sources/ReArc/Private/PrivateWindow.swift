@@ -137,6 +137,11 @@ struct PrivateWindowView: View {
             Button { window.engine.goForward() } label: { Image(systemName: "chevron.right") }
                 .disabled(!window.engine.canGoForward)
             Button { window.engine.reload() } label: { Image(systemName: "arrow.clockwise") }
+            // Site information, as at the start of the address in the main window: what the
+            // site may do in this private session (its rules end with the session).
+            if let site = SiteControlCenter.site(for: window.engine.currentURL) {
+                SiteInfoButton(model: model, engine: window.engine, site: site, ink: .secondary, showsPanelLinks: false)
+            }
             TextField("Search or enter address", text: Bindable(window).addressText)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit {

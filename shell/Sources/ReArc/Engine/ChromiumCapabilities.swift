@@ -72,6 +72,8 @@ struct ChromiumCapabilities: Equatable {
     static let pageThemeColorFeature = "page_theme_color"
     static let taskManagerFeature = "task_manager"
     static let contentBlockingFeature = "content_blocking"
+    static let sitePermissionsFeature = "site_permissions"
+    static let webAuthnPromptsFeature = "webauthn_prompts"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -133,6 +135,8 @@ struct ChromiumCapabilities: Equatable {
         pageThemeColorFeature: 51,
         taskManagerFeature: 65,
         contentBlockingFeature: 66,
+        sitePermissionsFeature: 67,
+        webAuthnPromptsFeature: 68,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -272,6 +276,14 @@ struct ChromiumCapabilities: Equatable {
     /// (ABI 1.66, CONTENT-BLOCKING.md §5). Without it every blocking surface
     /// is hidden.
     var contentBlocking: Bool
+    /// What Chromium holds for a tab's site: every setting with its state,
+    /// the devices chosen for it and what the page uses now, with allow,
+    /// block, reset and revoke (ABI 1.67). Without it the site panel shows
+    /// the shell's own record of its prompts' answers.
+    var sitePermissions: Bool
+    /// The steps of a passkey or security key request, for the shell's own
+    /// sheet (ABI 1.68). Without it such a request shows nothing and times out.
+    var passkeyPrompts: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -338,6 +350,8 @@ struct ChromiumCapabilities: Equatable {
         pageThemeColor = adopted(Self.pageThemeColorFeature)
         taskManager = perfMetrics && adopted(Self.taskManagerFeature)
         contentBlocking = profiles && adopted(Self.contentBlockingFeature)
+        sitePermissions = adopted(Self.sitePermissionsFeature)
+        passkeyPrompts = adopted(Self.webAuthnPromptsFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -425,6 +439,8 @@ struct ChromiumCapabilities: Equatable {
             (Self.extensionTabGroupsFeature, extensionTabGroups),
             (Self.taskManagerFeature, taskManager),
             (Self.contentBlockingFeature, contentBlocking),
+            (Self.sitePermissionsFeature, sitePermissions),
+            (Self.webAuthnPromptsFeature, passkeyPrompts),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),

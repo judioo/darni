@@ -1,0 +1,1150 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 WebAuthn steps for the host: phone, security key, this Mac (ABI 1.68)
+
+Engine side of docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md, part 1.
+The owner's report: Microsoft sign-in says "Face, fingerprint, PIN or
+security key: your device will open a security window", and nothing opens.
+
+Why. A request's UI is AuthenticatorRequestDialogModel, whose SetStep opens
+Chromium's dialog through AuthenticatorRequestDialogViewController::Create
+(chrome/browser/ui/views/webauthn/
+authenticator_request_dialog_view_controller_views.cc). Create returns null
+without a WebContentsModalDialogManager on the tab, and a bridge tab has
+none (browserless_tab_helpers.cc attaches no Browser UI helpers). The
+request itself ran: the authenticators were discovered and the model went
+through its steps, with nobody to show them or to answer, until the relying
+party's timeout.
+
+What. rearc::AttachWebAuthnPrompt, called from
+ChromeAuthenticatorRequestDelegate's constructor, observes the model. Each
+step with UI goes to the host as JSON (ReArcEngineSetWebAuthnCallback):
+the ways to sign in, the QR code's text for a phone, a security key's PIN
+entry with its errors and attempts, account choice, Bluetooth off or
+denied, the errors. ReArcWebAuthnRespond calls the model as the dialog's
+buttons do (chrome/browser/ui/webauthn/sheet_models.cc: each sheet's
+OnAccept, OnCancel and OnBack), checked against the step that is shown.
+The steps have names of the ABI's own, so a pin bump that renumbers
+Chromium's enum does not change the host. A request that needs no dialog
+(passkey autofill on a sign-in page) sends nothing. Without a host, or for
+a page that is no registry tab, a request that reaches a step with UI is
+cancelled instead of left waiting. Everything else stays Chromium's: the
+transports (hybrid over Bluetooth with the tunnel service, USB HID, the
+platform authenticators), the relying party checks, timeouts.
+
+This Mac. The profile authenticator (keys in the Secure Enclave, Touch ID
+or the login password) needs no Apple browser entitlement, only the
+keychain access group <team>.<bundle id>.webauthn in the app's signature
+(device/fido/mac/touch_id_context.mm). No ReArc build was signed with it,
+so the authenticator was never offered; shell/scripts/icloud-signing.sh now
+adds the group when the provisioning profile allows it. Chromium builds
+the group's name from the branding's MAC_TEAM_ID. A release engine's
+branding has it (build-engine-release.sh); the overlay's own, which the dev
+engine uses, has none, and the group was ".com.rearc.browser.webauthn".
+ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile now
+asks rearc::WebAuthnKeychainAccessGroup, which reads the team from the
+running app's signature (com.apple.developer.team-identifier) when the
+branding has none, so a signed dev build behaves as a release does. An
+unsigned or ad hoc build is as before.
+
+iCloud Keychain needs com.apple.developer.web-browser.public-key-credential
+(device/fido/mac/icloud_keychain_sys.mm), which ReArc does not have, and
+the page's NSWindow. ConfigureNSWindow found the window through a Views
+widget, which a bridge tab is not in; it now falls back to
+WebContents::GetTopLevelNativeWindow, so nothing else is missing the day
+the entitlement is granted.
+
+Google Password Manager steps (the enclave, its PIN and recovery windows)
+are reported as "unsupported": they need a signed-in Chrome profile with
+password sync, which a ReArc profile is not.
+
+After the pre-merge security review (security/PRE-passkeys-site-permissions.md,
+2026-11-18):
+- PK-03. A request whose asking frame is no http or https page is cancelled
+  when it reaches a step with UI, as one from a page that is no tab. An
+  extension page may claim any site it has host access to as the relying
+  party (ExtensionCanAssertRpId), and the host's sheet names the relying
+  party, not the asker.
+- PK-05. Each step carries "attestation" (none, model, serial) and
+  "stored_on_key" (no, maybe, yes): Chromium's PossibleAttestationWarning and
+  PossibleResidentKeyWarning on the touch steps, for the host to say before
+  the touch.
+- PK-06. Respond holds the host to what it was told. Any action but cancel
+  is refused while the model's ui_disabled_ is set ("busy"); a published step
+  takes one answer, and the next is for the step published after it; start
+  over on an error step needs offer_try_again_in_ui, as Chromium's error
+  sheets do. Continue on the fingerprint step and on the manual Bluetooth
+  step runs a one-time callback the controller does not null-check
+  (authenticator_request_dialog_controller.cc, OnBioEnrollmentDone and
+  ContinueWithFlowAfterBleAdapterPowered): each is run once per step, since
+  a second run is a CHECK failure that ends the browser.
+
+Built into the release engine on 2026-11-18 (overlay e6f031f180,
+out/ReArc-codecs-arm64): the framework exports both functions and
+engine/tests/check_abi168_imports.py passes. Run on screen with the host's
+sheet on webauthn.io: the choice of ways, the QR code, the security key
+step, "this Mac" up to macOS's Touch ID prompt, cancel, a second request
+and a tab closed in the middle. Not run: a real phone, a security key, and
+so the PIN, fingerprint and error steps.
+
+Touches: chrome/app/framework.exports, chrome/app/framework.order,
+chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,
+rearc_engine_abi.h, rearc_engine_abi.mm, rearc_engine_entry_mac.mm,
+rearc_services_abi.cc, rearc_webauthn.cc (new), rearc_webauthn.h (new)},
+chrome/browser/webauthn/chrome_authenticator_request_delegate.cc,
+chrome/browser/webauthn/chrome_web_authentication_delegate.cc.
+Applies after tab/096 (the same lines of the export lists, BUILD.gn and the
+ABI header).
+
+Bridge 0.78.0, ABI 1.68, feature webauthn_prompts. No struct changes.
+
+Last rebased: 2026-11-18 onto Chromium 156.0.8078.109 (overlay 67d25d5cf4).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 614ec7b..01496dd 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -54,6 +54,8 @@ _ReArcTabGetSitePermissions
+ _ReArcTabSetSitePermission
+ _ReArcTabRevokeSiteDevice
+ _ReArcEngineSetSitePermissionsChangedCallback
++_ReArcEngineSetWebAuthnCallback
++_ReArcWebAuthnRespond
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 0bac800..b2276ef 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -61,6 +61,8 @@ _ReArcTabGetSitePermissions
+ _ReArcTabSetSitePermission
+ _ReArcTabRevokeSiteDevice
+ _ReArcEngineSetSitePermissionsChangedCallback
++_ReArcEngineSetWebAuthnCallback
++_ReArcWebAuthnRespond
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index e599356..397eba3 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1492,6 +1492,8 @@ source_set("core") {
+       "rearc_bridge/rearc_history_abi.cc",
+       "rearc_bridge/rearc_search_abi.cc",
+       "rearc_bridge/rearc_site_permissions.cc",
++      "rearc_bridge/rearc_webauthn.cc",
++      "rearc_bridge/rearc_webauthn.h",
+       "rearc_bridge/rearc_fullscreen.cc",
+       "rearc_bridge/rearc_fullscreen.h",
+       "rearc_bridge/rearc_key_equivalents.cc",
+diff --git a/chrome/browser/rearc_bridge/rearc_abi_internal.h b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+index 503b6c5..8b2aa0b 100644
+--- a/chrome/browser/rearc_bridge/rearc_abi_internal.h
++++ b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+@@ -52,5 +52,8 @@ void ABIDetachContentBlocker(uint64_t profile_id);
+ // services hooks: the watch that tells the host a tab's answer changed.
+ void ABIAttachSitePermissions(uint64_t tab_id);
+ void ABIDetachSitePermissions(uint64_t tab_id);
++// ABI 1.68 WebAuthn steps (rearc_webauthn.cc): the tab's requests end for
++// the host; Chromium ends the requests themselves with the page.
++void ABICancelWebAuthn(uint64_t tab_id);
+ }  // namespace rearc
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index f638567..4feedba 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 67, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 68, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -1813,6 +1813,95 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
+ REARC_ENGINE_EXPORT void ReArcEngineSetSitePermissionsChangedCallback(
+     ReArcSitePermissionsChangedCallback callback, void* context);
+ 
++// WebAuthn (webauthn_prompts, ABI 1.68): the steps of a passkey or security
++// key request, for the host to show. Chromium's own dialog is a Views dialog
++// on a tab-modal dialog manager a bridge tab does not have; before this
++// channel no dialog opened and the request waited until it timed out. The
++// engine still runs everything else: the authenticators (a phone over
++// Bluetooth after a QR code, a USB security key, "this Mac"), the relying
++// party checks and the request's timeout.
++//
++// phase 0: a step of request_id; json says what to show. The first one opens
++// the host's sheet for the tab, later ones replace what it shows (also the
++// same step again, changed). phase 1: the request is over (done, cancelled,
++// failed or its page gone); close the sheet, no reply. A request that needs
++// no dialog (a sign-in page's passkey autofill, a silent failure) sends
++// nothing at all. Without a callback, for a page that is no registry tab and
++// for an asking frame that is no http or https page (an extension page, which
++// may claim a site it has access to as the relying party), a request that
++// reaches a step with UI is cancelled.
++//
++// json is a UTF-8 object; a host ignores keys it does not know and treats a
++// step it does not know as "unsupported". 64-bit numbers are decimal strings.
++//   "step": "choose" (the ways to sign in: "mechanisms"), "confirm" (one way
++//     offered first: "priority" is its index; the others stay in
++//     "mechanisms"), "security_key" (insert and touch it), "qr" ("qr" is the
++//     text of the code a phone's camera reads; "security_key_too": a USB key
++//     can be touched instead), "phone_connecting", "phone_connected" (go on
++//     on the phone), "phone_error", "bluetooth_off" ("bluetooth_on" turns
++//     true when the person switched it on; "can_power_on": Continue switches
++//     it on), "bluetooth_denied" (macOS denies the app Bluetooth; Continue
++//     opens System Settings), "private_notice" (a passkey made in a private
++//     window stays on the device), "pin", "pin_setup", "pin_change" ("pin":
++//     "min_length", "attempts" left, "error": "none", "wrong", "too_short",
++//     "invalid_characters", "same_as_current", "fingerprint_locked"),
++//     "touch_again", "fingerprint_enroll" ("samples", "samples_remaining"),
++//     "verify_again" ("attempts"), "account" (which account: "accounts"),
++//     "create_this_mac" (confirm a passkey kept on this Mac), "system" (macOS
++//     shows its own prompt; the host shows nothing), "hidden" (nothing to
++//     show for now), "unsupported", and the errors "error_no_transports",
++//     "error_no_passkeys", "error_not_recognized", "error_timeout",
++//     "error_key_not_registered", "error_key_already_registered",
++//     "error_missing_capability", "error_storage_full",
++//     "error_pin_soft_block" (remove and insert the key), "error_pin_hard_block"
++//     (the key must be reset), "error_key_removed".
++//   "request": "get" or "create"; "rp_id"; "origin" of the asking frame;
++//     "profile_id", "content_generation"; "private"; "user" (create: "name",
++//     "display_name").
++//   "busy": the engine works; only Cancel answers. "can_choose_another":
++//     start over (5) leads to "choose". "can_try_again": an error step may
++//     start over.
++//   "attestation": what a touch of a security key tells the site: "none",
++//     "model" (its make and model) or "serial" (enterprise attestation: which
++//     key it is). "stored_on_key": a record of the visit is kept on the key:
++//     "no", "maybe" or "yes". Chromium warns of both on the touch steps
++//     ("security_key", "touch_again"); a host says them before the touch.
++//   "mechanisms": "index", "kind" ("passkey" with "source", "phone",
++//     "security_key", "this_mac", "icloud_keychain", "password", "google",
++//     "other"), "name" and "description" (Chromium's strings; a passkey's
++//     name is its account). "accounts": "index", "name", "display_name",
++//     "source". "source": "this_mac", "icloud_keychain", "phone",
++//     "security_key", "google" or "other".
++// The "qr" text lets a phone join this one request; a PIN unlocks a security
++// key. A host shows them and writes neither to a log.
++typedef void (*ReArcWebAuthnCallback)(void* context,
++                                      uint64_t request_id,
++                                      uint64_t tab_id,
++                                      uint32_t phase,
++                                      const char* json);
++// Replacing or clearing the callback cancels the requests it was shown.
++REARC_ENGINE_EXPORT void ReArcEngineSetWebAuthnCallback(
++    ReArcWebAuthnCallback callback, void* context);
++// The person's answer, as the buttons of Chromium's dialog give it.
++// action: 0 cancel the request (any step); 1 choose mechanisms[index]
++// ("choose", "confirm"); 2 continue ("confirm": the offered way;
++// "bluetooth_off"; "bluetooth_denied"; "private_notice"; "create_this_mac";
++// "fingerprint_enroll": done); 3 the PIN in text, UTF-8, 1 to 63 bytes (the
++// "pin" steps; for a new PIN the host has asked twice and compared); 4 choose
++// accounts[index] ("account"); 5 start over (another way, or try again).
++// An action the step does not take, and any but cancel while no step with UI
++// is shown: invalid_state. Each step event takes one answer: any but cancel
++// while "busy", after the step's answer and before the next event, and a
++// start over on an error step without "can_try_again", is invalid_state too
++// (opening System Settings on "bluetooth_denied" may be repeated). An index
++// out of range, an empty or over-long PIN, an unknown action:
++// invalid_argument. A request that is over: not_found. The next step, or the
++// end, arrives as an event.
++REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
++                                                     uint32_t action,
++                                                     uint32_t index,
++                                                     const char* text);
++
+ #ifdef __cplusplus
+ }  // extern "C"
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 5d68e4f..a064af8 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -992,6 +992,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "task_manager" ||
+          std::string(feature) == "content_blocking" ||
+          std::string(feature) == "site_permissions" ||
++         std::string(feature) == "webauthn_prompts" ||
+          std::string(feature) == "early_window" ||
+          std::string(feature) == "media_capture" ||
+          std::string(feature) == "search_engines" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index 4521ae0..d2c9cac 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.77.0";
++  return "0.78.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_services_abi.cc b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+index f8c5938..24a7044 100644
+--- a/chrome/browser/rearc_bridge/rearc_services_abi.cc
++++ b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+@@ -1247,6 +1247,7 @@ void ABIDetachServices(uint64_t id) {
+   ABICancelExtensionTabs(id, 0);
+   ABICancelContextMenu(id);
+   ABICancelPermissions(id);
++  ABICancelWebAuthn(id);
+   ABICancelFileChooser(id);
+   ABICancelJavaScriptDialogs(id);
+   ABIDetachFind(id);
+diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.cc b/chrome/browser/rearc_bridge/rearc_webauthn.cc
+new file mode 100644
+index 0000000..b527a6c
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_webauthn.cc
+@@ -0,0 +1,725 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/rearc_bridge/rearc_webauthn.h"
++
++#include <CoreFoundation/CoreFoundation.h>
++#include <Security/SecTask.h>
++#include <pthread.h>
++
++#include <map>
++#include <optional>
++#include <string>
++#include <utility>
++#include <variant>
++#include <vector>
++
++#include "base/apple/foundation_util.h"
++#include "base/apple/scoped_cftyperef.h"
++#include "base/check.h"
++#include "base/functional/bind.h"
++#include "base/json/json_writer.h"
++#include "base/location.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/sys_string_conversions.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/values.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/tab_registry.h"
++#include "chrome/browser/rearc_bridge/tab_session.h"
++#include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
++#include "chrome/common/chrome_version.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "device/fido/discoverable_credential_metadata.h"
++#include "device/fido/pin.h"
++#include "device/fido/public/fido_transport_protocol.h"
++#include "device/fido/public/fido_types.h"
++#include "third_party/abseil-cpp/absl/functional/overload.h"
++#include "url/origin.h"
++#include "url/url_constants.h"
++
++namespace rearc {
++namespace {
++
++using Model = AuthenticatorRequestDialogModel;
++using Step = AuthenticatorRequestDialogModel::Step;
++using Mechanism = AuthenticatorRequestDialogModel::Mechanism;
++
++class Prompt;
++
++ReArcWebAuthnCallback host = nullptr;
++void* host_context = nullptr;
++uint64_t epoch = 0, next_id = 1;
++
++std::map<uint64_t, raw_ptr<Prompt>>& Prompts() {
++  static base::NoDestructor<std::map<uint64_t, raw_ptr<Prompt>>> prompts;
++  return *prompts;
++}
++
++// The ABI's names of the steps. They are the host's vocabulary and stay when
++// a pin bump renumbers or renames Chromium's enum. A step without UI of its
++// own is "hidden"; one that needs Google Password Manager or Windows is
++// "unsupported", and the host offers another way or Cancel.
++const char* StepName(Step step) {
++  switch (step) {
++    case Step::kMechanismSelection:
++      return "choose";
++    case Step::kSelectPriorityMechanism:
++      return "confirm";
++    case Step::kUsbInsertAndActivate:
++      return "security_key";
++    case Step::kCableV2QRCode:
++      return "qr";
++    case Step::kCableV2Connecting:
++      return "phone_connecting";
++    case Step::kCableV2Connected:
++      return "phone_connected";
++    case Step::kCableV2Error:
++      return "phone_error";
++    case Step::kBlePowerOnAutomatic:
++    case Step::kBlePowerOnManual:
++      return "bluetooth_off";
++    case Step::kBlePermissionMac:
++      return "bluetooth_denied";
++    case Step::kOffTheRecordInterstitial:
++      return "private_notice";
++    case Step::kClientPinEntry:
++      return "pin";
++    case Step::kClientPinSetup:
++      return "pin_setup";
++    case Step::kClientPinChange:
++      return "pin_change";
++    case Step::kClientPinTapAgain:
++      return "touch_again";
++    case Step::kClientPinErrorSoftBlock:
++      return "error_pin_soft_block";
++    case Step::kClientPinErrorHardBlock:
++      return "error_pin_hard_block";
++    case Step::kClientPinErrorAuthenticatorRemoved:
++      return "error_key_removed";
++    case Step::kInlineBioEnrollment:
++      return "fingerprint_enroll";
++    case Step::kRetryInternalUserVerification:
++      return "verify_again";
++    case Step::kSelectAccount:
++    case Step::kPreSelectAccount:
++      return "account";
++    case Step::kChromeProfileCreatePasskey:
++      return "create_this_mac";
++    case Step::kErrorNoAvailableTransports:
++      return "error_no_transports";
++    case Step::kErrorNoPasskeys:
++      return "error_no_passkeys";
++    case Step::kErrorInternalUnrecognized:
++      return "error_not_recognized";
++    case Step::kTimedOut:
++      return "error_timeout";
++    case Step::kKeyNotRegistered:
++      return "error_key_not_registered";
++    case Step::kKeyAlreadyRegistered:
++      return "error_key_already_registered";
++    case Step::kMissingCapability:
++      return "error_missing_capability";
++    case Step::kStorageFull:
++      return "error_storage_full";
++    case Step::kPlatformAuthenticator:
++      // macOS shows its own prompt (Touch ID, or iCloud Keychain's sheet).
++      return "system";
++    case Step::kNotStarted:
++    case Step::kPasskeyAutofill:
++    case Step::kPasskeyUpgrade:
++    case Step::kPasswordOsAuth:
++    case Step::kClosed:
++      return "hidden";
++    default:
++      return "unsupported";
++  }
++}
++
++const char* SourceName(device::AuthenticatorType type) {
++  switch (type) {
++    case device::AuthenticatorType::kTouchID:
++      return "this_mac";
++    case device::AuthenticatorType::kICloudKeychain:
++      return "icloud_keychain";
++    case device::AuthenticatorType::kPhone:
++      return "phone";
++    case device::AuthenticatorType::kEnclave:
++      return "google";
++    case device::AuthenticatorType::kOther:
++      return "security_key";
++    default:
++      return "other";
++  }
++}
++
++const char* TransportName(device::FidoTransportProtocol transport) {
++  switch (transport) {
++    case device::FidoTransportProtocol::kUsbHumanInterfaceDevice:
++      return "security_key";
++    case device::FidoTransportProtocol::kInternal:
++      return "this_mac";
++    case device::FidoTransportProtocol::kHybrid:
++      return "phone";
++    default:
++      return "other";
++  }
++}
++
++// "kind" says what a way to sign in is, so the host can draw and name it;
++// "name" and "description" are Chromium's own strings for it.
++base::DictValue DescribeMechanism(const Mechanism& mechanism, size_t index) {
++  base::DictValue row;
++  row.Set("index", static_cast<int>(index));
++  row.Set("name", base::UTF16ToUTF8(mechanism.name));
++  row.Set("description", base::UTF16ToUTF8(mechanism.description));
++  std::visit(
++      absl::Overload{
++          [&row](const Mechanism::Credential& credential) {
++            row.Set("kind", "passkey");
++            row.Set("source", SourceName(credential.value().source));
++          },
++          [&row](const Mechanism::Password&) { row.Set("kind", "password"); },
++          [&row](const Mechanism::Transport& transport) {
++            row.Set("kind", TransportName(transport.value()));
++          },
++          [&row](const Mechanism::WindowsAPI&) { row.Set("kind", "other"); },
++          [&row](const Mechanism::Hybrid&) { row.Set("kind", "phone"); },
++          [&row](const Mechanism::ICloudKeychain&) {
++            row.Set("kind", "icloud_keychain");
++          },
++          [&row](const Mechanism::Enclave&) { row.Set("kind", "google"); },
++          [&row](const Mechanism::SignInAgain&) { row.Set("kind", "other"); },
++      },
++      mechanism.type);
++  return row;
++}
++
++const char* PinErrorName(device::pin::PINEntryError error) {
++  switch (error) {
++    case device::pin::PINEntryError::kNoError:
++      return "none";
++    case device::pin::PINEntryError::kInternalUvLocked:
++      return "fingerprint_locked";
++    case device::pin::PINEntryError::kWrongPIN:
++      return "wrong";
++    case device::pin::PINEntryError::kTooShort:
++      return "too_short";
++    case device::pin::PINEntryError::kInvalidCharacters:
++      return "invalid_characters";
++    case device::pin::PINEntryError::kSameAsCurrentPIN:
++      return "same_as_current";
++  }
++  return "none";
++}
++
++// The steps that say a request failed. Chromium's sheets offer "try again"
++// there only while the model's offer_try_again_in_ui holds, and never after a
++// timeout.
++bool IsErrorStep(Step step) {
++  switch (step) {
++    case Step::kCableV2Error:
++    case Step::kClientPinErrorSoftBlock:
++    case Step::kClientPinErrorHardBlock:
++    case Step::kClientPinErrorAuthenticatorRemoved:
++    case Step::kErrorNoAvailableTransports:
++    case Step::kErrorNoPasskeys:
++    case Step::kErrorInternalUnrecognized:
++    case Step::kTimedOut:
++    case Step::kKeyNotRegistered:
++    case Step::kKeyAlreadyRegistered:
++    case Step::kMissingCapability:
++    case Step::kStorageFull:
++      return true;
++    default:
++      return false;
++  }
++}
++
++// What touching a security key tells the site, as Chromium's sheets warn on
++// the touch steps (sheet_models.cc, PossibleAttestationWarning): its make and
++// model, or with enterprise attestation its serial number.
++const char* AttestationName(const Model& model) {
++  if (!model.attestation_conveyance_preference) {
++    return "none";
++  }
++  switch (*model.attestation_conveyance_preference) {
++    case device::AttestationConveyancePreference::kNone:
++      return "none";
++    case device::AttestationConveyancePreference::kIndirect:
++    case device::AttestationConveyancePreference::kDirect:
++      return "model";
++    case device::AttestationConveyancePreference::
++        kEnterpriseIfRPListedOnAuthenticator:
++    case device::AttestationConveyancePreference::kEnterpriseApprovedByBrowser:
++      return "serial";
++  }
++  return "none";
++}
++
++// Whether a record of the visit is kept on the security key (sheet_models.cc,
++// PossibleResidentKeyWarning).
++const char* StoredOnKeyName(const Model& model) {
++  switch (model.resident_key_requirement) {
++    case device::ResidentKeyRequirement::kDiscouraged:
++      return "no";
++    case device::ResidentKeyRequirement::kPreferred:
++      return "maybe";
++    case device::ResidentKeyRequirement::kRequired:
++      return "yes";
++  }
++  return "no";
++}
++
++void Deliver(uint64_t expected,
++             uint64_t request_id,
++             uint64_t tab_id,
++             uint32_t phase,
++             std::string json) {
++  if (!host || expected != epoch) {
++    return;
++  }
++  host(host_context, request_id, tab_id, phase, json.c_str());
++}
++
++// One request's steps for the host. It lives as long as the request's dialog
++// model and holds no reference to it: the model says when it goes.
++class Prompt : public Model::Observer {
++ public:
++  Prompt(Model* model, content::RenderFrameHost* frame)
++      : model_(model), id_(next_id++) {
++    content::WebContents* contents =
++        content::WebContents::FromRenderFrameHost(frame);
++    for (uint64_t id : TabRegistry::Get().SessionIds()) {
++      TabSession* session = TabRegistry::Get().FindSession(id);
++      if (contents && session->web_contents() == contents) {
++        tab_id_ = session->tab_id();
++        profile_id_ = session->profile_id();
++        generation_ = session->content_generation();
++      }
++    }
++    const url::Origin& origin = frame->GetLastCommittedOrigin();
++    origin_ = origin.Serialize();
++    // Only a web page gets the host's sheet. An extension page may claim any
++    // site it has host access to as the relying party
++    // (ExtensionCanAssertRpId), and the sheet names the relying party, not
++    // who asks: such a request is cancelled when it reaches a step with UI,
++    // as one from a page that is no tab.
++    if (origin.scheme() != url::kHttpScheme &&
++        origin.scheme() != url::kHttpsScheme) {
++      tab_id_ = 0;
++    }
++    model_->AddObserver(this);
++    Prompts().emplace(id_, this);
++  }
++  ~Prompt() override = default;
++
++  uint64_t tab_id() const { return tab_id_; }
++  bool shown() const { return shown_ && !ended_; }
++
++  // Model::Observer:
++  void OnStepTransition() override {
++    // A new step has its own one-time callbacks.
++    spent_ = false;
++    Publish();
++  }
++  void OnSheetModelChanged() override { Publish(); }
++  void OnBluetoothPoweredStateChanged() override { Publish(); }
++  void OnModelDestroyed(Model* model) override {
++    End();
++    model->RemoveObserver(this);
++    model_ = nullptr;
++    Prompts().erase(id_);
++    // The model is going through its observers: this one goes afterwards.
++    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, this);
++  }
++
++  // The tab is going: its page hears nothing more of this request.
++  void Detach() {
++    End();
++    tab_id_ = 0;
++  }
++
++  // Cancel as the dialog's Cancel button does. This can end the request and
++  // with it this object, so nothing may follow the call.
++  void Cancel() {
++    if (model_) {
++      model_->CancelAuthenticatorRequest();
++    }
++  }
++
++  ReArcStatus Respond(uint32_t action, uint32_t index, const char* text) {
++    if (!model_ || !shown()) {
++      return REARC_INVALID_STATE;
++    }
++    Model* model = model_;
++    const Step step = model->step();
++    // Every call into the model below can end the request and delete this
++    // object: none is followed by a use of a member.
++    if (action == 0) {
++      // Cancel answers at every step, also while macOS shows its own prompt.
++      model->CancelAuthenticatorRequest();
++      return REARC_OK;
++    }
++    if (action > 5) {
++      return REARC_INVALID_ARGUMENT;
++    }
++    if (model->should_dialog_be_closed()) {
++      return REARC_INVALID_STATE;
++    }
++    // While the engine works, Chromium's own buttons are disabled but Cancel;
++    // and a published step takes one answer: the next one is for the step
++    // that follows it.
++    if (model->ui_disabled_ || answered_) {
++      return REARC_INVALID_STATE;
++    }
++    switch (action) {
++      case 1:
++        // The list is on these two steps only (the second shows the first
++        // choice with "another way").
++        if (step != Step::kMechanismSelection &&
++            step != Step::kSelectPriorityMechanism) {
++          return REARC_INVALID_STATE;
++        }
++        if (index >= model->mechanisms.size()) {
++          return REARC_INVALID_ARGUMENT;
++        }
++        answered_ = true;
++        // A copy: the callback rebuilds the list it is stored in.
++        base::RepeatingClosure(model->mechanisms[index].callback).Run();
++        return REARC_OK;
++      case 2:
++        return Continue(model, step);
++      case 3: {
++        if (step != Step::kClientPinEntry && step != Step::kClientPinSetup &&
++            step != Step::kClientPinChange) {
++          return REARC_INVALID_STATE;
++        }
++        // CTAP: a PIN is at most 63 bytes of UTF-8.
++        const std::string pin(text ? text : "");
++        if (pin.empty() || pin.size() > 63 || !base::IsStringUTF8(pin)) {
++          return REARC_INVALID_ARGUMENT;
++        }
++        answered_ = true;
++        model->OnHavePIN(base::UTF8ToUTF16(pin));
++        return REARC_OK;
++      }
++      case 4:
++        if (step != Step::kSelectAccount && step != Step::kPreSelectAccount) {
++          return REARC_INVALID_STATE;
++        }
++        if (index >= model->creds.size()) {
++          return REARC_INVALID_ARGUMENT;
++        }
++        answered_ = true;
++        if (step == Step::kSelectAccount) {
++          model->OnAccountSelected(index);
++        } else {
++          model->OnAccountPreselectedIndex(index);
++        }
++        return REARC_OK;
++      case 5:
++        // The request is over once it timed out: Chromium's sheet has only
++        // Close there. Its other error sheets offer "try again" only while
++        // the model says so.
++        if (step == Step::kTimedOut ||
++            (IsErrorStep(step) && !model->offer_try_again_in_ui)) {
++          return REARC_INVALID_STATE;
++        }
++        answered_ = true;
++        model->StartOver();
++        return REARC_OK;
++      default:
++        return REARC_INVALID_ARGUMENT;
++    }
++  }
++
++ private:
++  // The sheet's accept button, step by step (chrome/browser/ui/webauthn/
++  // sheet_models.cc, the OnAccept of each sheet).
++  // The flags are set before the call into the model, which can end the
++  // request and delete this object.
++  ReArcStatus Continue(Model* model, Step step) {
++    switch (step) {
++      case Step::kSelectPriorityMechanism:
++        if (!model->priority_mechanism_index ||
++            *model->priority_mechanism_index >= model->mechanisms.size()) {
++          return REARC_INVALID_STATE;
++        }
++        answered_ = true;
++        model->OnUserConfirmedPriorityMechanism();
++        return REARC_OK;
++      case Step::kBlePowerOnManual:
++        // The controller runs a one-time callback here without a null check.
++        if (!model->ble_adapter_is_powered || spent_) {
++          return REARC_INVALID_STATE;
++        }
++        answered_ = true;
++        spent_ = true;
++        model->ContinueWithFlowAfterBleAdapterPowered();
++        return REARC_OK;
++      case Step::kBlePowerOnAutomatic:
++        answered_ = true;
++        model->PowerOnBleAdapter();
++        return REARC_OK;
++      case Step::kBlePermissionMac:
++        // System Settings > Privacy & Security > Bluetooth. It changes
++        // nothing in the request and may be asked for again.
++        model->OpenBlePreferences();
++        return REARC_OK;
++      case Step::kOffTheRecordInterstitial:
++        answered_ = true;
++        model->OnOffTheRecordInterstitialAccepted();
++        return REARC_OK;
++      case Step::kChromeProfileCreatePasskey:
++        answered_ = true;
++        model->OnChromeProfileCreatePasskeyAccepted();
++        return REARC_OK;
++      case Step::kInlineBioEnrollment:
++        // The controller runs a one-time callback here without a null check
++        // (authenticator_request_dialog_controller.cc, OnBioEnrollmentDone),
++        // and the step stays while the key finishes: a second Continue would
++        // be a CHECK failure. Spent until the step changes, whatever is
++        // published meanwhile.
++        if (spent_) {
++          return REARC_INVALID_STATE;
++        }
++        answered_ = true;
++        spent_ = true;
++        model->OnBioEnrollmentDone();
++        return REARC_OK;
++      default:
++        return REARC_INVALID_STATE;
++    }
++  }
++
++  void Publish() {
++    if (!model_) {
++      return;
++    }
++    const Step step = model_->step();
++    if (step == Step::kClosed) {
++      End();
++      return;
++    }
++    const bool has_ui = !model_->should_dialog_be_closed();
++    // A request that never needed a dialog says nothing: a sign-in page's
++    // passkey autofill request runs on every load.
++    if (!has_ui && !shown_) {
++      return;
++    }
++    if (has_ui && (!host || !tab_id_)) {
++      // No host UI, or a page that is no tab: cancel rather than wait for a
++      // dialog nobody can answer. Deferred: the model is in a transition.
++      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++          FROM_HERE, base::BindOnce(&Prompt::Cancel, weak_.GetWeakPtr()));
++      return;
++    }
++    if (!tab_id_) {
++      return;
++    }
++    shown_ = true;
++    // What goes out now is what the next answer is for.
++    answered_ = false;
++    ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 0u, Describe(step)));
++  }
++
++  void End() {
++    if (!shown_ || ended_) {
++      return;
++    }
++    ended_ = true;
++    if (tab_id_) {
++      ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 1u, "{}"));
++    }
++  }
++
++  std::string Describe(Step step) {
++    const Model& model = *model_;
++    base::DictValue document;
++    document.Set("step", StepName(step));
++    document.Set("request",
++                 model.request_type == device::FidoRequestType::kMakeCredential
++                     ? "create"
++                     : "get");
++    document.Set("rp_id", model.relying_party_id);
++    document.Set("origin", origin_);
++    document.Set("profile_id", base::NumberToString(profile_id_));
++    document.Set("content_generation", base::NumberToString(generation_));
++    document.Set("private", model.is_off_the_record);
++    // The sheet waits for the engine: only Cancel answers.
++    document.Set("busy", model.ui_disabled_);
++    document.Set("can_choose_another", model.mechanisms.size() > 1);
++    document.Set("can_try_again", model.offer_try_again_in_ui);
++    // What a touch of a security key gives the site, for the host to say
++    // before the touch.
++    document.Set("attestation", AttestationName(model));
++    document.Set("stored_on_key", StoredOnKeyName(model));
++
++    if (step == Step::kMechanismSelection ||
++        step == Step::kSelectPriorityMechanism) {
++      base::ListValue mechanisms;
++      for (size_t i = 0; i < model.mechanisms.size(); ++i) {
++        mechanisms.Append(DescribeMechanism(model.mechanisms[i], i));
++      }
++      document.Set("mechanisms", std::move(mechanisms));
++      if (model.priority_mechanism_index &&
++          *model.priority_mechanism_index < model.mechanisms.size()) {
++        document.Set("priority",
++                     static_cast<int>(*model.priority_mechanism_index));
++      }
++    }
++    if (step == Step::kSelectAccount || step == Step::kPreSelectAccount) {
++      base::ListValue accounts;
++      for (size_t i = 0; i < model.creds.size(); ++i) {
++        const device::DiscoverableCredentialMetadata& cred = model.creds[i];
++        base::DictValue row;
++        row.Set("index", static_cast<int>(i));
++        row.Set("name", cred.user.name.value_or(std::string()));
++        row.Set("display_name", cred.user.display_name.value_or(std::string()));
++        row.Set("source", SourceName(cred.source));
++        accounts.Append(std::move(row));
++      }
++      document.Set("accounts", std::move(accounts));
++    }
++    if (step == Step::kCableV2QRCode && model.cable_qr_string) {
++      // What the phone's camera reads ("FIDO:/..."). The host draws it and
++      // keeps it out of logs.
++      document.Set("qr", *model.cable_qr_string);
++      document.Set("security_key_too", model.show_security_key_on_qr_sheet);
++    }
++    if (step == Step::kBlePowerOnAutomatic || step == Step::kBlePowerOnManual) {
++      document.Set("bluetooth_on", model.ble_adapter_is_powered);
++      document.Set("can_power_on", step == Step::kBlePowerOnAutomatic);
++    }
++    if (step == Step::kClientPinEntry || step == Step::kClientPinSetup ||
++        step == Step::kClientPinChange) {
++      base::DictValue pin;
++      pin.Set("min_length", static_cast<int>(model.min_pin_length));
++      pin.Set("error", PinErrorName(model.pin_error));
++      if (model.pin_attempts) {
++        pin.Set("attempts", *model.pin_attempts);
++      }
++      document.Set("pin", std::move(pin));
++    }
++    if (step == Step::kRetryInternalUserVerification && model.uv_attempts) {
++      document.Set("attempts", *model.uv_attempts);
++    }
++    if (step == Step::kInlineBioEnrollment) {
++      if (model.max_bio_samples) {
++        document.Set("samples", *model.max_bio_samples);
++      }
++      if (model.bio_samples_remaining) {
++        document.Set("samples_remaining", *model.bio_samples_remaining);
++      }
++    }
++    if (model.request_type == device::FidoRequestType::kMakeCredential) {
++      base::DictValue user;
++      user.Set("name", model.user_entity.name.value_or(std::string()));
++      user.Set("display_name",
++               model.user_entity.display_name.value_or(std::string()));
++      document.Set("user", std::move(user));
++    }
++    return base::WriteJson(document).value_or("{}");
++  }
++
++  raw_ptr<Model> model_;
++  const uint64_t id_;
++  uint64_t tab_id_ = 0, profile_id_ = 0, generation_ = 0;
++  std::string origin_;
++  // A step with UI went to the host; the end of the request does too.
++  bool shown_ = false;
++  bool ended_ = false;
++  // The step last published has its answer; the next publish clears it.
++  bool answered_ = false;
++  // This step's one-time callback has run; only a new step clears it.
++  bool spent_ = false;
++  base::WeakPtrFactory<Prompt> weak_{this};
++};
++
++}  // namespace
++
++void AttachWebAuthnPrompt(AuthenticatorRequestDialogModel* model,
++                          content::RenderFrameHost* frame) {
++  CHECK(pthread_main_np());
++  if (!model || !frame) {
++    return;
++  }
++  // Owned by the model's lifetime: Prompt::OnModelDestroyed deletes it.
++  new Prompt(model, frame);
++}
++
++void ABICancelWebAuthn(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  for (auto& [id, prompt] : Prompts()) {
++    if (prompt->tab_id() == tab_id) {
++      prompt->Detach();
++    }
++  }
++}
++
++std::string WebAuthnKeychainAccessGroup() {
++  static const base::NoDestructor<std::string> group([] {
++    std::string team = MAC_TEAM_IDENTIFIER_STRING;
++    if (team.empty()) {
++      base::apple::ScopedCFTypeRef<SecTaskRef> task(
++          SecTaskCreateFromSelf(nullptr));
++      if (task) {
++        base::apple::ScopedCFTypeRef<CFTypeRef> value(
++            SecTaskCopyValueForEntitlement(
++                task.get(), CFSTR("com.apple.developer.team-identifier"),
++                nullptr));
++        if (CFStringRef string =
++                base::apple::CFCast<CFStringRef>(value.get())) {
++          team = base::SysCFStringRefToUTF8(string);
++        }
++      }
++    }
++    return team + "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn";
++  }());
++  return *group;
++}
++
++}  // namespace rearc
++
++void ReArcEngineSetWebAuthnCallback(ReArcWebAuthnCallback callback,
++                                    void* context) {
++  CHECK(pthread_main_np());
++  // A host that goes takes its sheets with it: what it was asked is cancelled
++  // (a request that showed nothing goes on). Cancelling ends a prompt, so walk
++  // a copy of the ids.
++  std::vector<uint64_t> ids;
++  for (const auto& [id, prompt] : rearc::Prompts()) {
++    if (prompt->shown()) {
++      ids.push_back(id);
++    }
++  }
++  ++rearc::epoch;
++  rearc::host = callback;
++  rearc::host_context = context;
++  for (uint64_t id : ids) {
++    auto it = rearc::Prompts().find(id);
++    if (it != rearc::Prompts().end()) {
++      it->second->Cancel();
++    }
++  }
++}
++
++ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
++                                 uint32_t action,
++                                 uint32_t index,
++                                 const char* text) {
++  CHECK(pthread_main_np());
++  auto it = rearc::Prompts().find(request_id);
++  if (it == rearc::Prompts().end()) {
++    return REARC_NOT_FOUND;
++  }
++  return it->second->Respond(action, index, text);
++}
+diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.h b/chrome/browser/rearc_bridge/rearc_webauthn.h
+new file mode 100644
+index 0000000..7b2f979
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_webauthn.h
+@@ -0,0 +1,41 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_REARC_BRIDGE_REARC_WEBAUTHN_H_
++#define CHROME_BROWSER_REARC_BRIDGE_REARC_WEBAUTHN_H_
++
++#include <string>
++
++struct AuthenticatorRequestDialogModel;
++
++namespace content {
++class RenderFrameHost;
++}
++
++namespace rearc {
++
++// WebAuthn (webauthn_prompts, ABI 1.68). Chromium shows a request's steps
++// (which passkey, the QR code for a phone, a security key's PIN, errors) in a
++// Views dialog on the tab's WebContentsModalDialogManager. A bridge tab has
++// none, so no dialog ever opened and the request waited until it timed out.
++// This watches the request's dialog model instead and gives each step to the
++// host, whose answers call the model as the dialog's buttons do.
++// ChromeAuthenticatorRequestDelegate calls it for every request it makes.
++void AttachWebAuthnPrompt(AuthenticatorRequestDialogModel* model,
++                          content::RenderFrameHost* frame);
++
++// The keychain access group of the profile authenticator ("this Mac": keys
++// in the Secure Enclave, unlocked with Touch ID or the login password):
++// <team>.<bundle identifier>.webauthn. Chromium takes the team from the
++// build's branding. A release engine's branding names it
++// (shell/scripts/build-engine-release.sh); the overlay's own, which the dev
++// engine is built with, names none, and then the team is read from the
++// running app's signature (com.apple.developer.team-identifier). An unsigned
++// or ad hoc signed build has no team and no profile authenticator, as before.
++// The app must also be signed with the group, whatever the engine.
++std::string WebAuthnKeychainAccessGroup();
++
++}  // namespace rearc
++
++#endif  // CHROME_BROWSER_REARC_BRIDGE_REARC_WEBAUTHN_H_
+diff --git a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
+index 64cc583..d26f642 100644
+--- a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
++++ b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
+@@ -105,6 +105,7 @@
+ #include "ui/gfx/native_ui_types.h"
+ 
+ #if BUILDFLAG(IS_MAC)
++#include "chrome/browser/rearc_bridge/rearc_webauthn.h"  // nogncheck
+ #include "chrome/browser/webauthn/chrome_authenticator_request_delegate_mac.h"
+ #include "device/fido/mac/credential_metadata.h"
+ #include "ui/views/widget/widget.h"
+@@ -283,6 +284,11 @@ ChromeAuthenticatorRequestDelegate::ChromeAuthenticatorRequestDelegate(
+       barrier_(
+           std::make_unique<UiReadinessBarrier>(this, dialog_model_.get())) {
+   dialog_model_->observers.AddObserver(this);
++#if BUILDFLAG(IS_MAC)
++  // ReArc tab/097: the host shows this request's steps. A bridge tab has no
++  // WebContentsModalDialogManager, so Chromium's own dialog never opens.
++  rearc::AttachWebAuthnPrompt(dialog_model_.get(), render_frame_host);
++#endif
+   if (g_observer) {
+     g_observer->Created(this);
+   }
+@@ -1256,6 +1262,12 @@ void ChromeAuthenticatorRequestDelegate::ConfigureNSWindow(
+     if (window) {
+       discovery_factory->set_nswindow(window);
+     }
++  } else if (const gfx::NativeWindow window =
++                 web_contents->GetTopLevelNativeWindow()) {
++    // ReArc tab/097: a bridge tab's view is in a host window, not in a Views
++    // widget. iCloud Keychain's sheet needs the window (and the browser
++    // passkey entitlement, without which it is not offered at all).
++    discovery_factory->set_nswindow(window);
+   }
+ }
+ void ChromeAuthenticatorRequestDelegate::ConfigureICloudKeychain(
+diff --git a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
+index 6fc50b6..5d8c433 100644
+--- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
++++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
+@@ -81,6 +81,7 @@
+ #endif
+ 
+ #if BUILDFLAG(IS_MAC)
++#include "chrome/browser/rearc_bridge/rearc_webauthn.h"  // nogncheck
+ #include "device/fido/mac/credential_metadata.h"
+ #endif
+ 
+@@ -391,8 +392,10 @@ void ChromeWebAuthenticationDelegate::UpdateUserPasskeys(
+ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfig
+ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
+     Profile* profile) {
+-  constexpr char kKeychainAccessGroup[] =
+-      MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn";
++  // ReArc tab/097: a build whose branding names no team (the dev engine)
++  // takes the group's team from the running app's signature.
++  const std::string keychain_access_group =
++      rearc::WebAuthnKeychainAccessGroup();
+ 
+   std::string metadata_secret = profile->GetPrefs()->GetString(
+       webauthn::pref_names::kWebAuthnTouchIdMetadataSecretPrefName);
+@@ -405,7 +408,7 @@ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
+   }
+ 
+   return TouchIdAuthenticatorConfig{
+-      .keychain_access_group = kKeychainAccessGroup,
++      .keychain_access_group = keychain_access_group,
+       .metadata_secret = std::move(metadata_secret)};
+ }
+ 

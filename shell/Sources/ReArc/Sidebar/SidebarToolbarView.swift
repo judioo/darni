@@ -112,14 +112,24 @@ struct SidebarURLField: View {
         HStack(spacing: 6) {
             if let engine, let site {
                 // Arc's Site Control Center opens from the site's icon.
+                let badge = model.siteInfoBadge(for: engine, site: site)
                 Button { showsSiteControls.toggle() } label: {
-                    securityIcon(engine.securityState, hasHost: true)
+                    Group {
+                        if badge.isInUse {
+                            // What the page uses now takes the lock's place.
+                            Image(systemName: badge.symbol)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.orange)
+                        } else {
+                            securityIcon(engine.securityState, hasHost: true)
+                        }
+                    }
                         .frame(width: 16, height: 18)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .background(AnchorReader { siteControlsAnchor = $0 })
-                .help("Site controls for \(site.host)")
+                .help(badge.isInUse ? badge.help : "Site controls for \(site.host)")
                 .accessibilityLabel("Site controls")
                 .popover(isPresented: $showsSiteControls, arrowEdge: .bottom) {
                     SiteControlCenterView(model: model, engine: engine, site: site, anchor: siteControlsAnchor) {
@@ -138,8 +148,23 @@ struct SidebarURLField: View {
             if let container = model.containerLabel(for: engine, tab: tab) {
                 ContainerChip(label: container)
             }
-            if let summary = model.sitePermissionSummary(for: engine), site != nil {
-                // The wave 22 indicator: answers recorded for this site.
+            if let site, let access = model.siteAccess(for: engine, site: site) {
+                // The engine's state: the site holds a permission or a device of its own.
+                if !access.shownPermissions.isEmpty || !access.devices.isEmpty {
+                    Button { showsSiteControls.toggle() } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(access.shownPermissions.contains { $0.setting == .block }
+                                ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Site permissions for \(site.host)")
+                    .accessibilityLabel("Site permissions")
+                }
+            } else if model.siteAccessModel(for: engine) == nil, let summary = model.sitePermissionSummary(for: engine), site != nil {
+                // The wave 22 indicator: answers recorded for this site (an engine that does not report its own).
                 Button { showsSiteControls.toggle() } label: {
                     Image(systemName: summary.symbol)
                         .font(.system(size: 10, weight: .semibold))
