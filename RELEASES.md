@@ -19,6 +19,15 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- A page you cannot see gets no passkey request at all. A sign-in request from a background
+  tab, a hidden or minimised window, a hidden Little ReArc window or a window that another
+  app's window covers is now refused as it starts, before ReArc looks for a security key, a
+  phone or Bluetooth. Until now it was refused a moment later, when its sheet was about to
+  open, and on a Mac that had never answered macOS's Bluetooth question such a page could
+  bring that question up. A request you started while its page was in view stays open when you
+  switch away, as before. ReArc's log now has a line for each refused request.
+
 ## ReArc 2026.1118.1027 — 2026-11-18
 
 **New**

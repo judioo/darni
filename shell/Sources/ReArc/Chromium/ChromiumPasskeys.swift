@@ -39,7 +39,11 @@ private let passkeyCallback: ChromiumPasskeyCalls.Callback = { context, request,
     // The string is borrowed for the callback: decoded here. It can hold the
     // QR code's text, so it is never logged.
     let step = phase == 0 ? json.flatMap { PasskeyStep(json: String(cString: $0)) } : nil
+    let refusal = phase == 1 ? json.flatMap { PasskeyRefusal(json: String(cString: $0)) } : nil
     MainActor.assumeIsolated {
+        if let refusal {
+            return ChromiumPasskeyChannel.note(refusal, request: request, tab: tabID)
+        }
         ChromiumPasskeyChannel.handle(request: request, tab: tabID, ended: phase != 0, step: step,
                                       runtime: Unmanaged<ChromiumRuntime>.fromOpaque(context).takeUnretainedValue())
     }
@@ -51,6 +55,11 @@ enum ChromiumPasskeyChannel {
     /// Steps and ends received, answers sent: for logs and the self-test.
     private(set) static var events = 0
     private(set) static var replies = 0
+    /// Requests the engine refused because nobody sees their page, and the last one's log line.
+    private(set) static var refusals = 0
+    private(set) static var lastRefusal = ""
+    /// The requests whose first step went to the log.
+    private static var logged: Set<UInt64> = []
 
     /// At `ready`, before any tab exists, so no request falls to the engine's no-host cancel.
     static func register(runtime: ChromiumRuntime, context: UnsafeMutableRawPointer) {
@@ -64,8 +73,22 @@ enum ChromiumPasskeyChannel {
         calls.setCallback(passkeyCallback, context)
     }
 
+    /// A request of a page nobody sees: the engine refused it and it never had
+    /// a sheet. One line at information level, so a launch without tracing
+    /// shows the rule at work (security review AH-02).
+    fileprivate static func note(_ refusal: PasskeyRefusal, request: UInt64, tab: UInt64) {
+        refusals += 1
+        lastRefusal = refusal.logLine(request: request, tab: tab)
+        ChromiumLog.info(lastRefusal)
+    }
+
     fileprivate static func handle(request: UInt64, tab: UInt64, ended: Bool, step: PasskeyStep?, runtime: ChromiumRuntime) {
         events += 1
+        if ended {
+            logged.remove(request)
+        } else if let step, logged.insert(request).inserted {
+            ChromiumLog.info(step.firstStepLogLine(request: request, tab: tab))
+        }
         guard let engine = runtime.engine(forTab: tab) else {
             // A tab the shell does not know cannot show a sheet: the conservative answer, at once.
             if !ended { respond(request, .cancel) }

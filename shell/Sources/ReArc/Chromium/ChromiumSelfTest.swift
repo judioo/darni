@@ -1293,6 +1293,7 @@ final class ChromiumSelfTest {
             log("ABI-GAP tab_discard not advertised: Unload Tab drops the engine")
         }
         try await passkeyHiddenTabChecks(model: model, store: store, base: base)
+        try await passkeyHiddenLittleArcChecks(model: model, shell: shell, store: store, base: base)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
         } else {
@@ -1701,10 +1702,11 @@ final class ChromiumSelfTest {
     // MARK: Passkey requests from a tab that is not shown (ABI 1.68, security review PK-10)
 
     /// Chromium refuses to create a passkey for a tab that is not visible and
-    /// has no such rule for signing in; the engine cancels a request whose
-    /// first step with UI arrives for a hidden tab. The same request from the
-    /// tab once it is shown opens the sheet, which says the first result is
-    /// the rule's and not another refusal.
+    /// has no such rule for signing in; the engine refuses a sign-in from a
+    /// page nobody sees when it starts, and tells the shell, which logs it
+    /// (security review AH-02). The same request from the tab once it is
+    /// shown opens the sheet, which says the first result is the rule's and
+    /// not another refusal.
     @MainActor
     private func passkeyHiddenTabChecks(model: BrowserViewModel, store: SidebarStore, base: String) async throws {
         guard ChromiumPasskeyChannel.calls != nil else {
@@ -1729,6 +1731,7 @@ final class ChromiumSelfTest {
         func result() async -> String { ((try? await engine.evaluate("window.passkeyResult", in: .page)) as? String) ?? "" }
 
         let events = ChromiumPasskeyChannel.events
+        let refusals = ChromiumPasskeyChannel.refusals
         let hidden = try await engine.evaluate(ask, in: .page) as? String
         try check(hidden == "hidden" && engine.attachmentID == nil, "the background tab is \(hidden ?? "nil"), lease \(String(describing: engine.attachmentID))")
         var sheet = false
@@ -1741,6 +1744,10 @@ final class ChromiumSelfTest {
         let took = Int(Date().timeIntervalSince(asked) * 1000)
         try check(hiddenResult == "NotAllowedError" && !sheet && engine.pagePrompts.passkey == nil && ChromiumPasskeyChannel.events == events,
                   "hidden tab: result \(hiddenResult), sheet state \(sheet), step events \(ChromiumPasskeyChannel.events - events)")
+        let refusal = ChromiumPasskeyChannel.lastRefusal
+        try check(ChromiumPasskeyChannel.refusals == refusals + 1 && refusal.contains("of tab \(engine.tabID) refused") && refusal.contains("(hidden)"),
+                  "hidden tab: \(ChromiumPasskeyChannel.refusals - refusals) refusal line(s) from the engine, the last \"\(refusal)\" "
+                      + "(none: an engine older than tab/097's refusal at the start)")
 
         model.selectTab(tab.id)
         try await waitAsync("the passkey tab shown", timeout: 15) {
@@ -1760,8 +1767,78 @@ final class ChromiumSelfTest {
         try await wait("the passkey tab closed") { store.tab(withID: tab.id) == nil }
         if let previous { model.selectTab(previous) }
         log("PASS passkey request from a hidden tab (PK-10): navigator.credentials.get in background tab \(engine.tabID) -> "
-            + "\(hiddenResult) after \(took) ms, no step event and no sheet state; the same request with the tab shown -> "
-            + "step \(step.kind) \"\(step.requestLine)\", Cancel -> \(shownResult)")
+            + "\(hiddenResult) after \(took) ms, no step event and no sheet state, logged \"\(refusal)\"; the same request with the tab shown -> "
+            + "step \(step.kind) \"\(step.requestLine)\" (page \(step.pageVisibility)), Cancel -> \(shownResult)")
+    }
+
+    /// The same rule for a window nobody sees (security review AH-02): a
+    /// Little ReArc window that is ordered out. Its page holds a lease, unlike
+    /// a background tab's, so only the window's state makes it hidden. Signing
+    /// in and creating are both refused and logged; with the window back, the
+    /// same sign-in opens the sheet.
+    @MainActor
+    private func passkeyHiddenLittleArcChecks(model: BrowserViewModel, shell: ChromiumShell, store: SidebarStore,
+                                              base: String) async throws {
+        guard ChromiumPasskeyChannel.calls != nil else { return }
+        let url = URL(string: base.replacingOccurrences(of: "127.0.0.1", with: "localhost") + "/a")!
+        let record = model.openLittleArc(url: url)
+        guard let window = shell.window(forLittleArc: record.id),
+              let little = model.littleArcEngine(for: record.id) as? ChromiumEngine else {
+            throw Failure(description: "passkeys: Little ReArc opened no window/engine")
+        }
+        func visibility() async -> String { ((try? await little.evaluate("document.visibilityState", in: .page)) as? String) ?? "" }
+        func result() async -> String { ((try? await little.evaluate("window.passkeyResult", in: .page)) as? String) ?? "" }
+        try await waitAsync("the passkey Little ReArc loaded and visible", timeout: 20) {
+            guard little.attachmentID != nil, little.pageTitle == Self.titleA, !little.isLoading else { return false }
+            return await visibility() == "visible"
+        }
+        window.orderOut(nil)
+        try await waitAsync("the ordered-out Little ReArc's page hidden", timeout: 15) { await visibility() == "hidden" }
+        try check(little.attachmentID != nil && !window.isVisible, "the hidden Little ReArc: lease \(String(describing: little.attachmentID)), window visible \(window.isVisible)")
+
+        let settle = ".then(() => { window.passkeyResult = 'resolved' }, error => { window.passkeyResult = error.name })"
+        let get = "(window.passkeyResult = 'pending', navigator.credentials.get({publicKey: {challenge: new Uint8Array(32), timeout: 5000}})"
+            + settle + ", document.visibilityState)"
+        let create = """
+        (window.passkeyResult = 'pending',
+         navigator.credentials.create({publicKey: {challenge: new Uint8Array(32), rp: {name: 'ReArc self-test'},
+           user: {id: new Uint8Array(16), name: 'selftest', displayName: 'Self-test'},
+           pubKeyCredParams: [{type: 'public-key', alg: -7}], timeout: 5000}})
+        """ + settle + ", document.visibilityState)"
+        var lines: [String] = []
+        for (name, ask) in [("get", get), ("create", create)] {
+            let events = ChromiumPasskeyChannel.events
+            let refusals = ChromiumPasskeyChannel.refusals
+            _ = try await little.evaluate(ask, in: .page)
+            var sheet = false
+            try await waitAsync("the hidden Little ReArc's passkey \(name) ends", timeout: 10) {
+                sheet = sheet || little.pagePrompts.passkey != nil
+                return await result() != "pending"
+            }
+            let answer = await result()
+            let refusal = ChromiumPasskeyChannel.lastRefusal
+            try check(answer == "NotAllowedError" && !sheet && ChromiumPasskeyChannel.events == events
+                          && ChromiumPasskeyChannel.refusals == refusals + 1
+                          && refusal.contains("of tab \(little.tabID) refused") && refusal.contains("(hidden)"),
+                      "hidden Little ReArc \(name): result \(answer), sheet state \(sheet), step events \(ChromiumPasskeyChannel.events - events), "
+                          + "\(ChromiumPasskeyChannel.refusals - refusals) refusal line(s), the last \"\(refusal)\"")
+            lines.append("\(name) -> \(answer), logged \"\(refusal)\"")
+        }
+
+        window.orderFront(nil)
+        try await waitAsync("the Little ReArc's page visible again", timeout: 15) { await visibility() == "visible" }
+        _ = try await little.evaluate(get, in: .page)
+        try await wait("the shown Little ReArc's passkey sheet", timeout: 15) { little.pagePrompts.passkey != nil }
+        let step = try XUnwrap(little.pagePrompts.passkey?.step, "Little ReArc passkey step")
+        try check(step.showsSheet && step.pageVisibility == "visible", "shown Little ReArc: \(step.kind), page \(step.pageVisibility)")
+        little.pagePrompts.answerPasskey(.cancel)
+        try await waitAsync("the Little ReArc's cancelled passkey request ends", timeout: 10) { await result() != "pending" }
+        shell.dismissLittleArcWindow(record.id)
+        try await wait("the passkey Little ReArc closed") {
+            shell.window(forLittleArc: record.id) == nil && store.littleArcWindow(withID: record.id) == nil
+        }
+        log("PASS passkey request from a hidden Little ReArc window (AH-02): tab \(little.tabID), window ordered out, page hidden: "
+            + lines.joined(separator: "; ") + "; window back -> step \(step.kind), page \(step.pageVisibility)")
     }
 
     // MARK: Wave 23: HTML fullscreen (ABI 1.27)

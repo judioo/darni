@@ -180,6 +180,10 @@ public struct PasskeyStep: Equatable, Sendable {
     public var attestation: String
     /// A record of the visit is kept on the security key: "no", "maybe", "yes".
     public var storedOnKey: String
+    /// What the engine says of the page's tab as the step goes out: "visible",
+    /// "occluded" or "hidden"; empty when it does not say. For the log: a
+    /// request's first step goes to a visible page only (security review PK-10).
+    public var pageVisibility: String
 
     public init(kind: Kind, isCreate: Bool = false, relyingParty: String = "", origin: String = "", isPrivate: Bool = false,
                 isBusy: Bool = false, canChooseAnother: Bool = false, canTryAgain: Bool = true,
@@ -187,7 +191,7 @@ public struct PasskeyStep: Equatable, Sendable {
                 securityKeyToo: Bool = false, bluetoothOn: Bool = false, canPowerOnBluetooth: Bool = false,
                 pinMinLength: Int = 4, pinAttempts: Int? = nil, pinError: String = "none", attempts: Int? = nil,
                 samples: Int? = nil, samplesRemaining: Int? = nil, userName: String = "",
-                attestation: String = "none", storedOnKey: String = "no") {
+                attestation: String = "none", storedOnKey: String = "no", pageVisibility: String = "") {
         self.kind = kind
         self.isCreate = isCreate
         self.relyingParty = relyingParty
@@ -212,6 +216,7 @@ public struct PasskeyStep: Equatable, Sendable {
         self.userName = PasskeyStep.pageText(userName)
         self.attestation = attestation
         self.storedOnKey = storedOnKey
+        self.pageVisibility = PasskeyRefusal.visibilityName(pageVisibility) ?? ""
     }
 
     /// The longest page-chosen text the sheet shows, in Unicode scalars (so in characters too).
@@ -302,7 +307,8 @@ public struct PasskeyStep: Equatable, Sendable {
             samplesRemaining: object["samples_remaining"] as? Int,
             userName: (user["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? user["display_name"] as? String ?? "",
             attestation: object["attestation"] as? String ?? "none",
-            storedOnKey: object["stored_on_key"] as? String ?? "no"
+            storedOnKey: object["stored_on_key"] as? String ?? "no",
+            pageVisibility: object["visibility"] as? String ?? ""
         )
     }
 
@@ -592,5 +598,105 @@ public enum PasskeyPin {
         if pin.count < minLength { return "Use at least \(minLength) characters." }
         if pin != confirmation { return "The two PINs do not match." }
         return nil
+    }
+}
+
+extension PasskeyStep.Kind {
+    /// The ABI's name of the step, for the log.
+    public var logName: String {
+        switch self {
+        case .choose: return "choose"
+        case .confirm: return "confirm"
+        case .securityKey: return "security_key"
+        case .qr: return "qr"
+        case .phoneConnecting: return "phone_connecting"
+        case .phoneConnected: return "phone_connected"
+        case .phoneError: return "phone_error"
+        case .bluetoothOff: return "bluetooth_off"
+        case .bluetoothDenied: return "bluetooth_denied"
+        case .privateNotice: return "private_notice"
+        case .pin(.enter): return "pin"
+        case .pin(.setUp): return "pin_setup"
+        case .pin(.change): return "pin_change"
+        case .touchAgain: return "touch_again"
+        case .fingerprintEnroll: return "fingerprint_enroll"
+        case .verifyAgain: return "verify_again"
+        case .account: return "account"
+        case .createThisMac: return "create_this_mac"
+        case .system: return "system"
+        case .hidden: return "hidden"
+        case .failure(let failure): return failure.rawValue
+        case .unsupported: return "unsupported"
+        }
+    }
+}
+
+extension PasskeyStep {
+    /// The log line for a request's first step (information level, no
+    /// address in it): what the engine said of the page's visibility then.
+    public func firstStepLogLine(request: UInt64, tab: UInt64) -> String {
+        "passkey request \(request) of tab \(tab): first step \(kind.logName) (\(isCreate ? "create" : "get")), page "
+            + (pageVisibility.isEmpty ? "visibility not reported by this engine" : pageVisibility)
+    }
+}
+
+/// A passkey request the engine refused because nobody sees its page: a
+/// background tab, a hidden or minimised window, a window another app's
+/// window covers (ABI 1.68, the end event with "refused"; security review
+/// PK-10 and AH-02). It never had a sheet; the shell writes it to its log.
+public struct PasskeyRefusal: Equatable, Sendable {
+    public enum Place: String, Equatable, Sendable {
+        /// Chromium's own rule, when a request starts (and when a new passkey's result arrives).
+        case focusCheck = "focus_check"
+        /// The page went out of sight between the start and the request's first step with UI.
+        case firstStep = "first_step"
+    }
+
+    public var place: Place
+    /// "occluded" (its window is covered) or "hidden" (a background tab, a hidden or minimised window).
+    public var visibility: String
+    /// "create" or "get"; nil at Chromium's check, which knows the page and not the request.
+    public var request: String?
+    /// The step the engine did not send.
+    public var step: String?
+
+    public init(place: Place, visibility: String, request: String? = nil, step: String? = nil) {
+        self.place = place
+        self.visibility = visibility
+        self.request = request
+        self.step = step
+    }
+
+    /// Nil for an ordinary end of a request ("{}") and for a reason this shell does not know.
+    public init?(json: String) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              object["refused"] as? String == "not_visible",
+              let place = (object["at"] as? String).flatMap(Place.init(rawValue:)) else { return nil }
+        self.init(place: place,
+                  visibility: Self.visibilityName(object["visibility"] as? String ?? "") ?? "state not reported",
+                  request: (object["request"] as? String).flatMap { ["create", "get"].contains($0) ? $0 : nil },
+                  step: (object["step"] as? String).flatMap(Self.stepName))
+    }
+
+    /// One line, information level. Tab and request numbers, the engine's own words for the rest: no address.
+    public func logLine(request id: UInt64, tab: UInt64) -> String {
+        let page = tab == 0 ? "a page that is no tab" : "tab \(tab)"
+        switch place {
+        case .focusCheck:
+            return "passkey request of \(page) refused: its page is not visible (\(visibility)), at Chromium's focus check"
+        case .firstStep:
+            let what = [request, step].compactMap { $0 }.joined(separator: ", ")
+            return "passkey request \(id) of \(page) refused: its page is not visible (\(visibility)), at its first step"
+                + (what.isEmpty ? "" : " (\(what))")
+        }
+    }
+
+    static func visibilityName(_ name: String) -> String? {
+        ["visible", "occluded", "hidden"].contains(name) ? name : nil
+    }
+
+    /// A step name as the ABI writes them: lower case letters and "_".
+    static func stepName(_ name: String) -> String? {
+        !name.isEmpty && name.count <= 40 && name.allSatisfy { ("a"..."z").contains($0) || $0 == "_" } ? name : nil
     }
 }

@@ -229,4 +229,47 @@ final class PasskeyPromptTests: XCTestCase {
         XCTAssertEqual(PasskeyStep(json: #"{"step":"choose","rp_id":"example.com","origin":"https://login.example.com"}"#)?.site, "example.com")
         XCTAssertEqual(PasskeyStep(json: #"{"step":"choose","origin":"https://login.example.com"}"#)?.site, "login.example.com")
     }
+
+    // MARK: Requests from a page nobody sees (security review PK-10, AH-02)
+
+    func testAStepSaysWhatItsPageWasForTheLog() throws {
+        let step = try XCTUnwrap(PasskeyStep(json: #"{"step":"qr","request":"get","rp_id":"example.com","origin":"https://example.com","qr":"FIDO:/0123456789","visibility":"visible"}"#))
+        XCTAssertEqual(step.pageVisibility, "visible")
+        let line = step.firstStepLogLine(request: 7, tab: 3)
+        XCTAssertEqual(line, "passkey request 7 of tab 3: first step qr (get), page visible")
+        XCTAssertFalse(line.contains("example.com") || line.contains("FIDO"), "no address and no code in the log")
+        // An engine before the key, and a word that is not the ABI's.
+        let old = try XCTUnwrap(PasskeyStep(json: #"{"step":"pin_setup","request":"create","rp_id":"example.com"}"#))
+        XCTAssertEqual(old.firstStepLogLine(request: 1, tab: 2),
+                       "passkey request 1 of tab 2: first step pin_setup (create), page visibility not reported by this engine")
+        XCTAssertEqual(PasskeyStep(json: #"{"step":"choose","visibility":"https://example.com/"}"#)?.pageVisibility, "")
+        for name in ["choose", "confirm", "security_key", "qr", "phone_connecting", "phone_connected", "phone_error", "bluetooth_off",
+                     "bluetooth_denied", "private_notice", "pin", "pin_setup", "pin_change", "touch_again", "fingerprint_enroll",
+                     "verify_again", "account", "create_this_mac", "system", "hidden", "error_timeout", "error_no_passkeys"] {
+            XCTAssertEqual(PasskeyStep.Kind(name: name).logName, name)
+        }
+        XCTAssertEqual(PasskeyStep.Kind(name: "a_later_step").logName, "unsupported")
+    }
+
+    func testARefusalForAPageNobodySeesBecomesOneLogLine() throws {
+        let start = try XCTUnwrap(PasskeyRefusal(json: #"{"refused":"not_visible","at":"focus_check","visibility":"occluded"}"#))
+        XCTAssertEqual(start, PasskeyRefusal(place: .focusCheck, visibility: "occluded"))
+        XCTAssertEqual(start.logLine(request: 0, tab: 5),
+                       "passkey request of tab 5 refused: its page is not visible (occluded), at Chromium's focus check")
+        XCTAssertEqual(start.logLine(request: 0, tab: 0),
+                       "passkey request of a page that is no tab refused: its page is not visible (occluded), at Chromium's focus check")
+        let late = try XCTUnwrap(PasskeyRefusal(json: #"{"refused":"not_visible","at":"first_step","visibility":"hidden","request":"get","step":"qr"}"#))
+        XCTAssertEqual(late.logLine(request: 9, tab: 5),
+                       "passkey request 9 of tab 5 refused: its page is not visible (hidden), at its first step (get, qr)")
+        // Only the ABI's words reach the log.
+        let odd = try XCTUnwrap(PasskeyRefusal(json: #"{"refused":"not_visible","at":"first_step","visibility":"https://example.com","request":"<b>","step":"Insert Key!"}"#))
+        XCTAssertEqual(odd.logLine(request: 2, tab: 1), "passkey request 2 of tab 1 refused: its page is not visible (state not reported), at its first step")
+    }
+
+    func testAnOrdinaryEndIsNoRefusal() {
+        XCTAssertNil(PasskeyRefusal(json: "{}"))
+        XCTAssertNil(PasskeyRefusal(json: #"{"refused":"a_later_reason","at":"focus_check","visibility":"hidden"}"#))
+        XCTAssertNil(PasskeyRefusal(json: #"{"refused":"not_visible","at":"somewhere_new","visibility":"hidden"}"#))
+        XCTAssertNil(PasskeyRefusal(json: "not json"))
+    }
 }

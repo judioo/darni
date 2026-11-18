@@ -2837,17 +2837,39 @@ the host's answers call the model as the dialog's buttons do.
 
 | Function | Semantics |
 |---|---|
-| `ReArcEngineSetWebAuthnCallback(callback, context)` | `callback(context, request_id, tab_id, phase, json)`. phase 0: a step; the first one of a request opens the host's sheet, later ones replace what it shows. phase 1: the request is over; close, no reply. Replacing or clearing the callback cancels the requests it was shown. |
+| `ReArcEngineSetWebAuthnCallback(callback, context)` | `callback(context, request_id, tab_id, phase, json)`. phase 0: a step; the first one of a request opens the host's sheet, later ones replace what it shows. phase 1: the request is over; close, no reply. A phase 1 event whose JSON has `refused` is a request refused for a page nobody sees (below): it had no sheet, and the host logs it. Replacing or clearing the callback cancels the requests it was shown. |
 | `ReArcWebAuthnRespond(request, action, index, text)` | 0 cancel (any step); 1 choose `mechanisms[index]`; 2 continue; 3 the PIN in `text` (1 to 63 bytes of UTF-8); 4 choose `accounts[index]`; 5 start over. An action the shown step does not take: `invalid_state`. Each step event takes one answer: any action but cancel while `busy`, or after the step's answer and before the next event, is `invalid_state` too (opening System Settings on `bluetooth_denied` may be repeated). Bad index, PIN or action: `invalid_argument`. A request that is over: `not_found`. |
 
 A request that needs no dialog sends nothing: a sign-in page's passkey autofill request runs on
 every load. Without a callback, and for a page that is no registry tab, a request that reaches a
 step with UI is cancelled, never left waiting. So is one whose asking frame is no http or https
 page: an extension page may claim any site it has host access to as the relying party, and the
-sheet names the relying party, not the asker (security review PK-03). And so is one whose first
-step with UI arrives while its tab's WebContents is not visible (PK-10): Chromium has that rule
-for creating a passkey and none for signing in, so a hidden tab could hold a request open
-against a plugged-in key. The host gets no event for any of these.
+sheet names the relying party, not the asker (security review PK-03). The host gets no event for
+any of these.
+
+**A page nobody sees gets no dialog** (PK-10, AH-02). Chromium refuses to create a passkey for a
+page whose WebContents is not visible (`IsFocused`: a background tab, a hidden or minimised
+window, a window another app's window covers) and has no such rule for signing in, so a hidden
+page could hold a request open against a plugged-in key. The engine applies the rule to a
+sign-in that would open a dialog, where Chromium applies it to creating: when the request
+starts, before it has a delegate, reaches an authenticator or wakes Bluetooth. Waiting for the
+first step with UI was not enough: with macOS's Bluetooth permission not yet answered, Chromium
+asks for it before the dialog has a step, so a hidden page's request raised the system prompt
+and no step ever came (read in `EnsureBleAdapterIsPoweredAndContinue`, not run). A request whose
+page goes out of sight between its start and its first step with UI is cancelled then. A
+conditional request (a sign-in page's passkey autofill) shows no dialog and goes on. A sheet that
+is open stays when its page goes out of sight afterwards, as Chromium's dialog does: a person may
+cover the window to look up a PIN, and the display may sleep while they hold the phone.
+
+Each refusal is one phase 1 event, for the host's log: `{"refused":"not_visible","at":
+"focus_check","visibility":"hidden"|"occluded"}` with request 0 from Chromium's rule (tab 0 for a
+page that is no registry tab), or `"at":"first_step"` with the request's number, `"request"` and
+`"step"`. Every step carries `"visibility"` (`visible`, `occluded`, `hidden`), the tab's
+WebContents as the step goes out; a request's first step has `visible`. The shell writes one
+information line for each refusal and for each request's first step, with no address in it:
+
+    [ReArc/Chromium] passkey request of tab 3 refused: its page is not visible (occluded), at Chromium's focus check
+    [ReArc/Chromium] passkey request 2 of tab 3: first step qr (get), page visible
 
 **Steps** (`step` in the JSON; the names are the ABI's and do not follow Chromium's enum):
 
@@ -2902,5 +2924,6 @@ app (the `bluetooth_denied` step when it is refused).
 **Tests:** the import check above. Run on screen on webauthn.io (2026-11-18): the choice of
 ways, the QR code, the security key step, "this Mac" up to macOS's Touch ID prompt, cancel, a
 second request, a tab closed in the middle. Not run: a phone, a security key, and so the PIN,
-fingerprint and error steps, and the refusals above but the hidden tab's, which the shell's
-self-test runs (`passkeyHiddenTabChecks`).
+fingerprint and error steps, and the refusals above but those for a page nobody sees: the shell's
+self-test runs a background tab and a Little ReArc window that is ordered out
+(`passkeyHiddenTabChecks`, `passkeyHiddenLittleArcChecks`).

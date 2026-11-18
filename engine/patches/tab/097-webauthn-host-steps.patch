@@ -88,7 +88,35 @@ After the review's addendum (2026-11-18):
   the tab in front could answer it. The check is at the request's first
   step only: a sheet that is open stays when its tab goes to the back.
 
-Built into the release engine on 2026-11-18 (overlay a8fd9bb90b,
+After the review of 2026.1118.1027 (security/RC-2026.1118.1027.md, AH-02):
+- The rule moves to the start of the request. AuthenticatorCommonImpl::
+  GetCredential refuses a sign-in that would open a dialog (mediation modal
+  or immediate, UI not disabled) with NOT_FOCUSED when IsFocused() is false,
+  as MakeCredential does: before the request has a delegate, reaches an
+  authenticator or wakes the Bluetooth adapter. Waiting for the first step
+  with UI left one path open, read in the source and not run:
+  EnsureBleAdapterIsPoweredAndContinue asks macOS for the Bluetooth
+  permission while the step is still kNotStarted, so on a Mac that never
+  answered that prompt a hidden page's request raised it and no step ever
+  came. A conditional request (a sign-in page's passkey autofill) shows no
+  dialog and goes on. The check at the first step stays, for a page that
+  went out of sight in between.
+- Each refusal goes to the host as one phase 1 event with
+  {"refused":"not_visible","at":"focus_check"|"first_step","visibility":
+  "hidden"|"occluded"} (rearc::NoteWebAuthnRefusedNotVisible from
+  ChromeWebAuthenticationDelegate::IsFocused, and Prompt::Publish), and each
+  step carries "visibility", so the host can log both: the review could not
+  see which way its request went. A host of 1027 ends a sheet it does not
+  have, which does nothing.
+- What the review saw (a Little ReArc window that macOS reported hidden,
+  its sign-in not refused in 33 s) is a request that opened while the page
+  was still visible: its first step went out, and a sheet that is open
+  stays when its page goes out of sight, as Chromium's dialog does. Run in
+  an ordinary launch of 1027 on 2026-11-18: asked after the window was
+  hidden, covered or minimised, the request was refused within 130 ms every
+  time; asked two seconds before the hide, it was still open after 35 s.
+
+Built into the release engine on 2026-11-19 (overlay f36e9e30e1,
 out/ReArc-codecs-arm64): the framework exports both functions and
 engine/tests/check_abi168_imports.py passes. Run on screen with the host's
 sheet on webauthn.io: the choice of ways, the QR code, the security key
@@ -101,7 +129,8 @@ chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,
 rearc_engine_abi.h, rearc_engine_abi.mm, rearc_engine_entry_mac.mm,
 rearc_services_abi.cc, rearc_webauthn.cc (new), rearc_webauthn.h (new)},
 chrome/browser/webauthn/chrome_authenticator_request_delegate.cc,
-chrome/browser/webauthn/chrome_web_authentication_delegate.cc.
+chrome/browser/webauthn/chrome_web_authentication_delegate.cc,
+content/browser/webauth/authenticator_common_impl.cc.
 Applies after tab/096 (the same lines of the export lists, BUILD.gn and the
 ABI header).
 
@@ -164,7 +193,7 @@ index 503b6c5..8b2aa0b 100644
  }  // namespace rearc
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index f638567..4feedba 100644
+index f638567..c124ee0 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -176,7 +205,7 @@ index f638567..4feedba 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1813,6 +1813,95 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
+@@ -1813,6 +1813,109 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
  REARC_ENGINE_EXPORT void ReArcEngineSetSitePermissionsChangedCallback(
      ReArcSitePermissionsChangedCallback callback, void* context);
  
@@ -197,6 +226,18 @@ index f638567..4feedba 100644
 +// for an asking frame that is no http or https page (an extension page, which
 +// may claim a site it has access to as the relying party), a request that
 +// reaches a step with UI is cancelled.
++//
++// A page nobody sees gets no dialog (security review PK-10, AH-02): Chromium
++// refuses to create a passkey for a page whose WebContents is not visible,
++// and the engine refuses a sign-in that would open a dialog the same way,
++// when it starts, before it reaches an authenticator or Bluetooth. A request
++// whose page went out of sight before its first step with UI is cancelled
++// then. Each refusal is one phase 1 event with json {"refused":
++// "not_visible", "at": "focus_check" (Chromium's rule; request_id is 0, and
++// tab_id is 0 for a page that is no registry tab) or "first_step" (with
++// "request" and "step"), "visibility": "hidden" or "occluded"}, for the
++// host's log: it has no sheet to close for it. A sheet that is open stays
++// when its page goes out of sight afterwards, as Chromium's dialog does.
 +//
 +// json is a UTF-8 object; a host ignores keys it does not know and treats a
 +// step it does not know as "unsupported". 64-bit numbers are decimal strings.
@@ -224,7 +265,9 @@ index f638567..4feedba 100644
 +//     (the key must be reset), "error_key_removed".
 +//   "request": "get" or "create"; "rp_id"; "origin" of the asking frame;
 +//     "profile_id", "content_generation"; "private"; "user" (create: "name",
-+//     "display_name").
++//     "display_name"). "visibility": the tab's WebContents as the step goes
++//     out, "visible", "occluded" or "hidden"; a request's first step has
++//     "visible".
 +//   "busy": the engine works; only Cancel answers. "can_choose_another":
 +//     start over (5) leads to "choose". "can_try_again": an error step may
 +//     start over.
@@ -311,10 +354,10 @@ index f8c5938..24a7044 100644
    ABIDetachFind(id);
 diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.cc b/chrome/browser/rearc_bridge/rearc_webauthn.cc
 new file mode 100644
-index 0000000..5d29a8e
+index 0000000..6790ff4
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_webauthn.cc
-@@ -0,0 +1,738 @@
+@@ -0,0 +1,816 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -607,21 +650,65 @@ index 0000000..5d29a8e
 +  host(host_context, request_id, tab_id, phase, json.c_str());
 +}
 +
++const char* VisibilityName(content::Visibility visibility) {
++  switch (visibility) {
++    case content::Visibility::VISIBLE:
++      return "visible";
++    case content::Visibility::OCCLUDED:
++      return "occluded";
++    case content::Visibility::HIDDEN:
++      return "hidden";
++  }
++  return "hidden";
++}
++
++TabSession* SessionOf(content::WebContents* contents) {
++  if (!contents) {
++    return nullptr;
++  }
++  for (uint64_t id : TabRegistry::Get().SessionIds()) {
++    TabSession* session = TabRegistry::Get().FindSession(id);
++    if (session && session->web_contents() == contents) {
++      return session;
++    }
++  }
++  return nullptr;
++}
++
++// A request refused because nobody sees its page: the host hears of it, to
++// write it to its log. No address in it: the host's log is open to whoever
++// started the app.
++void NoteRefused(uint64_t request_id,
++                 uint64_t tab_id,
++                 const char* at,
++                 const char* visibility,
++                 const char* request,
++                 const char* step) {
++  base::DictValue document;
++  document.Set("refused", "not_visible");
++  document.Set("at", at);
++  document.Set("visibility", visibility);
++  if (request) {
++    document.Set("request", request);
++  }
++  if (step) {
++    document.Set("step", step);
++  }
++  ABIPost(base::BindOnce(&Deliver, epoch, request_id, tab_id, 1u,
++                         base::WriteJson(document).value_or("{}")));
++}
++
 +// One request's steps for the host. It lives as long as the request's dialog
 +// model and holds no reference to it: the model says when it goes.
 +class Prompt : public Model::Observer {
 + public:
 +  Prompt(Model* model, content::RenderFrameHost* frame)
 +      : model_(model), id_(next_id++) {
-+    content::WebContents* contents =
-+        content::WebContents::FromRenderFrameHost(frame);
-+    for (uint64_t id : TabRegistry::Get().SessionIds()) {
-+      TabSession* session = TabRegistry::Get().FindSession(id);
-+      if (contents && session->web_contents() == contents) {
-+        tab_id_ = session->tab_id();
-+        profile_id_ = session->profile_id();
-+        generation_ = session->content_generation();
-+      }
++    if (TabSession* session =
++            SessionOf(content::WebContents::FromRenderFrameHost(frame))) {
++      tab_id_ = session->tab_id();
++      profile_id_ = session->profile_id();
++      generation_ = session->content_generation();
 +    }
 +    const url::Origin& origin = frame->GetLastCommittedOrigin();
 +    origin_ = origin.Serialize();
@@ -819,7 +906,8 @@ index 0000000..5d29a8e
 +  }
 +
 +  void Publish() {
-+    if (!model_) {
++    // The cancel of a request nobody sees is on its way: nothing goes out.
++    if (!model_ || refused_) {
 +      return;
 +    }
 +    const Step step = model_->step();
@@ -833,10 +921,20 @@ index 0000000..5d29a8e
 +    if (!has_ui && !shown_) {
 +      return;
 +    }
-+    if (has_ui && (!host || !tab_id_ || (!shown_ && !TabVisible()))) {
++    const content::Visibility visibility = PageVisibility();
++    const bool unseen =
++        !shown_ && visibility != content::Visibility::VISIBLE;
++    if (has_ui && (!host || !tab_id_ || unseen)) {
 +      // No host UI, a page that is no tab, or a request that opens in a tab
 +      // nobody looks at: cancel rather than wait for a dialog nobody can
 +      // answer. Deferred: the model is in a transition.
++      if (host && tab_id_) {
++        // Nobody sees the page: said once, whatever the model publishes
++        // before the cancel runs.
++        refused_ = true;
++        NoteRefused(id_, tab_id_, "first_step", VisibilityName(visibility),
++                    RequestName(), StepName(step));
++      }
 +      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
 +          FROM_HERE, base::BindOnce(&Prompt::Cancel, weak_.GetWeakPtr()));
 +      return;
@@ -853,12 +951,21 @@ index 0000000..5d29a8e
 +  // Chromium's rule for creating a passkey (ChromeWebAuthenticationDelegate::
 +  // IsFocused), which it does not apply to signing in: a hidden tab's request
 +  // would stay open against a plugged-in key, and a touch meant for the tab
-+  // in front could answer it.
-+  bool TabVisible() const {
++  // in front could answer it. tab/097 asks the same of a sign-in when it
++  // starts (AuthenticatorCommonImpl::GetCredential); this is for a page that
++  // went out of sight between the start and the first step. A tab that has
++  // gone counts as hidden.
++  content::Visibility PageVisibility() const {
 +    TabSession* session = TabRegistry::Get().FindSession(tab_id_);
-+    return session && session->web_contents() &&
-+           session->web_contents()->GetVisibility() ==
-+               content::Visibility::VISIBLE;
++    return session && session->web_contents()
++               ? session->web_contents()->GetVisibility()
++               : content::Visibility::HIDDEN;
++  }
++
++  const char* RequestName() const {
++    return model_->request_type == device::FidoRequestType::kMakeCredential
++               ? "create"
++               : "get";
 +  }
 +
 +  void End() {
@@ -875,10 +982,10 @@ index 0000000..5d29a8e
 +    const Model& model = *model_;
 +    base::DictValue document;
 +    document.Set("step", StepName(step));
-+    document.Set("request",
-+                 model.request_type == device::FidoRequestType::kMakeCredential
-+                     ? "create"
-+                     : "get");
++    document.Set("request", RequestName());
++    // What the page's tab is as this step goes out: the first step of a
++    // request goes to a visible one only.
++    document.Set("visibility", VisibilityName(PageVisibility()));
 +    document.Set("rp_id", model.relying_party_id);
 +    document.Set("origin", origin_);
 +    document.Set("profile_id", base::NumberToString(profile_id_));
@@ -971,6 +1078,9 @@ index 0000000..5d29a8e
 +  bool answered_ = false;
 +  // This step's one-time callback has run; only a new step clears it.
 +  bool spent_ = false;
++  // Its page was not visible at the first step with UI: cancelled, and the
++  // host was told.
++  bool refused_ = false;
 +  base::WeakPtrFactory<Prompt> weak_{this};
 +};
 +
@@ -984,6 +1094,17 @@ index 0000000..5d29a8e
 +  }
 +  // Owned by the model's lifetime: Prompt::OnModelDestroyed deletes it.
 +  new Prompt(model, frame);
++}
++
++void NoteWebAuthnRefusedNotVisible(content::WebContents* contents) {
++  CHECK(pthread_main_np());
++  if (!contents) {
++    return;
++  }
++  TabSession* session = SessionOf(contents);
++  // No request id: Chromium's check knows the page, not the request.
++  NoteRefused(0, session ? session->tab_id() : 0, "focus_check",
++              VisibilityName(contents->GetVisibility()), nullptr, nullptr);
 +}
 +
 +void ABICancelWebAuthn(uint64_t tab_id) {
@@ -1055,10 +1176,10 @@ index 0000000..5d29a8e
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.h b/chrome/browser/rearc_bridge/rearc_webauthn.h
 new file mode 100644
-index 0000000..7b2f979
+index 0000000..1a4e2ee
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_webauthn.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,52 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1072,6 +1193,7 @@ index 0000000..7b2f979
 +
 +namespace content {
 +class RenderFrameHost;
++class WebContents;
 +}
 +
 +namespace rearc {
@@ -1085,6 +1207,16 @@ index 0000000..7b2f979
 +// ChromeAuthenticatorRequestDelegate calls it for every request it makes.
 +void AttachWebAuthnPrompt(AuthenticatorRequestDialogModel* model,
 +                          content::RenderFrameHost* frame);
++
++// Chromium's focus rule (ChromeWebAuthenticationDelegate::IsFocused: the
++// page's WebContents is visible) refused a request of this page. Chromium has
++// the rule for creating a passkey, at the start and again when the result
++// arrives; tab/097 adds it to the start of a sign-in that would open a
++// dialog (AuthenticatorCommonImpl::GetCredential), so a page nobody sees
++// reaches no authenticator, wakes no Bluetooth and raises no prompt of
++// macOS. The host hears of each refusal, to log it (security review PK-10,
++// AH-02).
++void NoteWebAuthnRefusedNotVisible(content::WebContents* contents);
 +
 +// The keychain access group of the profile authenticator ("this Mac": keys
 +// in the Secure Enclave, unlocked with Touch ID or the login password):
@@ -1138,7 +1270,7 @@ index 64cc583..d26f642 100644
  }
  void ChromeAuthenticatorRequestDelegate::ConfigureICloudKeychain(
 diff --git a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
-index 6fc50b6..5d8c433 100644
+index 6fc50b6..f77e679 100644
 --- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 @@ -81,6 +81,7 @@
@@ -1149,7 +1281,25 @@ index 6fc50b6..5d8c433 100644
  #include "device/fido/mac/credential_metadata.h"
  #endif
  
-@@ -391,8 +392,10 @@ void ChromeWebAuthenticationDelegate::UpdateUserPasskeys(
+@@ -250,7 +251,16 @@ bool ChromeWebAuthenticationDelegate::SupportsResidentKeys(
+ 
+ bool ChromeWebAuthenticationDelegate::IsFocused(
+     content::WebContents* web_contents) {
+-  return web_contents->GetVisibility() == content::Visibility::VISIBLE;
++  const bool visible =
++      web_contents->GetVisibility() == content::Visibility::VISIBLE;
++#if BUILDFLAG(IS_MAC)
++  // ReArc tab/097: every caller refuses the request on false; the host logs
++  // it (PK-10, AH-02).
++  if (!visible) {
++    rearc::NoteWebAuthnRefusedNotVisible(web_contents);
++  }
++#endif
++  return visible;
+ }
+ 
+ void ChromeWebAuthenticationDelegate::
+@@ -391,8 +401,10 @@ void ChromeWebAuthenticationDelegate::UpdateUserPasskeys(
  ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfig
  ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
      Profile* profile) {
@@ -1162,7 +1312,7 @@ index 6fc50b6..5d8c433 100644
  
    std::string metadata_secret = profile->GetPrefs()->GetString(
        webauthn::pref_names::kWebAuthnTouchIdMetadataSecretPrefName);
-@@ -405,7 +408,7 @@ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
+@@ -405,7 +417,7 @@ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
    }
  
    return TouchIdAuthenticatorConfig{
@@ -1171,3 +1321,32 @@ index 6fc50b6..5d8c433 100644
        .metadata_secret = std::move(metadata_secret)};
  }
  
+diff --git a/content/browser/webauth/authenticator_common_impl.cc b/content/browser/webauth/authenticator_common_impl.cc
+index 2a61a29..0fd7259 100644
+--- a/content/browser/webauth/authenticator_common_impl.cc
++++ b/content/browser/webauth/authenticator_common_impl.cc
+@@ -1700,6 +1700,24 @@ void AuthenticatorCommonImpl::GetCredential(
+     return;
+   }
+ 
++  // ReArc tab/097 (security review PK-10, AH-02): the focus rule of
++  // MakeCredential, for a sign-in that would open a dialog. Chromium has no
++  // such rule here, so a page nobody sees could hold a request open against
++  // a plugged-in security key, and with Bluetooth not yet allowed its
++  // request went to macOS's prompt before the dialog had a step. Refused
++  // before the request has a delegate or reaches an authenticator. A sign-in
++  // page's passkey autofill request (conditional) shows no dialog and goes
++  // on, as does a request with the UI disabled.
++  if (!disable_ui_ &&
++      (options->mediation == Mediation::MODAL ||
++       options->mediation == Mediation::IMMEDIATE) &&
++      !IsFocused()) {
++    req_state_->request_outcome = GetAssertionOutcome::kOtherFailure;
++    CompleteGetAssertionRequest(
++        blink::mojom::AuthenticatorStatus::NOT_FOCUSED);
++    return;
++  }
++
+   const std::string relying_party_id = public_key_options->relying_party_id;
+   const blink::mojom::RemoteDesktopClientOverridePtr&
+       remote_desktop_client_override =
