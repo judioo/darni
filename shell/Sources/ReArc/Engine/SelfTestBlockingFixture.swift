@@ -170,11 +170,100 @@ enum SelfTestBlockingFixture {
         arguments.contains(coldLaunchFlag)
     }
 
+    /// What one cold launch does (`--rearc-selftest-cold-step=`).
+    enum ColdStep: String, CaseIterable {
+        /// Blocking on (a new install's state); the restored tab and the
+        /// restored Little ReArc window must fetch neither the tracker nor the ad.
+        case restore
+        /// Blocking off from the start (an existing install that never turned
+        /// it on): both pages fetch both, and the engine gets no blocker. It
+        /// leaves a used profile whose blocker has no state.
+        case off
+        /// As `restore`, then a newer bundle arrives from the update folder and
+        /// takes over from the one that is blocking (a list update).
+        case takeover
+    }
+
+    static let coldStepFlag = "--rearc-selftest-cold-step="
+    /// The shell's `Blocklists` folder, kept from one cold launch to the next
+    /// (a downloaded bundle stays, as it does for a person).
+    static let coldListsFlag = "--rearc-selftest-cold-lists="
+    /// The folder with `latest.json` and the bundle archive the takeover step
+    /// gets from its mirror stand-in (`SelfTestFileMirror`).
+    static let coldUpdateFlag = "--rearc-selftest-cold-update="
+    /// A lists key the self-test made for this run (base64 of 32 raw bytes).
+    static let coldListsKeyFlag = "--rearc-selftest-cold-lists-key="
+    /// After its check the launch switches blocking off and sees both
+    /// requests load: the fixture can fetch them at all. That removes the
+    /// blocker, so only a profile's last launch is asked for it.
+    static let coldCheckOffFlag = "--rearc-selftest-cold-check-off"
+
+    static func coldStep(_ arguments: [String]) -> ColdStep? {
+        guard let value = value(of: coldStepFlag, in: arguments) else { return .restore }
+        return ColdStep(rawValue: value)
+    }
+
+    static func value(of flag: String, in arguments: [String]) -> String? {
+        arguments.last { $0.hasPrefix(flag) }.map { String($0.dropFirst(flag.count)) }.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// The cold launch's arguments (without the executable): the self-test's
     /// own, so the same Keychain mode and switches, with the flag and a user
     /// data directory of its own. The engine of this self-test holds its own.
-    static func coldLaunchArguments(from arguments: [String], userDataDir: String) -> [String] {
-        arguments.dropFirst().filter { !$0.hasPrefix(ChromiumLaunchArguments.userDataDirFlag) && $0 != coldLaunchFlag }
-            + [coldLaunchFlag, ChromiumLaunchArguments.userDataDirFlag + userDataDir]
+    static func coldLaunchArguments(from arguments: [String], userDataDir: String, step: ColdStep = .restore,
+                                    lists: String? = nil, update: String? = nil, listsKey: Data? = nil) -> [String] {
+        let own = [coldStepFlag, coldListsFlag, coldUpdateFlag, coldListsKeyFlag, coldCheckOffFlag]
+        var result = arguments.dropFirst().filter { argument in
+            !argument.hasPrefix(ChromiumLaunchArguments.userDataDirFlag) && argument != coldLaunchFlag
+                && !own.contains(where: { argument.hasPrefix($0) })
+        }
+        result += [coldLaunchFlag, ChromiumLaunchArguments.userDataDirFlag + userDataDir, coldStepFlag + step.rawValue]
+        if let lists { result.append(coldListsFlag + lists) }
+        if let update { result.append(coldUpdateFlag + update) }
+        if let listsKey { result.append(coldListsKeyFlag + listsKey.base64EncodedString()) }
+        return result
+    }
+
+    // MARK: A lists key for the self-test alone
+
+    /// The lists keys a launch trusts. The compiled-in ones always, and only
+    /// they in a bundle people get. The cold launch adds the key its self-test
+    /// made for this run (`ChromiumRuntime.selfTestListsKey`), so that the
+    /// takeover step can sign a second bundle; that key is never compiled in
+    /// and exists only in the two processes of one run. Never in a shipped
+    /// bundle, whatever set the runtime's key.
+    static func trustedListsKeys(compiledIn: [Data], selfTestKey: Data?, shipped: Bool) -> [Data] {
+        guard !shipped, let selfTestKey, selfTestKey.count == 32, !compiledIn.contains(selfTestKey) else { return compiledIn }
+        return compiledIn + [selfTestKey]
+    }
+
+    /// The cold launch's key from its arguments; nil outside the cold launch.
+    static func coldListsKey(_ arguments: [String]) -> Data? {
+        guard isColdLaunch(arguments), let text = value(of: coldListsKeyFlag, in: arguments) else { return nil }
+        return BlocklistSigningKey.parse(text)
+    }
+
+    // MARK: Which blocker the engine will load at the next launch
+
+    /// "ReArc Blocker"'s two extension IDs (engine
+    /// `rearc::kContentBlockerExtensionIds`), slot 0 first.
+    static let blockerIDs = ["eoaoomnoofleafmoihlpjdhdceloddjm", "kanaeoiolklalbbkdlpbfohpmgkgackf"]
+
+    /// The engine's marker of the blocker that was last ready, per slot: the
+    /// bundle version in `extensions.settings.<id>.rearc_ready_bundle` of a
+    /// profile's preferences file (`Secure Preferences` holds the extension
+    /// settings on the Mac; `Preferences` is read too). nil for a slot with none.
+    static func readyMarkers(inPreferences files: [Data]) -> [String?] {
+        blockerIDs.map { id in
+            for data in files {
+                guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let extensions = root["extensions"] as? [String: Any],
+                      let settings = extensions["settings"] as? [String: Any],
+                      let entry = settings[id] as? [String: Any],
+                      let marker = entry["rearc_ready_bundle"] as? String else { continue }
+                return marker
+            }
+            return nil
+        }
     }
 }

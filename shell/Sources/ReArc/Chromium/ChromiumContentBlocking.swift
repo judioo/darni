@@ -148,7 +148,11 @@ extension ChromiumContentBlockingEngine {
         runtime.onEngineProfileClosed = { [weak model] engineProfile in
             model?.contentBlockingProfileClosed(engineProfile: engineProfile)
         }
-        model.attachContentBlocking(engine: engine, engineVersion: BlocklistEngineVersion(chromium: String(cString: ReArcEngineVersion())))
+        model.attachContentBlocking(
+            engine: engine, engineVersion: BlocklistEngineVersion(chromium: String(cString: ReArcEngineVersion())),
+            publicKeys: SelfTestBlockingFixture.trustedListsKeys(compiledIn: BlocklistSigningKey.compiledIn,
+                                                                 selfTestKey: runtime.selfTestListsKey, shipped: ShippedBuild.current)
+        )
         for key in runtime.openProfileKeys where !key.isOffTheRecord {
             guard let engineProfile = runtime.engineProfileID(for: key) else { continue }
             model.contentBlockingProfileOpened(engineProfile: engineProfile, profile: key.parentProfileID)

@@ -1,5 +1,6 @@
 #if REARC_CHROMIUM
 import AppKit
+import CryptoKit
 import Foundation
 import Network
 import PDFKit
@@ -2205,6 +2206,22 @@ private struct SelfTestNoMirror: BlocklistFetching {
     }
 }
 
+/// The cold launch's mirror for a list update (security CB-02, the takeover
+/// step): `latest.json` and the archive the self-test wrote into `folder`,
+/// for the mirror's own addresses only. Nothing goes over the network.
+private struct SelfTestFileMirror: BlocklistFetching {
+    let folder: URL
+
+    func data(from url: URL, limit: Int) async throws -> Data {
+        guard url == BlocklistMirror.latestURL || BlocklistMirror.isMirrorURL(url, for: BlocklistMirror.latestURL) else {
+            throw URLError(.unsupportedURL)
+        }
+        let data = try Data(contentsOf: folder.appendingPathComponent(url.lastPathComponent))
+        guard data.count <= limit else { throw URLError(.dataLengthExceedsMaximum) }
+        return data
+    }
+}
+
 // MARK: - Host prompt channels (ABI 1.18–1.22)
 
 /// Answers file panels for the self-test: records each request and replies
@@ -3544,50 +3561,185 @@ extension ChromiumSelfTest {
 
     // MARK: Blocking at a cold launch (security CB-02)
 
-    /// Security CB-02: the engine keeps nothing of blocking between launches,
-    /// and a restored tab starts loading when its profile opens. If the
-    /// lists come on later than that, the tab's trackers are fetched at
-    /// every launch.
+    /// Security CB-02: the engine keeps nothing of blocking between launches
+    /// but what Chromium keeps of the blocker, and a restored tab starts
+    /// loading when its profile opens. If the lists come on later than that,
+    /// the tab's trackers are fetched at every such launch. The engine loads
+    /// again the blocker that was ready in the last session, so Chromium
+    /// brings its lists up with it, and holds a profile's first navigations
+    /// while a blocker loads fresh (tab/095).
     ///
-    /// This starts ReArc again, as a process of its own with a profile of
-    /// its own, whose one tab is restored on the blocking fixture
-    /// (`contentBlockingColdLaunch`). That launch passes when its fixture
-    /// server was never asked for the tracker or the ad. Twice on the same
-    /// profile where the build allows it: the first launch copies and indexes
-    /// the rules, the second is the everyday one.
+    /// Each case starts ReArc again, as a process of its own with a profile
+    /// of its own, whose tab and Little ReArc window are restored on the
+    /// blocking fixture (`contentBlockingColdLaunch`). A launch passes when
+    /// its fixture server was never asked for the tracker or the ad:
+    ///
+    /// 1. A new profile: the first launch copies and indexes the rules.
+    /// 2. The same profile again: the everyday launch.
+    /// 3. An existing profile whose blocker has no state: a launch with
+    ///    blocking off (both pages fetch both, and no rules are copied into the
+    ///    user data folder), then a launch with blocking on.
+    /// 4. A list update: on profile 1, a newer bundle signed with a key made
+    ///    for this run arrives and takes over (the engine's marker moves to
+    ///    the second blocker), and the launch after it, with that bundle,
+    ///    loads the second blocker again (the marker stays where it is).
+    ///
+    /// After each launch the engine's marker of the blocker that was last
+    /// ready is read from the profile's preferences. A bundle release.sh is
+    /// verifying takes only a new, empty profile (RC-0.1.0-602 F-03): there it
+    /// is case 1 alone, which also switches blocking off to see the page
+    /// fetch both.
     @MainActor
     private func contentBlockingColdLaunchChecks() async throws {
         // Without the feature the gap is already logged (contentBlockingChecks).
         guard runtime.capabilities.contentBlocking, ChromiumContentBlockingCalls.resolve() != nil else { return }
         guard let executable = Bundle.main.executableURL else { throw Failure(description: "no executable to start the cold launch with") }
-        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: profile) }
-        // A bundle release.sh is verifying takes only a new, empty profile (RC-0.1.0-602 F-03).
+        guard let builtIn = ContentBlockingController.builtInListsURL,
+              let builtInVersion = Self.bundleVersion(in: builtIn) else {
+            throw Failure(description: "content blocking cold launch: the app has no built-in bundle to read the version of")
+        }
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
         let release = ShippedBuild.isRelease(infoDictionary: Bundle.main.infoDictionary)
-        var summaries: [String] = []
-        for launch in 1...(release ? 1 : 2) {
-            // Longer than the launch's own waits together (45 s for the page, 45 s for a later
-            // blocked load), so a failing launch ends by itself and says why.
-            let child = try await runColdLaunch(executable: executable, profile: profile, timeout: 110)
+
+        /// One cold launch; its `COLD-BLOCKING PASS` summary.
+        @MainActor func launch(_ label: String, profile: URL, step: SelfTestBlockingFixture.ColdStep, lists: URL? = nil,
+                               update: URL? = nil, key: Data? = nil, checkOff: Bool = false) async throws -> String {
+            // Longer than the launch's own waits together (45 s for each page, 45 s for a later
+            // blocked load, 30 s for an update), so a failing launch ends by itself and says why.
+            var arguments = SelfTestBlockingFixture.coldLaunchArguments(
+                from: CommandLine.arguments, userDataDir: profile.path, step: step, lists: lists?.path, update: update?.path, listsKey: key)
+            if checkOff { arguments.append(SelfTestBlockingFixture.coldCheckOffFlag) }
+            let child = try await runColdLaunch(executable: executable, arguments: arguments, timeout: 150)
             let lines = child.output.split(whereSeparator: \.isNewline).map(String.init)
-            let told = lines.filter { $0.contains("COLD-BLOCKING") }
-            for line in told { log("cold launch \(launch): \(line)") }
+            let told = lines.filter { $0.contains("COLD-BLOCKING") || $0.contains("ReArc Blocker") }
+            for line in told { log("cold launch, \(label): \(line)") }
             guard child.status == 0, let passed = told.last(where: { $0.contains("COLD-BLOCKING PASS") }) else {
                 let failed = lines.filter { $0.contains("FAIL") }.suffix(4).joined(separator: " | ")
-                throw Failure(description: "content blocking cold launch \(launch) (\(launch == 1 ? "new profile" : "the same profile again")) "
-                    + "ended with status \(child.status): \(failed.isEmpty ? String(child.output.suffix(600)) : failed)")
+                throw Failure(description: "content blocking cold launch, \(label), ended with status \(child.status): "
+                    + (failed.isEmpty ? String(child.output.suffix(600)) : failed))
             }
-            summaries.append(passed.components(separatedBy: "COLD-BLOCKING PASS").last?.trimmingCharacters(in: .whitespaces) ?? "")
+            return "\(label): " + (passed.components(separatedBy: "COLD-BLOCKING PASS").last?.trimmingCharacters(in: .whitespaces) ?? "")
         }
-        log("PASS content blocking at a cold launch: a restored tab on the blocking fixture fetched neither the tracker nor the ad "
-            + "(\(summaries.enumerated().map { "launch \($0.offset + 1): \($0.element)" }.joined(separator: "; ")))"
-            + (release ? "; one launch, on a new profile: a release bundle under verification takes no used profile" : ""))
+        /// The engine's markers after a launch, slot 0 first, against what they must be.
+        @MainActor func expectMarkers(_ profile: URL, _ wanted: [String?], _ label: String, _ why: String) throws {
+            let found = Self.readyMarkers(userDataDir: profile)
+            try check(found == wanted, "content blocking cold launch, \(label): the engine's ready-blocker markers are "
+                + "\(found.map { $0 ?? "none" }), not \(wanted.map { $0 ?? "none" }): \(why)")
+        }
+
+        let first = scratch.appendingPathComponent("profile-1", isDirectory: true)
+        var summaries = [try await launch("new profile", profile: first, step: .restore, checkOff: release)]
+        if release {
+            log("PASS content blocking at a cold launch: a restored tab and a restored Little ReArc window on the blocking fixture "
+                + "fetched neither the tracker nor the ad (\(summaries[0])); one launch, on a new profile: a release bundle under "
+                + "verification takes no used profile")
+            log("NOTE content blocking cold launch: an existing profile without blocker state and the launch after a list update "
+                + "need a used profile, which only a development build's self-test runs")
+            return
+        }
+        let v0 = builtInVersion.description
+        try expectMarkers(first, [v0, nil], "new profile", "the first blocker was not ready before the launch ended, or its marker was not kept")
+        summaries.append(try await launch("the same profile again", profile: first, step: .restore))
+        try expectMarkers(first, [v0, nil], "the same profile again", "the blocker of the last session was not the one loaded")
+
+        // 3. An existing profile whose blocker has no state.
+        let existing = scratch.appendingPathComponent("profile-2", isDirectory: true)
+        summaries.append(try await launch("blocking off", profile: existing, step: .off))
+        try expectMarkers(existing, [nil, nil], "blocking off", "a profile with blocking off got a blocker")
+        let copies = existing.appendingPathComponent("ReArc Blocker")
+        try check(!FileManager.default.fileExists(atPath: copies.path),
+                  "content blocking cold launch, blocking off: the engine copied the rules into \(copies.path) with blocking off in every profile")
+        summaries.append(try await launch("an existing profile whose blocker has no state", profile: existing, step: .restore))
+        try expectMarkers(existing, [v0, nil], "an existing profile whose blocker has no state", "the fresh blocker did not get ready")
+
+        // 4. A list update's takeover on profile 1, and the launch after it.
+        let signer = Curve25519.Signing.PrivateKey()
+        let key = signer.publicKey.rawRepresentation
+        let update = scratch.appendingPathComponent("update", isDirectory: true)
+        let lists = scratch.appendingPathComponent("lists", isDirectory: true)
+        try FileManager.default.createDirectory(at: lists, withIntermediateDirectories: true)
+        let v1 = try Self.makeNewerBundle(from: builtIn, signer: signer, in: update)
+        summaries.append(try await launch("a list update (\(v0) to \(v1))", profile: first, step: .takeover, lists: lists, update: update, key: key))
+        try expectMarkers(first, [nil, v1], "a list update", "the second blocker did not take over from the first")
+        summaries.append(try await launch("the launch after the list update", profile: first, step: .restore, lists: lists, key: key))
+        try expectMarkers(first, [nil, v1], "the launch after the list update",
+                          "the engine loaded the first blocker fresh instead of the second, which holds the last session's lists")
+        log("PASS content blocking at a cold launch: restored tabs and Little ReArc windows on the blocking fixture fetched neither the "
+            + "tracker nor the ad (\(summaries.joined(separator: "; "))); the engine's markers followed the ready blocker: "
+            + "\(v0) in slot 0, then \(v1) in slot 1 after the update and the launch after it")
+    }
+
+    /// The `version` of the bundle in `directory`'s manifest.
+    private static func bundleVersion(in directory: URL) -> BlocklistVersion? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent(BlocklistManifest.fileName)),
+              let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (manifest["version"] as? String).flatMap(BlocklistVersion.init)
+    }
+
+    /// The engine's ready-blocker markers in the profiles of `userDataDir`.
+    private static func readyMarkers(userDataDir: URL) -> [String?] {
+        let profiles = (try? FileManager.default.contentsOfDirectory(at: userDataDir, includingPropertiesForKeys: nil)) ?? []
+        let files = profiles.flatMap { profile in
+            ["Secure Preferences", "Preferences"].compactMap { try? Data(contentsOf: profile.appendingPathComponent($0)) }
+        }
+        return SelfTestBlockingFixture.readyMarkers(inPreferences: files)
+    }
+
+    /// The takeover step's update: the built-in bundle as a newer version,
+    /// signed by `signer` (a key made for this run, which only its cold
+    /// launches trust), packed as the mirror packs it, with the
+    /// `latest.json` that names it. Written into `folder`; returns the version.
+    private static func makeNewerBundle(from source: URL, signer: Curve25519.Signing.PrivateKey, in folder: URL) throws -> String {
+        let manifestData = try Data(contentsOf: source.appendingPathComponent(BlocklistManifest.fileName))
+        guard var manifest = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+              let current = (manifest["version"] as? String).flatMap(BlocklistVersion.init), let date = current.date else {
+            throw Failure(description: "the built-in bundle's manifest has no version to make a newer one from")
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyyMMddHHmm"
+        let version = formatter.string(from: date.addingTimeInterval(3600))
+        guard let newer = BlocklistVersion(version), newer > current else { throw Failure(description: "no version after \(current)") }
+        manifest["version"] = version
+        let name = "blocklists-\(version)"
+        let bundle = folder.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: source, to: bundle)
+        let signed = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+        try signed.write(to: bundle.appendingPathComponent(BlocklistManifest.fileName))
+        try Data(signer.signature(for: signed).base64EncodedString().utf8)
+            .write(to: bundle.appendingPathComponent(BlocklistManifest.signatureFileName))
+        if case .failure(let rejection) = BlocklistVerifier.verify(directory: bundle, source: .downloaded,
+                                                                     publicKeys: [signer.publicKey.rawRepresentation], engine: nil) {
+            throw Failure(description: "the self-test's newer bundle does not verify: \(rejection.text)")
+        }
+        // Plain ustar, as the pipeline's archives: BlocklistArchive refuses pax headers and macOS metadata.
+        let archive = folder.appendingPathComponent("\(name).tar.gz")
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["--format", "ustar", "--no-mac-metadata", "--no-xattrs", "-czf", archive.path, "-C", folder.path, name]
+        tar.environment = ["COPYFILE_DISABLE": "1"]
+        try tar.run()
+        tar.waitUntilExit()
+        guard tar.terminationStatus == 0 else { throw Failure(description: "tar ended with status \(tar.terminationStatus) packing the newer bundle") }
+        try FileManager.default.removeItem(at: bundle)
+        let packed = try Data(contentsOf: archive)
+        let check = folder.appendingPathComponent("check", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: check) }
+        try BlocklistArchive.extract(packed, to: check)
+        let url = BlocklistMirror.latestURL.deletingLastPathComponent().appendingPathComponent(archive.lastPathComponent)
+        let latest: [String: Any] = ["version": version, "url": url.absoluteString, "sha256": BlocklistVerifier.sha256(of: packed)]
+        try JSONSerialization.data(withJSONObject: latest).write(to: folder.appendingPathComponent(BlocklistMirror.latestURL.lastPathComponent))
+        return version
     }
 
     /// Runs this executable again as the cold launch for blocking and waits
     /// for it to end. Its output goes to a file, so a full pipe cannot stall it.
     @MainActor
-    private func runColdLaunch(executable: URL, profile: URL, timeout: TimeInterval) async throws -> (status: Int32, output: String) {
+    private func runColdLaunch(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> (status: Int32, output: String) {
         let logFile = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-\(UUID().uuidString).log")
         guard FileManager.default.createFile(atPath: logFile.path, contents: nil) else {
             throw Failure(description: "could not create the cold launch's log \(logFile.path)")
@@ -3597,7 +3749,7 @@ extension ChromiumSelfTest {
         defer { try? output.close() }
         let process = Process()
         process.executableURL = executable
-        process.arguments = SelfTestBlockingFixture.coldLaunchArguments(from: CommandLine.arguments, userDataDir: profile.path)
+        process.arguments = arguments
         process.standardOutput = output
         process.standardError = output
         try process.run()
@@ -3615,35 +3767,54 @@ extension ChromiumSelfTest {
 
     /// The cold launch itself (`--rearc-selftest-cold-blocking`), in place
     /// of every other step: the shell starts as it does for a person, with a
-    /// sidebar whose selected tab is the blocking fixture, in a new install's
-    /// state (blocking on at Ads and trackers). Nothing waits for the lists.
-    /// The fixture server then says whether that first load fetched the
-    /// tracker or the ad.
+    /// sidebar whose selected tab is the blocking fixture and a Little ReArc
+    /// window on it too, in a new install's state (blocking on at Ads and
+    /// trackers) unless the step is `off`. Nothing waits for the lists. The
+    /// fixture server then says whether those first loads fetched the
+    /// tracker or the ad. The step (`SelfTestBlockingFixture.ColdStep`) says
+    /// what follows.
     ///
-    /// Prints `COLD-BLOCKING PASS …` and exits 0 when it fetched neither.
-    /// When it fetched one, the page is loaded again until it is blocked, so
-    /// the failure says how long after the start the lists came on.
+    /// Prints `COLD-BLOCKING PASS …` and exits 0 when the step passed. When a
+    /// page with blocking on fetched one, it is loaded again until it is
+    /// blocked, so the failure says how long after the start the lists came on.
     @MainActor
     private func contentBlockingColdLaunch() async throws {
         log("COLD-BLOCKING launch: engine ABI \(ReArcEngineABIVersion()), Chromium \(String(cString: ReArcEngineVersion())), "
             + "user data \(runtime.userDataDir?.path ?? "-")")
         try check(runtime.capabilities.contentBlocking && ChromiumContentBlockingCalls.resolve() != nil,
                   "COLD-BLOCKING FAIL: this engine has no content_blocking")
+        let arguments = CommandLine.arguments
+        guard let step = SelfTestBlockingFixture.coldStep(arguments) else {
+            throw Failure(description: "COLD-BLOCKING FAIL: unknown step in \(arguments.filter { $0.hasPrefix(SelfTestBlockingFixture.coldStepFlag) })")
+        }
         let server = try LoopbackFixtureServer()
         self.server = server
         let port = try await server.start()
         serverBase = "http://127.0.0.1:\(port)"
-        // Its own folder: the sidebar file's sibling `Blocklists` is then this launch's alone.
+        // Its own folder: the sidebar file's sibling `Blocklists` is then this launch's alone,
+        // or the one the self-test keeps from launch to launch.
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-shell-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
+        if let lists = SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldListsFlag, in: arguments) {
+            try FileManager.default.createSymbolicLink(at: scratch.appendingPathComponent(BlocklistStore.folderName),
+                                                       withDestinationURL: URL(fileURLWithPath: lists, isDirectory: true))
+        }
+        // The key this run's self-test made, beside the compiled-in ones, for the takeover's bundle.
+        runtime.selfTestListsKey = SelfTestBlockingFixture.coldListsKey(arguments)
 
         let store = SidebarStore()
-        blockingRun = 1
         let tab = store.addTab(kind: .today, title: "Blocking", url: SelfTestBlockingFixture.pageURL(base: serverBase, run: 1))
         store.selectTab(tab.id)
+        let owner = store.profiles.first?.id
+        let little = store.createLittleArcWindow(url: SelfTestBlockingFixture.pageURL(base: serverBase, run: 2), title: "Blocking", profileID: owner)
+        blockingRun = 2
+        if step == .off, let owner {
+            // Settled before the model loads: the rollout gives a new install's level only to a profile with none.
+            store.setContentBlocking(.off, for: owner)
+        }
         // As ChromiumShell.makeModel does: the owner is named before the model loads the tab.
-        runtime.legacyDefaultOwner = store.profiles.first?.id
+        runtime.legacyDefaultOwner = owner
         let model = BrowserViewModel(
             store: store,
             persistence: SidebarFilePersistence(fileURL: scratch.appendingPathComponent("sidebar.json")),
@@ -3660,35 +3831,86 @@ extension ChromiumSelfTest {
         self.engine = engine
         let profileID = model.profileID(for: tab)
         let level = store.contentBlocking(for: profileID).level
-        try check(level == .adsAndTrackers, "COLD-BLOCKING FAIL: the launch's profile is at \(level.title), not Ads and trackers "
-            + "(rollout \(String(describing: store.contentBlockingRollout.install))): the step needs blocking on")
+        let wantedLevel: ContentBlockingLevel = step == .off ? .off : .adsAndTrackers
+        try check(level == wantedLevel, "COLD-BLOCKING FAIL: the launch's profile is at \(level.title), not \(wantedLevel.title) "
+            + "(rollout \(String(describing: store.contentBlockingRollout.install)), step \(step.rawValue))")
 
-        // The restored tab's own load. Its first renderer starts cold.
+        // The restored pages' own loads. Their first renderers start cold.
         try await wait("the restored tab's page (title '\(engine.pageTitle ?? "nil")')", timeout: 45) {
             SelfTestBlockingFixture.Verdict(title: engine.pageTitle)?.run == 1
         }
         let loaded = sinceStart()
-        guard let verdict = SelfTestBlockingFixture.Verdict(title: engine.pageTitle) else {
-            throw Failure(description: "COLD-BLOCKING FAIL: the restored tab's title changed under the test")
+        try await wait("the restored Little ReArc window", timeout: 45) { shell.window(forLittleArc: little.id) != nil }
+        guard let littleEngine = model.littleArcEngine(for: little.id) as? ChromiumEngine else {
+            throw Failure(description: "COLD-BLOCKING FAIL: the restored Little ReArc window has no ChromiumEngine")
+        }
+        try await wait("the restored Little ReArc window's page (title '\(littleEngine.pageTitle ?? "nil")')", timeout: 45) {
+            SelfTestBlockingFixture.Verdict(title: littleEngine.pageTitle)?.run == 2
+        }
+        let littleLoaded = sinceStart()
+        guard let verdict = SelfTestBlockingFixture.Verdict(title: engine.pageTitle),
+              let littleVerdict = SelfTestBlockingFixture.Verdict(title: littleEngine.pageTitle) else {
+            throw Failure(description: "COLD-BLOCKING FAIL: a restored page's title changed under the test")
         }
         let fetched = LoopbackFixtureServer.blockingFetches(run: 1)
+        let littleFetched = LoopbackFixtureServer.blockingFetches(run: 2)
         let bundle = model.contentBlocking.bundle.map { "\($0.version) (\($0.source))" } ?? "none yet"
-        log("COLD-BLOCKING first load: \(verdict.text) \(loaded) ms after the shell started; the fixture server was asked for the tracker "
-            + "\(fetched.tracker) time(s) and the ad \(fetched.ad) time(s); bundle \(bundle)")
+        log("COLD-BLOCKING first loads (step \(step.rawValue)): the tab \(verdict.text) \(loaded) ms after the shell started, the "
+            + "Little ReArc window \(littleVerdict.text) at \(littleLoaded) ms; the fixture server was asked for the tracker "
+            + "\(fetched.tracker)+\(littleFetched.tracker) time(s) and the ad \(fetched.ad)+\(littleFetched.ad) time(s); bundle \(bundle)")
 
-        guard fetched.tracker == 0, fetched.ad == 0 else {
+        if step == .off {
+            try check(fetched.tracker > 0 && fetched.ad > 0 && littleFetched.tracker > 0 && littleFetched.ad > 0
+                        && !verdict.trackerBlocked && !verdict.adBlocked && !littleVerdict.trackerBlocked && !littleVerdict.adBlocked,
+                      "COLD-BLOCKING FAIL: with blocking off the restored pages did not fetch both (tab \(verdict.text), Little ReArc "
+                        + "\(littleVerdict.text)): the fixture cannot show blocking")
+            log("COLD-BLOCKING PASS blocking off: both restored pages fetched the tracker and the ad")
+            return
+        }
+        guard fetched.tracker == 0, fetched.ad == 0, littleFetched.tracker == 0, littleFetched.ad == 0 else {
             // Fetched before the lists were on. When do they come on?
             let loads = try await waitForBlocking("after the cold launch", model, tab, engine, tracker: true, ad: true, timeout: 45)
-            throw Failure(description: "COLD-BLOCKING FAIL (security CB-02): the restored tab fetched the tracker \(fetched.tracker) time(s) "
-                + "and the ad \(fetched.ad) time(s) \(loaded) ms after the shell started, before the lists were on; a later load "
-                + "(the \(loads + 1). of the page) was blocked at \(sinceStart()) ms. The first navigations must wait for the blocker's lists")
+            throw Failure(description: "COLD-BLOCKING FAIL (security CB-02): the restored pages fetched the tracker "
+                + "\(fetched.tracker)+\(littleFetched.tracker) time(s) and the ad \(fetched.ad)+\(littleFetched.ad) time(s) "
+                + "(tab at \(loaded) ms, Little ReArc window at \(littleLoaded) ms after the shell started), before the lists were on; "
+                + "a later load (the \(loads + 1). of the page) was blocked at \(sinceStart()) ms. The first navigations must wait "
+                + "for the blocker's lists")
         }
-        try check(verdict.trackerBlocked && verdict.adBlocked, "COLD-BLOCKING FAIL: the server was asked for nothing and the page saw \(verdict.text)")
-        // Not fetched. That means blocked only if the page can fetch them at all: with blocking off it must.
-        model.setContentBlockingEnabled(false, for: profileID)
-        let offLoads = try await waitForBlocking("the cold launch's fixture with blocking off", model, tab, engine, tracker: false, ad: false)
-        log("COLD-BLOCKING PASS neither fetched on the restored tab's first load, \(loaded) ms after the shell started "
-            + "(with blocking off both load, \(offLoads) load(s) later)")
+        try check(verdict.trackerBlocked && verdict.adBlocked && littleVerdict.trackerBlocked && littleVerdict.adBlocked,
+                  "COLD-BLOCKING FAIL: the server was asked for nothing and the pages saw \(verdict.text) and \(littleVerdict.text)")
+        var summary = "neither fetched on the restored pages' first loads (tab \(loaded) ms, Little ReArc window \(littleLoaded) ms "
+            + "after the shell started, bundle \(bundle))"
+
+        if step == .takeover {
+            // A list update: a newer bundle arrives while the first blocker blocks.
+            guard let update = SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldUpdateFlag, in: arguments) else {
+                throw Failure(description: "COLD-BLOCKING FAIL: the takeover step has no update folder")
+            }
+            let before = model.contentBlocking.bundle?.version
+            model.contentBlocking.fetcher = SelfTestFileMirror(folder: URL(fileURLWithPath: update, isDirectory: true))
+            try await wait("the newer bundle to be in use (now \(before.map(String.init(describing:)) ?? "none"))", timeout: 30) {
+                if model.contentBlocking.bundle?.version != before { return true }
+                if !model.contentBlocking.isCheckingLists { model.checkBlocklists() }
+                return false
+            }
+            let after = model.contentBlocking.bundle.map { "\($0.version) (\($0.source))" } ?? "none"
+            // Through the takeover the old blocker blocks until the new one's lists are on.
+            let loads = try await waitForBlocking("during the list update", model, tab, engine, tracker: true, ad: true, timeout: 10)
+            try check(loads == 1, "COLD-BLOCKING FAIL: during the list update \(loads - 1) load(s) of the page were not blocked")
+            summary += "; the list check brought \(after) and the next load was blocked"
+        }
+        if arguments.contains(SelfTestBlockingFixture.coldCheckOffFlag) {
+            // Not fetched means blocked only if the page can fetch them at all: with blocking off it must.
+            // This removes the blocker, so the self-test asks for it only on a profile's last launch.
+            model.setContentBlockingEnabled(false, for: profileID)
+            let offLoads = try await waitForBlocking("the cold launch's fixture with blocking off", model, tab, engine, tracker: false, ad: false)
+            summary += "; with blocking off both load, \(offLoads) load(s) later"
+        } else {
+            // The engine marks the blocker that is ready, for the next launch, when its lists are on
+            // (a takeover: the new one's, after indexing). That is not visible from here: time for it.
+            try await Task.sleep(for: .seconds(step == .takeover ? 10 : 4))
+        }
+        log("COLD-BLOCKING PASS \(summary)")
     }
 
     /// Window › Task Manager (docs/briefs/2026-11-17-chrome-features.md).

@@ -665,6 +665,34 @@ final class ContentBlockingEngineSyncTests: XCTestCase {
         XCTAssertEqual(engine.take(), ["level 7 0 "], "level 0 unloads the blocker; exceptions and own rules stay as they are")
     }
 
+    /// Security review, addendum 4: the engine copies a bundle's rules into
+    /// the user data folder, so it is named only once some profile has
+    /// blocking on.
+    func testTheBundleIsNamedOnlyOnceAProfileHasBlockingOn() {
+        let store = makeStore()
+        store.beginContentBlockingRollout(isNewInstall: false)
+        let profile = store.profiles[0].id
+        XCTAssertEqual(store.contentBlocking(for: profile).level, .off, "an existing install starts with blocking off")
+        let engine = RecordingEngine()
+        let sync = ContentBlockingEngineSync(engine: engine) { store.contentBlocking(for: $0) }
+        sync.setBundle(bundle("202611180900"))
+        sync.profileOpened(engineProfile: 7, profile: profile)
+        XCTAssertEqual(engine.take(), ["level 7 0 ", "exceptions 7 ", "rules 7 0"], "no directory while every profile is off")
+        XCTAssertNotNil(sync.activeBundle, "the bundle is still the one Settings reads its lists from")
+        sync.setBundle(bundle("202611190900"))
+        XCTAssertEqual(engine.take(), [], "a newer bundle is not named either")
+
+        store.updateContentBlocking { $0.isEnabled = true }
+        sync.settingsChanged()
+        XCTAssertEqual(engine.take(), ["directory 202611190900", "level 7 2 easyprivacy,peter-lowe,easylist"],
+                       "named before the level, once blocking is on")
+        store.updateContentBlocking { $0.isEnabled = false }
+        sync.settingsChanged()
+        store.updateContentBlocking { $0.isEnabled = true }
+        sync.settingsChanged()
+        XCTAssertEqual(engine.take(), ["level 7 0 ", "level 7 2 easyprivacy,peter-lowe,easylist"], "the same bundle is named once")
+    }
+
     func testABundleDecidesWhichLevelHasAList() {
         let store = makeStore()
         store.setContentBlocking(ContentBlockingSettings(isEnabled: true))

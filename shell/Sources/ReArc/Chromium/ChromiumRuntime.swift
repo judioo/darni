@@ -698,6 +698,12 @@ final class ChromiumRuntime {
     /// The shell profile that may take over the startup `Default` directory
     /// (the first profile); set before any of its tabs are created.
     var legacyDefaultOwner: Profile.ID?
+    /// A lists key the self-test made for one run, trusted beside the
+    /// compiled-in keys by this launch alone. Set only by the self-test's cold
+    /// launch for blocking (`ChromiumSelfTest.contentBlockingColdLaunch`),
+    /// before the shell starts; a shipped bundle ignores it
+    /// (`SelfTestBlockingFixture.trustedListsKeys`).
+    var selfTestListsKey: Data?
 
     /// `--user-data-dir` and `--profile-directory` the engine runs with.
     private(set) var userDataDir: URL?

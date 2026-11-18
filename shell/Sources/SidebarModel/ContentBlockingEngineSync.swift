@@ -6,9 +6,10 @@ import Foundation
 /// Profiles are the engine's own profile IDs, never an off-the-record one:
 /// private windows follow their profile in the engine.
 public protocol ContentBlockingEngine: AnyObject {
-    /// `ReArcEngineSetBlocklistDirectory`: a verified bundle's directory.
-    /// Every profile with blocking on gets that bundle's blocker; the engine
-    /// sets their exceptions and own rules again itself.
+    /// `ReArcEngineSetBlocklistDirectory`: a verified bundle's directory,
+    /// once some open profile has blocking on. Every profile with blocking on
+    /// gets that bundle's blocker; the engine sets their exceptions and own
+    /// rules again itself.
     func setBlocklistDirectory(_ directory: URL)
     /// `ReArcProfileSetContentBlocking`. Level 0 leaves the profile without a blocker.
     func setContentBlocking(engineProfile: UInt64, level: ContentBlockingLevel, enabledListIDs: [String])
@@ -40,6 +41,11 @@ public final class ContentBlockingEngineSync {
     /// parent's: `SidebarStore.contentBlocking(for:)`).
     private let settings: (Profile.ID) -> ContentBlockingSettings
     private var bundle: VerifiedBlocklist?
+    /// The bundle the engine was last told of. The engine copies a bundle's
+    /// rules into the user data folder (4.4 MB, 8.5 MB once indexed), so it
+    /// hears of one only while some open profile has blocking on: an install
+    /// that never turns blocking on gets no copy (security review, addendum 4).
+    private var named: VerifiedBlocklist?
     /// Loaded engine profiles and the shell profile each takes its settings from.
     private var profiles: [UInt64: Profile.ID] = [:]
     private var applied: [UInt64: Applied] = [:]
@@ -59,12 +65,12 @@ public final class ContentBlockingEngineSync {
     public var lists: [ContentBlockingList] { ContentBlockingLists.lists(of: bundle?.manifest) }
 
     /// A bundle was verified (launch, or an update): the engine gets its
-    /// directory, and any profile whose lists the new bundle changes gets them.
+    /// directory once a profile has blocking on, and any profile whose lists
+    /// the new bundle changes gets them.
     public func setBundle(_ bundle: VerifiedBlocklist?) {
         guard bundle?.directory != self.bundle?.directory || bundle?.version != self.bundle?.version else { return }
         self.bundle = bundle
-        guard let bundle else { return }
-        engine.setBlocklistDirectory(bundle.directory)
+        guard bundle != nil else { return }
         apply()
     }
 
@@ -88,6 +94,11 @@ public final class ContentBlockingEngineSync {
 
     private func apply() {
         let lists = self.lists
+        if let bundle, bundle.directory != named?.directory || bundle.version != named?.version,
+           profiles.values.contains(where: { settings($0).level != .off }) {
+            named = bundle
+            engine.setBlocklistDirectory(bundle.directory)
+        }
         var texts = Set<String>()
         for (engineProfile, profile) in profiles.sorted(by: { $0.key < $1.key }) {
             let settings = settings(profile)

@@ -128,7 +128,8 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertEqual(model.store.contentBlockingRollout.install, .existing)
         XCTAssertTrue(model.store.profiles.allSatisfy { model.store.contentBlocking(for: $0.id).level == .off }, "the upgrade changes no profile")
         model.contentBlockingProfileOpened(engineProfile: 4, profile: model.store.profiles[0].id)
-        XCTAssertEqual(engine.take(), ["directory", "level 4 0 ", "exceptions 4 ", "rules 4"], "an old profile opens with blocking Off")
+        XCTAssertEqual(engine.take(), ["level 4 0 ", "exceptions 4 ", "rules 4"],
+                       "an old profile opens with blocking Off, and the engine is not named the bundle: it would copy the rules")
         XCTAssertEqual(try savedRollout()?["offerShown"] as? Bool, false)
         XCTAssertFalse(model.contentBlocking.showsOffer, "not before the sidebar is up")
 
@@ -162,7 +163,8 @@ final class ContentBlockingShellTests: XCTestCase {
         model.acceptContentBlockingOffer()
         XCTAssertFalse(model.contentBlocking.showsOffer)
         XCTAssertEqual(model.store.contentBlocking().level, .adsAndTrackers)
-        XCTAssertEqual(engine.take(), ["level 4 2 easyprivacy,peter-lowe,easylist"])
+        XCTAssertEqual(engine.take(), ["directory", "level 4 2 easyprivacy,peter-lowe,easylist"],
+                       "the bundle is named once blocking is on, before the level")
     }
 
     func testWithoutAnEngineThatCanBlockNothingIsDecidedShownOrFetched() throws {

@@ -147,7 +147,9 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
     func testTheColdLaunchIsTheSelfTestWithItsFlagAndAProfileOfItsOwn() {
         let parent = ["/Apps/ReArc.app/Contents/MacOS/ReArc", "--rearc-selftest", "--user-data-dir=/tmp/parent", "--enable-logging"]
         let child = SelfTestBlockingFixture.coldLaunchArguments(from: parent, userDataDir: "/tmp/cold")
-        XCTAssertEqual(child, ["--rearc-selftest", "--enable-logging", "--rearc-selftest-cold-blocking", "--user-data-dir=/tmp/cold"])
+        XCTAssertEqual(child, ["--rearc-selftest", "--enable-logging", "--rearc-selftest-cold-blocking", "--user-data-dir=/tmp/cold",
+                               "--rearc-selftest-cold-step=restore"])
+        XCTAssertEqual(SelfTestBlockingFixture.coldStep(child), .restore)
         XCTAssertTrue(SelfTestBlockingFixture.isColdLaunch(child))
         XCTAssertFalse(SelfTestBlockingFixture.isColdLaunch(parent))
         XCTAssertEqual(ChromiumLaunchArguments.userDataDir(in: ["ReArc"] + child), "/tmp/cold", "never the profile the self-test's own engine holds")
@@ -159,5 +161,52 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
         let options = EngineLaunchOptions.parse(arguments: ["ReArc"] + child, environment: [:])
         XCTAssertTrue(options.selfTest)
         XCTAssertNil(options.bench)
+    }
+
+    func testAColdLaunchStepCarriesItsListsFolderUpdateAndKeyAndDropsTheLastOnes() throws {
+        let parent = ["/Apps/ReArc.app/Contents/MacOS/ReArc", "--rearc-selftest", "--user-data-dir=/tmp/parent"]
+        let key = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        let child = SelfTestBlockingFixture.coldLaunchArguments(from: parent, userDataDir: "/tmp/cold", step: .takeover,
+                                                                lists: "/tmp/lists", update: "/tmp/update", listsKey: key)
+        XCTAssertEqual(SelfTestBlockingFixture.coldStep(child), .takeover)
+        XCTAssertEqual(SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldListsFlag, in: child), "/tmp/lists")
+        XCTAssertEqual(SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldUpdateFlag, in: child), "/tmp/update")
+        XCTAssertEqual(SelfTestBlockingFixture.coldListsKey(child), key)
+        XCTAssertNil(SelfTestBlockingFixture.coldListsKey(parent + [SelfTestBlockingFixture.coldListsKeyFlag + key.base64EncodedString()]),
+                     "the key is read only in the cold launch")
+        // The next launch from a cold launch's arguments names only its own.
+        let next = SelfTestBlockingFixture.coldLaunchArguments(from: ["ReArc"] + child, userDataDir: "/tmp/cold", step: .off)
+        XCTAssertEqual(SelfTestBlockingFixture.coldStep(next), .off)
+        XCTAssertNil(SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldListsFlag, in: next))
+        XCTAssertNil(SelfTestBlockingFixture.coldListsKey(next))
+        XCTAssertEqual(next.filter { $0.hasPrefix(SelfTestBlockingFixture.coldStepFlag) }.count, 1)
+        XCTAssertNil(SelfTestBlockingFixture.coldStep(["--rearc-selftest-cold-step=later"]), "an unknown step is no step")
+    }
+
+    /// Security review (CB-02 point 3): a key the self-test makes to sign a
+    /// second bundle is a second lists key. A bundle people get trusts the
+    /// compiled-in keys alone, which are the key file's.
+    func testABundlePeopleGetTrustsOnlyTheCompiledInListsKeys() throws {
+        let compiled = BlocklistSigningKey.compiledIn
+        let text = try String(contentsOf: Self.shellDirectory.appendingPathComponent("scripts/blocklists/blocklists-public-key.txt"), encoding: .utf8)
+        XCTAssertEqual(compiled, BlocklistSigningKey.parseAll(text), "the compiled-in keys are the key file's")
+        let testKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        XCTAssertEqual(SelfTestBlockingFixture.trustedListsKeys(compiledIn: compiled, selfTestKey: testKey, shipped: true), compiled,
+                       "a shipped bundle never trusts a self-test key")
+        XCTAssertEqual(SelfTestBlockingFixture.trustedListsKeys(compiledIn: compiled, selfTestKey: nil, shipped: false), compiled)
+        XCTAssertEqual(SelfTestBlockingFixture.trustedListsKeys(compiledIn: compiled, selfTestKey: Data(count: 31), shipped: false), compiled)
+        XCTAssertEqual(SelfTestBlockingFixture.trustedListsKeys(compiledIn: compiled, selfTestKey: testKey, shipped: false), compiled + [testKey])
+    }
+
+    func testTheReadyMarkerIsReadPerBlockerFromEitherPreferencesFile() throws {
+        let ids = SelfTestBlockingFixture.blockerIDs
+        func prefs(_ entries: [String: Any]) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["extensions": ["settings": entries]])
+        }
+        let secure = try prefs([ids[1]: ["rearc_ready_bundle": "202611190857", "location": 5], ids[0]: ["location": 5]])
+        let plain = try prefs(["abcdefghijklmnopabcdefghijklmnop": ["rearc_ready_bundle": "202611180857"]])
+        XCTAssertEqual(SelfTestBlockingFixture.readyMarkers(inPreferences: [plain, secure]), [nil, "202611190857"])
+        XCTAssertEqual(SelfTestBlockingFixture.readyMarkers(inPreferences: [Data("not json".utf8)]), [nil, nil])
+        XCTAssertEqual(SelfTestBlockingFixture.readyMarkers(inPreferences: []), [nil, nil])
     }
 }
