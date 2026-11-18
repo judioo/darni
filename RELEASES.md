@@ -19,6 +19,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1118.968 — 2026-11-18
+
 **New**
 - Arc's 56 space icons are in ReArc's icon pickers, in Arc's order, followed by the icons ReArc
   already had (house, briefcase, globe, graduation cap, game controller, cart, brush, hammer,
