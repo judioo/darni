@@ -209,9 +209,9 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.contentView.drawsBackground = false
-        scroll.hasVerticalScroller = true
+        // No scroll bar, as in Arc: the list still scrolls (owner, 2026-11-18).
+        scroll.hasVerticalScroller = false
         scroll.hasHorizontalScroller = false
-        scroll.autohidesScrollers = true
         scroll.horizontalScrollElasticity = .none
         scroll.verticalScrollElasticity = .allowed
         scroll.automaticallyAdjustsContentInsets = false
