@@ -19,6 +19,19 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**New**
+- Task Manager: double-click a tab or subframe, or right-click it and choose Show Tab, to see
+  that tab in its window and space.
+
+**Fixes**
+- Swiping to a space (or switching to it any other way) no longer opens a tab by itself. The
+  space shows the tab you used last there if its page is still open, otherwise nothing until
+  you choose a tab.
+- The address bar shows a page's port, so `localhost:3000` no longer reads as `localhost`.
+
+**Changes**
+- The sidebar no longer shows a scroll bar. It still scrolls.
+
 **Security**
 - The engine has the fixes for two bugs Chrome rates Critical, CVE-2026-131060 (MP4 video
   files) and CVE-2026-131031 (graphics), and for sixteen it rates High: in video files
