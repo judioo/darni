@@ -1991,8 +1991,11 @@ final class ChromiumSelfTest {
         let menu = model.siteControlsMenu(for: engine, site: site)
         try check(menu.last == [.cookiesAndSiteData, .siteSettings], "⋯ menu \(menu)")
         let rows = model.siteControlSettingRows(for: engine, site: site)
-        try check(rows.last?.kind == .autoPictureInPicture
-                  && rows.dropLast().allSatisfy { $0.actions == [.openSiteSettings] }, "settings rows \(rows.map(\.title))")
+        // The content blocking row (an engine with ABI 1.66) has its own actions; the
+        // content blocking checks below test it.
+        let settingRows = rows.filter { $0.kind != .contentBlocking }
+        try check(settingRows.last?.kind == .autoPictureInPicture
+                  && settingRows.dropLast().allSatisfy { $0.actions == [.openSiteSettings] }, "settings rows \(rows.map(\.title))")
         let footer = model.siteControlsFooter(for: engine)
         try check(footer.action == .openSiteSettings, "footer \(footer)")
         log("PASS Site Control Center for \(site.host): panel zoom in and reset on tab A (zoom events); cookies and site data "
