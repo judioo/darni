@@ -92,7 +92,11 @@ final class MembershipCardStore {
 
 extension BrowserViewModel {
     /// The account's name: the active profile's, as Arc names its tab after the account.
-    var accountName: String { store.activeProfile.name }
+    /// The profile's name, also in a container's space: a container is part of its profile,
+    /// so Settings' first tab and the card name the profile, not the container.
+    var accountName: String {
+        store.profile(withID: store.owningProfileID(of: store.activeProfileID))?.name ?? store.activeProfile.name
+    }
 
     /// The name printed on the card.
     var membershipCardName: String {
@@ -116,7 +120,8 @@ extension BrowserViewModel {
     func changeAccountName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        _ = store.renameProfile(store.activeProfileID, to: trimmed)
+        // The profile the name belongs to, not a container's space's own record.
+        _ = store.renameProfile(store.owningProfileID(of: store.activeProfileID), to: trimmed)
         membershipCard.update { $0.name = trimmed }
     }
 

@@ -107,6 +107,20 @@ final class SettingsCardShellTests: XCTestCase {
         XCTAssertEqual(model.membershipCardName, "Ada")
     }
 
+    /// In a container's space, Settings and the card name the profile, and Change Name renames it,
+    /// not the container (owner, 2026-11-19: the first tab read the container's name).
+    func testAContainersSpaceNamesItsProfile() throws {
+        let model = makeModel()
+        let profile = model.store.activeProfile
+        let container = try XCTUnwrap(model.store.createContainer(forSpace: model.store.activeSpaceID))
+        XCTAssertEqual(model.store.activeProfileID, container.id, "the space now uses its container")
+        XCTAssertEqual(model.accountName, profile.name)
+        XCTAssertEqual(SettingsPane.account.title(accountName: model.accountName), profile.name)
+        model.changeAccountName("Ada")
+        XCTAssertEqual(model.store.profile(withID: profile.id)?.name, "Ada")
+        XCTAssertNotEqual(model.store.profile(withID: container.id)?.name, "Ada", "the container keeps its own name")
+    }
+
     func testRandomizeIsSaved() throws {
         let model = makeModel()
         let before = model.membershipCard.ensureLoaded()

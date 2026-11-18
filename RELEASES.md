@@ -20,6 +20,9 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **Fixes**
+- In a space with its own container, Settings' first tab and the membership card name your profile, not
+  the container; Change Name renames the profile; Settings › Profiles opens on the profile, where
+  ad and tracker blocking is set (a container follows its profile).
 - A page you cannot see gets no passkey request at all. A sign-in request from a background
   tab, a hidden or minimised window, a hidden Little ReArc window or a window that another
   app's window covers is now refused as it starts, before ReArc looks for a security key, a
