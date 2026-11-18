@@ -56,7 +56,7 @@ private let snapshotCallback: ReArcSnapshotCallback = { context, status, _, gene
 /// engine profile is open (named profiles open asynchronously); commands
 /// issued earlier wait for it.
 @Observable
-final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding, PageFullscreenControlling, LiveVideoProviding, MediaCaptureProviding {
+final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding, PageFullscreenControlling, LiveVideoProviding, MediaCaptureProviding, SiteAccessProviding {
     let profileContext: EngineProfileContext
     /// Only a Peek's changes, to `.tab`, when it is expanded (`retag(as:)`).
     @ObservationIgnored private(set) var role: EngineRole
@@ -151,6 +151,8 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
 
     /// Dialogs, file choosers, permission and password prompts and the page menu (ABI 1.18–1.22).
     @ObservationIgnored let pagePrompts = PagePromptCenter()
+    /// What the engine holds for this page's site (ABI 1.67); without the feature it reports nothing.
+    @ObservationIgnored private(set) lazy var siteAccess: SiteAccessModel = makeSiteAccessModel()
     /// A normal close (beforeunload) is in flight.
     @ObservationIgnored private(set) var pageCloseRequested = false
     /// The last committed main-frame URL (`currentURL` runs ahead while a navigation is pending).
@@ -340,6 +342,7 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
                 resumeCommitWaiters(throwing: nil)
                 applyPendingZoom()
                 pagePrompts.documentChanged()
+                siteAccess.documentChanged()
                 onNavigationCommit?(currentURL, pageTitle)
                 if runtime.capabilities.pageThemeColor {
                     documentCount += 1
@@ -379,6 +382,7 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
             // tab.closed is final: no later media event will report the session ended.
             if mediaState != .silent { mediaStateSubject.send(.silent) }
             if mediaCaptureSubject.value != .idle { mediaCaptureSubject.send(.idle) }
+            siteAccess.clear()
             if runtime.capabilities.pageThemeColor { colorTracker.reset() }
         }
     }
@@ -573,6 +577,8 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
     func handleMediaCapture(_ event: ChromiumMediaCaptureEvent) {
         guard event.tabID == tabID, event.state != mediaCapture else { return }
         mediaCaptureSubject.send(event.state)
+        // Camera, microphone and screen use change here, not on the site permission channel.
+        siteAccess.refresh()
     }
 
     /// `ReArcTabSetCaptureMuted`: asks the page to turn its camera or microphone

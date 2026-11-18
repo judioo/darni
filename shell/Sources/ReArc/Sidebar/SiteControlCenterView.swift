@@ -35,10 +35,21 @@ extension BrowserViewModel {
         siteControlCenterRequest += 1
     }
 
-    /// The panel's Settings rows: blocking (when the engine has it), answered permissions, then automatic PiP.
+    /// What the engine holds for the page's site, when it reports that (Chromium ABI 1.67).
+    func siteAccessModel(for engine: (any WebEngine)?) -> SiteAccessModel? {
+        guard let model = (engine as? SiteAccessProviding)?.siteAccess, model.isAvailable else { return nil }
+        return model
+    }
+
+    /// The panel's Settings rows: blocking (when the engine has it), the site's permissions
+    /// (the engine's own state where it reports it, else the answers recorded here), then automatic PiP.
     func siteControlSettingRows(for engine: any WebEngine, site: SiteControlCenter.Site, now: Date = Date()) -> [SiteControlCenter.SettingRow] {
-        SiteControlCenter.settingRows(
+        let access = siteAccessModel(for: engine)
+        return SiteControlCenter.settingRows(
             contentBlocking: contentBlockingRow(for: engine, site: site),
+            // An answer for another site (the page moved on, the next answer is on its way) is not shown.
+            siteAccess: access.map { $0.access.flatMap { $0.origin == site.origin ? $0 : nil } ?? SiteAccess(origin: site.origin) },
+            needsReload: access?.needsReload ?? false,
             permissions: sitePermissions.entries(origin: site.origin, scope: engine.pagePrompts.permissionScope),
             permissionsInEngine: sitePermissionsLiveInEngine,
             autoPiP: AutoPiPPolicy.effectiveHostPreference(host: Self.autoPiPHost(site), settings: store.autoPiPPolicy, now: now),
@@ -61,15 +72,22 @@ extension BrowserViewModel {
             case .allow: store.allowAutoPiP(forHost: host)
             case .block: store.setAutoPiPDisabled(forHost: host)
             case .snoozeOneHour: store.snoozeAutoPiP(forHost: host)
-            case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings: break
+            case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings,
+                 .removeDevice, .reloadPage: break
             }
         case .contentBlocking:
             switch action {
             case .turnOffBlockingForSite: setContentBlocking(false, forSiteOf: engine, site: site)
             case .turnOnBlockingForSite: setContentBlocking(true, forSiteOf: engine, site: site)
             case .openBlockingSettings: showSettings(.profiles)
-            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings: break
+            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .removeDevice, .reloadPage: break
             }
+        case .sitePermission, .siteDevice:
+            // The engine's own state: it checks that the page is still on the site the row was shown for.
+            if action == .openSiteSettings { return openSiteSettings(origin: site.origin) }
+            siteAccessModel(for: engine)?.perform(action, on: row)
+        case .reloadToApply:
+            if action == .reloadPage { engine.reload(ignoringCache: false) }
         case .permission(let key):
             let scope = engine.pagePrompts.permissionScope
             let type = PermissionType(key)
@@ -81,7 +99,7 @@ extension BrowserViewModel {
                 sitePermissions.reset(origin: site.origin, scope: scope, type: type)
             case .openSiteSettings:
                 openSiteSettings(origin: site.origin)
-            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings:
+            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .removeDevice, .reloadPage:
                 break
             }
         }
@@ -198,11 +216,13 @@ struct SiteControlCenterView: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(model.siteControlSettingRows(for: engine, site: site)) { row in
                 SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark) { action in
-                    if action == .openSiteSettings || action == .openBlockingSettings { dismiss() }
+                    if action == .openSiteSettings || action == .openBlockingSettings || action == .reloadPage { dismiss() }
                     model.performSiteSetting(action, on: row, engine: engine, site: site)
                 }
             }
         }
+        // The engine's state is asked for when the panel opens, so it shows what holds now.
+        .task { model.siteAccessModel(for: engine)?.refresh() }
     }
 
     private func manageExtensions() {
@@ -554,7 +574,7 @@ enum SiteControlsPreview {
 
 /// A Settings row: Arc's round taupe icon, the title and the site's state.
 /// One action is the click; more open a menu under the row.
-private struct SiteControlsSettingRowView: View {
+struct SiteControlsSettingRowView: View {
     let row: SiteControlCenter.SettingRow
     let isDark: Bool
     let perform: (SiteControlCenter.SettingAction) -> Void

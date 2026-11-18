@@ -1,0 +1,491 @@
+import Foundation
+
+/// One step of a passkey or security key request, as the engine reports it
+/// (Chromium ABI 1.68 `webauthn_prompts`, C-ABI.md "WebAuthn steps"). The
+/// engine runs the request; the shell shows each step in its own sheet and
+/// sends the person's answer back. The QR text and a PIN are secrets: they
+/// are shown and sent, never logged or stored.
+public struct PasskeyStep: Equatable, Sendable {
+    public enum PinMode: Equatable, Sendable {
+        /// The key's PIN.
+        case enter
+        /// A new PIN for a key that has none.
+        case setUp
+        /// The key demands a new PIN.
+        case change
+    }
+
+    public enum Failure: String, Equatable, Sendable {
+        case noTransports = "error_no_transports"
+        case noPasskeys = "error_no_passkeys"
+        case notRecognized = "error_not_recognized"
+        case timeout = "error_timeout"
+        case keyNotRegistered = "error_key_not_registered"
+        case keyAlreadyRegistered = "error_key_already_registered"
+        case missingCapability = "error_missing_capability"
+        case storageFull = "error_storage_full"
+        case pinSoftBlock = "error_pin_soft_block"
+        case pinHardBlock = "error_pin_hard_block"
+        case keyRemoved = "error_key_removed"
+    }
+
+    public enum Kind: Equatable, Sendable {
+        case choose, confirm, securityKey, qr
+        case phoneConnecting, phoneConnected, phoneError
+        case bluetoothOff, bluetoothDenied
+        case privateNotice
+        case pin(PinMode)
+        case touchAgain, fingerprintEnroll, verifyAgain
+        case account, createThisMac
+        /// macOS shows its own prompt (Touch ID); the shell shows nothing.
+        case system
+        case hidden
+        case failure(Failure)
+        /// A step this shell has no sheet for (Google Password Manager, a later engine's).
+        case unsupported
+
+        init(name: String) {
+            switch name {
+            case "choose": self = .choose
+            case "confirm": self = .confirm
+            case "security_key": self = .securityKey
+            case "qr": self = .qr
+            case "phone_connecting": self = .phoneConnecting
+            case "phone_connected": self = .phoneConnected
+            case "phone_error": self = .phoneError
+            case "bluetooth_off": self = .bluetoothOff
+            case "bluetooth_denied": self = .bluetoothDenied
+            case "private_notice": self = .privateNotice
+            case "pin": self = .pin(.enter)
+            case "pin_setup": self = .pin(.setUp)
+            case "pin_change": self = .pin(.change)
+            case "touch_again": self = .touchAgain
+            case "fingerprint_enroll": self = .fingerprintEnroll
+            case "verify_again": self = .verifyAgain
+            case "account": self = .account
+            case "create_this_mac": self = .createThisMac
+            case "system": self = .system
+            case "hidden": self = .hidden
+            default: self = Failure(rawValue: name).map(Kind.failure) ?? .unsupported
+            }
+        }
+    }
+
+    /// One way to sign in on the "choose" and "confirm" steps.
+    public struct Mechanism: Equatable, Identifiable, Sendable {
+        public var index: Int
+        /// "passkey", "phone", "security_key", "this_mac", "icloud_keychain", "password", "google", "other".
+        public var kind: String
+        /// The engine's own strings; a passkey's name is its account.
+        public var name: String
+        public var detail: String
+        /// Where a passkey is kept: "this_mac", "icloud_keychain", "phone", "security_key", "google", "other".
+        public var source: String
+        public var id: Int { index }
+
+        public init(index: Int, kind: String, name: String = "", detail: String = "", source: String = "") {
+            self.index = index
+            self.kind = kind
+            self.name = name
+            self.detail = detail
+            self.source = source
+        }
+
+        public var title: String {
+            switch kind {
+            case "passkey", "password": return name.isEmpty ? "Passkey" : name
+            case "phone": return "Phone or Tablet"
+            case "security_key": return "USB Security Key"
+            case "this_mac": return "This Mac"
+            case "icloud_keychain": return "iCloud Keychain"
+            case "google": return "Google Password Manager"
+            default: return name.isEmpty ? "Another Way" : name
+            }
+        }
+
+        public var subtitle: String {
+            switch kind {
+            case "passkey": return PasskeyStep.sourceLabel(source)
+            case "password": return "Saved password"
+            case "phone": return "Scan a QR code with its camera"
+            case "security_key": return "Insert it and touch it"
+            case "this_mac": return "Touch ID or your Mac password"
+            default: return detail
+            }
+        }
+
+        public var symbol: String {
+            switch kind {
+            case "passkey": return "person.badge.key.fill"
+            case "password": return "key.fill"
+            case "phone": return "qrcode"
+            case "security_key": return "cable.connector"
+            case "this_mac": return "touchid"
+            case "icloud_keychain": return "key.icloud.fill"
+            default: return "ellipsis.circle"
+            }
+        }
+    }
+
+    public struct Account: Equatable, Identifiable, Sendable {
+        public var index: Int
+        public var name: String
+        public var displayName: String
+        public var source: String
+        public var id: Int { index }
+
+        public init(index: Int, name: String, displayName: String = "", source: String = "") {
+            self.index = index
+            self.name = name
+            self.displayName = displayName
+            self.source = source
+        }
+
+        public var title: String { name.isEmpty ? (displayName.isEmpty ? "Unnamed account" : displayName) : name }
+        public var subtitle: String { displayName == title ? "" : displayName }
+    }
+
+    public var kind: Kind
+    /// A new passkey is being made (false: signing in with one).
+    public var isCreate: Bool
+    public var relyingParty: String
+    public var origin: String
+    public var isPrivate: Bool
+    /// The engine works: only Cancel answers.
+    public var isBusy: Bool
+    public var canChooseAnother: Bool
+    public var canTryAgain: Bool
+    public var mechanisms: [Mechanism]
+    /// The way offered first on "confirm".
+    public var priority: Int?
+    public var accounts: [Account]
+    /// The text of the QR code a phone's camera reads. A secret of this one request.
+    public var qr: String?
+    public var securityKeyToo: Bool
+    public var bluetoothOn: Bool
+    public var canPowerOnBluetooth: Bool
+    public var pinMinLength: Int
+    public var pinAttempts: Int?
+    /// "none", "wrong", "too_short", "invalid_characters", "same_as_current", "fingerprint_locked".
+    public var pinError: String
+    public var attempts: Int?
+    public var samples: Int?
+    public var samplesRemaining: Int?
+    public var userName: String
+
+    public init(kind: Kind, isCreate: Bool = false, relyingParty: String = "", origin: String = "", isPrivate: Bool = false,
+                isBusy: Bool = false, canChooseAnother: Bool = false, canTryAgain: Bool = true,
+                mechanisms: [Mechanism] = [], priority: Int? = nil, accounts: [Account] = [], qr: String? = nil,
+                securityKeyToo: Bool = false, bluetoothOn: Bool = false, canPowerOnBluetooth: Bool = false,
+                pinMinLength: Int = 4, pinAttempts: Int? = nil, pinError: String = "none", attempts: Int? = nil,
+                samples: Int? = nil, samplesRemaining: Int? = nil, userName: String = "") {
+        self.kind = kind
+        self.isCreate = isCreate
+        self.relyingParty = relyingParty
+        self.origin = origin
+        self.isPrivate = isPrivate
+        self.isBusy = isBusy
+        self.canChooseAnother = canChooseAnother
+        self.canTryAgain = canTryAgain
+        self.mechanisms = mechanisms
+        self.priority = priority
+        self.accounts = accounts
+        self.qr = qr
+        self.securityKeyToo = securityKeyToo
+        self.bluetoothOn = bluetoothOn
+        self.canPowerOnBluetooth = canPowerOnBluetooth
+        self.pinMinLength = pinMinLength
+        self.pinAttempts = pinAttempts
+        self.pinError = pinError
+        self.attempts = attempts
+        self.samples = samples
+        self.samplesRemaining = samplesRemaining
+        self.userName = userName
+    }
+
+    /// The engine's JSON for a step. Nil when it is not the object the ABI describes.
+    public init?(json: String) {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let step = object["step"] as? String else { return nil }
+        let pin = object["pin"] as? [String: Any] ?? [:]
+        let user = object["user"] as? [String: Any] ?? [:]
+        self.init(
+            kind: Kind(name: step),
+            isCreate: object["request"] as? String == "create",
+            relyingParty: object["rp_id"] as? String ?? "",
+            origin: object["origin"] as? String ?? "",
+            isPrivate: object["private"] as? Bool ?? false,
+            isBusy: object["busy"] as? Bool ?? false,
+            canChooseAnother: object["can_choose_another"] as? Bool ?? false,
+            canTryAgain: object["can_try_again"] as? Bool ?? false,
+            mechanisms: (object["mechanisms"] as? [[String: Any]] ?? []).compactMap { row in
+                guard let index = row["index"] as? Int, index >= 0 else { return nil }
+                return Mechanism(index: index, kind: row["kind"] as? String ?? "other", name: row["name"] as? String ?? "",
+                                 detail: row["description"] as? String ?? "", source: row["source"] as? String ?? "")
+            },
+            priority: object["priority"] as? Int,
+            accounts: (object["accounts"] as? [[String: Any]] ?? []).compactMap { row in
+                guard let index = row["index"] as? Int, index >= 0 else { return nil }
+                return Account(index: index, name: row["name"] as? String ?? "", displayName: row["display_name"] as? String ?? "",
+                               source: row["source"] as? String ?? "")
+            },
+            qr: (object["qr"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            securityKeyToo: object["security_key_too"] as? Bool ?? false,
+            bluetoothOn: object["bluetooth_on"] as? Bool ?? false,
+            canPowerOnBluetooth: object["can_power_on"] as? Bool ?? false,
+            pinMinLength: pin["min_length"] as? Int ?? 4,
+            pinAttempts: pin["attempts"] as? Int,
+            pinError: pin["error"] as? String ?? "none",
+            attempts: object["attempts"] as? Int,
+            samples: object["samples"] as? Int,
+            samplesRemaining: object["samples_remaining"] as? Int,
+            userName: (user["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? user["display_name"] as? String ?? ""
+        )
+    }
+
+    public static func sourceLabel(_ source: String) -> String {
+        switch source {
+        case "this_mac": return "Passkey on this Mac"
+        case "icloud_keychain": return "Passkey in iCloud Keychain"
+        case "phone": return "Passkey on your phone or tablet"
+        case "security_key": return "Passkey on a security key"
+        case "google": return "Passkey in Google Password Manager"
+        default: return "Passkey"
+        }
+    }
+
+    // MARK: What the sheet shows
+
+    /// The shell shows a sheet for this step. Not for the system's own
+    /// prompt, nor while the engine has nothing to show.
+    public var showsSheet: Bool { kind != .system && kind != .hidden }
+
+    /// The site as the sheet names it: the relying party, else the asking page's host.
+    public var site: String {
+        if !relyingParty.isEmpty { return relyingParty }
+        return PageOrigin.promptHost(origin) ?? "this site"
+    }
+
+    public var title: String {
+        switch kind {
+        case .choose, .confirm: return isCreate ? "Create a passkey for \(site)" : "Sign in to \(site)"
+        case .securityKey: return "Insert your security key and touch it"
+        case .qr: return isCreate ? "Save a passkey on a phone or tablet" : "Use a passkey on a phone or tablet"
+        case .phoneConnecting: return "Connecting to your device…"
+        case .phoneConnected: return "Continue on your device"
+        case .phoneError: return "Could not connect to your device"
+        case .bluetoothOff: return "Turn on Bluetooth"
+        case .bluetoothDenied: return "ReArc needs Bluetooth access"
+        case .privateNotice: return "This passkey stays after you close the private window"
+        case .pin(.enter): return "Enter the PIN of your security key"
+        case .pin(.setUp): return "Create a PIN for your security key"
+        case .pin(.change): return "Choose a new PIN for your security key"
+        case .touchAgain: return "Touch your security key again"
+        case .fingerprintEnroll: return "Add your fingerprint to the security key"
+        case .verifyAgain: return "Try your fingerprint again"
+        case .account: return "Choose an account for \(site)"
+        case .createThisMac: return "Save a passkey on this Mac?"
+        case .system, .hidden: return ""
+        case .unsupported: return "This way to sign in is not available in ReArc"
+        case .failure(let failure):
+            switch failure {
+            case .noTransports: return "No way to use a passkey here"
+            case .noPasskeys: return "No passkeys for \(site)"
+            case .notRecognized: return isCreate ? "The passkey was not saved" : "This Mac has no passkey for \(site)"
+            case .timeout: return "The request timed out"
+            case .keyNotRegistered: return "This security key is not registered with \(site)"
+            case .keyAlreadyRegistered: return "This security key is already registered with \(site)"
+            case .missingCapability: return "This security key cannot be used with \(site)"
+            case .storageFull: return "This security key is full"
+            case .pinSoftBlock: return "Too many wrong PINs"
+            case .pinHardBlock: return "Your security key is locked"
+            case .keyRemoved: return "The security key was removed"
+            }
+        }
+    }
+
+    public var message: String {
+        switch kind {
+        case .choose: return isCreate ? "Choose where to save your passkey." : "Choose how to sign in."
+        case .confirm, .account, .system, .hidden, .touchAgain: return ""
+        case .securityKey: return "Plug it into this Mac if it is not already, then touch its button or sensor."
+        case .qr:
+            let scan = "Scan this code with the camera of the device. Keep the device near this Mac with Bluetooth on."
+            return securityKeyToo ? scan + " A USB security key works too: insert it and touch it." : scan
+        case .phoneConnecting: return "Keep your device near this Mac."
+        case .phoneConnected: return "Follow the steps on your phone or tablet."
+        case .phoneError: return "Check that Bluetooth is on on both devices and that the device is online."
+        case .bluetoothOff:
+            return "A phone or tablet proves it is near this Mac over Bluetooth. Nothing is paired and no data is sent over it."
+        case .bluetoothDenied:
+            return "Allow ReArc under System Settings › Privacy & Security › Bluetooth, then try again. macOS may ask you to reopen ReArc."
+        case .privateNotice:
+            return "A passkey you create in a private window is kept on the device you choose and can sign you in later."
+        case .pin(let mode):
+            if let problem = pinProblem { return problem }
+            switch mode {
+            case .enter: return "The PIN belongs to the key, not to \(site)."
+            case .setUp, .change: return "At least \(pinMinLength) characters. You will need it each time you use the key."
+            }
+        case .fingerprintEnroll:
+            guard let samples, let samplesRemaining else { return "Touch the key's sensor several times." }
+            return samplesRemaining <= 0 ? "Your fingerprint was added." : "Touch the sensor again (\(samples - samplesRemaining) of \(samples))."
+        case .verifyAgain:
+            return attempts.map { "\($0) attempt\($0 == 1 ? "" : "s") left." } ?? ""
+        case .createThisMac:
+            let who = userName.isEmpty ? "" : " for \(userName)"
+            let kept = "A passkey\(who) at \(site) will be kept by ReArc on this Mac, protected by Touch ID or your Mac password. "
+                + "It does not sync to your other devices."
+            return isPrivate ? kept + " It stays after you close this private window." : kept
+        case .unsupported: return canChooseAnother ? "Choose another way to sign in." : ""
+        case .failure(let failure):
+            switch failure {
+            case .noTransports: return "This Mac has no Bluetooth, USB key or passkey storage that \(site) accepts."
+            case .noPasskeys: return "None of your devices offered a passkey for this site."
+            case .notRecognized: return isCreate ? "The request was cancelled or did not finish." : "Try a phone, tablet or security key that has one."
+            case .timeout: return "\(site) stopped waiting. Reload the page to try again."
+            case .keyNotRegistered: return "Try another key, or another way to sign in."
+            case .keyAlreadyRegistered: return "You do not need to register it again."
+            case .missingCapability: return "The site asks for something this key does not support."
+            case .storageFull: return "Delete a passkey from the key to make room."
+            case .pinSoftBlock: return "Remove the key, insert it again and try once more."
+            case .pinHardBlock: return "It was locked after too many wrong PINs and must be reset before it can be used."
+            case .keyRemoved: return "Insert it again and try once more."
+            }
+        }
+    }
+
+    /// The engine's complaint about the last PIN, if any.
+    public var pinProblem: String? {
+        switch pinError {
+        case "wrong":
+            guard let pinAttempts else { return "That PIN is wrong." }
+            return "That PIN is wrong. \(pinAttempts) attempt\(pinAttempts == 1 ? "" : "s") left."
+        case "too_short": return "That PIN is too short. Use at least \(pinMinLength) characters."
+        case "invalid_characters": return "That PIN has characters the key does not accept."
+        case "same_as_current": return "The new PIN must differ from the current one."
+        case "fingerprint_locked": return "The fingerprint reader is locked. Enter the key's PIN."
+        default: return nil
+        }
+    }
+
+    public var symbol: String {
+        switch kind {
+        case .choose, .confirm, .account: return "person.badge.key.fill"
+        case .securityKey, .touchAgain: return "cable.connector"
+        case .qr: return "qrcode"
+        case .phoneConnecting, .phoneConnected: return "iphone.gen3.radiowaves.left.and.right"
+        case .bluetoothOff, .bluetoothDenied: return SiteAccessType.bluetoothSymbol
+        case .privateNotice: return "eyeglasses"
+        case .pin: return "lock.fill"
+        case .fingerprintEnroll, .verifyAgain, .createThisMac: return "touchid"
+        case .system, .hidden: return "person.badge.key.fill"
+        case .phoneError, .failure, .unsupported: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    /// The sheet's main button, when the step has one.
+    public var primary: (title: String, action: PasskeyAction)? {
+        guard !isBusy else { return nil }
+        switch kind {
+        case .confirm: return ("Continue", .proceed)
+        case .privateNotice, .createThisMac: return ("Continue", .proceed)
+        case .bluetoothOff:
+            if canPowerOnBluetooth { return ("Turn On Bluetooth", .proceed) }
+            return bluetoothOn ? ("Continue", .proceed) : nil
+        case .bluetoothDenied: return ("Open System Settings", .proceed)
+        case .fingerprintEnroll: return ((samplesRemaining ?? 1) <= 0 ? "Done" : "Skip", .proceed)
+        case .phoneError: return ("Try Again", .startOver)
+        case .failure(let failure):
+            // The request is over after a timeout: only Close.
+            return failure != .timeout && canTryAgain ? ("Try Again", .startOver) : nil
+        case .choose, .securityKey, .qr, .phoneConnecting, .phoneConnected, .pin, .touchAgain, .verifyAgain, .account,
+             .system, .hidden, .unsupported:
+            return nil
+        }
+    }
+
+    /// "Another way": back to the list of ways to sign in.
+    public var offersAnotherWay: Bool {
+        guard canChooseAnother, !isBusy else { return false }
+        switch kind {
+        case .confirm, .securityKey, .qr, .bluetoothOff, .bluetoothDenied, .pin, .verifyAgain, .account, .createThisMac, .unsupported:
+            return true
+        case .choose, .phoneConnecting, .phoneConnected, .phoneError, .privateNotice, .touchAgain, .fingerprintEnroll,
+             .system, .hidden, .failure:
+            return false
+        }
+    }
+
+    /// Cancel for a request in flight, Close once it has failed for good.
+    public var dismissTitle: String {
+        if case .failure = kind { return "Close" }
+        return "Cancel"
+    }
+
+    /// The ways to sign in the list shows: on "confirm" only the one offered first.
+    public var listedMechanisms: [Mechanism] {
+        switch kind {
+        case .choose: return mechanisms
+        case .confirm: return mechanisms.filter { $0.index == priority }
+        default: return []
+        }
+    }
+
+    /// A step that waits for the person at a device, with a spinner.
+    public var showsProgress: Bool {
+        isBusy || kind == .phoneConnecting || kind == .securityKey || kind == .touchAgain
+    }
+}
+
+/// The person's answer to a step (`ReArcWebAuthnRespond`).
+public enum PasskeyAction: Equatable, Sendable {
+    case cancel
+    case chooseMechanism(Int)
+    /// The step's own "continue".
+    case proceed
+    case pin(String)
+    case chooseAccount(Int)
+    /// Another way, or try again.
+    case startOver
+
+    /// action, index and text of the ABI call.
+    public var engineValues: (action: UInt32, index: UInt32, text: String?) {
+        switch self {
+        case .cancel: return (0, 0, nil)
+        case .chooseMechanism(let index): return (1, UInt32(max(0, index)), nil)
+        case .proceed: return (2, 0, nil)
+        case .pin(let pin): return (3, 0, pin)
+        case .chooseAccount(let index): return (4, UInt32(max(0, index)), nil)
+        case .startOver: return (5, 0, nil)
+        }
+    }
+
+    /// For logs: what was answered, never the PIN.
+    public var logName: String {
+        switch self {
+        case .cancel: return "cancel"
+        case .chooseMechanism(let index): return "mechanism \(index)"
+        case .proceed: return "continue"
+        case .pin: return "pin"
+        case .chooseAccount(let index): return "account \(index)"
+        case .startOver: return "start over"
+        }
+    }
+}
+
+/// What the sheet checks before a PIN goes to the engine. The key checks the
+/// rest (CTAP: 4 to 63 bytes of UTF-8, the key's own minimum).
+public enum PasskeyPin {
+    public static let maxBytes = 63
+
+    /// Nil when the PIN may be sent; else what to tell the person.
+    public static func problem(pin: String, confirmation: String, mode: PasskeyStep.PinMode, minLength: Int) -> String? {
+        if pin.isEmpty { return "Enter a PIN." }
+        if pin.utf8.count > maxBytes { return "That PIN is too long." }
+        guard mode != .enter else { return nil }
+        if pin.count < minLength { return "Use at least \(minLength) characters." }
+        if pin != confirmation { return "The two PINs do not match." }
+        return nil
+    }
+}

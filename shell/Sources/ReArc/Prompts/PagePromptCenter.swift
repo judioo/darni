@@ -69,6 +69,13 @@ final class PagePromptCenter {
         var id: UInt64 { request.id }
     }
 
+    /// A passkey or security key request (Chromium ABI 1.68): the step it is at.
+    struct Passkey: Identifiable {
+        let id: UInt64
+        var step: PasskeyStep
+        fileprivate let reply: (PasskeyAction) -> Void
+    }
+
     /// What the suggestion list does with the engine (Chromium ABI 1.34).
     struct AutofillActions {
         enum AcceptOutcome { case accepted, busy, gone }
@@ -123,6 +130,13 @@ final class PagePromptCenter {
     private(set) var clientCertificate: ClientCertificate? { didSet { if oldValue != nil, clientCertificate == nil { permissionUncovered() } } }
     /// The identity selected in the certificate sheet.
     var selectedCertificate: String?
+    /// The passkey request this page is in, at its current step.
+    private(set) var passkey: Passkey? { didSet { if oldValue != nil, passkey == nil { permissionUncovered() } } }
+    /// The security key PIN being typed. Cleared when it is sent and with every new step; never logged.
+    var passkeyPin = ""
+    var passkeyPinConfirmation = ""
+    /// What the sheet found wrong with the PIN before sending it.
+    private(set) var passkeyPinProblem: String?
     @ObservationIgnored private var certificateQueue: [ClientCertificate] = []
 
     @ObservationIgnored private var dialogQueue: [Dialog] = []
@@ -157,7 +171,10 @@ final class PagePromptCenter {
 
     /// A JavaScript dialog, sign-in or certificate sheet is drawn over the permission card.
     /// The card takes no input then, and its delay restarts once it is uncovered (F-04).
-    var permissionCovered: Bool { dialog != nil || httpAuth != nil || clientCertificate != nil }
+    var permissionCovered: Bool { dialog != nil || httpAuth != nil || clientCertificate != nil || passkeySheetShown }
+
+    /// The passkey sheet is drawn (not while macOS shows its own prompt for the request).
+    var passkeySheetShown: Bool { passkey?.step.showsSheet == true }
 
     /// The page is asking the user something (a permission, automatic downloads included, a
     /// sign-in, a certificate or a dialog); an auto-hiding address bar stays shown meanwhile.
@@ -391,6 +408,66 @@ final class PagePromptCenter {
         authUsername = ""
         authPassword = ""
         if !authQueue.isEmpty { showHTTPAuth(authQueue.removeFirst()) }
+    }
+
+    // MARK: Passkeys and security keys (Chromium ABI 1.68)
+
+    /// A step of request `id`: the first one opens the sheet, later ones
+    /// replace what it shows. A second request on the same page takes the
+    /// sheet over, and the first is cancelled (one sheet, one answer).
+    func presentPasskey(id: UInt64, step: PasskeyStep, reply: @escaping (PasskeyAction) -> Void) {
+        if let current = passkey, current.id != id {
+            count(&cancelled, "passkey")
+            passkey = nil
+            current.reply(.cancel)
+        }
+        let previous = passkey?.step
+        // A typed PIN survives a redraw of the same step, and nothing else.
+        if previous?.kind != step.kind || previous?.pinError != step.pinError || previous?.isBusy != step.isBusy {
+            clearPasskeyPin()
+        }
+        passkey = Passkey(id: id, step: step, reply: reply)
+    }
+
+    /// The request is over (done, cancelled, failed, or its page gone): no reply.
+    func endPasskey(id: UInt64) {
+        guard passkey?.id == id else { return }
+        count(&cancelled, "passkey")
+        clearPasskeyPin()
+        passkey = nil
+    }
+
+    /// The sheet's buttons. The sheet stays until the engine sends the next
+    /// step or the end, so a refused answer leaves it as it was.
+    func answerPasskey(_ action: PasskeyAction) {
+        guard let current = passkey else { return }
+        count(&answered, "passkey")
+        if action == .cancel {
+            // Cancel always ends the request; the sheet goes at once.
+            clearPasskeyPin()
+            passkey = nil
+        }
+        current.reply(action)
+    }
+
+    /// Sends the typed PIN when it may be sent; else says why not.
+    func submitPasskeyPin() {
+        guard let current = passkey, case .pin(let mode) = current.step.kind, !current.step.isBusy else { return }
+        if let problem = PasskeyPin.problem(pin: passkeyPin, confirmation: passkeyPinConfirmation, mode: mode,
+                                            minLength: current.step.pinMinLength) {
+            passkeyPinProblem = problem
+            return
+        }
+        let pin = passkeyPin
+        clearPasskeyPin()
+        count(&answered, "passkey")
+        current.reply(.pin(pin))
+    }
+
+    private func clearPasskeyPin() {
+        passkeyPin = ""
+        passkeyPinConfirmation = ""
+        passkeyPinProblem = nil
     }
 
     // MARK: Client certificates (Chromium ABI 1.41)
@@ -646,6 +723,11 @@ final class PagePromptCenter {
         certificateQueue = []
         selectedCertificate = nil
         certificates.forEach { $0.reply(nil) }
+        if let request = passkey {
+            passkey = nil
+            clearPasskeyPin()
+            request.reply(.cancel)
+        }
         hideAutofill()
         if let chooser = fileChooser {
             fileChooser = nil
@@ -661,7 +743,8 @@ final class PagePromptCenter {
                                    ("password", password == nil ? 0 : 1),
                                    ("autofill_save", autofillSave == nil ? 0 : 1),
                                    ("http_auth", (httpAuth == nil ? 0 : 1) + authQueue.count),
-                                   ("client_certificate", (clientCertificate == nil ? 0 : 1) + certificateQueue.count)] where pending > 0 {
+                                   ("client_certificate", (clientCertificate == nil ? 0 : 1) + certificateQueue.count),
+                                   ("passkey", passkey == nil ? 0 : 1)] where pending > 0 {
             cancelled[channel, default: 0] += pending
         }
         dialog = nil
@@ -677,6 +760,8 @@ final class PagePromptCenter {
         clientCertificate = nil
         certificateQueue = []
         selectedCertificate = nil
+        passkey = nil
+        clearPasskeyPin()
         hideAutofill()
         if let chooser = fileChooser {
             fileChooser = nil
@@ -687,7 +772,7 @@ final class PagePromptCenter {
 
     var hasPendingPrompt: Bool {
         dialog != nil || permission != nil || password != nil || fileChooser != nil || autofillSave != nil || httpAuth != nil
-            || clientCertificate != nil
+            || clientCertificate != nil || passkey != nil
     }
 
     private func count(_ counter: inout [String: Int], _ channel: String) {

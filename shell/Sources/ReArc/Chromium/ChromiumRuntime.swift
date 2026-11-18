@@ -866,6 +866,9 @@ final class ChromiumRuntime {
         registerMediaCaptureChannel(context: context)
         // ABI 1.47: extension side panel requests, before any tab.
         registerSidePanelChannel(context: context)
+        // ABI 1.67 and 1.68: what a site holds, and the steps of a passkey request, before any tab.
+        registerSiteAccessChannel(context: context)
+        registerPasskeyChannel(context: context)
         if capabilities.htmlFullscreen {
             typealias SetFullscreen2 = @convention(c) (ReArcFullscreenCallback2?, UnsafeMutableRawPointer?) -> Void
             if ReArcEngineHasFeature("fullscreen_origin"),
