@@ -38,12 +38,13 @@ lines and this section starts empty again.
   profile. What was blocked is counted on your Mac only.
 - Your blocking settings sync with the profile when sync is on.
 - Sign in with a passkey or a security key. When a site asks for "Face, fingerprint, PIN or
-  security key", ReArc shows its own sheet, which names the site on every step: save or use a
-  passkey on this Mac, use a phone or tablet (scan the QR code with it; ReArc reaches it over
-  Bluetooth, which macOS asks you to allow the first time), or use a USB security key with its
-  PIN and touch. Before this, such sign-ins waited and failed. Only the tab you are looking at
-  can ask: a request from a tab in the background is refused. Passkeys kept in iCloud Keychain
-  are not available yet.
+  security key", ReArc shows its own sheet, which names the site on every step: use a phone or
+  tablet, or a USB security key with its PIN and touch. For a phone or tablet, scan the QR code
+  with it. Bluetooth (which macOS asks you to allow the first time) only checks that the phone is
+  near; the Mac and the phone then talk through a relay on the internet run by Google or Apple,
+  encrypted between the two devices. Before this, such sign-ins waited and failed. A request from
+  a background tab in a browser window is refused. Passkeys saved on this Mac or kept in iCloud
+  Keychain are not available yet.
 - The address bar has a site information button. It lists what the site may use (notifications,
   clipboard, camera, location and the rest, and devices it was given) with Allow, Block and
   Reset, and shows what it is using now. The site controls list the same, and a private window
