@@ -153,6 +153,9 @@ final class PeekShellTests: XCTestCase {
         XCTAssertEqual(PeekAddress.parts(of: URL(string: "https://www.example.com/")!).host, "www.example.com", "nothing trimmed")
         let long = URL(string: "https://login.accounts.example.com.\(String(repeating: "a", count: 80)).evil.test/x")!
         XCTAssertTrue(PeekAddress.parts(of: long).host.hasSuffix("evil.test"), "a long host keeps its registrable end")
+        // A right-to-left override or a run of spaces in the path cannot reorder or push away what follows.
+        let override = URL(string: "https://peek.test/a%E2%80%AEgpj.exe?q=%20%20x")!
+        XCTAssertEqual(PeekAddress.parts(of: override).rest, "/a%E2%80%AEgpj.exe?q=%20%20x")
     }
 
     // MARK: The outside click, from the mouse-down

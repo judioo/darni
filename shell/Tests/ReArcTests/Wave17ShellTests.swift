@@ -114,6 +114,9 @@ final class Wave17ShellTests: XCTestCase {
         XCTAssertEqual(SidebarURLField.displayHost(URL(string: "https://www.example.com/a")!), "example.com")
         XCTAssertNil(SidebarURLField.displayHost(URL(string: "about:blank")!))
         XCTAssertEqual(SidebarURLField.displayHost(URL(string: "data:text/html,x")!), "data:text/html,x")
+        let long = URL(string: "https://login.accounts.example.com.\(String(repeating: "a", count: 80)).evil.test/x")!
+        let shown = SidebarURLField.displayHost(long) ?? ""
+        XCTAssertTrue(shown.hasSuffix("evil.test") && !shown.contains("accounts.example.com"), "a long host keeps its registrable end: \(shown)")
     }
 
     func testCmdWOnFavoriteUnloadsInsteadOfDeleting() throws {

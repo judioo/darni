@@ -102,8 +102,9 @@ public struct SplitPaneToolbarLayout: Equatable {
     static let hostLimit = 40
 
     /// `text` with control, format (bidirectional, zero-width), separator and other
-    /// whitespace characters percent-encoded as UTF-8.
-    static func readable(_ text: String) -> String {
+    /// whitespace characters percent-encoded as UTF-8. Every address line that shows a
+    /// decoded path or query uses it (here, and the Peek's `PeekAddress`).
+    public static func readable(_ text: String) -> String {
         var out = ""
         for scalar in text.unicodeScalars {
             switch scalar.properties.generalCategory {
