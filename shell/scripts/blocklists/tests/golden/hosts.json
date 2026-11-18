@@ -1,0 +1,3 @@
+[
+{"id":1,"priority":1,"action":{"type":"block"},"condition":{"requestDomains":["ads.hosts.example","plain.hosts.example","tracker.hosts.example","xn--bcher-kva.example"]}}
+]

@@ -1,0 +1,288 @@
+{
+ "format": 1,
+ "version": "202611180857",
+ "created": "2026-11-18T08:57:00Z",
+ "min_engine": 156,
+ "priorities": {
+  "block": 1,
+  "allow": 2,
+  "important": 3,
+  "important_allow": 4,
+  "site_exception": 1000000
+ },
+ "lists": [
+  {
+   "id": "easyprivacy",
+   "title": "EasyPrivacy",
+   "homepage": "https://easylist.to/",
+   "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+   "license_url": "https://easylist.to/pages/licence.html",
+   "level": 1,
+   "source": {
+    "url": "https://easylist.to/easylist/easyprivacy.txt",
+    "sha256": "4b780a1334c72d0e081b4c6f672208b47687e8d7f2889901d930cccbedc06e4b",
+    "bytes": 1518731,
+    "version": "202611180853",
+    "last_modified": "18 Nov 2026 08:53 UTC",
+    "fetched": "2026-11-18T08:57:00Z"
+   },
+   "rules": {
+    "path": "rules/easyprivacy.json",
+    "sha256": "4d936d1da99bb99ce02b07ad9f3711682f523db07f0144e1bd4a28f202c62f61",
+    "bytes": 2166947,
+    "count": 9240,
+    "regex": 7,
+    "block": 8398,
+    "allow": 842,
+    "allow_all_requests": 0,
+    "request_domains": 47580
+   },
+   "filters": {
+    "lines": 57487,
+    "comments": 774,
+    "network": 56673,
+    "converted": 56633,
+    "duplicate": 4,
+    "dropped": {
+     "csp": 2,
+     "domain-pattern": 2,
+     "redirect": 31,
+     "too-broad": 1
+    },
+    "cosmetic": {
+     "hide": 2,
+     "exception": 0,
+     "procedural": 4,
+     "scriptlet": 34
+    }
+   }
+  },
+  {
+   "id": "peter-lowe",
+   "title": "Peter Lowe's Ad and tracking server list",
+   "homepage": "https://pgl.yoyo.org/adservers/",
+   "license": "McRae General Public License (version 4.r53)",
+   "license_url": "https://pgl.yoyo.org/license/",
+   "level": 1,
+   "source": {
+    "url": "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
+    "sha256": "01bd27b0137975aafef17a0302f07db79214f8bc255a78c8337ee641d3c3697f",
+    "bytes": 70526,
+    "version": "",
+    "last_modified": "Tue, 17 Nov 2026 23:23:34 GMT",
+    "fetched": "2026-11-18T08:57:00Z"
+   },
+   "rules": {
+    "path": "rules/peter-lowe.json",
+    "sha256": "c3686234d985de658f580a55cfd5525ca2ed137a4bd663ecaa6fd0e50c31042e",
+    "bytes": 66235,
+    "count": 1,
+    "regex": 0,
+    "block": 1,
+    "allow": 0,
+    "allow_all_requests": 0,
+    "request_domains": 3566
+   },
+   "filters": {
+    "lines": 3583,
+    "comments": 17,
+    "network": 3566,
+    "converted": 3566,
+    "duplicate": 0,
+    "dropped": {},
+    "cosmetic": {
+     "hide": 0,
+     "exception": 0,
+     "procedural": 0,
+     "scriptlet": 0
+    }
+   }
+  },
+  {
+   "id": "easylist",
+   "title": "EasyList",
+   "homepage": "https://easylist.to/",
+   "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+   "license_url": "https://easylist.to/pages/licence.html",
+   "level": 2,
+   "source": {
+    "url": "https://easylist.to/easylist/easylist.txt",
+    "sha256": "fdd85553a1cd9d882526b9a3eb3da279b2dd8046452071cbcfe1b1130d5039a0",
+    "bytes": 2050514,
+    "version": "202611180839",
+    "last_modified": "18 Nov 2026 08:39 UTC",
+    "fetched": "2026-11-18T08:57:00Z"
+   },
+   "rules": {
+    "path": "rules/easylist.json",
+    "sha256": "86a28aca3efa447a7e1e907e6035b7a4713b3f04cf197dc275f77801e989a83f",
+    "bytes": 1454356,
+    "count": 3890,
+    "regex": 19,
+    "block": 3371,
+    "allow": 515,
+    "allow_all_requests": 4,
+    "request_domains": 45845
+   },
+   "filters": {
+    "lines": 77812,
+    "comments": 278,
+    "network": 52737,
+    "converted": 49581,
+    "duplicate": 9,
+    "dropped": {
+     "cosmetic-exception": 167,
+     "csp": 4,
+     "popup": 2969,
+     "redirect": 7
+    },
+    "cosmetic": {
+     "hide": 24162,
+     "exception": 340,
+     "procedural": 295,
+     "scriptlet": 0
+    }
+   }
+  },
+  {
+   "id": "fanboy-annoyance",
+   "title": "Fanboy's Annoyance List",
+   "homepage": "https://easylist.to/",
+   "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+   "license_url": "https://easylist.to/pages/licence.html",
+   "level": 3,
+   "source": {
+    "url": "https://secure.fanboy.co.nz/fanboy-annoyance.txt",
+    "sha256": "474fe061775b791c3096e53c8afbc75f0421a901b8d6a81c0860a6c424d8c8c1",
+    "bytes": 2185627,
+    "version": "202611180750",
+    "last_modified": "2026-11-18 07:50 UTC",
+    "fetched": "2026-11-18T08:57:00Z"
+   },
+   "rules": {
+    "path": "rules/fanboy-annoyance.json",
+    "sha256": "d65712f3ef8cb360c03d81e7c66d6b804c0aabc58149fd93db111861d82a86b5",
+    "bytes": 450930,
+    "count": 3211,
+    "regex": 1,
+    "block": 2669,
+    "allow": 542,
+    "allow_all_requests": 0,
+    "request_domains": 1030
+   },
+   "filters": {
+    "lines": 56541,
+    "comments": 2324,
+    "network": 4167,
+    "converted": 4151,
+    "duplicate": 1,
+    "dropped": {
+     "cosmetic-exception": 13,
+     "domain-pattern": 1,
+     "popup": 1
+    },
+    "cosmetic": {
+     "hide": 45783,
+     "exception": 435,
+     "procedural": 981,
+     "scriptlet": 2851
+    }
+   }
+  },
+  {
+   "id": "easylist-cookie",
+   "title": "EasyList Cookie List",
+   "homepage": "https://easylist.to/",
+   "license": "GPL-3.0-or-later OR CC-BY-SA-3.0",
+   "license_url": "https://easylist.to/pages/licence.html",
+   "level": 3,
+   "source": {
+    "url": "https://secure.fanboy.co.nz/fanboy-cookiemonster.txt",
+    "sha256": "1dae701ce0045e607bf370163c6e55fdef0644fb166383e00280f802ccce380f",
+    "bytes": 906866,
+    "version": "",
+    "last_modified": "2026-11-18 07:50 UTC",
+    "fetched": "2026-11-18T08:57:00Z"
+   },
+   "rules": {
+    "path": "rules/easylist-cookie.json",
+    "sha256": "8a9fbcb191d9a06028562c257dc12f0cfb917650dc26e8589391e4ff3e17b6f2",
+    "bytes": 269931,
+    "count": 1795,
+    "regex": 1,
+    "block": 1368,
+    "allow": 427,
+    "allow_all_requests": 0,
+    "request_domains": 363
+   },
+   "filters": {
+    "lines": 26184,
+    "comments": 795,
+    "network": 2115,
+    "converted": 2112,
+    "duplicate": 0,
+    "dropped": {
+     "cosmetic-exception": 2,
+     "domain-pattern": 1
+    },
+    "cosmetic": {
+     "hide": 22898,
+     "exception": 316,
+     "procedural": 60,
+     "scriptlet": 0
+    }
+   }
+  }
+ ],
+ "limits": {
+  "guaranteed_minimum_static_rules": 30000,
+  "max_static_rules_per_profile": 300000,
+  "max_regex_rules": 1000,
+  "max_enabled_static_rulesets": 50,
+  "levels": {
+   "trackers": {
+    "lists": [
+     "easyprivacy",
+     "peter-lowe"
+    ],
+    "rules": 9241,
+    "regex": 7,
+    "from_global_pool": 0
+   },
+   "ads-and-trackers": {
+    "lists": [
+     "easyprivacy",
+     "peter-lowe",
+     "easylist"
+    ],
+    "rules": 13131,
+    "regex": 26,
+    "from_global_pool": 0
+   },
+   "strict": {
+    "lists": [
+     "easyprivacy",
+     "peter-lowe",
+     "easylist",
+     "fanboy-annoyance",
+     "easylist-cookie"
+    ],
+    "rules": 18137,
+    "regex": 28,
+    "from_global_pool": 0
+   },
+   "all": {
+    "lists": [
+     "easyprivacy",
+     "peter-lowe",
+     "easylist",
+     "fanboy-annoyance",
+     "easylist-cookie"
+    ],
+    "rules": 18137,
+    "regex": 28,
+    "from_global_pool": 0
+   }
+  }
+ }
+}
