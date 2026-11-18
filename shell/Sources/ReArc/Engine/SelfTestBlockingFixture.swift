@@ -198,6 +198,23 @@ enum SelfTestBlockingFixture {
     /// blocker, so only a profile's last launch is asked for it.
     static let coldCheckOffFlag = "--rearc-selftest-cold-check-off"
 
+    /// The cold launch's one shell profile, the same at every launch. The
+    /// engine finds a profile's folder by this ID (`ChromiumProfileStorageMap`):
+    /// the first launch on a user data folder adopts `Default` for it, and a
+    /// later launch opens `Default` again only for the same ID. A store with a
+    /// new ID at every launch got a new engine folder each time, so "the same
+    /// profile again" and the launch after a list update never met the last
+    /// session's blocker.
+    static let coldProfileID = UUID(uuidString: "C01DB10C-0000-4000-8000-5E1F7E57B10C")!
+
+    /// The engine's profile folders in a user data folder that are not the
+    /// startup one: `ReArcProfile-…`, made for a shell profile that could not
+    /// take `Default`. A cold launch that leaves one did not run in the profile
+    /// the launches before it used.
+    static func namedProfileFolders(in names: [String]) -> [String] {
+        names.filter { $0.hasPrefix(ChromiumProfileStoragePlan.namedDirectoryName(forKey: "")) }.sorted()
+    }
+
     static func coldStep(_ arguments: [String]) -> ColdStep? {
         guard let value = value(of: coldStepFlag, in: arguments) else { return .restore }
         return ColdStep(rawValue: value)

@@ -162,9 +162,12 @@ public final class SidebarStore {
     var onDidMutate: (() -> Void)?
     public private(set) var mutationJournal: SidebarMutationJournal
 
-    public init(spaces: [Space]? = nil, topAppsContainerID: UUID = UUID(), mutationJournal: SidebarMutationJournal? = nil) {
+    /// `defaultProfileID` names the first profile; a new one unless the caller
+    /// must meet the same profile again (the engine's storage is found by it).
+    public init(spaces: [Space]? = nil, topAppsContainerID: UUID = UUID(), defaultProfileID: Profile.ID = UUID(),
+                mutationJournal: SidebarMutationJournal? = nil) {
         self.mutationJournal = mutationJournal ?? SidebarMutationJournal()
-        let defaultProfile = Profile.personalDefault()
+        let defaultProfile = Profile.personalDefault(id: defaultProfileID)
         self.profiles = [defaultProfile]
         self.activeProfileID = defaultProfile.id
         self.lastActiveSpaceByProfile = [:]
