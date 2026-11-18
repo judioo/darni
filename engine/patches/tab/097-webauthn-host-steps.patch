@@ -115,6 +115,15 @@ After the review of 2026.1118.1027 (security/RC-2026.1118.1027.md, AH-02):
   an ordinary launch of 1027 on 2026-11-18: asked after the window was
   hidden, covered or minimised, the request was refused within 130 ms every
   time; asked two seconds before the hide, it was still open after 35 s.
+  Run on the QA bundle of this overlay (2026-11-19, an ordinary launch with
+  a throwaway data folder, a local page): get and create from a Little
+  ReArc window whose app was then hidden, from a browser window under
+  another app's window, and from a minimised window. All six ended with
+  NotAllowedError ("the page does not have focus") in 2 to 42 ms, each with
+  the host's log line; with the window back, the same get opened the sheet
+  ("first step qr (get), page visible"), and that request stayed open when
+  the app was hidden. The shell's self-test passes, with a background tab
+  and a Little ReArc window that is ordered out.
 
 Built into the release engine on 2026-11-19 (overlay f36e9e30e1,
 out/ReArc-codecs-arm64): the framework exports both functions and

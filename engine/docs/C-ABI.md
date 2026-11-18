@@ -2926,4 +2926,9 @@ ways, the QR code, the security key step, "this Mac" up to macOS's Touch ID prom
 second request, a tab closed in the middle. Not run: a phone, a security key, and so the PIN,
 fingerprint and error steps, and the refusals above but those for a page nobody sees: the shell's
 self-test runs a background tab and a Little ReArc window that is ordered out
-(`passkeyHiddenTabChecks`, `passkeyHiddenLittleArcChecks`).
+(`passkeyHiddenTabChecks`, `passkeyHiddenLittleArcChecks`). Run in an ordinary launch of a QA
+bundle (2026-11-19, a throwaway data folder, a local page that asks on a timer): `get` and
+`create` from a Little ReArc window whose app was then hidden, from a browser window under
+another app's window and from a minimised window were each refused in 2 to 42 ms with the log
+line; with the window back the same `get` opened the sheet, and it stayed open when the app was
+hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.
