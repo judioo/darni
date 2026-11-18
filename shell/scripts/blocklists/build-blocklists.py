@@ -8,7 +8,8 @@ key (Ed25519; never the Sparkle key).
 
   build-blocklists.py build --out DIR [--key FILE | --no-sign] [--from-bundle DIR [--raw-dir DIR]]
                             [--lists ID,ID] [--with-regional] [--version YYYYMMDDHHMM]
-                            [--previous DIR] [--allow-count-change] [--public-key FILE]
+                            [--previous DIR] [--allow-count-change]
+                            [--accept-gained-page-exceptions] [--public-key FILE]
   build-blocklists.py verify DIR [--public-key FILE]
   build-blocklists.py pack DIR --out DIR [--base-url URL] [--public-key FILE]
   build-blocklists.py install DIR DEST [--public-key FILE]
@@ -23,6 +24,10 @@ build     writes DIR/{manifest.json, manifest.json.sig, rules/<id>.json, raw/<id
           repository's shell/Resources/Blocklists): a rule or host count that moved by more than
           25% fails the build, and the exceptions the list gained are printed. Read them, then
           build again with --allow-count-change when the move is the list's own.
+          A gained exception for whole pages or frames (allowAllRequests, or an allow for
+          main_frame or sub_frame requests that is tied to no site) fails the build as well:
+          one such line can switch blocking off. A person who has read them builds again with
+          --accept-gained-page-exceptions; a job that runs by itself never passes that flag.
 verify    checks the signature against the committed public keys (any one of them) and every
           file's sha256.
 pack      verifies, then writes the mirror files: blocklists-<version>.tar.gz and latest.json
@@ -70,6 +75,8 @@ BUILT_IN_BUNDLE = HERE.parent.parent / "Resources" / "Blocklists"
 # A filter for every site must say something about the address: a pattern with fewer letters
 # than this (anchors and wildcards aside), or one that matches every address in BROAD_PROBES
 # under http or under https, is refused when the rule is an exception or blocks pages and frames.
+# "For every site" includes a filter whose domains are top-level names (to=com|net|org): a name
+# without a dot names no site (names_domain).
 MIN_BROAD_PATTERN_CHARS = 4
 BROAD_PROBES = (
     "example.com/",
@@ -327,6 +334,9 @@ PROCEDURAL = re.compile(
 OPTION_TOKEN = re.compile(r"~?[A-Za-z0-9_-]+(?:=.*)?")
 PURE_HOST = re.compile(r"\|\|((?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?\.)+[a-z][a-z0-9-]*[a-z0-9])\^")
 DOMAIN = re.compile(r"(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?\.)*[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?")
+# A urlFilter that starts at a host of two labels or more and ends the host there
+# (||ads.example/ok/, ||example.com^): the rule applies to that site and its subdomains only.
+HOST_ANCHORED = re.compile(r"\|\|(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?\.)+[a-z][a-z0-9-]*[a-z0-9][/^:?]")
 # What RE2 rejects that list regexes use: lookaround, backreferences, atomic and possessive forms.
 RE2_UNSUPPORTED = re.compile(r"\(\?[=!<>]|\\[1-9]|\(\?>|[*+?}]\+|\\[zZGK]")
 HOSTS_LINE = re.compile(r"^(?:0\.0\.0\.0|127\.0\.0\.1|::1?)\s+(\S+)")
@@ -477,6 +487,28 @@ def matches_every_address(condition):
         return False
 
 
+def names_domain(condition):
+    """True when the rule applies only to requests to, or from, sites it names: requestDomains
+    or initiatorDomains that hold nothing but names of two labels or more. A single-label name
+    (com, net, org, any name without a dot) covers every site under it and names none, and a
+    list with one such name in it is as wide as that name. The excluded forms say where a rule
+    does not apply, so they never name a domain."""
+    return any(
+        condition.get(key) and all("." in domain for domain in condition[key])
+        for key in ("requestDomains", "initiatorDomains"))
+
+
+def takes_pages_or_frames(condition):
+    """True when the rule matches main_frame or sub_frame requests, as DNR reads the types:
+    without resourceTypes everything but main_frame, less the excluded types (and main_frame
+    too once any type is excluded)."""
+    types = condition.get("resourceTypes")
+    if types is not None:
+        return bool({"main_frame", "sub_frame"} & set(types))
+    excluded = set(condition.get("excludedResourceTypes", []))
+    return "sub_frame" not in excluded or (bool(excluded) and "main_frame" not in excluded)
+
+
 def is_too_broad(rule):
     """True for a rule no list should carry (security CB-04): it names no domain, its pattern
     says next to nothing about the address, and it is an exception (one line then switches
@@ -484,17 +516,29 @@ def is_too_broad(rule):
     every page). A block rule for other request kinds is left to the list: it breaks pages,
     visibly, and blocks nothing a person asked to see."""
     condition = rule["condition"]
-    if "requestDomains" in condition or "initiatorDomains" in condition:
+    if names_domain(condition):
         return False
     if not matches_every_address(condition):
         return False
     if rule["action"]["type"] != "block":
         return True
-    types = condition.get("resourceTypes")
-    if types is not None:
-        return bool({"main_frame", "sub_frame"} & set(types))
-    # Without resourceTypes DNR matches everything but main_frame.
-    return "sub_frame" not in condition.get("excludedResourceTypes", [])
+    return takes_pages_or_frames(condition)
+
+
+def is_page_exception(rule):
+    """True for an exception a build must not gain unread (security CB-04): one line of it can
+    switch blocking off for whole pages. That is every allowAllRequests rule (what
+    @@...$document converts to: nothing is blocked in that page or frame), and an allow rule for
+    main_frame or sub_frame requests that is tied to no site: it names no domain (names_domain)
+    and its pattern does not start at a host of two labels or more (||example.com/...).
+    is_too_broad drops the widest of these at conversion; no test of a pattern finds every wide
+    one (@@.com/$document), so what is left is for a person to read."""
+    kind, condition = rule["action"]["type"], rule["condition"]
+    if kind == "allowAllRequests":
+        return True
+    if kind != "allow" or not takes_pages_or_frames(condition):
+        return False
+    return not names_domain(condition) and not HOST_ANCHORED.match(condition.get("urlFilter", "").lower())
 
 
 def convert_network_filter(text):
@@ -785,7 +829,7 @@ def validate_rules(rules):
         if condition.get("domainType") not in (None, "firstParty", "thirdParty"):
             bad("domainType")
         if is_too_broad(rule):
-            bad("too broad: no domain and a pattern that matches every address")
+            bad("too broad: no domain but top-level names and a pattern that matches every address")
 
 
 def rules_json(rules):
@@ -1058,24 +1102,45 @@ def count_changes(entry, before):
     return moved
 
 
+def rule_key(rule):
+    """A rule as comparable text (no id)."""
+    return json.dumps({key: rule[key] for key in ("priority", "action", "condition")}, sort_keys=True)
+
+
 def exception_keys(rules):
-    """The allow and allowAllRequests rules of a list as comparable text (no id)."""
-    return {
-        json.dumps({key: rule[key] for key in ("priority", "action", "condition")}, sort_keys=True)
-        for rule in rules if rule["action"]["type"] != "block"
-    }
+    """The allow and allowAllRequests rules of a list as comparable text."""
+    return {rule_key(rule) for rule in rules if rule["action"]["type"] != "block"}
+
+
+def page_exception_keys(rules):
+    """The exceptions for whole pages or frames among `rules` (is_page_exception) as comparable
+    text, one for each requested domain. The converter merges @@||a.example^$document and
+    @@||b.example^$document into one rule; a merged rule that gained a host must show that host
+    and not all of them, and one that only lost a host gained nothing."""
+    keys = set()
+    for rule in rules:
+        condition = rule["condition"]
+        for domain in condition.get("requestDomains") or [None]:
+            single = rule if domain is None else dict(rule, condition=dict(condition, requestDomains=[domain]))
+            if is_page_exception(single):
+                keys.add(rule_key(single))
+    return keys
 
 
 def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None, raw_dir=None,
                  version=None, now=None, fetcher=fetch, log=print, previous=None,
-                 previous_public_key=None, allow_count_change=False):
+                 previous_public_key=None, allow_count_change=False,
+                 accept_gained_page_exceptions=False):
     """Writes a bundle to `out` (replaced) and returns its manifest. Raw list text comes from
     `from_bundle`'s raw/ files (a bundle signed by `from_public_key` when that is given), from
     `raw_dir` (<id>.txt), or from each list's URL.
 
     `previous`: the bundle this one replaces (signed by `previous_public_key` when that is
     given). A list whose counts moved by more than MAX_COUNT_CHANGE against it fails the build
-    unless `allow_count_change`, and the exceptions each list gained are logged."""
+    unless `allow_count_change`, and the exceptions each list gained are logged. A gained
+    exception for whole pages or frames (is_page_exception) fails the build unless
+    `accept_gained_page_exceptions`; for a list `previous` does not have, every such exception
+    is gained."""
     replaced_bundle = previous
     now = now or datetime.datetime.now(datetime.timezone.utc)
     version = version or new_version(now)
@@ -1087,7 +1152,7 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
         previous_manifest = verify_bundle(from_bundle, from_public_key,
                                           require_signature=from_public_key is not None)
         previous = {entry["id"]: entry for entry in previous_manifest["lists"]}
-    replaced, moved = None, []
+    replaced, moved, gained_pages = None, [], []
     if replaced_bundle:
         replaced_bundle = Path(replaced_bundle)
         replaced_manifest = verify_bundle(replaced_bundle, previous_public_key,
@@ -1168,6 +1233,7 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
             continue
         if list_id not in replaced:
             log(f"{list_id}: not in the bundle this one replaces; nothing to compare")
+            gained_pages += [(list_id, text) for text in sorted(page_exception_keys(rules))]
             continue
         for change in count_changes(entry, replaced[list_id]):
             moved.append(f"{list_id}: {change}")
@@ -1182,13 +1248,30 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
                 log(f"  {text[:300]}")
             if len(gained) > MAX_PRINTED_EXCEPTIONS:
                 log(f"  and {len(gained) - MAX_PRINTED_EXCEPTIONS} more")
+        gained_pages += [(list_id, text)
+                         for text in sorted(page_exception_keys(rules) - page_exception_keys(before))]
+    failures = []
     if moved:
         report = "\n  ".join(moved)
         if not allow_count_change:
-            raise BuildError(
+            failures.append(
                 f"a list moved by more than {MAX_COUNT_CHANGE:.0%} against the bundle it replaces:\n  "
                 f"{report}\nRead what changed upstream, then build with --allow-count-change")
-        log(f"lists that moved by more than {MAX_COUNT_CHANGE:.0%} (allowed by --allow-count-change):\n  {report}")
+        else:
+            log(f"lists that moved by more than {MAX_COUNT_CHANGE:.0%} (allowed by --allow-count-change):\n  {report}")
+    if gained_pages:
+        report = "\n  ".join(f"{list_id}: {text[:300]}" for list_id, text in gained_pages[:MAX_PRINTED_EXCEPTIONS])
+        if len(gained_pages) > MAX_PRINTED_EXCEPTIONS:
+            report += f"\n  and {len(gained_pages) - MAX_PRINTED_EXCEPTIONS} more"
+        count = f"{len(gained_pages)} exception(s) for whole pages or frames that the replaced bundle did not have"
+        if not accept_gained_page_exceptions:
+            failures.append(
+                f"{count}:\n  {report}\nEach can switch blocking off where it applies. Read them, then "
+                "build with --accept-gained-page-exceptions (a person's decision; no job passes it)")
+        else:
+            log(f"{count} (accepted by --accept-gained-page-exceptions):\n  {report}")
+    if failures:
+        raise BuildError("\n".join(failures))
     problems, report = check_limits(entries)
     for name, level in report["levels"].items():
         log(f"level {name}: {level['rules']} rules, {level['regex']} regex, "
@@ -1373,6 +1456,10 @@ def main(argv=None):
     build.add_argument("--allow-count-change", action="store_true",
                        help=f"build although a list's rule or host count moved by more than "
                             f"{MAX_COUNT_CHANGE:.0%} against --previous")
+    build.add_argument("--accept-gained-page-exceptions", action="store_true",
+                       help="build although a list gained an exception for whole pages or frames "
+                            "against --previous; for a person who has read them, never for a job "
+                            "that runs by itself")
     verify = commands.add_parser("verify", help="check a bundle's signature and file hashes")
     verify.add_argument("bundle", type=Path)
     verify.add_argument("--public-key", type=Path)
@@ -1403,13 +1490,15 @@ def main(argv=None):
             if previous is None and (BUILT_IN_BUNDLE / "manifest.json").is_file():
                 previous = BUILT_IN_BUNDLE
             if previous is None:
-                print("no bundle to compare with (--previous): the lists' counts are not checked")
+                print("no bundle to compare with (--previous): the lists' counts and the exceptions "
+                      "they gained are not checked")
             manifest = build_bundle(
                 args.out, lists, key=None if args.no_sign else args.key, from_bundle=args.from_bundle,
                 from_public_key=from_key, raw_dir=args.raw_dir, version=args.version,
                 previous=previous,
                 previous_public_key=read_public_keys(args.public_key) if previous else None,
-                allow_count_change=args.allow_count_change)
+                allow_count_change=args.allow_count_change,
+                accept_gained_page_exceptions=args.accept_gained_page_exceptions)
             if not args.no_sign:
                 verify_bundle(args.out, public_key_of(args.key))
             print(f"bundle {manifest['version']} in {args.out}" + (" (unsigned)" if args.no_sign else ""))

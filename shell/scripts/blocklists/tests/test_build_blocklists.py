@@ -378,6 +378,48 @@ class TooBroadTests(TemporaryDirectoryCase):
         self.assertEqual(rule(".$subdocument,domain=shop.example")["action"], {"type": "block"})
         self.assertEqual(rule("@@||page.example^$document")["action"], {"type": "allowAllRequests"})
 
+    def test_a_top_level_name_names_no_domain(self):
+        # to=com|net|org is every site under them: the filter is as wide as one with no domain.
+        for text in ("@@*$document,to=com|net|org", "@@$document,to=com", "@@.$document,to=org",
+                     "@@*$document,domain=com|net|org", "@@/$image,to=net", "@@*$script,domain=localhost",
+                     "@@*$document,to=com|shop.example", "@@*$document,domain=shop.example|org"):
+            self.refused(text)
+        for text in ("*$document,to=com|net|org", "$all,to=com", ".$subdocument,domain=net",
+                     "*$document,to=com|shop.example", ".$to=org"):
+            self.refused(text)
+
+    def test_an_excluded_name_names_no_domain(self):
+        for text in ("@@*$document,to=~com", "@@.$document,domain=~org", "@@.$document,to=~shop.example",
+                     "*$document,to=~com", ".$all,domain=~shop.example", "@@.$document,denyallow=cdn.example"):
+            self.refused(text)
+
+    def test_a_site_beside_a_top_level_name_still_names_a_domain(self):
+        # Requests to anywhere under .com, but only from shop.example's pages.
+        self.assertEqual(bb.convert_network_filter("@@*$document,to=com,domain=shop.example"), [{
+            "priority": 2, "action": {"type": "allowAllRequests"},
+            "condition": {"requestDomains": ["com"], "initiatorDomains": ["shop.example"],
+                          "resourceTypes": ["main_frame"]}}])
+        self.assertEqual(rule("@@*$document,to=shop.example|cdn.example")["action"], {"type": "allowAllRequests"})
+        self.assertEqual(rule("*$document,to=shop.example")["action"], {"type": "block"})
+
+    def test_a_top_level_name_with_a_pattern_that_says_where_stays(self):
+        self.assertEqual(rule("/adframe.$subdocument,to=com")["condition"],
+                         {"urlFilter": "/adframe.", "requestDomains": ["com"], "resourceTypes": ["sub_frame"]})
+        self.assertEqual(rule("||ads.example/a.php$domain=chrome-extension-scheme")["action"], {"type": "block"})
+        # A block rule for other request kinds is the list's own, with a top-level name too.
+        self.assertEqual(rule("*$script,to=com")["condition"], {"requestDomains": ["com"], "resourceTypes": ["script"]})
+
+    def test_names_domain(self):
+        for condition in ({"requestDomains": ["shop.example"]}, {"initiatorDomains": ["a.shop.example", "b.example"]},
+                          {"requestDomains": ["com"], "initiatorDomains": ["shop.example"]}):
+            self.assertTrue(bb.names_domain(condition), condition)
+        for condition in ({}, {"urlFilter": "||shop.example^"}, {"requestDomains": ["com"]},
+                          {"requestDomains": ["com", "shop.example"]}, {"initiatorDomains": ["localhost"]},
+                          {"requestDomains": ["com"], "initiatorDomains": ["net"]},
+                          {"excludedRequestDomains": ["shop.example"]},
+                          {"excludedInitiatorDomains": ["shop.example"], "requestDomains": ["org"]}):
+            self.assertFalse(bb.names_domain(condition), condition)
+
     def test_a_pattern_that_says_where_stays(self):
         self.assertEqual(rule("@@/ads.txt")["condition"], {"urlFilter": "/ads.txt"})
         self.assertEqual(rule("/adframe.$subdocument")["action"], {"type": "block"})
@@ -395,7 +437,10 @@ class TooBroadTests(TemporaryDirectoryCase):
                       "condition": {"regexFilter": "^https?://", "resourceTypes": ["main_frame", "script"]}}
         no_pattern = {"id": 1, "priority": 2, "action": {"type": "allow"},
                       "condition": {"domainType": "thirdParty"}}
-        for broken in (page, everything, no_pattern):
+        top_level = {"id": 1, "priority": 2, "action": {"type": "allowAllRequests"},
+                     "condition": {"requestDomains": ["com", "net", "org"], "resourceTypes": ["main_frame"]}}
+        top_level_block = dict(top_level, priority=1, action={"type": "block"})
+        for broken in (page, everything, no_pattern, top_level, top_level_block):
             with self.subTest(broken), self.assertRaises(bb.BuildError) as failure:
                 bb.validate_rules([broken])
             self.assertIn("too broad", str(failure.exception))
@@ -403,13 +448,16 @@ class TooBroadTests(TemporaryDirectoryCase):
 
     def test_the_build_drops_the_line_counts_it_and_says_which(self):
         lines = []
-        raw = self.raw_dir(dict(RAW, ads=RAW["ads"] + "@@.$document\n.$all\n"))
+        raw = self.raw_dir(dict(RAW, ads=RAW["ads"] + "@@.$document\n.$all\n@@*$document,to=com|net|org\n"
+                                                      "*$document,to=com|net|org\n"))
         manifest = bb.build_bundle(self.tmp / "bundle", LISTS, raw_dir=raw, now=NOW, log=lines.append)
         ads = manifest["lists"][1]
-        self.assertEqual(ads["filters"]["dropped"]["too-broad"], 2)
+        self.assertEqual(ads["filters"]["dropped"]["too-broad"], 4)
         self.assertEqual(ads["rules"]["allow_all_requests"], 0)
         self.assertIn("ads: refused as too broad: @@.$document", lines)
         self.assertIn("ads: refused as too broad: .$all", lines)
+        self.assertIn("ads: refused as too broad: @@*$document,to=com|net|org", lines)
+        self.assertIn("ads: refused as too broad: *$document,to=com|net|org", lines)
         rules = json.loads((self.tmp / "bundle/rules/ads.json").read_text())
         self.assertFalse(any(bb.is_too_broad(entry) for entry in rules))
 
@@ -428,9 +476,8 @@ def host_filters(count):
     return "".join(f"||h{index}.example^\n" for index in range(count))
 
 
-class CountChangeTests(TemporaryDirectoryCase):
-    """Security CB-04: a list whose rule or host count moved by more than a quarter against the
-    bundle it replaces fails the build until someone has read why."""
+class ComparedBuildCase(TemporaryDirectoryCase):
+    """Builds of the two test lists, each compared with the bundle it replaces."""
 
     def setUp(self):
         super().setUp()
@@ -449,6 +496,11 @@ class CountChangeTests(TemporaryDirectoryCase):
         bb.build_bundle(out, LISTS, key=self.signing_key, raw_dir=raw, now=NOW, log=self.lines.append,
                         previous=previous, **options)
         return out
+
+
+class CountChangeTests(ComparedBuildCase):
+    """Security CB-04: a list whose rule or host count moved by more than a quarter against the
+    bundle it replaces fails the build until someone has read why."""
 
     def test_a_list_that_moved_a_little_builds(self):
         before = self.build("before", path_filters(100))
@@ -525,7 +577,7 @@ class CountChangeTests(TemporaryDirectoryCase):
         before = self.build("before", path_filters(100))
         self.lines.clear()
         gained = path_filters(100) + "@@||cdn.example/ok/\n@@||shop.example^$document\n"
-        self.build("after", gained, previous=before)
+        self.build("after", gained, previous=before, accept_gained_page_exceptions=True)
         self.assertIn("trackers: 2 exception(s) the replaced bundle did not have:", self.lines)
         printed = [line for line in self.lines if line.startswith("  {")]
         self.assertEqual(len(printed), 2)
@@ -571,6 +623,177 @@ class CountChangeTests(TemporaryDirectoryCase):
                       "--allow-count-change")
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertIn("peter-lowe: 1200 to 2400 hosts (+100%)", allowed.stdout)
+
+
+class GainedPageExceptionTests(ComparedBuildCase):
+    """Security CB-04, for a build nobody watches: no test of a pattern finds every wide
+    exception, so one a list gained that covers whole pages or frames fails the build until a
+    person has read it."""
+
+    FLAG = "--accept-gained-page-exceptions"
+
+    def gained(self, *filters, **options):
+        """Builds a bundle, then one whose trackers list has `filters` more, compared with it."""
+        before = self.build("before", path_filters(100))
+        self.lines.clear()
+        return self.build("after", path_filters(100) + "".join(f"{text}\n" for text in filters),
+                          previous=before, **options)
+
+    def test_a_gained_document_exception_fails_the_build(self):
+        with self.assertRaises(bb.BuildError) as failure:
+            self.gained("@@||shop.example^$document")
+        message = str(failure.exception)
+        self.assertIn("1 exception(s) for whole pages or frames", message)
+        self.assertIn('trackers: {"action": {"type": "allowAllRequests"}', message)
+        self.assertIn("shop.example", message)
+        self.assertIn(self.FLAG, message)
+        self.assertNotIn("ads:", message)
+        self.assertFalse((self.tmp / "after").exists())
+        # Printed as before, with the other exceptions the list gained.
+        self.assertIn("trackers: 1 exception(s) the replaced bundle did not have:", self.lines)
+
+    def test_a_gained_allow_for_pages_or_frames_of_no_site_fails_the_build(self):
+        for index, text in enumerate(("@@.com/$subdocument", "@@/embed/player$subdocument,document",
+                                      "@@/widgets/frame.", "@@/promo/$~script", "@@||blog^$subdocument",
+                                      r"@@/^https:\/\/[a-z]+\.example\//$subdocument",
+                                      "@@/embed/player$subdocument,to=com", "@@||shop.example$subdocument")):
+            with self.subTest(text):
+                self.tmp = Path(tempfile.mkdtemp(prefix=f"case{index}.", dir=self.tmp))
+                with self.assertRaises(bb.BuildError) as failure:
+                    self.gained(text)
+                self.assertIn("for whole pages or frames", str(failure.exception))
+                self.assertIn(self.FLAG, str(failure.exception))
+
+    def test_a_gained_exception_tied_to_a_site_or_to_other_requests_builds(self):
+        out = self.gained("@@||cdn.example/ok/", "@@||cdn.example^$subdocument", "@@/pixel/ok.gif$image",
+                          "@@/embed/player$subdocument,domain=shop.example", "@@/api/v1/$xmlhttprequest,script",
+                          "@@||shop.example/frame/$subdocument,to=com", "@@/x/y/z$~subdocument")
+        self.assertIn("trackers: 7 exception(s) the replaced bundle did not have:", self.lines)
+        self.assertEqual(bb.verify_bundle(out, self.public)["lists"][0]["rules"]["allow"], 7)
+
+    def test_the_override_builds_and_says_what_was_accepted(self):
+        out = self.gained("@@||shop.example^$document", "@@/embed/player$subdocument",
+                          accept_gained_page_exceptions=True)
+        rules = bb.verify_bundle(out, self.public)["lists"][0]["rules"]
+        self.assertEqual((rules["allow_all_requests"], rules["allow"]), (1, 1))
+        accepted = [line for line in self.lines if self.FLAG in line]
+        self.assertEqual(len(accepted), 1, self.lines)
+        self.assertIn("2 exception(s) for whole pages or frames", accepted[0])
+        self.assertIn("shop.example", accepted[0])
+        self.assertIn("/embed/player", accepted[0])
+
+    def test_an_exception_the_replaced_bundle_has_is_not_gained(self):
+        accepted = self.gained("@@||shop.example^$document", accept_gained_page_exceptions=True)
+        self.lines.clear()
+        self.build("next", path_filters(101) + "@@||shop.example^$document\n", previous=accepted)
+        self.assertFalse(any("whole pages" in line for line in self.lines), self.lines)
+        # The same exception with another priority is another rule.
+        with self.assertRaises(bb.BuildError):
+            self.build("important", path_filters(100) + "@@||shop.example^$document,important\n", previous=accepted)
+
+    def test_a_merged_rule_shows_the_host_it_gained_and_losing_one_gains_nothing(self):
+        # The converter writes the three as one rule with three requestDomains.
+        hosts = [f"@@||shop{index}.example^$document" for index in range(3)]
+        accepted = self.gained(*hosts, accept_gained_page_exceptions=True)
+        rules = json.loads((accepted / "rules/trackers.json").read_text())
+        self.assertEqual([len(entry["condition"]["requestDomains"]) for entry in rules
+                          if entry["action"]["type"] == "allowAllRequests"], [3])
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("more", path_filters(100) + "".join(f"{text}\n" for text in hosts + ["@@||new.example^$document"]),
+                       previous=accepted)
+        message = str(failure.exception)
+        self.assertIn("1 exception(s) for whole pages or frames", message)
+        self.assertIn('"requestDomains": ["new.example"]', message)
+        self.assertNotIn("shop0.example", message)
+        self.build("fewer", path_filters(100) + "".join(f"{text}\n" for text in hosts[:2]), previous=accepted)
+
+    def test_the_count_override_does_not_accept_them(self):
+        with self.assertRaises(bb.BuildError) as failure:
+            self.gained("@@||shop.example^$document", allow_count_change=True)
+        self.assertIn(self.FLAG, str(failure.exception))
+
+    def test_both_failures_are_said_together(self):
+        before = self.build("before", path_filters(100))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("after", path_filters(200) + "@@||shop.example^$document\n", previous=before)
+        self.assertIn("trackers: 100 to 201 rules (+101%)", str(failure.exception))
+        self.assertIn("--allow-count-change", str(failure.exception))
+        self.assertIn(self.FLAG, str(failure.exception))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("again", path_filters(200) + "@@||shop.example^$document\n", previous=before,
+                       accept_gained_page_exceptions=True)
+        self.assertNotIn(self.FLAG, str(failure.exception))
+
+    def test_many_are_counted_past_the_first(self):
+        more = bb.MAX_PRINTED_EXCEPTIONS + 3
+        with self.assertRaises(bb.BuildError) as failure:
+            self.gained(*(f"@@||shop{index}.example^$document" for index in range(more)))
+        self.assertIn(f"{more} exception(s) for whole pages or frames", str(failure.exception))
+        self.assertIn("  and 3 more", str(failure.exception))
+
+    def test_a_list_the_replaced_bundle_does_not_have_gained_all_of_its_own(self):
+        raw = self.raw_dir(dict(RAW, ads=RAW["ads"] + "@@||shop.example^$document\n"))
+        before = self.tmp / "before"
+        bb.build_bundle(before, LISTS[:1], key=self.signing_key, raw_dir=raw, now=NOW, log=self.lines.append)
+        options = dict(key=self.signing_key, raw_dir=raw, now=NOW, log=self.lines.append, previous=before,
+                       previous_public_key=self.public)
+        with self.assertRaises(bb.BuildError) as failure:
+            bb.build_bundle(self.tmp / "after", LISTS, **options)
+        self.assertIn("1 exception(s) for whole pages or frames", str(failure.exception))
+        self.assertIn("ads: {", str(failure.exception))
+        bb.build_bundle(self.tmp / "after", LISTS, accept_gained_page_exceptions=True, **options)
+
+    def test_without_a_bundle_to_compare_with_nothing_is_gained(self):
+        self.build("first", path_filters(10) + "@@||shop.example^$document\n")
+
+    def test_what_counts_as_a_page_exception(self):
+        def made(kind, **condition):
+            return {"priority": 2, "action": {"type": kind}, "condition": condition}
+        for entry in (made("allowAllRequests", requestDomains=["shop.example"], resourceTypes=["main_frame"]),
+                      made("allowAllRequests", urlFilter="||shop.example/a/", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="/embed/", resourceTypes=["sub_frame", "script"]),
+                      made("allow", urlFilter="/embed/", resourceTypes=["main_frame"]),
+                      made("allow", urlFilter="/embed/"),
+                      made("allow", urlFilter="/embed/", excludedResourceTypes=["main_frame", "script"]),
+                      made("allow", urlFilter="/embed/", excludedResourceTypes=["sub_frame"]),
+                      made("allow", regexFilter=r"^https://shop\.example/", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="||example^", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="||shop.example", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="||shop.exam*le^", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="|https://shop.example/", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="/embed/", requestDomains=["com"], resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="/embed/", excludedRequestDomains=["shop.example"])):
+            self.assertTrue(bb.is_page_exception(entry), entry)
+        for entry in (made("block", urlFilter="/embed/", resourceTypes=["main_frame", "sub_frame"]),
+                      made("allow", urlFilter="/embed/", resourceTypes=["script", "image"]),
+                      made("allow", urlFilter="/embed/", excludedResourceTypes=["main_frame", "sub_frame"]),
+                      made("allow", urlFilter="||shop.example^", resourceTypes=["sub_frame"]),
+                      made("allow", urlFilter="||Shop.Example/Frame/"),
+                      made("allow", urlFilter="||cdn.shop.example:8443/"),
+                      made("allow", urlFilter="||shop.example?frame"),
+                      made("allow", urlFilter="/embed/", requestDomains=["shop.example"]),
+                      made("allow", urlFilter="/embed/", initiatorDomains=["shop.example"], resourceTypes=["sub_frame"])):
+            self.assertFalse(bb.is_page_exception(entry), entry)
+
+    def test_the_command_takes_the_override(self):
+        public = self.tmp / "public.txt"
+        public.write_text(self.public + "\n")
+        raw = self.tmp / "raw"
+        raw.mkdir()
+        (raw / "peter-lowe.txt").write_text(host_filters(1200))
+        common = ("--key", self.signing_key, "--raw-dir", raw, "--lists", "peter-lowe", "--public-key", public)
+        first = run("build", "--out", self.tmp / "first", "--key", self.signing_key, "--raw-dir", raw,
+                    "--lists", "peter-lowe", "--allow-count-change")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.tmp / "second"
+        (raw / "peter-lowe.txt").write_text(host_filters(1200) + "@@||shop.example^$document\n")
+        refused = run("build", "--out", second, *common, "--previous", self.tmp / "first")
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn(self.FLAG, refused.stderr)
+        self.assertFalse(second.exists())
+        accepted = run("build", "--out", second, *common, "--previous", self.tmp / "first", self.FLAG)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertIn(self.FLAG, accepted.stdout)
 
 
 class FakeResponse:
