@@ -49,6 +49,20 @@ subproject_commit() {
     commit -q -m "$(subproject_subject "$rel")" -m "patch-sha256: $(subproject_sha "$patch")"
 }
 
+# True when applying the patch to the commit's parent gives exactly the commit's tree, so a
+# commit amended in place (same subject and trailer, other content) is caught. Uses a
+# temporary index; the checkout's own index and files are untouched.
+subproject_tree_matches() {
+  local dir="$1" commit="$2" patch="$3" index tree
+  index="$(mktemp "${TMPDIR:-/tmp}/rearc-subproject-index.XXXXXX")" || return 1
+  if GIT_INDEX_FILE="$index" git -C "$dir" read-tree "$commit^" \
+     && GIT_INDEX_FILE="$index" git -C "$dir" apply --cached "$patch" 2>/dev/null; then
+    tree="$(GIT_INDEX_FILE="$index" git -C "$dir" write-tree)"
+  fi
+  rm -f "$index"
+  [[ -n "${tree:-}" && "$tree" == "$(git -C "$dir" rev-parse "$commit^{tree}")" ]]
+}
+
 # Checks one checkout: no loose changes, and its history from the pinned revision is
 # exactly the given patches' commits, in order, each with the patch file's current SHA-256.
 # With "prefix", a leading part of the list is enough (fetch.sh then applies the rest) and
@@ -71,6 +85,8 @@ subproject_verify() {
     [[ "$subject" == "$(subproject_subject "$rel")" ]] || { echo "src/$checkout: commit $commit is not $rel"; return 1; }
     [[ -n "$sha" ]] || { echo "src/$checkout: $rel was applied without its patch-sha256 (an older fetch.sh)"; return 1; }
     [[ "$sha" == "$(subproject_sha "$patches_dir/$rel")" ]] || { echo "src/$checkout: $rel changed since it was applied"; return 1; }
+    subproject_tree_matches "$dir" "$commit" "$patches_dir/$rel" \
+      || { echo "src/$checkout: commit $commit is not $rel applied to its parent (amended?)"; return 1; }
     i=$((i + 1))
   done <<<"$commits"
   if [[ "$mode" == prefix ]]; then printf '%s\n' "$i"; return 0; fi

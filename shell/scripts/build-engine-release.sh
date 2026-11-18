@@ -81,7 +81,10 @@ SUBPROJECTS="$(subproject_entries "$ENGINE_DIR/patches/series-subprojects")" || 
 # listed checkout, and each checkout is its pinned revision plus its listed patches, in order.
 SUBPROJECT_EXCLUDES=()
 while IFS= read -r spec; do [[ -n "$spec" ]] && SUBPROJECT_EXCLUDES+=("$spec"); done < <(subproject_excludes "$SUBPROJECTS")
-git diff --quiet -- . "${SUBPROJECT_EXCLUDES[@]}" && git diff --cached --quiet -- . "${SUBPROJECT_EXCLUDES[@]}" \
+# --ignore-submodules=none: src sets diff.ignoreSubmodules=dirty, which hides an edit left
+# in an unlisted checkout (Skia, Dawn, PDFium, ...).
+git diff --quiet --ignore-submodules=none -- . "${SUBPROJECT_EXCLUDES[@]}" \
+  && git diff --cached --quiet --ignore-submodules=none -- . "${SUBPROJECT_EXCLUDES[@]}" \
   || die 'chromium/src has uncommitted changes; the release engine is built from commits only'
 SUBPROJECT_HEADS=''
 while IFS= read -r checkout; do
