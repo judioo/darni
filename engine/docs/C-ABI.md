@@ -2708,6 +2708,13 @@ blocking. The old one is removed when the new one has its site exceptions, its o
 and its lists on. From then on the profile has one blocker again, under the other ID; the
 two IDs change places at every update.
 
+**Order within one blocker.** A blocker that is loaded, at profile load or as the second one
+in an update, gets its site exceptions and own rules first. Its lists are switched on when
+both of those updates have ended, never before: Chromium runs dynamic rule updates and
+ruleset updates on separate queues, and lists that came on first would block requests on an
+excepted site for a moment. An exception the host sets later reaches a blocker whose lists
+are already on, and takes the time of one rule update.
+
 - A blocker that never got ready (the first load of a launch still indexing, or an update
   that a newer bundle overtakes) blocks nothing and is replaced in place.
 - A level or list change during an update removes the old blocker at once, so the change

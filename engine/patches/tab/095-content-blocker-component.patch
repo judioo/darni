@@ -49,12 +49,29 @@ What Chromium needed worked around, all in rearc_content_blocker.cc:
   indexed. On a list update the new bundle is therefore loaded as the other
   blocker, beside the one that is blocking. The old one is removed when the
   new one has its site exceptions, its own rules and its lists on
-  (FinishTakeover; the three are separate queues in RulesMonitorService).
+  (FinishTakeover), in the order of the next point.
   A blocker that never got ready is replaced in place, a level change during
   an update removes the old blocker at once, and a new bundle that does not
   load or whose lists do not come on leaves the old one blocking. Both
   blockers' lists are on for that moment, which the bundle's size must allow
   (build-blocklists.py check_limits). Security CB-02.
+- RulesMonitorService keeps two queues per extension, one for dynamic rule
+  updates (the site exceptions and the own rules) and one for ruleset
+  updates (the lists), and nothing orders one against the other. Started
+  together, a blocker's lists could come on before its site exceptions, and
+  a site the person excepted because blocking breaks it would have requests
+  blocked for a moment. A blocker that is loaded therefore gets its site
+  exceptions and own rules first, and its lists are switched on only when
+  both dynamic rule updates have ended and their rules are in the matcher
+  (SwitchListsOn), at profile load and in a takeover alike. An update
+  Chromium refuses counts as ended: the lists still come on. What is left of
+  the window: when the host changes the exceptions later, the lists are
+  already on and the change takes the time of one dynamic rule update; and
+  at a launch with the bundle of the last session Chromium itself loads the
+  lists that were on together with the dynamic rules as that session left
+  them (RulesMonitorService::OnExtensionLoaded, one load for both), so
+  until this launch's first update ends the exceptions in force are that
+  session's.
 
 What a list may do (security CB-03). PrepareBundle reads every rules file
 while it copies it and refuses the bundle when a rule's action is not
@@ -89,7 +106,8 @@ touched. The new file and the four other C++ files (rearc_extension_actions,
 rearc_profile_registry, chrome_extensions_api_client, allowlist) pass
 clang -fsyntax-only with the dev build's flags, plugins and generated
 headers, run from a scratch symlink view of the tree (again on 2026-11-18
-after the CB-02 and CB-03 changes). The two .mm files (one line each) were
+after the CB-02 and CB-03 changes, and after the change to the order of a
+blocker's steps). The two .mm files (one line each) were
 not checked, nothing was linked, and nothing has run: the load, the
 on-demand indexing, the counts, the limits with real lists and the takeover
 on a list update all need an engine build and the self-test steps of the
@@ -220,10 +238,10 @@ index 9667c06..9a3489e 100644
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 new file mode 100644
-index 0000000..be72ead
+index 0000000..9c284dd
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-@@ -0,0 +1,1021 @@
+@@ -0,0 +1,1061 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -244,7 +262,8 @@ index 0000000..be72ead
 +// bundle is loaded as the other one, and the old one goes on blocking until
 +// the new one's lists are on: an extension cannot change its rulesets'
 +// files without a reload, and a reload leaves every open page unblocked
-+// while 18,000 rules are indexed (security CB-02).
++// while 18,000 rules are indexed (security CB-02). A blocker's lists are
++// switched on after its site exceptions and own rules are set, never before.
 +
 +#include "chrome/browser/rearc_bridge/rearc_content_blocker.h"
 +
@@ -386,7 +405,10 @@ index 0000000..be72ead
 +  // the other one goes on blocking until `current` is ready (FinishTakeover).
 +  std::array<std::string, kSlots> loaded;
 +  int current = -1;
-+  // `current` has its site exceptions, its own rules and its lists on.
++  // `current` has its site exceptions and its own rules: both dynamic rule
++  // updates have ended. Its lists are not switched on before (SwitchListsOn).
++  bool current_rules_set = false;
++  // `current` has its lists on too.
 +  bool current_ready = false;
 +};
 +
@@ -670,14 +692,19 @@ index 0000000..be72ead
 +  }
 +}
 +
-+// A dynamic rule update ended, well or not: `done` runs either way. A blocker
-+// whose exceptions or own rules Chromium refused still takes over from the
-+// one before it; the refusal is the same in both.
++// A dynamic rule update ended, well or not: `done` follows either way. A
++// blocker whose exceptions or own rules Chromium refused still gets its lists
++// and takes over from the one before it; the refusal is the same in both.
++// `done` is posted, not run here: Chromium calls back just before it hands
++// the updated rules to the matcher
++// (RulesMonitorService::OnDynamicRulesUpdated), and what follows must find
++// them in force.
 +void OnDynamicRulesSet(const char* what,
 +                       base::OnceClosure done,
 +                       std::optional<std::string> error) {
 +  LogRuleError(what, std::move(error));
-+  std::move(done).Run();
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(FROM_HERE,
++                                                           std::move(done));
 +}
 +
 +base::DictValue RuleValue(int id,
@@ -922,13 +949,15 @@ index 0000000..be72ead
 +  state.loaded[slot].clear();
 +  if (state.current == slot) {
 +    state.current = -1;
++    state.current_rules_set = false;
 +    state.current_ready = false;
 +  }
 +}
 +
 +// The blocker in `slot`, loaded for bundle `version`, has its site
-+// exceptions, its own rules and its lists on. Only now does the blocker of
-+// the bundle before it go: no open page was without its lists in between.
++// exceptions, its own rules and, after them, its lists on. Only now does the
++// blocker of the bundle before it go: no open page was without its lists in
++// between.
 +void FinishTakeover(uint64_t profile_id, int slot, std::string version) {
 +  Profile* profile = FindBridgeProfile(profile_id);
 +  auto found = States().find(profile_id);
@@ -944,6 +973,28 @@ index 0000000..be72ead
 +  if (!state.loaded[other].empty()) {
 +    Unload(profile, state, other);
 +  }
++}
++
++// The blocker in `slot`, loaded for bundle `version`, has its site exceptions
++// and its own rules: both dynamic rule updates have ended. Only now are its
++// lists switched on. A ruleset update and a dynamic rule update wait in
++// different queues of RulesMonitorService, so started together the lists
++// could come on first, and a site the person excepted because blocking
++// breaks it would have requests blocked until its exception arrived.
++// FinishTakeover follows when the lists are on.
++void SwitchListsOn(uint64_t profile_id, int slot, std::string version) {
++  auto found = States().find(profile_id);
++  if (found == States().end()) {
++    return;
++  }
++  ProfileState& state = found->second;
++  if (state.current != slot || state.loaded[slot] != version) {
++    return;  // Unloaded or replaced since; the newer load switches on its own.
++  }
++  state.current_rules_set = true;
++  ApplyRulesets(profile_id, slot,
++                base::BindOnce(&FinishTakeover, profile_id, slot,
++                               std::move(version)));
 +}
 +
 +// Brings the profile's blocker in line with its state and the bundle in use:
@@ -977,6 +1028,11 @@ index 0000000..be72ead
 +    const int other = kSlots - 1 - slot;
 +    if (!state.loaded[other].empty()) {
 +      Unload(profile, state, other);
++    }
++    if (!state.current_rules_set) {
++      // Its site exceptions and own rules are still being set. SwitchListsOn
++      // follows them and reads the level and the lists as they are then.
++      return;
 +    }
 +    ApplyRulesets(profile_id, slot,
 +                  state.current_ready
@@ -1012,19 +1068,21 @@ index 0000000..be72ead
 +  }
 +  state.loaded[slot] = bundle->version;
 +  state.current = slot;
++  state.current_rules_set = false;
 +  state.current_ready = false;
 +  // ActionTracker hands the per-tab count of blocked requests to
 +  // ExtensionsAPIClient::UpdateActionCount for an extension with this
 +  // preference; OnContentBlockerActionCount takes it from there.
 +  dnr::PrefsHelper(*extensions::ExtensionPrefs::Get(profile))
 +      .SetUseActionCountAsBadgeText(BlockerId(slot), true);
-+  // Three steps, each on a queue of its own in RulesMonitorService, so none
-+  // is known to end before another: the blocker is ready after all three.
-+  base::RepeatingClosure step = base::BarrierClosure(
-+      3, base::BindOnce(&FinishTakeover, profile_id, slot, bundle->version));
-+  ApplyExceptions(profile_id, slot, step);
-+  ApplyOwnRules(profile_id, slot, step);
-+  ApplyRulesets(profile_id, slot, step);
++  // The site exceptions and the own rules first. The lists are switched on
++  // when both updates have ended (SwitchListsOn), and the blocker is ready,
++  // and takes over from the one before it, when the lists are on
++  // (FinishTakeover).
++  base::RepeatingClosure rules_set = base::BarrierClosure(
++      2, base::BindOnce(&SwitchListsOn, profile_id, slot, bundle->version));
++  ApplyExceptions(profile_id, slot, rules_set);
++  ApplyOwnRules(profile_id, slot, rules_set);
 +}
 +
 +// Applies once the profile's extension system is ready: the host may speak
