@@ -22,7 +22,7 @@ protocol TaskManagerSource: AnyObject {
     func endProcess(_ pid: Int32) async -> Bool
     /// Whether the engine tab is a page of the shell's that can be brought forward.
     func canShowTab(_ engineTabID: UInt64) -> Bool
-    /// Brings the engine tab's window forward and selects the tab in its space.
+    /// Brings the last focused browser window forward and selects the tab there, in its space.
     func showTab(_ engineTabID: UInt64)
 }
 

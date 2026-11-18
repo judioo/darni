@@ -753,7 +753,8 @@ final class BrowserViewModel {
         engineHost.linkRouter = self
         installTidyDownloads()
         // A close or unload never hands the selection to a saved pin or
-        // favorite without a live page: selecting it would load it.
+        // favorite without a live page: selecting it would load it. A space
+        // coming back on screen asks the same of every row.
         self.store.isTabOpen = { [weak self] id in self?.canUnloadTab(id) ?? false }
         shortcutRouter.binding = { [weak self] key, modifiers in
             (self?.shortcutOverrides ?? ShortcutOverrides()).binding(for: key, modifiers: modifiers)

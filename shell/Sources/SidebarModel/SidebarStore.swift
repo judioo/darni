@@ -132,9 +132,11 @@ public final class SidebarStore {
     public var autoPiPPolicy = AutoPiPPolicyState()
     /// Clock for last-active stamps and archive times (tests inject a fixed date).
     @ObservationIgnored public var now: () -> Date = { Date() }
-    /// Whether a pinned or favorite tab has a page open. Only open ones can
-    /// take the selection when the selected item closes: Arc goes to the
-    /// empty state rather than load a saved pin (ARC-RECORDING-2026-11-06).
+    /// Whether a tab has a page open. Two rules ask, through `hasOpenPage`.
+    /// When the selected item closes, only an open pin or favorite can take
+    /// the selection: Arc goes to the empty state rather than load a saved pin
+    /// (ARC-RECORDING-2026-11-06). When a space comes back on screen, only an
+    /// open row can, a Today tab included (`restoredSelection`).
     /// The shell answers from its engines; on its own the model counts all.
     @ObservationIgnored public var isTabOpen: (Tab.ID) -> Bool = { _ in true }
     var selectionBySpace: [Space.ID: UUID] {
@@ -1799,18 +1801,19 @@ public final class SidebarStore {
         if let remembered = selectionBySpace[spaceID], rows.ids.contains(remembered) {
             // A closed tab group shows none of its tabs: the space is blank, as when the group was closed.
             if isInClosedTabGroup(remembered, in: spaceID) { return nil }
-            if let entry = rows.entries.first(where: { $0.id == remembered }), isOpenOnReturn(entry) { return remembered }
+            if let entry = rows.entries.first(where: { $0.id == remembered }), hasOpenPage(entry) { return remembered }
         }
         // The space's own rows: a favorite's last focus may have been in another space.
         let favorites = Set(sortedFavorites(in: space(withID: spaceID)?.profileID ?? activeProfileID).map(\.id))
         return rows.entries
-            .filter { !favorites.contains($0.id) && !isInClosedTabGroup($0.id, in: spaceID) && isOpenOnReturn($0) }
+            .filter { !favorites.contains($0.id) && !isInClosedTabGroup($0.id, in: spaceID) && hasOpenPage($0) }
             .max { lastFocused($0) < lastFocused($1) }?.id
     }
 
-    /// Whether a row can take a returning space's selection without loading
-    /// a page: an open tab, a split with an open pane, or an easel.
-    private func isOpenOnReturn(_ entry: SidebarEntry) -> Bool {
+    /// Whether a row can take the selection without loading a page: an open
+    /// tab, a split with an open pane, or an easel. A returning space asks
+    /// only this. A close asks it with two exceptions (`isOpenSuccessor`).
+    private func hasOpenPage(_ entry: SidebarEntry) -> Bool {
         switch entry {
         case .tab(let tab): return isTabOpen(tab.id)
         case .split(let split): return split.tabs.contains { isTabOpen($0.id) }
@@ -1964,8 +1967,13 @@ public final class SidebarStore {
     private func isOpenSuccessor(_ entry: SidebarEntry) -> Bool {
         // A closed tab group's tabs are not on screen.
         if isInClosedTabGroup(entry.id) { return false }
-        guard case .tab(let tab) = entry, tab.kind != .today else { return true }
-        return isTabOpen(tab.id)
+        switch entry {
+        // The two ways a close differs from a space's return: it goes on to a
+        // Today tab whose page was unloaded, and to a split whatever its panes.
+        case .tab(let tab) where tab.kind == .today: return true
+        case .split, .folder, .tabGroup: return true
+        case .tab, .easel: return hasOpenPage(entry)
+        }
     }
 
     private func advanceSelection(by delta: Int) {
