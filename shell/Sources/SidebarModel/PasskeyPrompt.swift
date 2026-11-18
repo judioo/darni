@@ -214,29 +214,50 @@ public struct PasskeyStep: Equatable, Sendable {
         self.storedOnKey = storedOnKey
     }
 
-    /// The longest page-chosen text the sheet shows.
+    /// The longest page-chosen text the sheet shows, in Unicode scalars (so in characters too).
     public static let pageTextLimit = 64
+    /// The most combining marks one character keeps.
+    public static let pageTextMarkLimit = 2
 
     /// A name the page chose (an account, a display name), made safe to
     /// show: control, format and direction-override characters and line
-    /// breaks are removed, and it is cut at a fixed length. It then reads as
-    /// one short line that cannot pose as the sheet's own text or push the
-    /// buttons out of the window.
+    /// breaks are removed, a character keeps two combining marks, and it is
+    /// cut at a fixed length. It then reads as one short line that cannot
+    /// pose as the sheet's own text, draw over the lines around it or push
+    /// the buttons out of the window.
     public static func pageText(_ raw: String, limit: Int = pageTextLimit) -> String {
         var scalars = String.UnicodeScalarView()
+        var marks = 0
         for scalar in raw.unicodeScalars {
             switch scalar.properties.generalCategory {
             case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate, .privateUse, .unassigned:
                 // A line break or a tab separated two words.
                 if scalar == "\n" || scalar == "\r" || scalar == "\t" || scalar == "\u{2028}" || scalar == "\u{2029}" {
                     scalars.append(" ")
+                    marks = 0
                 }
+            case .nonspacingMark, .enclosingMark:
+                // Marks stack above and below their letter without limit.
+                marks += 1
+                if marks <= pageTextMarkLimit { scalars.append(scalar) }
+            case .spacingMark:
+                // Beside its letter, and the marks after it are still that letter's.
+                scalars.append(scalar)
             default:
                 scalars.append(scalar)
+                marks = 0
             }
         }
         let text = String(scalars).split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
-        return text.count > limit ? String(text.prefix(limit)) + "…" : text
+        // Counted in scalars: one character can be a long run of them.
+        guard text.unicodeScalars.count > limit else { return text }
+        var kept = "", count = 0
+        for character in text {
+            count += character.unicodeScalars.count
+            if count > limit { break }
+            kept.append(character)
+        }
+        return (kept.isEmpty ? String(text.unicodeScalars.prefix(limit)) : kept) + "…"
     }
 
     /// The engine's JSON for a step. Nil when it is not the object the ABI describes.

@@ -78,7 +78,17 @@ After the pre-merge security review (security/PRE-passkeys-site-permissions.md,
   ContinueWithFlowAfterBleAdapterPowered): each is run once per step, since
   a second run is a CHECK failure that ends the browser.
 
-Built into the release engine on 2026-11-18 (overlay e6f031f180,
+After the review's addendum (2026-11-18):
+- PK-10. A request whose first step with UI arrives while its tab's
+  WebContents is not visible is cancelled, as one from a page that is no
+  tab. Chromium has this rule for creating a passkey
+  (AuthenticatorCommonImpl::IsFocused, visibility VISIBLE) and none for
+  signing in: a hidden tab's request stayed open for the three minutes
+  Chromium raises a timeout to, and a touch of a plugged-in key meant for
+  the tab in front could answer it. The check is at the request's first
+  step only: a sheet that is open stays when its tab goes to the back.
+
+Built into the release engine on 2026-11-18 (overlay a8fd9bb90b,
 out/ReArc-codecs-arm64): the framework exports both functions and
 engine/tests/check_abi168_imports.py passes. Run on screen with the host's
 sheet on webauthn.io: the choice of ways, the QR code, the security key
@@ -301,10 +311,10 @@ index f8c5938..24a7044 100644
    ABIDetachFind(id);
 diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.cc b/chrome/browser/rearc_bridge/rearc_webauthn.cc
 new file mode 100644
-index 0000000..b527a6c
+index 0000000..5d29a8e
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_webauthn.cc
-@@ -0,0 +1,725 @@
+@@ -0,0 +1,738 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -343,6 +353,7 @@ index 0000000..b527a6c
 +#include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
 +#include "chrome/common/chrome_version.h"
 +#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/visibility.h"
 +#include "content/public/browser/web_contents.h"
 +#include "device/fido/discoverable_credential_metadata.h"
 +#include "device/fido/pin.h"
@@ -822,9 +833,10 @@ index 0000000..b527a6c
 +    if (!has_ui && !shown_) {
 +      return;
 +    }
-+    if (has_ui && (!host || !tab_id_)) {
-+      // No host UI, or a page that is no tab: cancel rather than wait for a
-+      // dialog nobody can answer. Deferred: the model is in a transition.
++    if (has_ui && (!host || !tab_id_ || (!shown_ && !TabVisible()))) {
++      // No host UI, a page that is no tab, or a request that opens in a tab
++      // nobody looks at: cancel rather than wait for a dialog nobody can
++      // answer. Deferred: the model is in a transition.
 +      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
 +          FROM_HERE, base::BindOnce(&Prompt::Cancel, weak_.GetWeakPtr()));
 +      return;
@@ -836,6 +848,17 @@ index 0000000..b527a6c
 +    // What goes out now is what the next answer is for.
 +    answered_ = false;
 +    ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 0u, Describe(step)));
++  }
++
++  // Chromium's rule for creating a passkey (ChromeWebAuthenticationDelegate::
++  // IsFocused), which it does not apply to signing in: a hidden tab's request
++  // would stay open against a plugged-in key, and a touch meant for the tab
++  // in front could answer it.
++  bool TabVisible() const {
++    TabSession* session = TabRegistry::Get().FindSession(tab_id_);
++    return session && session->web_contents() &&
++           session->web_contents()->GetVisibility() ==
++               content::Visibility::VISIBLE;
 +  }
 +
 +  void End() {

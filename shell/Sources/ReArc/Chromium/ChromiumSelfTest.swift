@@ -1292,6 +1292,7 @@ final class ChromiumSelfTest {
         } else {
             log("ABI-GAP tab_discard not advertised: Unload Tab drops the engine")
         }
+        try await passkeyHiddenTabChecks(model: model, store: store, base: base)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
         } else {
@@ -1695,6 +1696,72 @@ final class ChromiumSelfTest {
             + "engine and content generation \(generation) kept, row dimmed); selecting B restored it as a new document "
             + "(\(documentBefore.map { "\($0.documentGeneration)" } ?? "?") -> "
             + "\(runtime.documentIdentity(tab: hiddenEngine.tabID).map { "\($0.documentGeneration)" } ?? "?"))")
+    }
+
+    // MARK: Passkey requests from a tab that is not shown (ABI 1.68, security review PK-10)
+
+    /// Chromium refuses to create a passkey for a tab that is not visible and
+    /// has no such rule for signing in; the engine cancels a request whose
+    /// first step with UI arrives for a hidden tab. The same request from the
+    /// tab once it is shown opens the sheet, which says the first result is
+    /// the rule's and not another refusal.
+    @MainActor
+    private func passkeyHiddenTabChecks(model: BrowserViewModel, store: SidebarStore, base: String) async throws {
+        guard ChromiumPasskeyChannel.calls != nil else {
+            return log("ABI-GAP webauthn_prompts not advertised: a passkey request shows no sheet")
+        }
+        // An IP address is no relying party: the page is on localhost.
+        let url = URL(string: base.replacingOccurrences(of: "127.0.0.1", with: "localhost") + "/a")!
+        let previous = store.selectedTab?.id
+        let tab = store.addTab(kind: .today, title: "Passkey", url: url)
+        _ = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let engine = try shellEngine(model, tab)
+        engine.load(url)
+        try await wait("background passkey tab loaded", timeout: 20) { engine.pageTitle == Self.titleA && !engine.isLoading }
+
+        // Chromium raises a page's timeout to minutes, so an end within seconds is not the timeout.
+        let ask = """
+        (window.passkeyResult = 'pending',
+         navigator.credentials.get({publicKey: {challenge: new Uint8Array(32), timeout: 5000}})
+           .then(() => { window.passkeyResult = 'resolved' }, error => { window.passkeyResult = error.name }),
+         document.visibilityState)
+        """
+        func result() async -> String { ((try? await engine.evaluate("window.passkeyResult", in: .page)) as? String) ?? "" }
+
+        let events = ChromiumPasskeyChannel.events
+        let hidden = try await engine.evaluate(ask, in: .page) as? String
+        try check(hidden == "hidden" && engine.attachmentID == nil, "the background tab is \(hidden ?? "nil"), lease \(String(describing: engine.attachmentID))")
+        var sheet = false
+        let asked = Date()
+        try await waitAsync("the hidden tab's passkey request ends", timeout: 10) {
+            sheet = sheet || engine.pagePrompts.passkey != nil
+            return await result() != "pending"
+        }
+        let hiddenResult = await result()
+        let took = Int(Date().timeIntervalSince(asked) * 1000)
+        try check(hiddenResult == "NotAllowedError" && !sheet && engine.pagePrompts.passkey == nil && ChromiumPasskeyChannel.events == events,
+                  "hidden tab: result \(hiddenResult), sheet state \(sheet), step events \(ChromiumPasskeyChannel.events - events)")
+
+        model.selectTab(tab.id)
+        try await waitAsync("the passkey tab shown", timeout: 15) {
+            guard engine.attachmentID != nil else { return false }
+            return ((try? await engine.evaluate("document.visibilityState", in: .page)) as? String) == "visible"
+        }
+        _ = try await engine.evaluate(ask, in: .page)
+        try await wait("the shown tab's passkey sheet", timeout: 15) { engine.pagePrompts.passkey != nil }
+        let step = try XUnwrap(engine.pagePrompts.passkey?.step, "passkey step")
+        try check(step.requestLine == "Sign in to localhost" && step.showsSheet, "shown tab: \(step.kind) \"\(step.requestLine)\"")
+        engine.pagePrompts.answerPasskey(.cancel)
+        try await waitAsync("the cancelled passkey request ends", timeout: 10) { await result() != "pending" }
+        let shownResult = await result()
+        try check(shownResult == "NotAllowedError" && engine.pagePrompts.passkey == nil, "shown tab after Cancel: \(shownResult)")
+        // The close asks the page first and then loads the tab it leaves selected: the next step waits for that.
+        model.closeTab(tab.id)
+        try await wait("the passkey tab closed") { store.tab(withID: tab.id) == nil }
+        if let previous { model.selectTab(previous) }
+        log("PASS passkey request from a hidden tab (PK-10): navigator.credentials.get in background tab \(engine.tabID) -> "
+            + "\(hiddenResult) after \(took) ms, no step event and no sheet state; the same request with the tab shown -> "
+            + "step \(step.kind) \"\(step.requestLine)\", Cancel -> \(shownResult)")
     }
 
     // MARK: Wave 23: HTML fullscreen (ABI 1.27)

@@ -2844,7 +2844,10 @@ A request that needs no dialog sends nothing: a sign-in page's passkey autofill 
 every load. Without a callback, and for a page that is no registry tab, a request that reaches a
 step with UI is cancelled, never left waiting. So is one whose asking frame is no http or https
 page: an extension page may claim any site it has host access to as the relying party, and the
-sheet names the relying party, not the asker (security review PK-03).
+sheet names the relying party, not the asker (security review PK-03). And so is one whose first
+step with UI arrives while its tab's WebContents is not visible (PK-10): Chromium has that rule
+for creating a passkey and none for signing in, so a hidden tab could hold a request open
+against a plugged-in key. The host gets no event for any of these.
 
 **Steps** (`step` in the JSON; the names are the ABI's and do not follow Chromium's enum):
 
@@ -2899,4 +2902,5 @@ app (the `bluetooth_denied` step when it is refused).
 **Tests:** the import check above. Run on screen on webauthn.io (2026-11-18): the choice of
 ways, the QR code, the security key step, "this Mac" up to macOS's Touch ID prompt, cancel, a
 second request, a tab closed in the middle. Not run: a phone, a security key, and so the PIN,
-fingerprint and error steps, and the refusals above.
+fingerprint and error steps, and the refusals above but the hidden tab's, which the shell's
+self-test runs (`passkeyHiddenTabChecks`).

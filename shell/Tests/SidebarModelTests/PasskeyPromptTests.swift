@@ -184,6 +184,15 @@ final class PasskeyPromptTests: XCTestCase {
         let long = PasskeyStep.pageText(String(repeating: "x", count: 500))
         XCTAssertEqual(long.count, PasskeyStep.pageTextLimit + 1)
         XCTAssertTrue(long.hasSuffix("…"))
+        // A letter keeps two combining marks, so a stack cannot draw over the lines around it (review addendum).
+        XCTAssertEqual(PasskeyStep.pageText("a" + String(repeating: "\u{0301}", count: 60) + "b\u{0303}"), "a\u{0301}\u{0301}b\u{0303}")
+        XCTAssertEqual(PasskeyStep.pageText("Nguye\u{0302}\u{0303}n ที่"), "Nguye\u{0302}\u{0303}n ที่")
+        // The cut counts scalars: a single character can be a run of them without one mark too many.
+        let conjuncts = PasskeyStep.pageText(String(repeating: "क\u{094D}", count: 200))
+        XCTAssertLessThanOrEqual(conjuncts.unicodeScalars.count, PasskeyStep.pageTextLimit + 1)
+        XCTAssertTrue(conjuncts.hasSuffix("…"))
+        let accented = PasskeyStep.pageText(String(repeating: "e\u{0301}", count: 40))
+        XCTAssertEqual(accented, String(repeating: "e\u{0301}", count: 32) + "…")
 
         let step = try XCTUnwrap(PasskeyStep(json: """
         {"step":"create_this_mac","request":"create","rp_id":"example.com","origin":"https://example.com",

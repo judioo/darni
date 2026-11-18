@@ -39,7 +39,8 @@ lines and this section starts empty again.
   security key", ReArc shows its own sheet, which names the site on every step: save or use a
   passkey on this Mac, use a phone or tablet (scan the QR code with it; ReArc reaches it over
   Bluetooth, which macOS asks you to allow the first time), or use a USB security key with its
-  PIN and touch. Before this, such sign-ins waited and failed. Passkeys kept in iCloud Keychain
+  PIN and touch. Before this, such sign-ins waited and failed. Only the tab you are looking at
+  can ask: a request from a tab in the background is refused. Passkeys kept in iCloud Keychain
   are not available yet.
 - The address bar has a site information button. It lists what the site may use (notifications,
   clipboard, camera, location and the rest, and devices it was given) with Allow, Block and
