@@ -50,3 +50,32 @@ final class SpaceCircleTests: XCTestCase {
         }
     }
 }
+
+/// Arc's space icons (2026-11-18): the picker offers Arc's 56 in Arc's order,
+/// then ReArc's own, and an Arc import draws Arc's named icons.
+final class ArcSpaceIconTests: XCTestCase {
+    func testThePickerOffersArcsIconsInArcsOrderThenReArcsExtras() {
+        let arc = ArcSpaceIcons.pickerOrder.map(\.symbol)
+        XCTAssertEqual(arc.count, 56)
+        XCTAssertEqual(Array(Space.iconChoices.prefix(56)), arc)
+        XCTAssertEqual(Set(Space.iconChoices).count, Space.iconChoices.count, "no icon twice")
+        for symbol in Space.rearcIconChoices {
+            XCTAssertTrue(Space.iconChoices.contains(symbol), "\(symbol) is kept")
+        }
+    }
+
+    func testArcIconNamesDrawAsTheirSymbols() {
+        XCTAssertEqual(Space.symbolToDraw(for: "code"), "chevron.left.forwardslash.chevron.right")
+        XCTAssertEqual(Space.symbolToDraw(for: "planet"), "globe.americas.fill")
+        XCTAssertEqual(Space.symbolToDraw(for: "star"), "star.fill", "Arc's star is filled")
+        XCTAssertEqual(Space.symbolToDraw(for: "house.fill"), "house.fill")
+        XCTAssertNil(Space.symbolToDraw(for: "🌿"))
+    }
+
+    func testAnArcImportMapsNamedIcons() {
+        XCTAssertEqual(ArcSidebarReader.icon(["icon": "code"]), .sfSymbol(name: "chevron.left.forwardslash.chevron.right"))
+        XCTAssertEqual(ArcSidebarReader.icon(["icon": "fileTrayFull"]), .sfSymbol(name: "tray.full.fill"), "camelCase names were dropped before")
+        XCTAssertEqual(ArcSidebarReader.icon(["icon": "star.fill"]), .sfSymbol(name: "star.fill"))
+        XCTAssertEqual(ArcSidebarReader.icon(["emoji_v2": "🧪", "emoji": 3]), .emoji("🧪"))
+    }
+}

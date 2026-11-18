@@ -290,10 +290,12 @@ public enum ArcSidebarReader {
     }
 
     /// `{"emoji_v2": "🌿", "emoji": n}` or `{"icon": "name"}`. Arc's named
-    /// icons are kept only when they are SF Symbol-shaped names.
+    /// icons become the SF Symbol ReArc draws for them (`ArcSpaceIcons`);
+    /// another name is kept only when it is SF Symbol-shaped.
     static func icon(_ value: Any?) -> SidebarItemIcon? {
         guard let object = value as? [String: Any] else { return nil }
         if let emoji = object["emoji_v2"] as? String, !emoji.isEmpty { return .emoji(emoji) }
+        if let name = object["icon"] as? String, let symbol = ArcSpaceIcons.symbol(forArcName: name) { return .sfSymbol(name: symbol) }
         if let name = object["icon"] as? String, Space.isSymbolName(name) { return .sfSymbol(name: name) }
         return nil
     }

@@ -412,5 +412,10 @@ public enum SpaceCircles {
         "beach": "🏖️", "fish": "🐟", "bird": "🐦", "hare": "🐇", "tortoise": "🐢", "ant": "🐜",
         "ladybug": "🐞", "dice": "🎲", "theatermasks": "🎭", "scissors": "✂️",
         "ruler": "📏", "eyeglasses": "👓", "tshirt": "👕", "basket": "🧺",
+        // Arc's icon set (ArcSpaceIcons), 2026-11-18.
+        "triangle": "🔺", "staroflife": "✳️", "square": "🟦", "server": "🗄️", "rectangle": "🗂️",
+        "tray": "📥", "checkmark": "✅", "ellipsis": "💬", "oval": "🥚", "video": "📹",
+        "bandage": "🩹", "chevron": "👨‍💻", "baseball": "⚾️", "takeoutbag": "🍕", "receipt": "🧾",
+        "hand": "👍",
     ]
 }

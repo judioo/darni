@@ -196,17 +196,21 @@ struct IconChooser: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Icon").font(.headline)
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8), spacing: 6) {
-                ForEach(["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" }, id: \.self) { name in
-                    Button { selection = .sfSymbol(name: name) } label: {
-                        Image(systemName: name)
-                            .frame(width: 30, height: 30)
-                            .background(selection == .sfSymbol(name: name) ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8), spacing: 6) {
+                    ForEach(["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" }, id: \.self) { name in
+                        Button { selection = .sfSymbol(name: name) } label: {
+                            Image(systemName: name)
+                                .frame(width: 30, height: 30)
+                                .background(selection == .sfSymbol(name: name) ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                        .help(name)
                     }
-                    .buttonStyle(.plain)
-                    .help(name)
                 }
             }
+            // Arc's picker shows seven rows of eight; the rest scroll.
+            .frame(height: 246)
             HStack {
                 TextField("Emoji", text: $emoji).textFieldStyle(.roundedBorder)
                 Button("Use Emoji") {
