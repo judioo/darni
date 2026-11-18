@@ -19,6 +19,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1118.1027 — 2026-11-18
+
 **New**
 - ReArc can block ads and trackers itself, with no extension. A new install has it on, at the
   level Ads and trackers. If you already use ReArc, nothing changes until you turn it on: the
@@ -55,6 +57,8 @@ lines and this section starts empty again.
 
 **Fixes**
 - ReArc no longer quits when the program that started it has closed its log output.
+- After Add Split View, the page you were typing in keeps the keyboard even when the Mac is busy
+  and the new pane takes a moment to appear.
 
 ## ReArc 2026.1118.968 — 2026-11-18
 
