@@ -1291,6 +1291,7 @@ final class ChromiumSelfTest {
         try await codecChecks(model: model, store: store)
         try await prerenderChecks(model: model, store: store)
         try await taskManagerChecks(model: model, store: store, window: first)
+        try await contentBlockingChecks(model: model, store: store)
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3323,6 +3324,37 @@ extension ChromiumSelfTest {
                 log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
             }
         }
+    }
+
+    /// Built-in ad and tracker blocking (CONTENT-BLOCKING.md §8 "Self-test").
+    /// A STUB UNTIL THE ENGINE PATCH LANDS (`tab/095-content-blocker-component`):
+    /// an engine without the blocking calls logs the gap, and the only check is
+    /// that nothing of blocking shows. With the calls it checks the shell's
+    /// half (the install was counted as new or existing, the bundles were
+    /// looked at) and says which bundle is in use.
+    ///
+    /// Still to write, with the engine patch and a fixture page of known ad
+    /// and tracker URLs: the page's requests are blocked at Ads and trackers,
+    /// allowed with a site exception and at Off, and "N blocked on this page"
+    /// matches the fixture's count.
+    @MainActor
+    private func contentBlockingChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        guard model.contentBlocking.isAvailable else {
+            log("ABI-GAP content blocking not exported (\(ChromiumContentBlockingCalls.missingSymbols.joined(separator: ", "))): "
+                + "Block ads and trackers is hidden in Settings and the site controls, and no install is offered it")
+            try check(!model.contentBlocking.showsOffer, "the blocking offer is up without an engine that can block")
+            try check(model.contentBlocking.bundle == nil, "a blocklist bundle was loaded without an engine that can block")
+            return
+        }
+        try check(store.contentBlockingRollout.isDecided, "an engine with blocking attached and the install was not counted as new or existing")
+        try await wait("the blocklist bundles to be checked") { model.contentBlocking.didLoadLists }
+        guard let bundle = model.contentBlocking.bundle else {
+            log("NOTE content blocking: no bundle verified (\(model.contentBlockingEvents.suffix(3).joined(separator: "; "))); "
+                + "nothing can be blocked and the page checks did not run")
+            return
+        }
+        log("NOTE content blocking: bundle \(bundle.version) (\(bundle.source)) is in use; the page checks "
+            + "(blocked, excepted, Off, the count) are not written yet and need the engine patch")
     }
 
     /// Window › Task Manager (docs/briefs/2026-11-17-chrome-features.md).

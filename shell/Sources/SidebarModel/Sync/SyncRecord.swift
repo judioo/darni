@@ -182,6 +182,11 @@ public enum SyncRecordKind: String, Codable, CaseIterable, Sendable {
     /// spaces' pinned rows for it are item records. A record of its own
     /// kind, so builds from before tab groups drop it and never write it.
     case tabGroup = "SidebarTabGroupRecord"
+    /// A profile's ad and tracker blocking: the switch, the level, the lists,
+    /// own rules and site exceptions (CONTENT-BLOCKING.md §2), named after
+    /// the profile. A record of its own kind, so builds from before blocking
+    /// drop it and never write it.
+    case contentBlocking = "SidebarContentBlockingRecord"
 
     var namePrefix: String {
         switch self {
@@ -192,6 +197,7 @@ public enum SyncRecordKind: String, Codable, CaseIterable, Sendable {
         case .spaceStyle: return "spacestyle_"
         case .spaceArchive: return "spacearchive_"
         case .tabGroup: return "tabgroup_"
+        case .contentBlocking: return "contentblocking_"
         }
     }
 

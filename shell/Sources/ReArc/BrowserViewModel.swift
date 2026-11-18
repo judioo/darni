@@ -671,6 +671,13 @@ final class BrowserViewModel {
     /// Window › Task Manager: the engine's processes and what they use (both
     /// engines; WebKit lists ReArc itself). Its window is made when first shown.
     let taskManager = TaskManagerController()
+    /// Built-in ad and tracker blocking: the engine seam, the list bundle and
+    /// the one-time offer (`BrowserViewModel+ContentBlocking.swift`). Hidden
+    /// until an engine with the blocking calls attaches.
+    let contentBlocking = ContentBlockingController()
+    /// Blocking's recent log lines, newest last (the Chromium shell logs them).
+    @ObservationIgnored var contentBlockingEvents: [String] = []
+    @ObservationIgnored var onContentBlockingEvent: ((String) -> Void)?
     @ObservationIgnored var taskManagerWindow: TaskManagerWindowController?
     /// Permission answers per site (URL field indicator; WebKit's remembered answers).
     let sitePermissions: SitePermissionsController
@@ -1333,6 +1340,7 @@ final class BrowserViewModel {
             self.mutationFollowUpScheduled = false
             self.reconcileEngineOwnership()
             self.syncAllTabBoosts()
+            self.contentBlockingSettingsChanged()
         }
     }
 

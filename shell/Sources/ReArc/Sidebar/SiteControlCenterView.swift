@@ -35,9 +35,10 @@ extension BrowserViewModel {
         siteControlCenterRequest += 1
     }
 
-    /// The panel's Settings rows: answered permissions, then automatic PiP.
+    /// The panel's Settings rows: blocking (when the engine has it), answered permissions, then automatic PiP.
     func siteControlSettingRows(for engine: any WebEngine, site: SiteControlCenter.Site, now: Date = Date()) -> [SiteControlCenter.SettingRow] {
         SiteControlCenter.settingRows(
+            contentBlocking: contentBlockingRow(for: engine, site: site),
             permissions: sitePermissions.entries(origin: site.origin, scope: engine.pagePrompts.permissionScope),
             permissionsInEngine: sitePermissionsLiveInEngine,
             autoPiP: AutoPiPPolicy.effectiveHostPreference(host: Self.autoPiPHost(site), settings: store.autoPiPPolicy, now: now),
@@ -60,7 +61,14 @@ extension BrowserViewModel {
             case .allow: store.allowAutoPiP(forHost: host)
             case .block: store.setAutoPiPDisabled(forHost: host)
             case .snoozeOneHour: store.snoozeAutoPiP(forHost: host)
-            case .reset, .openSiteSettings: break
+            case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings: break
+            }
+        case .contentBlocking:
+            switch action {
+            case .turnOffBlockingForSite: setContentBlocking(false, forSiteOf: engine, site: site)
+            case .turnOnBlockingForSite: setContentBlocking(true, forSiteOf: engine, site: site)
+            case .openBlockingSettings: showSettings(.profiles)
+            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings: break
             }
         case .permission(let key):
             let scope = engine.pagePrompts.permissionScope
@@ -73,7 +81,7 @@ extension BrowserViewModel {
                 sitePermissions.reset(origin: site.origin, scope: scope, type: type)
             case .openSiteSettings:
                 openSiteSettings(origin: site.origin)
-            case .snoozeOneHour:
+            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings:
                 break
             }
         }
@@ -178,19 +186,31 @@ struct SiteControlCenterView: View {
                 .animation(.easeOut(duration: 0.12), value: isOverExtensions)
             }
             header("Settings", top: 16, bottom: 8)
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(model.siteControlSettingRows(for: engine, site: site)) { row in
-                    SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark) { action in
-                        if action == .openSiteSettings { dismiss() }
-                        model.performSiteSetting(action, on: row, engine: engine, site: site)
-                    }
-                }
+            if model.contentBlocking.isAvailable {
+                // "N blocked on this page" is the engine's count, read while
+                // the panel is open: the shell knows no event for its changes.
+                TimelineView(.periodic(from: .now, by: Self.blockedCountRefresh)) { _ in settingRows }
+            } else {
+                settingRows
             }
             Divider().padding(.top, 10).padding(.bottom, 8)
             footer
         }
         .padding(10)
         .frame(width: Self.width + 20)
+    }
+
+    static let blockedCountRefresh: TimeInterval = 0.5
+
+    private var settingRows: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(model.siteControlSettingRows(for: engine, site: site)) { row in
+                SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark) { action in
+                    if action == .openSiteSettings || action == .openBlockingSettings { dismiss() }
+                    model.performSiteSetting(action, on: row, engine: engine, site: site)
+                }
+            }
+        }
     }
 
     private func manageExtensions() {

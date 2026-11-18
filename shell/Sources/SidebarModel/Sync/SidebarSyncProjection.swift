@@ -14,8 +14,9 @@ public struct SyncRecordBody: Equatable, Sendable {
 /// Maps the sidebar to sync records and back (docs/SYNC-RECORDS.md).
 ///
 /// Synced: profiles, spaces (with their themes and archived state), favorites, pinned tabs,
-/// folders, splits in Favorites or Pinned, Boosts, and tab groups (each
-/// group, its tabs, and the spaces' pinned rows for it). Not synced: Today
+/// folders, splits in Favorites or Pinned, Boosts, tab groups (each
+/// group, its tabs, and the spaces' pinned rows for it), and each profile's
+/// ad and tracker blocking settings. Not synced: Today
 /// (unpinned) tabs and a space's Today row for a tab group, easels,
 /// selection, archive, closed-tab stack, Little Arc windows and other
 /// per-Mac state; `apply` leaves those where they are.
@@ -85,6 +86,12 @@ public enum SidebarSyncProjection {
                 boost["package"] = (try? SyncValue.encoding(portable)) ?? .null
                 boost["installation"] = library?.installation(for: package.manifest.id).map(installationValue) ?? .null
                 records[SyncRecordKind.boost.recordName(for: package.manifest.id)] = SyncRecordBody(kind: .boost, values: boost)
+            }
+
+            // Only settings someone chose: a profile from before blocking has none and writes no record.
+            if let blocking = snapshot.contentBlocking.settingsByProfile[profile.id] {
+                records[SyncRecordKind.contentBlocking.recordName(for: profile.id)] =
+                    SyncRecordBody(kind: .contentBlocking, values: contentBlockingValues(blocking, profileID: profile.id))
             }
         }
 
@@ -181,6 +188,38 @@ public enum SidebarSyncProjection {
         }
     }
 
+    static func contentBlockingValues(_ settings: ContentBlockingSettings, profileID: Profile.ID) -> [String: SyncValue] {
+        [
+            "profile": .string(profileID.uuidString.lowercased()),
+            "enabled": .bool(settings.isEnabled),
+            "level": .string(settings.strength.rawValue),
+            "lists": .object(settings.listOverrides.mapValues(SyncValue.bool)),
+            "ownRules": .string(settings.ownRules),
+            "exceptions": .array(settings.exceptions.map(SyncValue.string)),
+        ]
+    }
+
+    /// A blocking record's settings; nil when it has no readable switch. The
+    /// other fields read as their defaults when missing or not understood,
+    /// and hosts and list IDs are normalised again: a record is data from
+    /// another Mac.
+    static func contentBlocking(values: [String: SyncValue]) -> ContentBlockingSettings? {
+        guard case .bool(let enabled)? = values["enabled"] else { return nil }
+        var overrides: [String: Bool] = [:]
+        for (id, value) in values["lists"]?.objectValue ?? [:] {
+            if case .bool(let on) = value { overrides[id] = on }
+        }
+        var hosts: [String] = []
+        if case .array(let list)? = values["exceptions"] { hosts = list.compactMap(\.stringValue) }
+        return ContentBlockingSettings(
+            isEnabled: enabled,
+            strength: values["level"]?.stringValue.flatMap(ContentBlockingLevel.init(rawValue:)) ?? .newProfileDefault,
+            listOverrides: overrides,
+            ownRules: values["ownRules"]?.stringValue ?? "",
+            exceptions: hosts
+        )
+    }
+
     /// The item `type` of a space's row for a tab group; its `group` field names the group.
     static let tabGroupRowType = "tabGroup"
 
@@ -268,6 +307,7 @@ public enum SidebarSyncProjection {
         var styles: [UUID: SpaceThemeStyle] = [:]
         var archives: [UUID: Date] = [:]
         var groups: [UUID: TabGroup] = [:]
+        var blocking: [UUID: [String: SyncValue]] = [:]
         for (name, payload) in records where payload.isAlive {
             guard let (kind, id) = SyncRecordKind.parse(recordName: name) else { continue }
             switch kind {
@@ -277,6 +317,7 @@ public enum SidebarSyncProjection {
             case .spaceStyle: styles[id] = spaceStyle(payload.values)
             case .spaceArchive: archives[id] = archiveDate(payload.values)
             case .tabGroup: groups[id] = tabGroup(id: id, values: payload.values)
+            case .contentBlocking: blocking[id] = payload.values
             case .item:
                 guard let parentKey = payload.values["parent"]?.stringValue, let parent = Parent(key: parentKey) else { continue }
                 items[id] = ItemRecord(
@@ -552,6 +593,14 @@ public enum SidebarSyncProjection {
         out.foldersByID = foldersByID
         out.easelRefsByID = easelRefsByID
         out.boostLibrariesByProfileID = libraries
+        // A profile with no record has no settings (Off). A record this
+        // build cannot read leaves this Mac's settings as they are.
+        var blockingByProfile: [Profile.ID: ContentBlockingSettings] = [:]
+        for profile in profiles {
+            guard let values = blocking[profile.id] else { continue }
+            blockingByProfile[profile.id] = contentBlocking(values: values) ?? snapshot.contentBlocking.settingsByProfile[profile.id]
+        }
+        out.contentBlocking.settingsByProfile = blockingByProfile
         var seenRows = Set<UUID>()
         out.tabGroups = TabGroupsSnapshot(
             groups: groups.values.sorted { $0.id.uuidString < $1.id.uuidString },
@@ -595,7 +644,8 @@ public enum SidebarSyncProjection {
         var texts: [String] = []
 
         init(_ records: [String: SyncRecordBody]) {
-            for body in records.values {
+            // Blocking's defaults are not rows: a new install's starter is still a starter.
+            for body in records.values where body.kind != .contentBlocking {
                 counts[body.kind, default: 0] += 1
                 let text = body.values["url"]?.stringValue ?? body.values["name"]?.stringValue ?? body.values["title"]?.stringValue
                 if let text { texts.append("\(body.kind.rawValue):\(text)") }
@@ -627,6 +677,8 @@ public enum SidebarSyncProjection {
             return archiveDate(values) != nil
         case .tabGroup:
             return tabGroup(id: id, values: values) != nil
+        case .contentBlocking:
+            return contentBlocking(values: values) != nil
         case .item:
             guard values["parent"]?.stringValue.flatMap(Parent.init(key:)) != nil else { return false }
             switch values["type"]?.stringValue {

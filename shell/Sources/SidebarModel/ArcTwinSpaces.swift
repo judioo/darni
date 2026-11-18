@@ -245,6 +245,8 @@ extension SidebarSnapshot {
         if let threshold = autoArchiveThresholdByProfile.removeValue(forKey: from), autoArchiveThresholdByProfile[into] == nil {
             autoArchiveThresholdByProfile[into] = threshold
         }
+        // Blocking keeps the surviving profile's own choice: this Mac's never turns it on there.
+        contentBlocking.settingsByProfile[from] = nil
     }
 
     /// A row listed in two places shows in one: favorites first, then the

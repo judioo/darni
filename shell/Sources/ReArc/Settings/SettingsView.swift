@@ -514,8 +514,15 @@ struct ProfilesSettingsPane: View {
             (.notifications, "bell.fill", .orange),
             (.clearBrowsingData, "trash.fill", .red),
         ].filter { model.canOpenBrowserPage($0.0) }
-        if !dataRows.isEmpty {
+        // Ad and tracker blocking, when the engine has it (CONTENT-BLOCKING.md §3).
+        let blocking = model.contentBlocking.isAvailable
+        if !dataRows.isEmpty || blocking {
             SettingsHeader(title: "Your Data and Settings")
+        }
+        if blocking {
+            ContentBlockingSettingsGroup(model: model, profile: profile)
+        }
+        if !dataRows.isEmpty {
             if let status = capabilities.safeBrowsingStatus?() {
                 let row = SafeBrowsingRow(status)
                 SettingsGroup {

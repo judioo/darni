@@ -372,6 +372,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             // Window › Task Manager lists the engine's processes; before ABI 1.44 it shows ReArc alone.
             model.taskManager.source = ChromiumTaskManagerSource(runtime: runtime, model: model)
         }
+        // Built-in ad and tracker blocking, when the engine has its calls (CONTENT-BLOCKING.md §5).
+        ChromiumContentBlockingEngine.attach(to: model, runtime: runtime)
         model.presentSettings = { [weak self] pane in MainActor.assumeIsolated { self?.presentSettings(pane) } }
         model.onShortcutOverridesChanged = { [weak self, weak model] in
             guard let self, let model, let menu = NSApp.mainMenu else { return }
