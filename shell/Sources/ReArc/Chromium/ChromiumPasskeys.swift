@@ -24,14 +24,13 @@ struct ChromiumPasskeyCalls {
     let respond: Respond
 
     static func resolve() -> ChromiumPasskeyCalls? {
-        let found = symbols.map { dlsym(UnsafeMutableRawPointer(bitPattern: -2), $0) }
-        guard found.allSatisfy({ $0 != nil }) else { return nil }
+        guard let found = ChromiumSymbols.resolve(symbols) else { return nil }
         return ChromiumPasskeyCalls(setCallback: unsafeBitCast(found[0], to: SetCallback.self),
                                     respond: unsafeBitCast(found[1], to: Respond.self))
     }
 
     static var missingSymbols: [String] {
-        symbols.filter { dlsym(UnsafeMutableRawPointer(bitPattern: -2), $0) == nil }
+        ChromiumSymbols.missing(symbols)
     }
 }
 
