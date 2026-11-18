@@ -36,6 +36,15 @@ lines and this section starts empty again.
   profile. What was blocked is counted on your Mac only.
 - Your blocking settings sync with the profile when sync is on.
 
+**Security**
+- The address bar can no longer be used to disguise a site. A long address is shortened from
+  the left, so the site's real domain always shows; only the path is cut, at its end. Characters
+  that reverse text direction or are invisible, and spaces, stay encoded (`%E2%80%AE`, `%20`)
+  instead of being drawn. An IPv6 address keeps its brackets.
+
+**Fixes**
+- ReArc no longer quits when the program that started it has closed its log output.
+
 ## ReArc 2026.1118.968 — 2026-11-18
 
 **New**

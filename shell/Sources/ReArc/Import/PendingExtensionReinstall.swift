@@ -59,7 +59,7 @@ struct PendingExtensionReinstall: Codable, Equatable {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(pending).write(to: url, options: [.atomic])
         } catch {
-            FileHandle.standardError.write(Data("[ReArc] could not save \(url.lastPathComponent): \(error.localizedDescription)\n".utf8))
+            StandardError.write("[ReArc] could not save \(url.lastPathComponent): \(error.localizedDescription)\n")
         }
     }
 }

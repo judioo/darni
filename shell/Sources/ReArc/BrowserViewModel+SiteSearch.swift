@@ -198,7 +198,7 @@ extension BrowserViewModel {
             do {
                 try importedSiteSearches.save(to: url)
             } catch {
-                FileHandle.standardError.write(Data("[ReArc] could not save \(url.lastPathComponent): \(error.localizedDescription)\n".utf8))
+                StandardError.write("[ReArc] could not save \(url.lastPathComponent): \(error.localizedDescription)\n")
             }
         }
         return added

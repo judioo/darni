@@ -62,15 +62,42 @@ public struct SplitPaneToolbarLayout: Equatable {
     /// A pane row's address: the host without `www.` (Arc draws it darker)
     /// and the rest of the URL without its scheme. Nil for a blank page. A
     /// port stays with the host (`localhost:3000`): without it two local
-    /// servers look the same. The card toolbar shows the two parts joined.
+    /// servers look the same. The card toolbar shows the two parts side by side.
+    ///
+    /// Spoofing (security AG-01): the host is cut from the left, so its registrable domain
+    /// always shows (`PageOrigin.shortenedHost`) and a long host under an attacker's domain
+    /// cannot show only a trusted-looking start; an IPv6 address keeps its brackets. The rest
+    /// is decoded for reading, except control, invisible and direction characters and
+    /// whitespace, which stay percent-encoded: a right-to-left override or a run of spaces
+    /// cannot reorder or push away what follows.
     public static func addressParts(_ url: URL?) -> (host: String, rest: String)? {
         guard let url, url.absoluteString != "about:blank" else { return nil }
         guard let host = url.host(), !host.isEmpty else { return (url.absoluteString, "") }
         var bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        if bareHost.contains(":") { bareHost = "[\(bareHost)]" }
         if let port = url.port { bareHost += ":\(port)" }
-        var rest = url.path(percentEncoded: false)
+        if !bareHost.hasPrefix("[") { bareHost = PageOrigin.shortenedHost(bareHost, limit: hostLimit) }
+        var rest = readable(url.path(percentEncoded: false))
         if rest == "/" { rest = "" }
-        if let query = url.query(percentEncoded: false), !query.isEmpty { rest += "?" + query }
+        if let query = url.query(percentEncoded: false), !query.isEmpty { rest += "?" + readable(query) }
         return (bareHost, rest)
+    }
+
+    /// Characters past which the host is shortened, from the left.
+    static let hostLimit = 40
+
+    /// `text` with control, format (bidirectional, zero-width), separator and other
+    /// whitespace characters percent-encoded as UTF-8.
+    static func readable(_ text: String) -> String {
+        var out = ""
+        for scalar in text.unicodeScalars {
+            switch scalar.properties.generalCategory {
+            case .control, .format, .spaceSeparator, .lineSeparator, .paragraphSeparator, .unassigned, .surrogate, .privateUse:
+                for byte in String(scalar).utf8 { out += String(format: "%%%02X", byte) }
+            default:
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
     }
 }

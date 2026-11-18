@@ -114,7 +114,7 @@ extension BrowserViewModel {
             do {
                 try VisitHistoryFile.save(snapshot, to: historyFileURL)
             } catch {
-                FileHandle.standardError.write(Data("[ReArc] could not save \(historyFileURL.lastPathComponent): \(error.localizedDescription)\n".utf8))
+                StandardError.write("[ReArc] could not save \(historyFileURL.lastPathComponent): \(error.localizedDescription)\n")
             }
         }
     }

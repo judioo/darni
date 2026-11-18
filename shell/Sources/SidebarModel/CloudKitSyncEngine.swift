@@ -95,8 +95,9 @@ enum CloudKitCallLog {
         defer { lock.unlock() }
         let text = ISO8601DateFormatter().string(from: Date()) + " " + line + "\n"
         if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(Data(text.utf8))
+            // Throwing forms: the raising ones stop ReArc on a closed or full file (AG-02).
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(text.utf8))
             try? handle.close()
         } else {
             try? Data(text.utf8).write(to: url, options: [.atomic])

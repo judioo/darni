@@ -139,7 +139,7 @@ final class UpdateNoticePreview: UpdateNoticeDriving {
                                            infoDictionary: [String: Any]? = Bundle.main.infoDictionary) -> State? {
         guard let argument = arguments.dropFirst().last(where: { $0.hasPrefix(flagPrefix) }) else { return nil }
         guard EngineLaunchOptions.allowsVerification(infoDictionary: infoDictionary, environment: environment) else {
-            FileHandle.standardError.write(Data("ReArc: \(flagPrefix)… runs only in a development build or a verification bundle\n".utf8))
+            StandardError.write("ReArc: \(flagPrefix)… runs only in a development build or a verification bundle\n")
             return nil
         }
         return State(rawValue: String(argument.dropFirst(flagPrefix.count)).lowercased())

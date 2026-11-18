@@ -34,11 +34,20 @@ struct CardToolbarView: View {
             HStack(spacing: 6) {
                 if let container { ContainerChip(label: container, ink: ink) }
                 Button { model.focusLocation() } label: {
-                    Text(url.flatMap(Self.displayURL) ?? "Search or Enter URL…")
+                    // Two texts (security AG-01): the host, already cut from the left to keep its
+                    // registrable domain, never truncates; only the path gives way, at its tail.
+                    HStack(spacing: 0) {
+                        if let parts = SplitPaneToolbarLayout.addressParts(url) {
+                            Text(parts.host).fixedSize()
+                            Text(parts.rest).truncationMode(.tail)
+                        } else {
+                            Text("Search or Enter URL…")
+                        }
+                    }
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(ink)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .accessibilityElement(children: .combine)
                         .padding(.horizontal, 10)
                         .frame(height: 22)
                         .background(palette.hover.opacity(isHoveringURL ? 1 : 0), in: RoundedRectangle(cornerRadius: 6))

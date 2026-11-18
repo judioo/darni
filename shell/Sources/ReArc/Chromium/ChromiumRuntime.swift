@@ -13,12 +13,12 @@ enum ChromiumLog {
                                                   environment: ProcessInfo.processInfo.environment)
 
     static func info(_ message: @autoclosure () -> String) {
-        FileHandle.standardError.write(Data("[ReArc/Chromium] \(message())\n".utf8))
+        StandardError.write("[ReArc/Chromium] \(message())\n")
     }
 
     static func trace(_ message: @autoclosure () -> String) {
         guard traceEnabled else { return }
-        FileHandle.standardError.write(Data("[ReArc/Chromium trace] \(message())\n".utf8))
+        StandardError.write("[ReArc/Chromium trace] \(message())\n")
     }
 }
 

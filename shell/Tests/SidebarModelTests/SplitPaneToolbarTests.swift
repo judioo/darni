@@ -63,4 +63,23 @@ final class SplitPaneToolbarTests: XCTestCase {
         XCTAssertEqual(SplitPaneToolbarLayout.addressParts(URL(string: "data:text/html,x"))?.host, "data:text/html,x")
         XCTAssertNil(SplitPaneToolbarLayout.addressParts(nil))
     }
+
+    /// Security AG-01: the host keeps its registrable domain, IPv6 keeps its brackets, and the
+    /// rest cannot hide or reorder text with direction, invisible or space characters.
+    func testTheAddressCannotBeSpoofed() throws {
+        let long = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(
+            URL(string: "https://accounts.google.com.verify-session.signin.secure-login.evil.example/login")))
+        XCTAssertTrue(long.host.hasSuffix("evil.example"), long.host)
+        XCTAssertTrue(long.host.hasPrefix("…"), long.host)
+        XCTAssertLessThanOrEqual(long.host.count, SplitPaneToolbarLayout.hostLimit)
+        let v6 = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "http://[2001:db8::1]:8080/a")))
+        XCTAssertEqual(v6.host, "[2001:db8::1]:8080")
+        let bidi = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "https://example.com/%E2%80%AEfdp.exe")))
+        XCTAssertEqual(bidi.rest, "/%E2%80%AEfdp.exe", "a right-to-left override stays encoded")
+        let spaces = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "https://example.com/a%20%20%20%20b?q=%0Ax")))
+        XCTAssertEqual(spaces.rest, "/a%20%20%20%20b?q=%0Ax")
+        let readable = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "https://example.com/caf%C3%A9")))
+        XCTAssertEqual(readable.rest, "/café", "ordinary letters still read decoded")
+    }
 }
+

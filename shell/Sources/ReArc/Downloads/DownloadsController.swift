@@ -580,7 +580,7 @@ final class DownloadsController {
         do {
             try DownloadListFile.save(.init(directory: directory.path, askWhereToSave: askWhereToSave, list: trimmed), to: fileURL)
         } catch {
-            FileHandle.standardError.write(Data("[ReArc] could not save \(fileURL.lastPathComponent): \(error.localizedDescription)\n".utf8))
+            StandardError.write("[ReArc] could not save \(fileURL.lastPathComponent): \(error.localizedDescription)\n")
         }
     }
 }

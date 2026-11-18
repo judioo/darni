@@ -19,7 +19,7 @@ enum CloudLookProbe {
                            infoDictionary: [String: Any]? = Bundle.main.infoDictionary) {
         guard arguments.contains(flag) else { return }
         guard EngineLaunchOptions.allowsVerification(infoDictionary: infoDictionary, environment: environment) else {
-            FileHandle.standardError.write(Data("ReArc: \(flag) runs only in a development build or a verification bundle\n".utf8))
+            StandardError.write("ReArc: \(flag) runs only in a development build or a verification bundle\n")
             exit(64)
         }
         #if canImport(CloudKit)

@@ -10,7 +10,7 @@ enum ReArcMain {
     static func main() {
         // Before anything else (RC-0.1.0-602 T-04): a shipped bundle runs only on its own data.
         if let refusal = ShippedBuild.launchRefusal(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment) {
-            FileHandle.standardError.write(Data("ReArc: \(refusal)\n".utf8))
+            StandardError.write("ReArc: \(refusal)\n")
             exit(64)
         }
         // A read-only timing of the look at iCloud's sidebar; exits.
@@ -32,12 +32,12 @@ enum ReArcMain {
         )
         let options = parsed.resolvingApplicationClass(requiresChromium: chromiumOwnsApplication)
         if let refusal = options.verificationRefusal {
-            FileHandle.standardError.write(Data("ReArc: \(refusal)\nSELFTEST FAIL: verification refused\n".utf8))
+            StandardError.write("ReArc: \(refusal)\nSELFTEST FAIL: verification refused\n")
             exit(64)
         }
         if options.source == .applicationClass {
-            FileHandle.standardError.write(Data(("ReArc: this bundle's application class is Chromium's \(EngineLaunchOptions.chromiumApplicationClass); "
-                + "using the Chromium engine (the WebKit path cannot start here).\n").utf8))
+            StandardError.write(("ReArc: this bundle's application class is Chromium's \(EngineLaunchOptions.chromiumApplicationClass); "
+                + "using the Chromium engine (the WebKit path cannot start here).\n"))
         }
         // Links from other apps (ReArc as the default browser), both engines.
         if !options.selfTest && options.bench == nil { ExternalLinkRouter.shared.install() }
@@ -50,7 +50,7 @@ enum ReArcMain {
         }
         if chromiumOwnsApplication {
             // NSApplicationMain would instantiate BrowserCrApplication and abort; exit cleanly instead.
-            FileHandle.standardError.write(Data("ReArc: Chromium is unavailable in a Chromium bundle; cannot start the WebKit path here.\n".utf8))
+            StandardError.write("ReArc: Chromium is unavailable in a Chromium bundle; cannot start the WebKit path here.\n")
             exit(70)
         }
         ReArcApp.main()
@@ -58,9 +58,9 @@ enum ReArcMain {
 
     /// Falls back to WebKit, except for the self-test, which only proves Chromium.
     static func unavailableChromium(_ options: EngineLaunchOptions, reason: String) {
-        FileHandle.standardError.write(Data("ReArc: Chromium engine requested but \(reason); using WebKit.\n".utf8))
+        StandardError.write("ReArc: Chromium engine requested but \(reason); using WebKit.\n")
         if options.selfTest {
-            FileHandle.standardError.write(Data("SELFTEST FAIL: Chromium engine unavailable\n".utf8))
+            StandardError.write("SELFTEST FAIL: Chromium engine unavailable\n")
             exit(2)
         }
     }

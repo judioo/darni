@@ -50,7 +50,7 @@ enum ChromiumHost {
                 let refusal = ChromiumLaunchArguments.userDataDir(in: arguments).map { dir in ReleaseVerificationDataDir.refusal(dir).map { "\(dir): \($0)" } }
                     ?? "no --user-data-dir"
                 if let refusal {
-                    FileHandle.standardError.write(Data("ReArc: verification refused for \(refusal)\nSELFTEST FAIL: verification refused\n".utf8))
+                    StandardError.write("ReArc: verification refused for \(refusal)\nSELFTEST FAIL: verification refused\n")
                     exit(64)
                 }
             }
