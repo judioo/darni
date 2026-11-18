@@ -95,9 +95,10 @@ struct ContentBlockingAdvancedView: View {
         VStack(alignment: .leading, spacing: 8) {
             title("Lists", note: "The level chooses the lists. A change here stays until you choose another level.")
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(model.contentBlockingListRows) { list in
+                let rows = model.contentBlockingListRows
+                ForEach(rows) { list in
                     Toggle(list.title, isOn: Binding(
-                        get: { settings.isListEnabled(list.id) },
+                        get: { settings.isListEnabled(list.id, in: rows) },
                         set: { model.setContentBlockingList(list.id, enabled: $0, for: profileID) }
                     ))
                     .toggleStyle(.checkbox)

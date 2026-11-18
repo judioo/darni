@@ -1,12 +1,12 @@
 import CryptoKit
 import Foundation
 
-// A blocklist bundle (docs/FEATURE-SPECS/CONTENT-BLOCKING.md §4):
+// A blocklist bundle (docs/FEATURE-SPECS/CONTENT-BLOCKING.md §4, "As built", format 1):
 //
-//     manifest.json        version, created, min_engine, lists[…] with the sha256 of each file
+//     manifest.json        format, version, created, min_engine, lists[…]; each list's
+//                          `rules` has the `path` and `sha256` of its rules file
 //     manifest.json.sig    Ed25519 signature over manifest.json's bytes, base64
 //     rules/<list-id>.json DNR rule arrays
-//     css/<list-id>.css    phase 2
 //
 // Trust rests on the lists key alone: a bundle is used only when the
 // signature verifies against the compiled-in public key and every file in
@@ -15,20 +15,12 @@ import Foundation
 /// The lists key's public half, compiled into the app. Never the Sparkle
 /// key (spec §4 "Signing key").
 public enum BlocklistSigningKey {
-    /// TODO(content-blocking): replace with the contents of
-    /// `shell/scripts/blocklists/blocklists-public-key.txt` once the list
-    /// pipeline has generated the key. Until then no bundle verifies, so
-    /// blocking has no lists; `BlocklistSigningKeyTests` fails a release
-    /// build that still has the placeholder, and fails any build once the
-    /// file exists and this constant does not match it.
-    public static let compiledInText = placeholderText
+    /// The key in `shell/scripts/blocklists/blocklists-public-key.txt`:
+    /// base64 of the raw 32 bytes. `BlocklistSigningKeyTests` fails when the
+    /// two differ, so a new key cannot ship in the file alone.
+    public static let compiledInText = "JzoQqIp57WYVyAiycJEzp8MuiD08WZ5jnZDUa8CzJEQ="
 
-    /// Not a key: 32 zero bytes, which `parse` refuses.
-    public static let placeholderText = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-
-    public static var isPlaceholder: Bool { compiledInText == placeholderText }
-
-    /// The compiled-in key's 32 raw bytes; nil while it is the placeholder.
+    /// The compiled-in key's 32 raw bytes.
     public static let compiledIn: Data? = parse(compiledInText)
 
     /// A public key file's text: the 32 raw bytes in base64 or hex, or the
@@ -85,73 +77,58 @@ public struct BlocklistVersion: Hashable, Comparable, Sendable, CustomStringConv
     }
 }
 
-/// The running engine, for a manifest's `min_engine`.
+/// The running engine, for a manifest's `min_engine`: Chromium's major version.
 public struct BlocklistEngineVersion: Equatable, Sendable {
-    /// Chromium's version, `156.0.8078.74`.
-    public var chromium: [Int]
-    /// The bridge's version, `0.76.0`.
-    public var bridge: [Int]
-    /// The C ABI's minor version (the major is 1).
-    public var abiMinor: Int
+    public var chromiumMajor: Int
 
-    public init(chromium: String, bridge: String, abiMinor: Int) {
-        self.chromium = Self.numbers(chromium)
-        self.bridge = Self.numbers(bridge)
-        self.abiMinor = abiMinor
+    public init(chromiumMajor: Int) {
+        self.chromiumMajor = chromiumMajor
     }
 
-    static func numbers(_ text: String) -> [Int] {
-        text.split(separator: ".").map { Int($0) ?? 0 }
+    /// From Chromium's version text, `156.0.8078.109`.
+    public init(chromium: String) {
+        chromiumMajor = chromium.split(separator: ".").first.flatMap { Int($0) } ?? 0
     }
 
-    /// Whether this engine meets `requirement`. The spec names the key and
-    /// not its form, so each form an engine version has is read: a number
-    /// (Chromium's major from 100, otherwise the ABI minor), `1.66` (the
-    /// ABI), `0.76.0` (the bridge) or `156.0.8078.74` (Chromium). A
-    /// requirement that reads as none of them is not met.
+    /// A requirement this build cannot read is not met.
     public func meets(_ requirement: BlocklistManifest.EngineRequirement) -> Bool {
         switch requirement {
-        case .none:
-            return true
-        case .number(let number):
-            return number >= 100 ? (chromium.first ?? 0) >= number : abiMinor >= number
-        case .version(let parts):
-            switch parts.count {
-            case 1: return meets(.number(parts[0]))
-            case 2: return !Self.isLess([1, abiMinor], parts)
-            case 3: return !Self.isLess(bridge, parts)
-            case 4: return !Self.isLess(chromium, parts)
-            default: return false
-            }
-        case .unreadable:
-            return false
+        case .none: return true
+        case .chromiumMajor(let major): return chromiumMajor >= major
+        case .unreadable: return false
         }
-    }
-
-    static func isLess(_ lhs: [Int], _ rhs: [Int]) -> Bool {
-        for index in 0..<max(lhs.count, rhs.count) {
-            let l = index < lhs.count ? lhs[index] : 0, r = index < rhs.count ? rhs[index] : 0
-            if l != r { return l < r }
-        }
-        return false
     }
 }
 
-/// A bundle's signed `manifest.json`.
+/// A bundle's signed `manifest.json`, as much of it as the shell uses.
 public struct BlocklistManifest: Equatable, Sendable {
+    /// The manifest format this build reads.
+    public static let format = 1
+
     public struct List: Equatable, Identifiable, Sendable {
         public var id: String
         public var title: String
         public var homepage: String?
         public var license: String?
-        /// The list's DNR rule count, when the manifest gives one.
+        /// The lowest blocking level with the list (1, 2 or 3); 0 for a regional list.
+        public var level: Int
+        /// The list's DNR rule count.
         public var ruleCount: Int?
+
+        public init(id: String, title: String, homepage: String? = nil, license: String? = nil, level: Int = 0, ruleCount: Int? = nil) {
+            self.id = id
+            self.title = title
+            self.homepage = homepage
+            self.license = license
+            self.level = level
+            self.ruleCount = ruleCount
+        }
     }
 
     public enum EngineRequirement: Equatable, Sendable {
         case none
-        case number(Int)
-        case version([Int])
+        /// `min_engine`: an integer, Chromium's major version.
+        case chromiumMajor(Int)
         case unreadable
     }
 
@@ -165,72 +142,54 @@ public struct BlocklistManifest: Equatable, Sendable {
     /// The date "Lists last updated" shows.
     public var date: Date? { created ?? version.date }
 
-    /// Reads the manifest. A list's hashes may be `files` (path to sha256),
-    /// `sha256` (the same map, or keyed `rules` and `css`, or the rules
-    /// file's hash alone) or `rules_sha256` and `css_sha256`; a top-level
-    /// `files` map is read too. A path is relative, inside the bundle, and
-    /// never `manifest.json` or its signature.
+    /// Reads a format 1 manifest. Each list names one file, `rules.path`
+    /// (always `rules/<id>.json`) with `rules.sha256`. Keys this build does
+    /// not use (`priorities`, `limits`, a list's `source` and `filters`) are
+    /// passed over; another `format` is refused.
     public static func decode(_ data: Data) throws -> BlocklistManifest {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw BlocklistRejection.badManifest("not a JSON object")
         }
-        let versionText = (root["version"] as? String) ?? (root["version"] as? NSNumber).map { String(format: "%012llu", $0.uint64Value) }
-        guard let version = versionText.flatMap(BlocklistVersion.init) else { throw BlocklistRejection.badManifest("no version") }
+        guard let format = integer(root["format"]), format == Self.format else {
+            throw BlocklistRejection.badManifest("format \(root["format"].map { "\($0)" } ?? "missing"), not \(Self.format)")
+        }
+        guard let version = (root["version"] as? String).flatMap(BlocklistVersion.init) else { throw BlocklistRejection.badManifest("no version") }
         guard let entries = root["lists"] as? [[String: Any]], !entries.isEmpty else { throw BlocklistRejection.badManifest("no lists") }
 
         var files: [String: String] = [:]
-        func add(_ path: String, _ hash: Any?) throws {
-            guard let hash = (hash as? String)?.lowercased(), hash.utf8.count == 64, hash.allSatisfy(\.isHexDigit) else {
-                throw BlocklistRejection.badManifest("no sha256 for \(path)")
-            }
-            guard isSafePath(path) else { throw BlocklistRejection.unsafePath(path) }
-            if let known = files[path], known != hash { throw BlocklistRejection.badManifest("two hashes for \(path)") }
-            files[path] = hash
-        }
-        for (path, hash) in root["files"] as? [String: Any] ?? [:] { try add(path, hash) }
-
         var lists: [List] = []
         for entry in entries {
             guard let id = entry["id"] as? String, ContentBlockingSettings.isListID(id) else { throw BlocklistRejection.badManifest("a list without an id") }
             guard !lists.contains(where: { $0.id == id }) else { throw BlocklistRejection.badManifest("list \(id) twice") }
-            let kinds = ["rules": "rules/\(id).json", "css": "css/\(id).css"]
-            for (path, hash) in entry["files"] as? [String: Any] ?? [:] { try add(path, hash) }
-            if let map = entry["sha256"] as? [String: Any] {
-                for (key, hash) in map { try add(kinds[key] ?? key, hash) }
-            } else if let hash = entry["sha256"] as? String {
-                try add(kinds["rules"]!, hash)
+            guard let rules = entry["rules"] as? [String: Any], let path = rules["path"] as? String else {
+                throw BlocklistRejection.badManifest("no rules file for \(id)")
             }
-            if let hash = entry["rules_sha256"] { try add(kinds["rules"]!, hash) }
-            if let hash = entry["css_sha256"] { try add(kinds["css"]!, hash) }
-            guard files[kinds["rules"]!] != nil else { throw BlocklistRejection.badManifest("no rules file for \(id)") }
-            let count = (entry["rules"] as? NSNumber) ?? (entry["rule_count"] as? NSNumber)
-                ?? ((entry["rules"] as? [String: Any])?["count"] as? NSNumber)
+            guard isSafePath(path) else { throw BlocklistRejection.unsafePath(path) }
+            guard path == "rules/\(id).json" else { throw BlocklistRejection.badManifest("\(path) is not rules/\(id).json") }
+            guard let hash = (rules["sha256"] as? String)?.lowercased(), hash.utf8.count == 64, hash.allSatisfy(\.isHexDigit) else {
+                throw BlocklistRejection.badManifest("no sha256 for \(path)")
+            }
+            files[path] = hash
             lists.append(List(id: id, title: (entry["title"] as? String) ?? id, homepage: entry["homepage"] as? String,
-                              license: entry["license"] as? String, ruleCount: count?.intValue))
+                              license: entry["license"] as? String, level: integer(entry["level"]) ?? 0, ruleCount: integer(rules["count"])))
         }
 
         var created: Date?
-        if let text = root["created"] as? String {
-            let withFraction = ISO8601DateFormatter()
-            withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            created = ISO8601DateFormatter().date(from: text) ?? withFraction.date(from: text)
-        } else if let seconds = root["created"] as? NSNumber {
-            created = Date(timeIntervalSince1970: seconds.doubleValue)
-        }
+        if let text = root["created"] as? String { created = ISO8601DateFormatter().date(from: text) }
 
         let minEngine: EngineRequirement
         switch root["min_engine"] {
-        case nil, is NSNull:
-            minEngine = .none
-        case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID() && number.doubleValue == Double(number.intValue) && number.intValue >= 0:
-            minEngine = .number(number.intValue)
-        case let text as String:
-            let parts = text.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
-            minEngine = parts.isEmpty || parts.contains(where: { $0 == nil || $0! < 0 }) ? .unreadable : .version(parts.compactMap { $0 })
-        default:
-            minEngine = .unreadable
+        case nil, is NSNull: minEngine = .none
+        case let value?: minEngine = integer(value).map(EngineRequirement.chromiumMajor) ?? .unreadable
         }
         return BlocklistManifest(version: version, created: created, minEngine: minEngine, lists: lists, files: files)
+    }
+
+    /// A JSON whole number that is not a boolean and not negative.
+    private static func integer(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue == Double(number.intValue), number.intValue >= 0 else { return nil }
+        return number.intValue
     }
 
     public static let fileName = "manifest.json"

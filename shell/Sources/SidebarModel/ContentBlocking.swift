@@ -32,9 +32,10 @@ public enum ContentBlockingLevel: String, Codable, CaseIterable, Sendable {
     public static let newProfileDefault: ContentBlockingLevel = .adsAndTrackers
 }
 
-/// One filter list as Settings › Advanced shows it. The bundle's manifest
-/// names the lists it carries (`BlocklistManifest`); this table says which
-/// level turns each one on.
+/// One filter list as Settings › Advanced shows it, and the level that turns
+/// it on. The table below is spec §2's; a bundle's signed manifest says the
+/// same of each list it carries (`level`), and decides for a list the table
+/// does not know.
 public struct ContentBlockingList: Equatable, Identifiable, Sendable {
     public var id: String
     public var title: String
@@ -65,24 +66,32 @@ public enum ContentBlockingLists {
         ContentBlockingList(id: easyListCookie, title: "EasyList Cookie List", level: .strict),
         ContentBlockingList(id: "easylist-germany", title: "EasyList Germany", level: nil),
         ContentBlockingList(id: "liste-fr", title: "Liste FR", level: nil),
+        ContentBlockingList(id: "easylist-italy", title: "EasyList Italy", level: nil),
+        ContentBlockingList(id: "easylist-spanish", title: "EasyList Spanish", level: nil),
+        ContentBlockingList(id: "easylist-dutch", title: "EasyList Dutch", level: nil),
     ]
 
-    /// The lists a level turns on, in the table's order. Off turns on none.
-    public static func defaults(for level: ContentBlockingLevel) -> [String] {
+    /// The lists a level turns on, in `lists`' order. Off turns on none.
+    public static func defaults(for level: ContentBlockingLevel, in lists: [ContentBlockingList] = known) -> [String] {
         guard level != .off else { return [] }
-        return known.filter { list in list.level.map { $0.engineValue <= level.engineValue } ?? false }.map(\.id)
+        return lists.filter { list in list.level.map { $0.engineValue <= level.engineValue } ?? false }.map(\.id)
     }
 
-    /// The Advanced rows: the known lists the bundle carries, then lists
-    /// only the bundle knows (a regional list added to the mirror later),
-    /// under the bundle's titles. Without a bundle, the known lists.
-    public static func rows(bundle: [(id: String, title: String)]?) -> [ContentBlockingList] {
-        guard let bundle else { return known }
-        let titles = Dictionary(bundle.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
-        let carried = known.filter { titles[$0.id] != nil }
-        let knownIDs = Set(known.map(\.id))
-        let extra = bundle.filter { !knownIDs.contains($0.id) }
-            .map { ContentBlockingList(id: $0.id, title: $0.title.isEmpty ? $0.id : $0.title, level: nil) }
+    /// The lists of a bundle, for Settings › Advanced and for what the
+    /// engine is told: the table's lists the bundle carries, in the table's
+    /// order and at the bundle's levels, then lists only the bundle knows
+    /// (added to the mirror after this build), under the bundle's titles.
+    /// Without a bundle, the table's non-regional lists.
+    public static func lists(of bundle: BlocklistManifest?) -> [ContentBlockingList] {
+        guard let bundle else { return known.filter { $0.level != nil } }
+        func level(_ list: BlocklistManifest.List) -> ContentBlockingLevel? {
+            ContentBlockingLevel.strengths.first { Int($0.engineValue) == list.level }
+        }
+        let carried = known.compactMap { row in
+            bundle.lists.first { $0.id == row.id }.map { ContentBlockingList(id: row.id, title: row.title, level: level($0)) }
+        }
+        let extra = bundle.lists.filter { list in !known.contains { $0.id == list.id } }
+            .map { ContentBlockingList(id: $0.id, title: $0.title.isEmpty ? $0.id : $0.title, level: level($0)) }
         return carried + extra
     }
 }
@@ -100,7 +109,8 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
     public var isEnabled: Bool
     /// Trackers only, Ads and trackers or Strict; never Off.
     public private(set) var strength: ContentBlockingLevel
-    /// Lists switched away from what the strength sets, by list ID.
+    /// Lists the person switched on or off themselves, by list ID; the
+    /// strength decides the others.
     public private(set) var listOverrides: [String: Bool]
     /// uBO/ABP network filters, one a line (`ContentBlockingRuleConverter`).
     public private(set) var ownRules: String
@@ -139,14 +149,14 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
         listOverrides = [:]
     }
 
-    public func isListEnabled(_ id: String) -> Bool {
-        listOverrides[id] ?? ContentBlockingLists.defaults(for: strength).contains(id)
+    /// `lists`: the bundle's lists and levels (`ContentBlockingLists.lists(of:)`).
+    public func isListEnabled(_ id: String, in lists: [ContentBlockingList] = ContentBlockingLists.known) -> Bool {
+        listOverrides[id] ?? ContentBlockingLists.defaults(for: strength, in: lists).contains(id)
     }
 
-    /// Only a difference from the strength's own choice is kept.
     public mutating func setList(_ id: String, enabled: Bool) {
         guard Self.isListID(id) else { return }
-        listOverrides[id] = ContentBlockingLists.defaults(for: strength).contains(id) == enabled ? nil : enabled
+        listOverrides[id] = enabled
     }
 
     /// List IDs name files in the bundle (`rules/<id>.json`).
@@ -157,17 +167,14 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
     }
 
     /// The lists the engine switches on: none while Off, otherwise the
-    /// strength's lists with the person's changes, in the table's order and
-    /// then by ID. `available` (the bundle's lists) drops IDs the bundle
-    /// does not carry.
-    public func enabledListIDs(available: [String]? = nil) -> [String] {
+    /// strength's lists with the person's changes, in `lists`' order, then
+    /// lists the person switched on that `lists` does not have, by ID (the
+    /// engine skips an ID its bundle lacks until a later bundle has it).
+    public func enabledListIDs(in lists: [ContentBlockingList] = ContentBlockingLists.known) -> [String] {
         guard isEnabled else { return [] }
-        let defaults = ContentBlockingLists.defaults(for: strength)
-        var ids = defaults.filter { listOverrides[$0] != false }
-        ids += listOverrides.filter { $0.value && !defaults.contains($0.key) }.keys.sorted()
-        guard let available else { return ids }
-        let carried = Set(available)
-        return ids.filter(carried.contains)
+        let known = lists.map(\.id)
+        return known.filter { isListEnabled($0, in: lists) }
+            + listOverrides.filter { $0.value && !known.contains($0.key) }.keys.sorted()
     }
 
     /// Text over the limit is cut at the end of the last whole line.
@@ -260,10 +267,8 @@ public enum ContentBlockingHost {
 
     static func isHost(_ host: String) -> Bool {
         guard (1...253).contains(host.utf8.count) else { return false }
-        if host.hasPrefix("[") {
-            // An IPv6 literal, in the brackets a URL gives it.
-            return host.hasSuffix("]") && host.dropFirst().dropLast().allSatisfy { $0.isHexDigit || $0 == ":" || $0 == "." }
-        }
+        // Names and IPv4 addresses. The engine's exception hosts are names
+        // (C-ABI.md "Content blocking"): an IPv6 literal is not one.
         let labels = host.split(separator: ".", omittingEmptySubsequences: false)
         return labels.allSatisfy { label in
             (1...63).contains(label.utf8.count) && !label.hasPrefix("-") && !label.hasSuffix("-")
@@ -287,7 +292,7 @@ public enum ContentBlockingHost {
     /// where the exact host is the site.
     public static func exceptionHost(for url: URL?) -> String? {
         guard let host = pageHost(url) else { return nil }
-        if host.hasPrefix("[") || !host.contains(".") || host.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) {
+        if !host.contains(".") || host.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) {
             return host
         }
         let registrable = BoostScopeMatcher.registrableDomain(host)

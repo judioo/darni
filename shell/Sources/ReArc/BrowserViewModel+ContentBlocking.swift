@@ -67,6 +67,9 @@ final class ContentBlockingController {
     private(set) var lastCheck: BlocklistUpdateOutcome?
     /// The one-time offer card is up (existing installs).
     var showsOffer = false
+    /// Bumped when the engine reports a tab's blocked count changed, so the
+    /// open site controls panel reads the count again.
+    private(set) var blockedCountRevision = 0
 
     @ObservationIgnored private(set) var engineSync: ContentBlockingEngineSync?
     @ObservationIgnored private(set) var lists: BlocklistStore?
@@ -91,6 +94,11 @@ final class ContentBlockingController {
         didLoadLists = true
         if self.bundle != bundle { self.bundle = bundle }
         engineSync?.setBundle(bundle)
+    }
+
+    /// The engine's count callback (at most every 250 ms, C-ABI.md).
+    func blockedCountChanged() {
+        blockedCountRevision &+= 1
     }
 
     fileprivate func beginCheck() -> Bool {
@@ -156,8 +164,9 @@ extension BrowserViewModel {
         onContentBlockingEvent?(message)
     }
 
-    /// An engine profile finished loading (a private window's included):
-    /// it gets its shell profile's settings before any tab exists.
+    /// A persistent engine profile finished loading: it gets its shell
+    /// profile's level, exceptions and own rules before any tab exists.
+    /// Private windows follow their profile in the engine and get no call.
     func contentBlockingProfileOpened(engineProfile: UInt64, profile: Profile.ID) {
         contentBlocking.engineSync?.profileOpened(engineProfile: engineProfile, profile: profile)
     }
@@ -210,9 +219,9 @@ extension BrowserViewModel {
         contentBlockingSettingsChanged()
     }
 
-    /// The Advanced sheet's list rows: what the bundle carries, by the known order.
+    /// The Advanced sheet's list rows: the bundle's lists, each with the level that turns it on.
     var contentBlockingListRows: [ContentBlockingList] {
-        ContentBlockingLists.rows(bundle: contentBlocking.bundle?.manifest.lists.map { ($0.id, $0.title) })
+        ContentBlockingLists.lists(of: contentBlocking.bundle?.manifest)
     }
 
     // MARK: Site Control Center
@@ -223,6 +232,8 @@ extension BrowserViewModel {
         let settings = store.contentBlocking(for: profileID)
         let url = engine.currentURL ?? URL(string: site.origin)
         let counts = settings.isEnabled && settings.exception(covering: url) == nil
+        // The count is the engine's: its change callback bumps the revision this reads.
+        _ = contentBlocking.blockedCountRevision
         return SiteControlCenter.contentBlockingRow(
             settings: settings,
             pageURL: url,

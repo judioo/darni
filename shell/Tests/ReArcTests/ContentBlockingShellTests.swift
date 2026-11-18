@@ -74,19 +74,22 @@ final class ContentBlockingShellTests: XCTestCase {
         let bundle = directory.appendingPathComponent("App/Blocklists", isDirectory: true)
         try FileManager.default.createDirectory(at: bundle.appendingPathComponent("rules"), withIntermediateDirectories: true)
         var lists: [[String: Any]] = []
-        for id in ["easyprivacy", "peter-lowe", "easylist"] {
+        for (id, level) in [("easyprivacy", 1), ("peter-lowe", 1), ("easylist", 2)] {
             let rules = Data("[]".utf8)
             try rules.write(to: bundle.appendingPathComponent("rules/\(id).json"))
-            lists.append(["id": id, "title": id, "files": ["rules/\(id).json": BlocklistVerifier.sha256(of: rules)]])
+            lists.append(["id": id, "title": id, "level": level,
+                          "rules": ["path": "rules/\(id).json", "sha256": BlocklistVerifier.sha256(of: rules), "count": 0]])
         }
-        let manifest = try JSONSerialization.data(withJSONObject: ["version": "202611180900", "created": "2026-11-18T09:00:00Z", "lists": lists])
+        let manifest = try JSONSerialization.data(withJSONObject: ["format": 1, "version": "202611180900", "created": "2026-11-18T09:00:00Z",
+                                                                   "min_engine": 156, "lists": lists])
         try manifest.write(to: bundle.appendingPathComponent("manifest.json"))
         try Data(key.signature(for: manifest).base64EncodedString().utf8).write(to: bundle.appendingPathComponent("manifest.json.sig"))
         return bundle
     }
 
     private func attach(_ model: BrowserViewModel, engine: RecordingEngine) async throws {
-        model.attachContentBlocking(engine: engine, engineVersion: nil, builtInLists: try builtInBundle(), publicKey: key.publicKey.rawRepresentation)
+        model.attachContentBlocking(engine: engine, engineVersion: BlocklistEngineVersion(chromiumMajor: 156),
+                                    builtInLists: try builtInBundle(), publicKey: key.publicKey.rawRepresentation)
         for _ in 0..<400 where !model.contentBlocking.didLoadLists { try await Task.sleep(nanoseconds: 5_000_000) }
         XCTAssertTrue(model.contentBlocking.didLoadLists)
     }
@@ -112,7 +115,8 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertEqual(model.contentBlocking.listsUpdatedText, "Lists last updated \(ISO8601DateFormatter().date(from: "2026-11-18T09:00:00Z")!.formatted(date: .abbreviated, time: .omitted))")
 
         model.contentBlockingProfileOpened(engineProfile: 4, profile: model.store.profiles[0].id)
-        XCTAssertEqual(engine.take(), ["directory", "exceptions 4 ", "rules 4", "level 4 2 easyprivacy,peter-lowe,easylist"])
+        XCTAssertEqual(engine.take(), ["directory", "level 4 2 easyprivacy,peter-lowe,easylist", "exceptions 4 ", "rules 4"],
+                       "at profile load: the level, then the exceptions, then the own rules")
     }
 
     func testAnExistingInstallStaysOffAndIsOfferedOnceWithTheMarkerOnDiskFirst() async throws {
@@ -124,7 +128,7 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertEqual(model.store.contentBlockingRollout.install, .existing)
         XCTAssertTrue(model.store.profiles.allSatisfy { model.store.contentBlocking(for: $0.id).level == .off }, "the upgrade changes no profile")
         model.contentBlockingProfileOpened(engineProfile: 4, profile: model.store.profiles[0].id)
-        XCTAssertEqual(engine.take().last, "level 4 0 ", "an old profile opens with blocking Off")
+        XCTAssertEqual(engine.take(), ["directory", "level 4 0 ", "exceptions 4 ", "rules 4"], "an old profile opens with blocking Off")
         XCTAssertEqual(try savedRollout()?["offerShown"] as? Bool, false)
         XCTAssertFalse(model.contentBlocking.showsOffer, "not before the sidebar is up")
 
@@ -204,7 +208,7 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertEqual(engine.take(), ["rules 4"])
         model.removeContentBlockingException("shop.test", for: profile)
         model.setContentBlockingEnabled(false, for: profile)
-        XCTAssertEqual(engine.take(), ["exceptions 4 ", "rules 4", "level 4 0 "])
+        XCTAssertEqual(engine.take(), ["exceptions 4 ", "level 4 0 "])
         XCTAssertEqual(model.contentBlockingListRows.map(\.id), ["easyprivacy", "peter-lowe", "easylist"], "the lists this bundle carries")
     }
 
@@ -232,6 +236,34 @@ final class ContentBlockingShellTests: XCTestCase {
         model.performSiteSetting(.turnOnBlockingForSite, on: rows[0], engine: engine, site: site)
         XCTAssertEqual(model.store.contentBlocking().exceptions, [])
         XCTAssertEqual(recorder.take(), ["exceptions 4 "])
+    }
+
+    func testTheEnginesCountCallbackRefreshesTheOpenPanel() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        var count = 3
+        model.contentBlocking.blockedCount = { _ in count }
+        let changed = expectation(description: "the row is read again")
+        withObservationTracking {
+            XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.state, "3 blocked on this page")
+        } onChange: { changed.fulfill() }
+        count = 9
+        model.contentBlocking.blockedCountChanged()
+        await fulfillment(of: [changed], timeout: 2)
+        XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.state, "9 blocked on this page")
+    }
+
+    /// ABI 1.66, feature `content_blocking` (C-ABI.md): without both, blocking stays hidden.
+    func testTheEngineFeatureGatesBlocking() {
+        let all: (String) -> Bool = { _ in true }
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 65, hasFeature: all).contentBlocking)
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 66, hasFeature: all).contentBlocking)
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 66, hasFeature: { $0 != "content_blocking" }).contentBlocking)
+        XCTAssertFalse(ChromiumCapabilities.none.contentBlocking)
     }
 
     func testAPrivateWindowNeverWritesItsSiteIntoTheProfile() async throws {

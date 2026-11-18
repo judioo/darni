@@ -5,15 +5,19 @@ import XCTest
 /// Blocklist bundles (docs/FEATURE-SPECS/CONTENT-BLOCKING.md §4 and §8,
 /// "Signature"): a good bundle, a bad signature, a hash mismatch, an older
 /// version, a wrong `min_engine`; which bundle is used; and the daily check.
+/// The bundle the repository carries and the archive the pipeline packs are
+/// read too, so the shell and `build-blocklists.py` cannot drift apart.
 
-/// Makes signed bundles the way the list pipeline does, with a key of its own.
+private let shellDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+
+/// Makes signed format 1 bundles as `build-blocklists.py` writes them, with a key of its own.
 private struct BundleMaker {
     let key = Curve25519.Signing.PrivateKey()
     var publicKey: Data { key.publicKey.rawRepresentation }
 
     struct Options {
         var lists = ["easyprivacy", "peter-lowe", "easylist"]
-        var minEngine: Any?
+        var minEngine: Any? = 156
         var created: String? = "2026-11-18T09:00:00Z"
         /// Signed with another key.
         var foreignKey = false
@@ -26,13 +30,15 @@ private struct BundleMaker {
         let directory = parent.appendingPathComponent(name ?? version, isDirectory: true)
         try FileManager.default.createDirectory(at: directory.appendingPathComponent("rules"), withIntermediateDirectories: true)
         var lists: [[String: Any]] = []
-        for id in options.lists {
+        for (index, id) in options.lists.enumerated() {
             let rules = Data(#"[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||\#(id).ads.test^"}}]"#.utf8)
             try rules.write(to: directory.appendingPathComponent("rules/\(id).json"))
             lists.append(["id": id, "title": id.capitalized, "homepage": "https://lists.test/\(id)", "license": "GPL-3.0",
-                          "files": ["rules/\(id).json": BlocklistVerifier.sha256(of: rules)], "rules": 1])
+                          "level": min(index + 1, 3),
+                          "rules": ["path": "rules/\(id).json", "sha256": BlocklistVerifier.sha256(of: rules), "bytes": rules.count, "count": 1]])
         }
-        var manifest: [String: Any] = ["version": version, "lists": lists]
+        var manifest: [String: Any] = ["format": 1, "version": version, "lists": lists,
+                                       "priorities": ["block": 1, "allow": 2, "important": 3, "important_allow": 4, "site_exception": 1_000_000]]
         if let created = options.created { manifest["created"] = created }
         if let minEngine = options.minEngine { manifest["min_engine"] = minEngine }
         var data = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
@@ -49,7 +55,7 @@ private struct BundleMaker {
         let folder = scratch.appendingPathComponent("pack-\(UUID().uuidString)", isDirectory: true)
         try make(version, in: folder, named: "blocklists-\(version)", options)
         let file = scratch.appendingPathComponent("\(UUID().uuidString).tar.gz")
-        try run("/usr/bin/tar", ["-czf", file.path, "-C", folder.path, "blocklists-\(version)"])
+        try runTool("/usr/bin/tar", ["-czf", file.path, "-C", folder.path, "blocklists-\(version)"])
         let archive = try Data(contentsOf: file)
         return (archive, latest(version, archive: archive))
     }
@@ -60,7 +66,7 @@ private struct BundleMaker {
     }
 }
 
-private func run(_ tool: String, _ arguments: [String], input: Data? = nil) throws -> Data {
+private func runTool(_ tool: String, _ arguments: [String], input: Data? = nil) throws -> Data {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: tool)
     process.arguments = arguments
@@ -93,7 +99,7 @@ private func tarEntry(_ name: String, type: Character = "0", content: Data = Dat
 }
 
 private func gzip(_ entries: [Data]) throws -> Data {
-    try run("/usr/bin/gzip", ["-c"], input: entries.reduce(Data(), +) + Data(count: 1024))
+    try runTool("/usr/bin/gzip", ["-c"], input: entries.reduce(Data(), +) + Data(count: 1024))
 }
 
 private final class FakeMirror: BlocklistFetching, @unchecked Sendable {
@@ -113,36 +119,26 @@ private func scratchDirectory() throws -> URL {
     return url
 }
 
-private let engine = BlocklistEngineVersion(chromium: "156.0.8078.74", bridge: "0.76.0", abiMinor: 66)
+private let engine = BlocklistEngineVersion(chromium: "156.0.8078.109")
 
 // MARK: - The lists key
 
 final class BlocklistSigningKeyTests: XCTestCase {
-    private static let shell = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    private static let keyFile = shell.appendingPathComponent("scripts/blocklists/blocklists-public-key.txt")
+    private static let keyFile = shellDirectory.appendingPathComponent("scripts/blocklists/blocklists-public-key.txt")
 
-    /// The key in the app is the pipeline's public key file. While the file
-    /// does not exist a debug build passes with the placeholder (no bundle
-    /// verifies, so blocking has no lists); a release build fails.
+    /// The key in the app is the pipeline's committed public key. A new key
+    /// in the file alone fails here, loudly, in any build.
     func testTheCompiledInKeyIsThePipelinesPublicKey() throws {
-        if let text = try? String(contentsOf: Self.keyFile, encoding: .utf8) {
-            let key = try XCTUnwrap(BlocklistSigningKey.parse(text), "\(Self.keyFile.path) holds no Ed25519 public key")
-            XCTAssertEqual(BlocklistSigningKey.compiledIn, key,
-                           "BlocklistSigningKey.compiledInText is not the key in \(Self.keyFile.path): copy the file's key into it")
-            return
-        }
-        guard BlocklistSigningKey.isPlaceholder else { return }
-        #if DEBUG
-        throw XCTSkip("no lists key yet: BlocklistSigningKey.compiledInText is the placeholder and no bundle verifies. A release build fails here.")
-        #else
-        XCTFail("RELEASE BUILD WITHOUT THE LISTS KEY: BlocklistSigningKey.compiledInText is still the placeholder, so no blocklist "
-            + "bundle verifies and ad and tracker blocking does nothing. Put the key from scripts/blocklists/blocklists-public-key.txt in it.")
-        #endif
+        let text = try String(contentsOf: Self.keyFile, encoding: .utf8)
+        let key = try XCTUnwrap(BlocklistSigningKey.parse(text), "\(Self.keyFile.path) holds no Ed25519 public key")
+        XCTAssertEqual(BlocklistSigningKey.compiledIn, key,
+                       "BlocklistSigningKey.compiledInText is not the key in \(Self.keyFile.path): no bundle will verify. Copy the file's key into it.")
+        XCTAssertEqual(text.trimmingCharacters(in: .whitespacesAndNewlines), BlocklistSigningKey.compiledInText)
     }
 
-    func testThePlaceholderIsNotAKey() {
-        XCTAssertNil(BlocklistSigningKey.parse(BlocklistSigningKey.placeholderText))
-        if BlocklistSigningKey.isPlaceholder { XCTAssertNil(BlocklistSigningKey.compiledIn) }
+    func testZerosAreNotAKey() {
+        XCTAssertNil(BlocklistSigningKey.parse(Data(count: 32).base64EncodedString()))
+        XCTAssertNotNil(BlocklistSigningKey.compiledIn)
     }
 
     func testAKeyFileInEachUsualForm() {
@@ -183,6 +179,8 @@ final class BlocklistVerifierTests: XCTestCase {
         XCTAssertEqual(bundle.manifest.lists.map(\.id), ["easyprivacy", "peter-lowe", "easylist"])
         XCTAssertEqual(bundle.manifest.lists.first?.title, "Easyprivacy")
         XCTAssertEqual(bundle.manifest.lists.first?.ruleCount, 1)
+        XCTAssertEqual(bundle.manifest.lists.map(\.level), [1, 2, 3])
+        XCTAssertEqual(bundle.manifest.minEngine, .chromiumMajor(156))
         XCTAssertEqual(bundle.manifest.files.count, 3)
         XCTAssertEqual(bundle.manifest.date, ISO8601DateFormatter().date(from: "2026-11-18T09:00:00Z"))
     }
@@ -232,55 +230,76 @@ final class BlocklistVerifierTests: XCTestCase {
     }
 
     func testAWrongMinEngineIsRefused() throws {
-        func result(_ minEngine: Any, _ version: String) throws -> BlocklistRejection? {
+        func result(_ minEngine: Any?, _ version: String, on engine: BlocklistEngineVersion? = engine) throws -> BlocklistRejection? {
             var options = BundleMaker.Options()
             options.minEngine = minEngine
-            return rejection(verify(try maker.make(version, in: scratch, options)))
+            return rejection(verify(try maker.make(version, in: scratch, options), engine: engine))
         }
-        XCTAssertNil(try result(66, "202611180900"), "the ABI minor this engine has")
-        XCTAssertEqual(try result(67, "202611180901"), .engineTooOld)
-        XCTAssertNil(try result(156, "202611180902"), "Chromium's major")
-        XCTAssertEqual(try result(157, "202611180903"), .engineTooOld)
-        XCTAssertNil(try result("156.0.8078.74", "202611180904"))
-        XCTAssertEqual(try result("156.0.8078.75", "202611180905"), .engineTooOld)
-        XCTAssertNil(try result("0.76.0", "202611180906"), "the bridge")
-        XCTAssertEqual(try result("0.77.0", "202611180907"), .engineTooOld)
-        XCTAssertNil(try result("1.66", "202611180908"), "the ABI")
-        XCTAssertEqual(try result("1.67", "202611180909"), .engineTooOld)
-        XCTAssertEqual(try result("soon", "202611180910"), .engineTooOld, "a requirement that cannot be read is not met")
-        XCTAssertEqual(try result(true, "202611180911"), .engineTooOld)
+        XCTAssertNil(try result(156, "202611180900"), "Chromium's major, the one this engine has")
+        XCTAssertNil(try result(150, "202611180901"))
+        XCTAssertEqual(try result(157, "202611180902"), .engineTooOld)
+        XCTAssertNil(try result(nil, "202611180903"), "no requirement")
+        XCTAssertEqual(try result("156", "202611180904"), .engineTooOld, "a requirement that is not the integer is not met")
+        XCTAssertEqual(try result(156.5, "202611180905"), .engineTooOld)
+        XCTAssertEqual(try result(true, "202611180906"), .engineTooOld)
+        XCTAssertEqual(try result(160, "202611180907", on: BlocklistEngineVersion(chromium: "159.0.1.2")), .engineTooOld)
+        XCTAssertNil(try result(160, "202611180908", on: BlocklistEngineVersion(chromium: "160.0.1.2")))
     }
 
-    func testAManifestThatNamesAPathOutsideTheBundleIsRefused() throws {
-        func manifest(_ files: [String: String]) -> Data {
-            let list: [String: Any] = ["id": "easylist", "title": "EasyList", "files": files]
-            return try! JSONSerialization.data(withJSONObject: ["version": "202611180900", "lists": [list]])
-        }
+    func testAManifestThatIsNotFormatOneOrNamesAnotherPathIsRefused() throws {
         let hash = String(repeating: "a", count: 64)
-        XCTAssertThrowsError(try BlocklistManifest.decode(manifest(["rules/easylist.json": hash, "../outside.json": hash]))) {
-            XCTAssertEqual($0 as? BlocklistRejection, .unsafePath("../outside.json"))
+        func decode(format: Any? = 1, path: String = "rules/easylist.json", sha256: Any = String(repeating: "a", count: 64)) throws -> BlocklistManifest {
+            var manifest: [String: Any] = ["version": "202611180900",
+                                           "lists": [["id": "easylist", "title": "EasyList", "level": 2, "rules": ["path": path, "sha256": sha256]]]]
+            manifest["format"] = format
+            return try BlocklistManifest.decode(JSONSerialization.data(withJSONObject: manifest))
         }
-        XCTAssertThrowsError(try BlocklistManifest.decode(manifest(["rules/easylist.json": hash, "/etc/hosts": hash])))
-        XCTAssertThrowsError(try BlocklistManifest.decode(manifest(["rules/easylist.json": hash, "manifest.json": hash])))
-        XCTAssertThrowsError(try BlocklistManifest.decode(manifest(["css/easylist.css": hash])), "a list without its rules file")
-        XCTAssertThrowsError(try BlocklistManifest.decode(manifest(["rules/easylist.json": "short"])))
-        XCTAssertNoThrow(try BlocklistManifest.decode(manifest(["rules/easylist.json": hash, "css/easylist.css": hash])))
-    }
-
-    func testTheOtherWaysAManifestMayGiveItsHashes() throws {
-        let hash = String(repeating: "b", count: 64), css = String(repeating: "c", count: 64)
-        func decode(_ list: [String: Any]) throws -> [String: String] {
-            var list = list
-            list["id"] = "easylist"
-            return try BlocklistManifest.decode(JSONSerialization.data(withJSONObject: ["version": 202611180900, "lists": [list]])).files
-        }
-        let both = ["rules/easylist.json": hash, "css/easylist.css": css]
-        XCTAssertEqual(try decode(["sha256": ["rules": hash, "css": css]]), both)
-        XCTAssertEqual(try decode(["rules_sha256": hash, "css_sha256": css]), both)
-        XCTAssertEqual(try decode(["sha256": hash.uppercased()]), ["rules/easylist.json": hash])
+        XCTAssertEqual(try decode().files, ["rules/easylist.json": hash])
+        XCTAssertThrowsError(try decode(format: 2), "a later format is not guessed at")
+        XCTAssertThrowsError(try decode(format: nil))
+        XCTAssertThrowsError(try decode(path: "../outside.json")) { XCTAssertEqual($0 as? BlocklistRejection, .unsafePath("../outside.json")) }
+        XCTAssertThrowsError(try decode(path: "/etc/hosts")) { XCTAssertEqual($0 as? BlocklistRejection, .unsafePath("/etc/hosts")) }
+        XCTAssertThrowsError(try decode(path: "manifest.json"))
+        XCTAssertThrowsError(try decode(path: "rules/other.json"), "a list's file is rules/<id>.json")
+        XCTAssertThrowsError(try decode(sha256: "short"))
+        XCTAssertEqual(try decode(sha256: hash.uppercased()).files, ["rules/easylist.json": hash])
         XCTAssertEqual(BlocklistVersion("202611180900")?.date, ISO8601DateFormatter().date(from: "2026-11-18T09:00:00Z"))
         XCTAssertNil(BlocklistVersion("20261118"))
         XCTAssertNil(BlocklistVersion("2026111809oo"))
+    }
+
+    // MARK: The bundle in the repository
+
+    /// `shell/Resources/Blocklists` is what the app carries
+    /// (`Contents/Resources/Blocklists`): it verifies against the compiled-in
+    /// key on the engine this build pins, and its lists and levels are the
+    /// table's (spec §2).
+    func testTheBuiltInBundleVerifiesAgainstTheCompiledInKey() throws {
+        let directory = shellDirectory.appendingPathComponent("Resources/Blocklists", isDirectory: true)
+        let bundle = try BlocklistVerifier.verify(directory: directory, source: .builtIn, publicKey: BlocklistSigningKey.compiledIn,
+                                                  engine: BlocklistEngineVersion(chromiumMajor: 156)).get()
+        XCTAssertEqual(bundle.manifest.minEngine, .chromiumMajor(156))
+        XCTAssertNotNil(bundle.manifest.date)
+        for list in bundle.manifest.lists {
+            let known = try XCTUnwrap(ContentBlockingLists.known.first { $0.id == list.id }, "the bundle has a list the table lacks: \(list.id)")
+            XCTAssertEqual(known.level.map { Int($0.engineValue) } ?? 0, list.level, "\(list.id): the table and the bundle disagree on its level")
+            XCTAssertGreaterThan(list.ruleCount ?? 0, 0, list.id)
+        }
+        let lists = ContentBlockingLists.lists(of: bundle.manifest)
+        for level in ContentBlockingLevel.strengths {
+            XCTAssertEqual(ContentBlockingSettings(isEnabled: true, strength: level).enabledListIDs(in: lists),
+                           ContentBlockingLists.defaults(for: level), "\(level): what the engine is told is spec §2's table")
+        }
+        XCTAssertEqual(ContentBlockingSettings.newProfile.enabledListIDs(in: lists), ["easyprivacy", "peter-lowe", "easylist"])
+        // Every own-rule priority is in the range the engine places above the lists.
+        let priorities = [ContentBlockingRuleConverter.Priority.block, ContentBlockingRuleConverter.Priority.allow, ContentBlockingRuleConverter.Priority.importantBlock]
+        XCTAssertTrue(priorities.allSatisfy { (1...100).contains($0) })
+    }
+
+    /// Its signature file is as the spec says: base64, no newline.
+    func testTheBuiltInSignatureIsBase64WithoutANewline() throws {
+        let text = try String(contentsOf: shellDirectory.appendingPathComponent("Resources/Blocklists/manifest.json.sig"), encoding: .utf8)
+        XCTAssertEqual(Data(base64Encoded: text)?.count, 64)
     }
 }
 
@@ -372,12 +391,12 @@ final class BlocklistStoreTests: XCTestCase {
         XCTAssertEqual(first?.source, .builtIn, "works offline and on the first launch")
 
         try maker.make("202611180900", in: downloads)
-        let newer = await try store().load()
+        let newer = try await store().load()
         XCTAssertEqual(newer?.version.description, "202611180900")
         XCTAssertEqual(newer?.source, .downloaded)
 
         // An app update carries newer lists than the last download.
-        let updatedApp = await try store(builtIn: "202612010000").load()
+        let updatedApp = try await store(builtIn: "202612010000").load()
         XCTAssertEqual(updatedApp?.source, .builtIn)
         XCTAssertEqual(updatedApp?.version.description, "202612010000")
     }
@@ -389,7 +408,7 @@ final class BlocklistStoreTests: XCTestCase {
         let tampered = try maker.make("202611190900", in: downloads)
         try Data("[]".utf8).write(to: tampered.appendingPathComponent("rules/easylist.json"))
         var tooNew = BundleMaker.Options()
-        tooNew.minEngine = 99
+        tooNew.minEngine = 160
         try maker.make("202611210900", in: downloads, tooNew)
         try maker.make("202611170900", in: downloads, named: "202611220900") // a version in another version's folder
         try FileManager.default.createDirectory(at: downloads.appendingPathComponent(".incoming-crashed"), withIntermediateDirectories: true)
@@ -409,7 +428,7 @@ final class BlocklistStoreTests: XCTestCase {
 
     func testOnePreviousBundleIsKept() async throws {
         for version in ["202611150900", "202611160900", "202611170900", "202611180900"] { try maker.make(version, in: downloads) }
-        let active = await try store().load()
+        let active = try await store().load()
         XCTAssertEqual(active?.version.description, "202611180900")
         XCTAssertEqual(downloaded(), ["202611170900", "202611180900"], "the one in use and one before it")
     }
@@ -445,7 +464,7 @@ final class BlocklistStoreTests: XCTestCase {
         let again = await store.checkForUpdate(using: mirror)
         XCTAssertEqual(again, .upToDate)
         XCTAssertEqual(mirror.requested.count, 3, "an up to date check fetches latest.json only")
-        let relaunched = await try self.store().load()
+        let relaunched = try await self.store().load()
         XCTAssertEqual(relaunched?.version.description, "202611180900", "the next launch finds it")
     }
 
@@ -486,7 +505,7 @@ final class BlocklistStoreTests: XCTestCase {
         XCTAssertEqual(badSignature, .rejected("the signature does not verify"))
 
         var tooNew = BundleMaker.Options()
-        tooNew.minEngine = "157.0.0.0"
+        tooNew.minEngine = 157
         let wrongEngine = await check(try maker.archive("202611180901", in: scratch, tooNew), version: "202611180901")
         XCTAssertEqual(wrongEngine, .rejected("it needs a newer engine"))
 
@@ -529,6 +548,32 @@ final class BlocklistStoreTests: XCTestCase {
         XCTAssertEqual(offline, .unreachable)
         let state = await store.updateState
         XCTAssertEqual(state.lastAttempt, now)
+    }
+
+    /// The mirror's files as the pipeline writes them (`build-blocklists.py
+    /// pack` of the repository's bundle): the shell downloads, unpacks and
+    /// verifies them with the compiled-in key.
+    func testTheArchiveThePipelinePacksIsAccepted() async throws {
+        let script = shellDirectory.appendingPathComponent("scripts/blocklists/build-blocklists.py")
+        let out = scratch.appendingPathComponent("mirror", isDirectory: true)
+        do {
+            _ = try runTool("/usr/bin/env", ["python3", script.path, "pack", shellDirectory.appendingPathComponent("Resources/Blocklists").path, "--out", out.path])
+        } catch {
+            throw XCTSkip("build-blocklists.py pack did not run here (python3, or its Ed25519 tool, is missing)")
+        }
+        let latest = try Data(contentsOf: out.appendingPathComponent("latest.json"))
+        let named = try XCTUnwrap(BlocklistLatest.decode(latest, from: latestURL), "latest.json is not {version, url, sha256} on the mirror")
+        XCTAssertEqual(named.url.absoluteString, "https://rearc.imara.ae/blocklists/blocklists-\(named.version).tar.gz")
+        let mirror = FakeMirror()
+        mirror.pages[latestURL.absoluteString] = latest
+        mirror.pages[named.url.absoluteString] = try Data(contentsOf: out.appendingPathComponent("blocklists-\(named.version).tar.gz"))
+
+        let store = BlocklistStore(configuration: .init(builtIn: nil, downloads: downloads, engine: BlocklistEngineVersion(chromiumMajor: 156)))
+        let outcome = await store.checkForUpdate(using: mirror)
+        XCTAssertEqual(outcome, .updated(named.version))
+        let active = await store.active
+        XCTAssertEqual(active?.manifest.lists.map(\.id), ["easyprivacy", "peter-lowe", "easylist", "fanboy-annoyance", "easylist-cookie"])
+        XCTAssertEqual(downloaded(), [named.version.description])
     }
 
     func testTheCheckIsDailyAndOnlyWhileBlockingIsOnSomewhere() {

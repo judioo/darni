@@ -186,21 +186,13 @@ struct SiteControlCenterView: View {
                 .animation(.easeOut(duration: 0.12), value: isOverExtensions)
             }
             header("Settings", top: 16, bottom: 8)
-            if model.contentBlocking.isAvailable {
-                // "N blocked on this page" is the engine's count, read while
-                // the panel is open: the shell knows no event for its changes.
-                TimelineView(.periodic(from: .now, by: Self.blockedCountRefresh)) { _ in settingRows }
-            } else {
-                settingRows
-            }
+            settingRows
             Divider().padding(.top, 10).padding(.bottom, 8)
             footer
         }
         .padding(10)
         .frame(width: Self.width + 20)
     }
-
-    static let blockedCountRefresh: TimeInterval = 0.5
 
     private var settingRows: some View {
         VStack(alignment: .leading, spacing: 4) {

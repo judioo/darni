@@ -3327,9 +3327,9 @@ extension ChromiumSelfTest {
     }
 
     /// Built-in ad and tracker blocking (CONTENT-BLOCKING.md §8 "Self-test").
-    /// A STUB UNTIL THE ENGINE PATCH LANDS (`tab/095-content-blocker-component`):
-    /// an engine without the blocking calls logs the gap, and the only check is
-    /// that nothing of blocking shows. With the calls it checks the shell's
+    /// A STUB UNTIL AN ENGINE WITH `tab/095-content-blocker-component` IS BUILT
+    /// (ABI 1.66, `content_blocking`): an engine without it logs the gap, and
+    /// the only check is that nothing of blocking shows. With it this checks the shell's
     /// half (the install was counted as new or existing, the bundles were
     /// looked at) and says which bundle is in use.
     ///
@@ -3340,7 +3340,7 @@ extension ChromiumSelfTest {
     @MainActor
     private func contentBlockingChecks(model: BrowserViewModel, store: SidebarStore) async throws {
         guard model.contentBlocking.isAvailable else {
-            log("ABI-GAP content blocking not exported (\(ChromiumContentBlockingCalls.missingSymbols.joined(separator: ", "))): "
+            log("ABI-GAP content_blocking not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 66): "
                 + "Block ads and trackers is hidden in Settings and the site controls, and no install is offered it")
             try check(!model.contentBlocking.showsOffer, "the blocking offer is up without an engine that can block")
             try check(model.contentBlocking.bundle == nil, "a blocklist bundle was loaded without an engine that can block")

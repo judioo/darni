@@ -40,8 +40,10 @@ public enum ContentBlockingRuleConverter {
     /// Spec §2: at most 5,000 own rules.
     public static let maxRules = 5000
 
-    /// Own rules sit above nothing and below site exceptions: a block is 1,
-    /// an `@@` exception 2, an `$important` block 3.
+    /// A block is 1, an `@@` exception 2, an `$important` block 3. The
+    /// engine keeps the order of own rules' priorities (1 to 100) and places
+    /// them above every list rule and below the site exceptions; it numbers
+    /// the rules itself, so `id` only has to be unique.
     public enum Priority {
         public static let block = 1
         public static let allow = 2
@@ -279,7 +281,7 @@ extension ContentBlockingHost {
     /// host exactly as written, `www.` included.
     static func normalizedKeepingWWW(_ input: String) -> String? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !text.isEmpty, !text.contains("/"), !text.contains(":") || text.hasPrefix("["),
+        guard !text.isEmpty, !text.contains("/"), !text.contains(":"),
               var host = URLComponents(string: "https://" + text)?.encodedHost?.lowercased() else { return nil }
         while host.hasSuffix(".") { host.removeLast() }
         return isHost(host) ? host : nil

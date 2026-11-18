@@ -29,6 +29,8 @@ final class ContentBlockingSettingsTests: XCTestCase {
     }
 
     func testRegionalListsAreOffAtEveryLevel() {
+        XCTAssertEqual(ContentBlockingLists.known.filter { $0.level == nil }.map(\.id),
+                       ["easylist-germany", "liste-fr", "easylist-italy", "easylist-spanish", "easylist-dutch"], "the pipeline's regional lists")
         for level in ContentBlockingLevel.strengths {
             let settings = ContentBlockingSettings(isEnabled: true, strength: level)
             XCTAssertFalse(settings.isListEnabled("easylist-germany"))
@@ -47,17 +49,16 @@ final class ContentBlockingSettingsTests: XCTestCase {
         XCTAssertEqual(settings.level, .strict, "the switch brings the chosen level back")
     }
 
-    func testListChoicesAreKeptAsDifferencesAndALevelChangeClearsThem() {
+    func testListChoicesStayUntilAnotherLevelIsChosen() {
         var settings = ContentBlockingSettings(isEnabled: true)
         settings.setList("easylist", enabled: false)
         settings.setList("liste-fr", enabled: true)
-        settings.setList("easyprivacy", enabled: true)
-        XCTAssertEqual(settings.listOverrides, ["easylist": false, "liste-fr": true], "what the level already says is not kept")
+        XCTAssertEqual(settings.listOverrides, ["easylist": false, "liste-fr": true])
         XCTAssertEqual(settings.enabledListIDs(), ["easyprivacy", "peter-lowe", "liste-fr"])
-        XCTAssertEqual(settings.enabledListIDs(available: ["easyprivacy", "easylist"]), ["easyprivacy"],
-                       "a list the bundle does not carry is not sent to the engine")
+        XCTAssertTrue(settings.isListEnabled("liste-fr"))
+        XCTAssertFalse(settings.isListEnabled("easylist"))
         settings.setList("easylist", enabled: true)
-        XCTAssertEqual(settings.listOverrides, ["liste-fr": true])
+        XCTAssertEqual(settings.enabledListIDs(), ["easyprivacy", "peter-lowe", "easylist", "liste-fr"])
         settings.setStrength(.strict)
         XCTAssertEqual(settings.listOverrides, [:])
         settings.setStrength(.off)
@@ -101,6 +102,7 @@ final class ContentBlockingHostTests: XCTestCase {
             ("www.example.com", "example.com"),
             ("localhost:3000", "localhost"),
             ("192.168.1.10:8080", "192.168.1.10"),
+            ("[::1]:8080", nil),
             ("bücher.example", "xn--bcher-kva.example"),
             ("", nil),
             ("not a host", nil),
@@ -119,6 +121,7 @@ final class ContentBlockingHostTests: XCTestCase {
         XCTAssertEqual(host("https://someone.github.io/blog"), "someone.github.io", "a shared host's tenants are separate sites")
         XCTAssertEqual(host("http://localhost:3000/"), "localhost")
         XCTAssertEqual(host("http://192.168.1.10:8080/"), "192.168.1.10")
+        XCTAssertNil(host("http://[::1]:3000/"), "the engine's exception hosts are names")
         XCTAssertNil(host("about:blank"))
         XCTAssertNil(host("file:///Users/someone/page.html"))
         XCTAssertNil(host("chrome://settings/"))
@@ -595,23 +598,52 @@ private final class RecordingEngine: ContentBlockingEngine {
 }
 
 final class ContentBlockingEngineSyncTests: XCTestCase {
-    private func bundle(_ version: String, lists: [String] = ["easyprivacy", "peter-lowe", "easylist"]) -> VerifiedBlocklist {
-        let manifest = BlocklistManifest(version: BlocklistVersion(version)!, created: nil, minEngine: .none,
-                                         lists: lists.map { .init(id: $0, title: $0) }, files: [:])
+    private func bundle(_ version: String, lists: [BlocklistManifest.List]? = nil) -> VerifiedBlocklist {
+        let lists = lists ?? [
+            .init(id: "easyprivacy", title: "EasyPrivacy", level: 1), .init(id: "peter-lowe", title: "Peter Lowe", level: 1),
+            .init(id: "easylist", title: "EasyList", level: 2), .init(id: "fanboy-annoyance", title: "Fanboy", level: 3),
+            .init(id: "easylist-cookie", title: "Cookie", level: 3),
+        ]
+        let manifest = BlocklistManifest(version: BlocklistVersion(version)!, created: nil, minEngine: .none, lists: lists, files: [:])
         return VerifiedBlocklist(directory: URL(fileURLWithPath: "/lists/\(version)"), manifest: manifest, source: .downloaded)
     }
 
-    func testAProfileGetsItsStateWhenItLoadsAndOnlyChangesAfterwards() {
+    /// C-ABI.md "Content blocking": the engine keeps no state, so at every
+    /// profile load it is told the level, then the exceptions, then the own rules.
+    func testEveryProfileLoadSendsLevelThenExceptionsThenOwnRules() {
         let store = makeStore()
-        store.beginContentBlockingRollout(isNewInstall: true)
+        store.setContentBlocking(ContentBlockingSettings(isEnabled: true, ownRules: "||ads.test^", exceptions: ["shop.test"]))
         let profile = store.profiles[0].id
         let engine = RecordingEngine()
         let sync = ContentBlockingEngineSync(engine: engine) { store.contentBlocking(for: $0) }
 
         sync.profileOpened(engineProfile: 7, profile: profile)
-        XCTAssertEqual(engine.take(), [], "no verified bundle yet: the engine has no rules to switch on")
+        XCTAssertEqual(engine.take(), ["level 7 2 easyprivacy,peter-lowe,easylist", "exceptions 7 shop.test", "rules 7 1"],
+                       "before a bundle is named too: the engine holds the state until one is")
         sync.setBundle(bundle("202611180900"))
-        XCTAssertEqual(engine.take(), ["directory 202611180900", "exceptions 7 ", "rules 7 0", "level 7 2 easyprivacy,peter-lowe,easylist"])
+        XCTAssertEqual(engine.take(), ["directory 202611180900"], "the engine sets exceptions and own rules again itself")
+
+        // The profile closes and loads again (its last window closed, then a new one): all three again.
+        sync.profileClosed(engineProfile: 7)
+        sync.profileOpened(engineProfile: 8, profile: profile)
+        XCTAssertEqual(engine.take(), ["level 8 2 easyprivacy,peter-lowe,easylist", "exceptions 8 shop.test", "rules 8 1"])
+
+        // An Off profile is told so too, at load: a profile the shell says nothing about has no blocker either way.
+        let off = store.addProfile(name: "Work")
+        sync.profileOpened(engineProfile: 9, profile: off.id)
+        XCTAssertEqual(engine.take(), ["level 9 0 ", "exceptions 9 ", "rules 9 0"])
+        sync.profileOpened(engineProfile: 0, profile: profile)
+        XCTAssertEqual(engine.take(), [], "0 is no engine profile")
+    }
+
+    func testAfterTheLoadOnlyWhatChangedIsSent() {
+        let store = makeStore()
+        store.beginContentBlockingRollout(isNewInstall: true)
+        let engine = RecordingEngine()
+        let sync = ContentBlockingEngineSync(engine: engine) { store.contentBlocking(for: $0) }
+        sync.setBundle(bundle("202611180900"))
+        sync.profileOpened(engineProfile: 7, profile: store.profiles[0].id)
+        _ = engine.take()
 
         sync.settingsChanged()
         XCTAssertEqual(engine.take(), [], "nothing changed")
@@ -620,63 +652,40 @@ final class ContentBlockingEngineSyncTests: XCTestCase {
         XCTAssertEqual(engine.take(), ["exceptions 7 shop.test"])
         store.updateContentBlocking { $0.setStrength(.strict) }
         sync.settingsChanged()
-        XCTAssertEqual(engine.take(), ["level 7 3 easyprivacy,peter-lowe,easylist"], "Strict's other lists are not in this bundle")
+        XCTAssertEqual(engine.take(), ["level 7 3 easyprivacy,peter-lowe,easylist,fanboy-annoyance,easylist-cookie"])
         store.updateContentBlocking { $0.setOwnRules("||ads.test^\nexample.com##.ad") }
         sync.settingsChanged()
-        XCTAssertEqual(engine.take(), ["rules 7 1"])
-    }
-
-    func testOffSendsLevelZeroNoListsAndNoOwnRules() {
-        let store = makeStore()
-        store.setContentBlocking(ContentBlockingSettings(isEnabled: true, ownRules: "||ads.test^", exceptions: ["shop.test"]))
-        let engine = RecordingEngine()
-        let sync = ContentBlockingEngineSync(engine: engine) { store.contentBlocking(for: $0) }
-        sync.setBundle(bundle("202611180900"))
-        sync.profileOpened(engineProfile: 3, profile: store.profiles[0].id)
-        XCTAssertEqual(engine.take(), ["directory 202611180900", "exceptions 3 shop.test", "rules 3 1", "level 3 2 easyprivacy,peter-lowe,easylist"])
+        XCTAssertEqual(engine.take(), ["rules 7 1"], "the line DNR cannot express is left out")
+        store.updateContentBlocking { $0.setList("easylist-cookie", enabled: false); $0.setList("liste-fr", enabled: true) }
+        sync.settingsChanged()
+        XCTAssertEqual(engine.take(), ["level 7 3 easyprivacy,peter-lowe,easylist,fanboy-annoyance,liste-fr"],
+                       "a list this bundle lacks is still named: the engine skips it until a bundle has it")
         store.updateContentBlocking { $0.isEnabled = false }
         sync.settingsChanged()
-        XCTAssertEqual(engine.take(), ["rules 3 0", "level 3 0 "])
+        XCTAssertEqual(engine.take(), ["level 7 0 "], "level 0 unloads the blocker; exceptions and own rules stay as they are")
     }
 
-    func testANewBundleIsFollowedByEveryProfilesStateAgain() {
+    func testABundleDecidesWhichLevelHasAList() {
         let store = makeStore()
-        store.beginContentBlockingRollout(isNewInstall: true)
-        let work = store.addProfile(name: "Work")
-        store.updateContentBlocking(for: work.id) { $0.addException("bank.test") }
+        store.setContentBlocking(ContentBlockingSettings(isEnabled: true))
         let engine = RecordingEngine()
         let sync = ContentBlockingEngineSync(engine: engine) { store.contentBlocking(for: $0) }
         sync.setBundle(bundle("202611180900"))
         sync.profileOpened(engineProfile: 1, profile: store.profiles[0].id)
-        sync.profileOpened(engineProfile: 2, profile: work.id)
         _ = engine.take()
 
         sync.setBundle(bundle("202611180900"))
-        XCTAssertEqual(engine.take(), [], "the same bundle again is no reload")
-        sync.setBundle(bundle("202611190900"))
-        XCTAssertEqual(engine.take(), [
-            "directory 202611190900",
-            "exceptions 1 ", "rules 1 0", "level 1 2 easyprivacy,peter-lowe,easylist",
-            "exceptions 2 bank.test", "rules 2 0", "level 2 2 easyprivacy,peter-lowe,easylist",
-        ], "site exceptions are reapplied after the engine reloads its blocker")
-    }
-
-    func testAPrivateWindowsProfileTakesItsParentsSettingsAndAClosedProfileIsForgotten() {
-        let store = makeStore()
-        let profile = store.profiles[0].id
-        store.setContentBlocking(ContentBlockingSettings(isEnabled: true, strength: .trackersOnly))
-        let engine = RecordingEngine()
-        let sync = ContentBlockingEngineSync(engine: engine) { store.contentBlocking(for: $0) }
-        sync.setBundle(bundle("202611180900"))
-        sync.profileOpened(engineProfile: 1, profile: profile)
-        sync.profileOpened(engineProfile: 9, profile: profile) // the private window's off-the-record profile
-        XCTAssertEqual(engine.take().filter { $0.hasPrefix("level") }, ["level 1 1 easyprivacy,peter-lowe", "level 9 1 easyprivacy,peter-lowe"])
-        sync.profileClosed(engineProfile: 9)
-        store.updateContentBlocking { $0.isEnabled = false }
-        sync.settingsChanged()
-        XCTAssertEqual(engine.take(), ["level 1 0 "], "Off in the profile is Off in its private windows; a closed one is told nothing")
-        sync.profileOpened(engineProfile: 0, profile: profile)
-        XCTAssertEqual(engine.take(), [], "0 is no engine profile")
+        XCTAssertEqual(engine.take(), [], "the same bundle again is nothing new")
+        // A later bundle brings a list this build's table does not know, at Ads and trackers, and a regional one.
+        let later: [BlocklistManifest.List] = [
+            .init(id: "easyprivacy", title: "EasyPrivacy", level: 1), .init(id: "easylist", title: "EasyList", level: 2),
+            .init(id: "new-ads", title: "New Ads", level: 2), .init(id: "liste-xx", title: "Liste XX", level: 0),
+        ]
+        sync.setBundle(bundle("202611190900", lists: later))
+        XCTAssertEqual(engine.take(), ["directory 202611190900", "level 1 2 easyprivacy,easylist,new-ads"])
+        XCTAssertEqual(sync.lists.map(\.id), ["easyprivacy", "easylist", "new-ads", "liste-xx"])
+        XCTAssertEqual(sync.lists.map(\.level), [.trackersOnly, .adsAndTrackers, .adsAndTrackers, nil])
+        XCTAssertEqual(sync.lists.map(\.title), ["EasyPrivacy", "EasyList", "New Ads", "Liste XX"])
     }
 }
 
