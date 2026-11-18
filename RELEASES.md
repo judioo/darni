@@ -19,7 +19,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1118.929 — 2026-11-18
+## ReArc 2026.1118.931 — 2026-11-18
 
 This release also brings everything in 2026.1117.849 and 2026.1117.864 below (Task Manager,
 Tab Groups, the 1Password card and their fixes), which were not announced on their own.
