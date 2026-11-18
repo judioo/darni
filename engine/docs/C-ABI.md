@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
 ABI **1.66** (major remains 1 for existing hosts), bridge **0.76.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, which no engine build contains yet; built engines are 1.65, bridge 0.75.0). Public header:
+(1.66 and bridge 0.76.0 are patch `tab/095`, built so far only in the QA engine `out/ReArc-codecs-arm64`; the release engine is 1.65, bridge 0.75.0). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2658,9 +2658,10 @@ count itself has no engine test.
 ## Content blocking (ABI 1.66, bridge 0.76.0)
 
 Patch `tab/095-content-blocker-component`, feature `content_blocking`. Spec:
-`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`. **Not built yet:** the patch was written
-against the overlay without an engine build (its header says what was checked), so
-nothing below has run. Hosts gate on the feature. No struct changes.
+`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`. **Built in the QA engine only**
+(`out/ReArc-codecs-arm64`): the patch header says which builds, and what the security
+review ran on them. The release engine does not have it yet. Hosts gate on the
+feature. No struct changes.
 
 Blocking is Chromium's declarativeNetRequest. The lists of a blocklist bundle are the
 static rulesets of a component extension, "ReArc Blocker"

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SidebarModel
 
 /// The input gate, the shared input lock and cleanup on every way out.
 ///
@@ -60,7 +61,7 @@ enum Cleanup {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
             source.setEventHandler {
-                FileHandle.standardError.write("arc-vs-rearc: signal \(number), cleaning up\n".data(using: .utf8)!)
+                StandardError.write("arc-vs-rearc: signal \(number), cleaning up\n")
                 Cleanup.run()
                 exit(128 + number)
             }
