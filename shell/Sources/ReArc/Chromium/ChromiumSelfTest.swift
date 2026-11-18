@@ -2073,7 +2073,7 @@ final class ChromiumSelfTest {
     /// then closes the tab and selects the one shown before.
     @MainActor
     private func withFixtureTab(_ model: BrowserViewModel, _ store: SidebarStore, title: String, path: String,
-                                _ body: (Tab, ChromiumEngine) async throws -> Void) async throws {
+                                _ body: @MainActor (Tab, ChromiumEngine) async throws -> Void) async throws {
         let previous = store.selectedTab?.id
         let (tab, engine) = try openFixtureTab(model, store, title: title, path: path)
         defer {
@@ -3398,9 +3398,9 @@ extension ChromiumSelfTest {
                 store.setContentBlocking(saved, for: profileID)
                 model.contentBlockingSettingsChanged()
             }
-            func settings() -> ContentBlockingSettings { store.contentBlocking(for: profileID) }
-            func count() -> Int? { model.contentBlocking.blockedCount?(engine) }
-            func row() throws -> SiteControlCenter.SettingRow {
+            @MainActor func settings() -> ContentBlockingSettings { store.contentBlocking(for: profileID) }
+            @MainActor func count() -> Int? { model.contentBlocking.blockedCount?(engine) }
+            @MainActor func row() throws -> SiteControlCenter.SettingRow {
                 guard let site = SiteControlCenter.site(for: engine.currentURL),
                       let row = model.contentBlockingRow(for: engine, site: site) else {
                     throw Failure(description: "the site controls have no blocking row for \(engine.currentURL?.absoluteString ?? "nil")")
@@ -3408,7 +3408,7 @@ extension ChromiumSelfTest {
                 return row
             }
             /// The engine's count for the page reaches `expected` and stays there.
-            func expectCount(_ expected: Int, _ label: String) async throws {
+            @MainActor func expectCount(_ expected: Int, _ label: String) async throws {
                 try await wait("\(label): the engine's count of blocked requests to be \(expected) (now \(count().map(String.init) ?? "nil"))", timeout: 10) {
                     count() == expected
                 }
