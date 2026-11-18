@@ -1123,23 +1123,24 @@ final class ChromiumSelfTest {
                 + "mapping persisted in \(mapURL?.lastPathComponent ?? "-")")
         }
 
-        // A second browser window on the same model shows the same selected tab:
-        // the lease moves (detach, then attach) and returns when it closes.
+        // A second browser window on the same space starts with nothing selected (each window
+        // keeps its own tab, SidebarStore+Windows, c8ec449b): tab A stays in the first window
+        // while the second is open and after it closes.
         let leaseBefore = engineA.attachmentID ?? 0
         guard let second = shell.openBrowserWindow() else { throw Failure(description: "New Window opened nothing") }
-        try await wait("lease moved to the second browser window") {
-            engineA.leaseHolder?.window === second && engineA.attachmentID != nil && engineA.attachmentID != leaseBefore
-        }
+        try await wait("second browser window open") { shell.browserWindowCount == 2 && second.isVisible }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        try check(engineA.leaseHolder?.window === first && engineA.attachmentID != nil,
+                  "opening a second window took tab A from the first (holder \(String(describing: engineA.leaseHolder?.window)))")
         try checkOneLease(engineA, "two browser windows")
-        let leaseInSecond = engineA.attachmentID ?? 0
         shell.closeWindow(second)
-        try await wait("lease back in the first browser window") {
-            engineA.leaseHolder?.window === first && engineA.attachmentID != nil && engineA.attachmentID != leaseInSecond
+        try await wait("tab A still in the first browser window after closing the second") {
+            shell.browserWindowCount == 1 && engineA.leaseHolder?.window === first && engineA.attachmentID != nil
         }
         try checkOneLease(engineA, "after closing window 2")
         try check(shell.browserWindowCount == 1 && first.isVisible && NSApp.isRunning, "closing window 2 changed the app")
-        log("PASS New Window: tab A lease \(leaseBefore) -> \(leaseInSecond) (window 2) -> \(engineA.attachmentID ?? 0) (window 1 "
-            + "after window 2 closed); one live attachment throughout; app still running")
+        log("PASS New Window: starts with nothing selected; tab A stays in window 1 (lease \(leaseBefore) -> "
+            + "\(engineA.attachmentID ?? 0)); one live attachment throughout; app still running")
 
         // Split view: both panes attach at once, each its own tab and lease.
         // With the page focused: its host's detach used to hide the first
