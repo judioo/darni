@@ -2675,7 +2675,7 @@ nothing about has no blocker. `profile_id` is never an off-the-record profile
 
 | Function | Contract |
 |---|---|
-| `ReArcEngineSetBlocklistDirectory(utf8_path)` | The directory of a bundle the host has verified (`manifest.json`, `rules/<list id>.json`): an absolute path, read once. The engine copies the rules to `<user data dir>/ReArc Blocker/<version>`, where Chromium also writes its index, so the directory may be read-only and inside the app, and the host may delete it once a later call has taken effect. Every profile with blocking on gets the blocker of this bundle; site exceptions and own rules are set again. While the rules are copied each one is read: a bundle with a rule whose action is not `block`, `allow` or `allowAllRequests` is refused. A directory the engine cannot read or copy, or a bundle it refuses, leaves the bundle in use (logged). Null or a relative path: `invalid_argument`. Deferred, no completion. |
+| `ReArcEngineSetBlocklistDirectory(utf8_path)` | The directory of a bundle the host has verified (ReArc's shell names one only once some profile has blocking on) (`manifest.json`, `rules/<list id>.json`): an absolute path, read once. The engine copies the rules to `<user data dir>/ReArc Blocker/<version>`, where Chromium also writes its index, so the directory may be read-only and inside the app, and the host may delete it once a later call has taken effect. Every profile with blocking on gets the blocker of this bundle; site exceptions and own rules are set again. While the rules are copied each one is read: a bundle with a rule whose action is not `block`, `allow` or `allowAllRequests` is refused. A directory the engine cannot read or copy, or a bundle it refuses, leaves the bundle in use (logged). Null or a relative path: `invalid_argument`. Deferred, no completion. |
 | `ReArcProfileSetContentBlocking(profile, level, enabled_list_ids_json)` | `level` 0 off (the profile has no blocker), 1 trackers, 2 ads and trackers, 3 strict. `enabled_list_ids_json`: a JSON array of the bundle's list ids to switch on, all others off; null for the lists of the level (a list's `level` in the bundle's manifest is the lowest level with it). An id the bundle in use lacks is skipped and applies when a later bundle has it. Another level or malformed JSON: `invalid_argument`. Before a bundle is named the state waits. |
 | `ReArcProfileSetBlockingExceptions(profile, hosts_json)` | Replaces the profile's site exceptions: a JSON array of at most 10,000 hosts, lower-case ASCII (punycode), no scheme, port or path. A host covers its subdomains. Nothing is blocked in a page or frame of an excepted host, nor a request one of its documents makes, whatever the lists and own rules say. Applies to requests from then on; the host reloads the tab. Kept while blocking is off. |
 | `ReArcProfileSetOwnBlockingRules(profile, dnr_rules_json)` | Replaces the person's own rules: a JSON array of at most 5,000 declarativeNetRequest rules with action `block`, `allow` or `allowAllRequests`. Any other action is `invalid_argument`, so own rules (which sync) never redirect a request or change headers. The engine numbers them (their `id` is ignored) and keeps the order of their priorities, 1 to 100, above every list rule and below the site exceptions. A rule that does not parse: `invalid_argument`, nothing changes. A rule Chromium refuses at indexing (a regular expression RE2 cannot compile) fails the whole replacement and leaves the earlier own rules (logged; there is no completion yet). |
@@ -2724,6 +2724,24 @@ are already on, and takes the time of one rule update.
 - For that moment both bundles' lists are on. `build-blocklists.py` fails a bundle two of
   which would not fit Chromium's global rule pool.
 
+**At launch** (security CB-02). When a blocker becomes ready the engine writes the bundle
+version into its extension preferences (`rearc_ready_bundle`), and removes it with the
+blocker. At a profile's first load the engine loads the one blocker whose marker is the
+bundle in use, and only that one, so Chromium brings up its lists and dynamic rules with the
+extension (one load for both, as the last session left them, until this launch's updates
+end). No marker, one of another version, or both blockers marked: the first ID loads fresh.
+
+**Held navigations.** While a profile with a level above 0 has no ready blocker (a fresh
+load, or no bundle named yet), its http and https navigations, main frames and subframes,
+private windows following their profile, are deferred by a navigation throttle
+(`ChromeContentBrowserClient::CreateThrottlesForNavigation`). They go on when the blocker is
+ready, when a blocker loaded again at launch has its lists on, when blocking is switched off,
+when the profile goes, and at 1.5 s from the first navigation held; never cancelled. That
+limit is one per load, shared by every navigation, redirect and reload; after it, or once the
+blocker was ready, nothing is held until a fresh load starts again. A profile at level 0 or
+one the host has said nothing about gets no throttle, and a list update holds nothing (the
+old blocker is ready).
+
 **What a list may do.** The manifest the engine builds asks for one permission,
 `declarativeNetRequest`: no host permissions, no content scripts, no background script.
 Chromium ignores a redirect or header rule from an extension without access to the site,
@@ -2737,8 +2755,8 @@ fails when a manifest key or permission is added.
 has two blockers a tab's count is the sum (one of them blocks a request). When the old
 blocker goes, what it counted in the pages that are open goes with it.
 
-**Known limits.** Between a profile's load and the host's first call nothing is blocked
-(a few requests of a restored tab can pass). `$popup` filters have no
+**Known limits.** Between a profile's load and the host's first call nothing is blocked and
+nothing is held (the shell calls at profile load, before any tab exists). `$popup` filters have no
 declarativeNetRequest form; popups are not blocked. Regular expressions above
 Chromium's 2 KB compiled size are skipped by its indexer with a warning.
 
@@ -2749,6 +2767,7 @@ need a build. `engine/tests/check_content_blocker_manifest.py` reads the patch: 
 manifest's keys and its one permission, and that every rules file goes through the action
 check. No host test exists yet. The shell's self-test has the page checks (a fixture page
 with a tracker's and an ad server's host: blocked at level 2, the ad allowed at level 1, both
-allowed with a site exception and at level 0, and the count) and a cold launch with a
-restored tab on that page, which must not fetch the tracker. They are written and have not
-run: they are the first check once an engine with the patch is built.
+allowed with a site exception and at level 0, and the count) and cold launches with a
+restored tab and a restored Little ReArc window on that page, which must not fetch the
+tracker: a new profile, the same again, an existing profile whose blocker has no state, and
+the launch after a list update's takeover, with the ready-blocker markers read after each.
