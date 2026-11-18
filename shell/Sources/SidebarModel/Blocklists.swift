@@ -216,13 +216,17 @@ public struct BlocklistManifest: Equatable, Sendable {
     public static let fileName = "manifest.json"
     public static let signatureFileName = "manifest.json.sig"
 
-    /// A relative path of plain names: no `..`, no leading `/`, no
-    /// backslash, and not the manifest or its signature.
-    static func isSafePath(_ path: String) -> Bool {
+    /// A relative path of plain names: no `..`, no leading `/` and no
+    /// backslash. The one check for a path a manifest names and for an
+    /// archive entry's name (`BlocklistArchive`).
+    static func isPlainRelativePath(_ path: String) -> Bool {
         guard !path.isEmpty, path.utf8.count <= 512, !path.hasPrefix("/"), !path.contains("\\"), !path.contains("\0") else { return false }
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
-        guard parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return false }
-        return path != fileName && path != signatureFileName
+        return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+    }
+
+    /// A plain relative path that is not the manifest or its signature.
+    static func isSafePath(_ path: String) -> Bool {
+        isPlainRelativePath(path) && path != fileName && path != signatureFileName
     }
 }
 
@@ -379,22 +383,6 @@ public enum BlocklistVerifier {
             }
         }
         return .success(paths)
-    }
-
-    /// The file's sha256 in lowercase hex, read in pieces; nil when it cannot be read.
-    public static func sha256(of file: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        do {
-            // Nothing, or no bytes, is the end of the file.
-            while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-                hasher.update(data: chunk)
-            }
-        } catch {
-            return nil
-        }
-        return hex(hasher.finalize())
     }
 
     public static func sha256(of data: Data) -> String {
