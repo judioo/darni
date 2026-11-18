@@ -81,7 +81,13 @@ What Chromium needed worked around, all in rearc_content_blocker.cc:
   rules. At launch ApplyState loads the one slot whose marker is the bundle
   in use, and only that one, so Chromium brings its lists and dynamic rules
   up with its load. No marker, a marker of another version, a value that is
-  not a string or both slots marked is a fresh load in slot 0.
+  not a string or both slots marked is a fresh load in slot 0. The host can
+  speak for a profile before the bundle it named is copied: ApplyState then
+  has a level and no bundle, loads nothing and leaves the markers alone. It
+  unloads, and removes markers, only when blocking is off. (It used to
+  unload in both cases, so such a launch lost its marker and loaded fresh:
+  after a list update every next launch, where the copy of the bundle
+  before is deleted first and the bundle comes later than the profile.)
 - A fresh load all the same (a new built-in bundle, blocking switched on
   from another Mac, a profile that never had a blocker) leaves restored
   pages unblocked until its lists are indexed. While a profile that wants
@@ -125,7 +131,8 @@ ReArcTabGetBlockedCount reads it, and ReArcEngineSetBlockedCountCallback
 hears changes together at most every 250 ms.
 
 Built in out/ReArc-codecs-arm64 (QA build 995, then again on 2026-11-18
-with the remembered slot and FreshLoadThrottle). The security review ran
+with the remembered slot and FreshLoadThrottle, and once more with the
+markers kept while the bundle is copied). The security review ran
 the load, the levels, the exceptions, the own rules and the counts on build
 995 (security/PRE-content-blocking.md, addendum 4). The takeover on a list
 update and the hold need the self-test steps of the spec's section 8.
@@ -278,10 +285,10 @@ index 9667c06..9a3489e 100644
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 new file mode 100644
-index 0000000..b9e869e
+index 0000000..7922dd3
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-@@ -0,0 +1,1369 @@
+@@ -0,0 +1,1376 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1291,14 +1298,21 @@ index 0000000..b9e869e
 +  const std::optional<Bundle>& bundle = CurrentBundle();
 +  const bool wanted = state.level > 0 && bundle.has_value();
 +  if (!wanted) {
-+    // Off: no blocker in the profile. With no bundle yet the level may still
-+    // want one, and what the hold holds waits for it.
-+    for (int slot = 0; slot < kSlots; ++slot) {
-+      Unload(profile, state, slot);
-+    }
 +    if (state.level == 0) {
++      // Off: no blocker in the profile, and none to load at the next launch.
++      for (int slot = 0; slot < kSlots; ++slot) {
++        Unload(profile, state, slot);
++      }
 +      ReleaseHeld(state);
 +    }
++    // Else there is no bundle yet (the host has spoken for the profile and
++    // the bundle is still being copied): the level wants a blocker, nothing
++    // is loaded, as a blocker is loaded only for a bundle, and what the hold
++    // holds waits for the bundle. The markers of the last session stay for
++    // RememberedSlot. Unloading here removed them, and a launch whose
++    // profile came before its bundle then loaded fresh: after a list update
++    // that was every next launch, the copy of the bundle before being
++    // deleted first.
 +    return;
 +  }
 +  if (state.current >= 0 && state.loaded[state.current] == bundle->version) {
