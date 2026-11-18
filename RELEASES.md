@@ -19,6 +19,11 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## ReArc 2026.1118.929 — 2026-11-18
+
+This release also brings everything in 2026.1117.849 and 2026.1117.864 below (Task Manager,
+Tab Groups, the 1Password card and their fixes), which were not announced on their own.
+
 **Fixes**
 - On first launch macOS no longer shows a "Chromium" notifications banner beside ReArc's: the
   helper that delivers website notifications now carries ReArc's name and icon. Camera,
@@ -44,6 +49,10 @@ lines and this section starts empty again.
 - With Sync Sidebar on, a tab group's tab sends its new address to your other Macs only once
   it has stayed on that page for 2 seconds, so the short-lived sign-in redirects that carry
   one-time codes never sync.
+
+**Security**
+- The engine is updated to Chromium 156.0.8078.109, Chromium's latest security update for
+  the 156 line.
 
 ## ReArc 2026.1117.864 — 2026-11-17
 
