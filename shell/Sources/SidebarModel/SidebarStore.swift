@@ -1789,14 +1789,42 @@ public final class SidebarStore {
         if selectedItemID == nil { spacesLeftBlank.insert(activeSpaceID) } else { spacesLeftBlank.remove(activeSpaceID) }
     }
 
+    /// What a space shows when it comes back on screen. Nothing loads by
+    /// itself: only a page that is open now can take the selection. The
+    /// remembered row if it is open, else the space's open row focused last,
+    /// else none (the space is blank until a tab is chosen).
     func restoredSelection(for spaceID: Space.ID) -> UUID? {
         guard !spacesLeftBlank.contains(spaceID) else { return nil }
         let rows = displayRows(in: spaceID)
         if let remembered = selectionBySpace[spaceID], rows.ids.contains(remembered) {
             // A closed tab group shows none of its tabs: the space is blank, as when the group was closed.
-            return isInClosedTabGroup(remembered, in: spaceID) ? nil : remembered
+            if isInClosedTabGroup(remembered, in: spaceID) { return nil }
+            if let entry = rows.entries.first(where: { $0.id == remembered }), isOpenOnReturn(entry) { return remembered }
         }
-        return rows.entries.first(where: { !isInClosedTabGroup($0.id, in: spaceID) })?.id
+        // The space's own rows: a favorite's last focus may have been in another space.
+        let favorites = Set(sortedFavorites(in: space(withID: spaceID)?.profileID ?? activeProfileID).map(\.id))
+        return rows.entries
+            .filter { !favorites.contains($0.id) && !isInClosedTabGroup($0.id, in: spaceID) && isOpenOnReturn($0) }
+            .max { lastFocused($0) < lastFocused($1) }?.id
+    }
+
+    /// Whether a row can take a returning space's selection without loading
+    /// a page: an open tab, a split with an open pane, or an easel.
+    private func isOpenOnReturn(_ entry: SidebarEntry) -> Bool {
+        switch entry {
+        case .tab(let tab): return isTabOpen(tab.id)
+        case .split(let split): return split.tabs.contains { isTabOpen($0.id) }
+        case .easel: return true
+        case .folder, .tabGroup: return false
+        }
+    }
+
+    private func lastFocused(_ entry: SidebarEntry) -> Date {
+        switch entry {
+        case .tab(let tab): return tab.lastActiveAt ?? .distantPast
+        case .split(let split): return split.tabs.compactMap(\.lastActiveAt).max() ?? .distantPast
+        case .easel, .folder, .tabGroup: return .distantPast
+        }
     }
 
     public func spaceContaining(tabID: Tab.ID) -> Space.ID? {
