@@ -20,6 +20,11 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **New**
+- Arc's 56 space icons are in ReArc's icon pickers, in Arc's order, followed by the icons ReArc
+  already had (house, briefcase, globe, graduation cap, game controller, cart, brush, hammer,
+  camera, chart, cup). Icons of spaces imported from Arc, such as Arc's code and planet icons, now
+  show instead of nothing. SF Symbols has no planet, egg, pizza or skull, so a globe, an oval, a
+  takeaway bag and theatre masks stand in for them.
 - Library › Spaces: drag a space's ✥ handle, at the foot of its card, to change the order of your
   spaces, or use the card's ··· menu (Move Left, Move Right). The order is the one the sidebar,
   ⌃1…9 and the space switcher use.

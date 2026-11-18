@@ -288,13 +288,29 @@ public struct SpaceThemeStyle: Hashable, Codable, Sendable {
 }
 
 public extension Space {
-    /// SF Symbols offered by the space icon picker (emoji can be typed instead).
-    static let iconChoices = [
+    /// SF Symbols offered by the space icon picker (emoji can be typed instead):
+    /// Arc's 56, in the order of Arc's picker, then the ones ReArc offered
+    /// before that Arc does not have.
+    static let iconChoices: [String] = {
+        let arc = ArcSpaceIcons.pickerOrder.map(\.symbol)
+        return arc + rearcIconChoices.filter { !arc.contains($0) }
+    }()
+
+    /// ReArc's own picker before Arc's set was added (2026-11-18).
+    static let rearcIconChoices = [
         "house.fill", "briefcase.fill", "star.fill", "flame.fill", "leaf.fill", "moon.fill",
         "globe", "music.note", "book.fill", "graduationcap.fill", "gamecontroller.fill", "cart.fill",
         "heart.fill", "bolt.fill", "paintbrush.fill", "hammer.fill", "airplane", "camera.fill",
         "chart.bar.fill", "terminal.fill", "cup.and.saucer.fill", "pawprint.fill", "sun.max.fill", "circle.fill",
     ]
+
+    /// The SF Symbol to draw for a stored icon name: an Arc icon name (from an
+    /// import made before Arc's names were mapped) is drawn as its symbol; any
+    /// other symbol-shaped name as itself; an emoji or a letter gives nil.
+    static func symbolToDraw(for iconName: String) -> String? {
+        if let mapped = ArcSpaceIcons.symbol(forArcName: iconName) { return mapped }
+        return isSymbolName(iconName) ? iconName : nil
+    }
 
     /// SF Symbol names are lowercase ASCII words joined by dots; anything else
     /// (an emoji or a letter) is drawn as text.
@@ -413,3 +429,45 @@ public struct Space: Identifiable, Hashable, Codable {
         try c.encodeIfPresent(archivedAt, forKey: .archivedAt)
     }
 }
+
+/// Arc's space and item icons (`customInfo.iconType.icon`), the Ionicons-style
+/// set of Arc's icon picker, named as Arc stores them, with the SF Symbol
+/// ReArc draws for each. Order and names from Arc's `AllCases`
+/// (analysis/Arc.app) and the owner's screenshot of the picker, 2026-11-18.
+/// SF Symbols has no planet, egg, pizza or skull: the nearest shapes stand in.
+public enum ArcSpaceIcons {
+    public struct Icon: Equatable, Sendable {
+        public let arcName: String
+        public let symbol: String
+    }
+
+    /// The 56 icons of Arc's picker, row by row (8 to a row).
+    public static let pickerOrder: [Icon] = [
+        ("star", "star.fill"), ("bookmark", "bookmark.fill"), ("heart", "heart.fill"), ("flag", "flag.fill"),
+        ("flash", "bolt.fill"), ("triangle", "triangle.fill"), ("medical", "staroflife.fill"), ("notifications", "bell.fill"),
+        ("bulb", "lightbulb.fill"), ("shapes", "square.on.circle.fill"), ("grid", "square.grid.2x2.fill"), ("apps", "square.grid.3x3.fill"),
+        ("layers", "square.3.layers.3d"), ("server", "server.rack"), ("albums", "rectangle.stack.fill"), ("copy", "doc.on.doc.fill"),
+        ("folder", "folder.fill"), ("fileTrayFull", "tray.full.fill"), ("calendar", "calendar"), ("mail", "envelope.fill"),
+        ("checkbox", "checkmark.square.fill"), ("document", "doc.fill"), ("book", "book.fill"), ("chatBubbleEllipses", "ellipsis.bubble.fill"),
+        ("people", "person.2.fill"), ("terminal", "terminal.fill"), ("construction", "wrench.and.screwdriver.fill"), ("square", "square.fill"),
+        ("egg", "oval.portrait.fill"), ("ellipse", "circle.fill"), ("moon", "moon.fill"), ("sunny", "sun.max.fill"),
+        ("planet", "globe.americas.fill"), ("leaf", "leaf.fill"), ("cloud", "cloud.fill"), ("paw", "pawprint.fill"),
+        ("bag", "bag.fill"), ("gift", "gift.fill"), ("bed", "bed.double.fill"), ("restaurant", "fork.knife"),
+        ("barbell", "dumbbell.fill"), ("airplane", "airplane"), ("musicalNote", "music.note"), ("colorPallete", "paintpalette.fill"),
+        ("video", "video.fill"), ("bandage", "bandage.fill"), ("code", "chevron.left.forwardslash.chevron.right"), ("baseball", "baseball.fill"),
+        ("cloudOutline", "cloud"), ("map", "map.fill"), ("bonfire", "flame.fill"), ("pizza", "takeoutbag.and.cup.and.straw.fill"),
+        ("skull", "theatermasks.fill"), ("receipt", "receipt"), ("thumbsUp", "hand.thumbsup.fill"), ("train", "tram.fill"),
+    ].map { Icon(arcName: $0.0, symbol: $0.1) }
+
+    /// Names Arc can store that its picker grid does not show. Arc's brand
+    /// icons (github, linear, figma) have no symbol and are left out.
+    public static let others: [Icon] = [
+        ("rss", "dot.radiowaves.up.forward"), ("search", "magnifyingglass"),
+    ].map { Icon(arcName: $0.0, symbol: $0.1) }
+
+    private static let byArcName: [String: String] = Dictionary(
+        uniqueKeysWithValues: (pickerOrder + others).map { ($0.arcName, $0.symbol) })
+
+    public static func symbol(forArcName name: String) -> String? { byArcName[name] }
+}
+

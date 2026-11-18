@@ -49,8 +49,8 @@ struct SpaceIconView: View {
     var size: CGFloat = 13
 
     var body: some View {
-        if Space.isSymbolName(iconName) {
-            Image(systemName: iconName)
+        if let symbol = Space.symbolToDraw(for: iconName) {
+            Image(systemName: symbol)
                 .font(.system(size: size))
         } else {
             Text(iconName)

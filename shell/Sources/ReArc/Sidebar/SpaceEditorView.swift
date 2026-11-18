@@ -42,20 +42,24 @@ struct SpaceEditorView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Icon").font(.headline)
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8), spacing: 6) {
-                    ForEach(Space.iconChoices, id: \.self) { symbol in
-                        Button { store.setSpaceIcon(spaceID, iconName: symbol) } label: {
-                            Image(systemName: symbol)
-                                .frame(width: 30, height: 30)
-                                .background(
-                                    space?.iconName == symbol ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05),
-                                    in: RoundedRectangle(cornerRadius: 6)
-                                )
+                ScrollView {
+                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8), spacing: 6) {
+                        ForEach(Space.iconChoices, id: \.self) { symbol in
+                            Button { store.setSpaceIcon(spaceID, iconName: symbol) } label: {
+                                Image(systemName: symbol)
+                                    .frame(width: 30, height: 30)
+                                    .background(
+                                        Space.symbolToDraw(for: space?.iconName ?? "") == symbol ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 6)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                            .help(symbol)
                         }
-                        .buttonStyle(.plain)
-                        .help(symbol)
                     }
                 }
+                // Arc's picker shows seven rows of eight; the rest scroll.
+                .frame(height: 246)
                 HStack {
                     TextField("Or type an emoji", text: $emoji)
                         .textFieldStyle(.roundedBorder)

@@ -443,10 +443,10 @@ private struct SpaceIconButton: View {
                 Text(SpaceCircles.initial(for: space.name))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(circleInk)
-            } else if let emoji = SpaceCircles.emoji(forSymbol: space.iconName) {
+            } else if let emoji = SpaceCircles.emoji(forSymbol: Space.symbolToDraw(for: space.iconName) ?? space.iconName) {
                 Text(emoji).font(.system(size: 10))
-            } else if Space.isSymbolName(space.iconName) {
-                Image(systemName: space.iconName)
+            } else if let symbol = Space.symbolToDraw(for: space.iconName) {
+                Image(systemName: symbol)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(circleInk)
             } else {
