@@ -99,14 +99,17 @@ private struct PromptAnchor: NSViewRepresentable {
 
 /// The frame of a sheet that makes one page wait (a script's dialog, HTTP
 /// sign-in, a certificate, a passkey request): the page dims under it and
-/// takes no clicks, and the sheet sits near its top on the system's material.
-/// The sidebar, other tabs and windows keep working. The caller adds what
-/// Escape does and marks the whole as modal.
+/// takes no clicks, and the sheet sits near its top in the space's theme, as
+/// ReArc's toasts and the page's cards do (`PromptCardChrome`): the theme's pale
+/// tint, its title ink and a hairline in it. The sidebar, other tabs and windows
+/// keep working. The caller adds what Escape does and marks the whole as modal.
 struct PageSheet<Content: View>: View {
     let width: CGFloat
     @ViewBuilder var content: Content
+    @Environment(\.themeChrome) private var chrome
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         ZStack(alignment: .top) {
             Color.black.opacity(0.22)
                 .contentShape(Rectangle())
@@ -114,8 +117,10 @@ struct PageSheet<Content: View>: View {
             VStack(alignment: .leading, spacing: 12) { content }
                 .padding(18)
                 .frame(width: width)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+                .foregroundStyle(chrome.title)
+                .tint(Color(chrome.commandBarFill))
+                .background(chrome.toast, in: shape)
+                .overlay(shape.strokeBorder(chrome.title.opacity(0.1)))
                 .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
                 .padding(.top, 64)
         }
@@ -162,19 +167,18 @@ private struct JavaScriptDialogSheet: View {
             }
             if dialog.offersSuppression {
                 Toggle("Don't allow this page to create more dialogs", isOn: $prompts.suppressDialogs)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .toggleStyle(PromptCheckboxStyle())
             }
             HStack(spacing: 8) {
                 Spacer()
                 if request.showsCancel {
                     Button(request.kind == .beforeUnload ? "Stay" : "Cancel") { prompts.answerDialog(accept: false) }
                         .keyboardShortcut(.cancelAction)
+                        .buttonStyle(PromptButtonStyle(large: true))
                 }
                 Button(request.acceptTitle) { prompts.answerDialog(accept: true) }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true, large: true))
             }
             .controlSize(.regular)
         }
@@ -225,7 +229,7 @@ private struct PromptCardChrome: ViewModifier {
 }
 
 /// The card's glyph: white on the accent fill.
-private struct PromptGlyph: View {
+struct PromptGlyph: View {
     let systemName: String
     var size: CGFloat = 13
     @Environment(\.themeChrome) private var chrome
@@ -243,18 +247,20 @@ private struct PromptGlyph: View {
 /// A toast's button, a little larger: the accent fill for the main action,
 /// a wash of the title ink for the others. Dimmed while the card is disabled
 /// (the permission card's interaction delay).
-private struct PromptButtonStyle: ButtonStyle {
+struct PromptButtonStyle: ButtonStyle {
     var prominent = false
+    /// A sheet's buttons (`PageSheet`): a size up from the cards'.
+    var large = false
     @Environment(\.themeChrome) private var chrome
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: large ? 7 : 6, style: .continuous)
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: large ? 13 : 12, weight: .semibold))
             .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(height: 22)
+            .padding(.horizontal, large ? 12 : 10)
+            .frame(height: large ? 26 : 22)
             .foregroundStyle(prominent ? Color.white : chrome.title)
             .background(prominent ? Color(chrome.commandBarFill) : chrome.title.opacity(0.08), in: shape)
             .contentShape(shape)
@@ -285,7 +291,7 @@ private struct PromptCloseButton: View {
 }
 
 /// A checkbox in the theme's inks; VoiceOver still reads a toggle.
-private struct PromptCheckboxStyle: ToggleStyle {
+struct PromptCheckboxStyle: ToggleStyle {
     @Environment(\.themeChrome) private var chrome
     @Environment(\.isEnabled) private var isEnabled
 
@@ -520,9 +526,10 @@ private struct HTTPAuthSheet: View {
                 Spacer()
                 Button("Cancel") { prompts.answerHTTPAuth(signIn: false) }
                     .keyboardShortcut(.cancelAction)
+                    .buttonStyle(PromptButtonStyle(large: true))
                 Button("Sign In") { prompts.answerHTTPAuth(signIn: true) }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true, large: true))
             }
         }
         .onExitCommand { prompts.answerHTTPAuth(signIn: false) }
@@ -565,9 +572,10 @@ private struct ClientCertificateSheet: View {
                 Spacer()
                 Button("Cancel") { prompts.answerClientCertificate(nil) }
                     .keyboardShortcut(.cancelAction)
+                    .buttonStyle(PromptButtonStyle(large: true))
                 Button("OK") { prompts.answerClientCertificate(prompts.selectedCertificate) }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true, large: true))
                     .disabled(prompts.selectedCertificate == nil)
             }
         }

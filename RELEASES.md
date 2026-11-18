@@ -28,6 +28,10 @@ lines and this section starts empty again.
   bring that question up. A request you started while its page was in view stays open when you
   switch away, as before. ReArc's log now has a line for each refused request.
 
+**Changes**
+- The passkey sheet and the dialogs a page opens (alerts and confirmations, HTTP sign-in, choosing a
+  certificate) use your space's colours, like ReArc's notices and permission cards.
+
 ## ReArc 2026.1118.1027 — 2026-11-18
 
 **New**

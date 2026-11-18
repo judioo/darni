@@ -152,21 +152,23 @@ struct PasskeySheet: View {
         HStack(spacing: 8) {
             if step.offersAnotherWay {
                 Button("Another Way") { prompts.answerPasskey(.startOver) }
+                    .buttonStyle(PromptButtonStyle(large: true))
                     .help("Choose another way to sign in")
                     .disabled(isLocked)
             }
             Spacer()
             Button(step.dismissTitle) { prompts.answerPasskey(.cancel) }
                 .keyboardShortcut(.cancelAction)
+                .buttonStyle(PromptButtonStyle(large: true))
             if case .pin = step.kind {
                 Button("Continue") { prompts.submitPasskeyPin() }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true, large: true))
                     .disabled(isLocked || prompts.passkeyPin.isEmpty)
             } else if let primary = step.primary {
                 Button(primary.title) { prompts.answerPasskey(primary.action) }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(PromptButtonStyle(prominent: true, large: true))
                     .disabled(isLocked)
             }
         }
@@ -184,6 +186,7 @@ private struct PasskeyChoiceRow: View {
     var isEnabled = true
     let action: () -> Void
     @State private var isHovering = false
+    @Environment(\.themeChrome) private var chrome
 
     var body: some View {
         Button(action: action) {
@@ -213,7 +216,8 @@ private struct PasskeyChoiceRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.primary.opacity(isHovering && isButton && isEnabled ? 0.10 : 0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            // The theme's title ink as the wash, as the cards' secondary buttons.
+            .background(chrome.title.opacity(isHovering && isButton && isEnabled ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
             .opacity(isButton && !isEnabled ? 0.5 : 1)
         }
