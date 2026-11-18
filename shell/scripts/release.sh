@@ -218,6 +218,19 @@ SHELL_DSYM="$(swift build --package-path "$SHELL_DIR" --scratch-path "${REARC_SH
 echo "==> $(find "$DIST/symbols" -maxdepth 1 -name '*.dSYM' | wc -l | tr -d ' ') dSYMs in $DIST/symbols"
 echo "==> bundle ready in $((SECONDS - START))s: $APP ($(du -sh "$APP" | cut -f1))"
 
+# A --qa bundle without the verification below still has to start: macOS refuses a
+# signature its profile does not allow (968's QA bundle, signed for Development under the
+# Developer ID profile, never launched). Exec it once on a throwaway data dir; a refusal
+# kills it before main.
+if [[ $QA == 1 && $VERIFY == 0 ]]; then
+  PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rearc-qa-probe.XXXXXX")"
+  probe_status=0
+  REARC_DATA_DIR="$PROBE_DIR" timeout 60 "$APP/Contents/MacOS/ReArc" --version >"$DIST/qa-launch-probe.log" 2>&1 || probe_status=$?
+  rm -rf "$PROBE_DIR"
+  [[ $probe_status == 0 ]] || die "the --qa bundle does not start (status $probe_status, log $DIST/qa-launch-probe.log); check REARC_ICLOUD_ENVIRONMENT against the profile"
+  echo "==> --qa bundle starts (launch probe passed)"
+fi
+
 # 5. Verification: LaunchServices launch to ready, then the self-test on the real Keychain
 #    (no --use-mock-keychain; release shells ignore the dev marker anyway).
 if [[ $VERIFY == 1 ]]; then

@@ -56,8 +56,22 @@ icloud_prepare() {
   fi
   local expires
   expires="$(plutil -extract ExpirationDate raw -o - "$decoded" 2>/dev/null || true)"
-  local has_environment=0
-  $pb -c "Print :Entitlements:com.apple.developer.icloud-container-environment" "$decoded" >/dev/null 2>&1 && has_environment=1
+  local has_environment=0 allowed_environments=""
+  if allowed_environments="$($pb -c "Print :Entitlements:com.apple.developer.icloud-container-environment" "$decoded" 2>/dev/null)"; then
+    has_environment=1
+    # A Developer ID profile allows Production only: signing Development into it makes a
+    # bundle macOS refuses to launch (launchd 163, amfid "No matching profile found"),
+    # which is what happened to 968's --qa bundle (security review, 2026-11-18).
+    allows() { sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' <<<"$allowed_environments" | grep -qxF "$1"; }
+    # Unset, the environment follows the profile: Production for a Developer ID profile.
+    if [[ -z ${REARC_ICLOUD_ENVIRONMENT:-} ]] && ! allows "$environment" && allows Production; then
+      environment=Production
+    fi
+    if ! allows "$environment"; then
+      rm -f "$decoded"
+      die "the profile does not allow iCloud environment $environment (it allows: $(sed -E 's/^[[:space:]]+//' <<<"$allowed_environments" | grep -vE '^(Array \{|\})$' | tr '\n' ' ')); set REARC_ICLOUD_ENVIRONMENT"
+    fi
+  fi
   rm -f "$decoded"
 
   cp "$base" "$out"
