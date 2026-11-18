@@ -128,11 +128,13 @@ struct CardToolbarView: View {
     }
 
     /// The full address without its scheme or `www.` (Arc's
-    /// `toolbarShowFullURLsEnabledPreference`); nil for a blank page.
+    /// `toolbarShowFullURLsEnabledPreference`); nil for a blank page. A port
+    /// stays (`localhost:3000`): without it two local servers look the same.
     static func displayURL(_ url: URL) -> String? {
         if url.absoluteString == "about:blank" { return nil }
         guard let host = url.host(), !host.isEmpty else { return url.absoluteString }
-        let bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        var bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        if let port = url.port { bareHost += ":\(port)" }
         var rest = url.path(percentEncoded: false)
         if rest == "/" { rest = "" }
         if let query = url.query(percentEncoded: false), !query.isEmpty { rest += "?" + query }

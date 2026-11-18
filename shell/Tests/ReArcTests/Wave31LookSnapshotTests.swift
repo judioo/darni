@@ -45,6 +45,7 @@ final class Wave31LookSnapshotTests: XCTestCase {
         XCTAssertEqual(CardToolbarView.displayURL(URL(string: "https://www.github.com/example/notes?tab=1")!), "github.com/example/notes?tab=1")
         XCTAssertEqual(CardToolbarView.displayURL(URL(string: "https://arc.net/")!), "arc.net")
         XCTAssertNil(CardToolbarView.displayURL(URL(string: "about:blank")!))
+        XCTAssertEqual(CardToolbarView.displayURL(URL(string: "http://localhost:3000/extension-auth?a=1")!), "localhost:3000/extension-auth?a=1")
         XCTAssertTrue(ToolbarURLPreference.defaultValue, "URL in toolbar is the default, as in the user's Arc")
         XCTAssertEqual(SidebarWidth.standard, 228, "Arc's stored sidebar width")
     }
