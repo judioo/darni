@@ -1293,6 +1293,7 @@ final class ChromiumSelfTest {
             log("ABI-GAP tab_discard not advertised: Unload Tab drops the engine")
         }
         try await passkeyHiddenTabChecks(model: model, store: store, base: base)
+        try await passkeyStaleSheetChecks(model: model, store: store, base: base)
         try await passkeyHiddenLittleArcChecks(model: model, shell: shell, store: store, base: base)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
@@ -1771,6 +1772,92 @@ final class ChromiumSelfTest {
             + "step \(step.kind) \"\(step.requestLine)\" (page \(step.pageVisibility)), Cancel -> \(shownResult)")
     }
 
+    /// A sheet that is open stays when its tab goes to the back, so a touch of
+    /// a security key meant for the tab in front could answer the older
+    /// request. When a request with UI starts in a visible page, the engine
+    /// cancels every open request whose page is not visible (tab/097; security
+    /// review of 2026.1118.1027, addendum 2): the first tab's request ends
+    /// with NotAllowedError, its sheet goes, and the log says why.
+    @MainActor
+    private func passkeyStaleSheetChecks(model: BrowserViewModel, store: SidebarStore, base: String) async throws {
+        guard ChromiumPasskeyChannel.calls != nil else { return }
+        let url = URL(string: base.replacingOccurrences(of: "127.0.0.1", with: "localhost") + "/a")!
+        let previous = store.selectedTab?.id
+        let ask = """
+        (window.passkeyResult = 'pending',
+         navigator.credentials.get({publicKey: {challenge: new Uint8Array(32), timeout: 5000}})
+           .then(() => { window.passkeyResult = 'resolved' }, error => { window.passkeyResult = error.name }),
+         document.visibilityState)
+        """
+        func open(_ title: String) async throws -> (tab: Tab, engine: ChromiumEngine) {
+            let tab = store.addTab(kind: .today, title: title, url: url)
+            _ = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+            let engine = try shellEngine(model, tab)
+            engine.load(url)
+            try await wait("\(title) loaded", timeout: 20) { engine.pageTitle == Self.titleA && !engine.isLoading }
+            return (tab, engine)
+        }
+        func state(_ engine: ChromiumEngine, _ script: String) async -> String {
+            ((try? await engine.evaluate(script, in: .page)) as? String) ?? ""
+        }
+        func show(_ tab: Tab, _ engine: ChromiumEngine, _ label: String) async throws {
+            model.selectTab(tab.id)
+            try await waitAsync("\(label) shown", timeout: 15) {
+                guard engine.attachmentID != nil else { return false }
+                return await state(engine, "document.visibilityState") == "visible"
+            }
+        }
+
+        // The first tab asks while it is shown: its sheet opens.
+        let first = try await open("Passkey first")
+        try await show(first.tab, first.engine, "the first passkey tab")
+        _ = try await first.engine.evaluate(ask, in: .page)
+        try await wait("the first tab's passkey sheet", timeout: 15) { first.engine.pagePrompts.passkey != nil }
+        let firstRequest = try XUnwrap(first.engine.pagePrompts.passkey?.id, "the first tab's request")
+
+        // It goes to the back: the request and its sheet stay.
+        let second = try await open("Passkey second")
+        try await show(second.tab, second.engine, "the second passkey tab")
+        try await waitAsync("the first passkey tab hidden", timeout: 15) { await state(first.engine, "document.visibilityState") == "hidden" }
+        let kept = await state(first.engine, "window.passkeyResult")
+        try check(kept == "pending" && first.engine.pagePrompts.passkey?.id == firstRequest,
+                  "the first tab behind: result \(kept), sheet of request \(String(describing: first.engine.pagePrompts.passkey?.id)) (a sheet that is open stays)")
+
+        // The second asks while it is shown: its sheet opens, and the first's request is cancelled.
+        let refusals = ChromiumPasskeyChannel.refusals
+        _ = try await second.engine.evaluate(ask, in: .page)
+        try await wait("the second tab's passkey sheet", timeout: 15) { second.engine.pagePrompts.passkey != nil }
+        try await waitAsync("the first tab's passkey request ends", timeout: 10) { await state(first.engine, "window.passkeyResult") != "pending" }
+        let firstResult = await state(first.engine, "window.passkeyResult")
+        try await wait("the first tab's passkey sheet gone") { first.engine.pagePrompts.passkey == nil }
+        let cancel = ChromiumPasskeyChannel.lastRefusal
+        try check(firstResult == "NotAllowedError", "the first tab's request after the second tab asked: \(firstResult)")
+        try check(ChromiumPasskeyChannel.refusals == refusals + 1
+                      && cancel.contains("request \(firstRequest) of tab \(first.engine.tabID) cancelled")
+                      && cancel.contains("(hidden)") && cancel.contains("tab \(second.engine.tabID), which is visible, asked"),
+                  "the cancel of the first tab's request: \(ChromiumPasskeyChannel.refusals - refusals) event(s), the last \"\(cancel)\" "
+                      + "(none: an engine older than tab/097's cancel of requests nobody sees)")
+        let step = try XUnwrap(second.engine.pagePrompts.passkey?.step, "the second tab's passkey step")
+        let secondPending = await state(second.engine, "window.passkeyResult")
+        try check(step.showsSheet && step.pageVisibility == "visible" && secondPending == "pending",
+                  "the second tab: \(step.kind), page \(step.pageVisibility), result \(secondPending)")
+
+        second.engine.pagePrompts.answerPasskey(.cancel)
+        try await waitAsync("the second tab's cancelled passkey request ends", timeout: 10) {
+            await state(second.engine, "window.passkeyResult") != "pending"
+        }
+        let secondResult = await state(second.engine, "window.passkeyResult")
+        try check(secondResult == "NotAllowedError" && second.engine.pagePrompts.passkey == nil, "the second tab after Cancel: \(secondResult)")
+        let tabs = "tab \(first.engine.tabID) and tab \(second.engine.tabID)"
+        for tab in [second.tab, first.tab] {
+            model.closeTab(tab.id)
+            try await wait("a passkey tab closed") { store.tab(withID: tab.id) == nil }
+        }
+        if let previous { model.selectTab(previous) }
+        log("PASS passkey request of a tab that went to the back is cancelled when the tab in front asks: \(tabs); the first's sheet "
+            + "stayed while it was hidden, then its request -> \(firstResult), logged \"\(cancel)\"; the second's step \(step.kind), Cancel -> \(secondResult)")
+    }
+
     /// The same rule for a window nobody sees (security review AH-02): a
     /// Little ReArc window that is ordered out. Its page holds a lease, unlike
     /// a background tab's, so only the window's state makes it hidden. Signing
@@ -1806,6 +1893,7 @@ final class ChromiumSelfTest {
            pubKeyCredParams: [{type: 'public-key', alg: -7}], timeout: 5000}})
         """ + settle + ", document.visibilityState)"
         var lines: [String] = []
+        let written = ChromiumPasskeyChannel.refusalLines
         for (name, ask) in [("get", get), ("create", create)] {
             let events = ChromiumPasskeyChannel.events
             let refusals = ChromiumPasskeyChannel.refusals
@@ -1822,8 +1910,11 @@ final class ChromiumSelfTest {
                           && refusal.contains("of tab \(little.tabID) refused") && refusal.contains("(hidden)"),
                       "hidden Little ReArc \(name): result \(answer), sheet state \(sheet), step events \(ChromiumPasskeyChannel.events - events), "
                           + "\(ChromiumPasskeyChannel.refusals - refusals) refusal line(s), the last \"\(refusal)\"")
-            lines.append("\(name) -> \(answer), logged \"\(refusal)\"")
+            lines.append("\(name) -> \(answer), \"\(refusal)\"")
         }
+        // A page can ask in a loop: the tab's first refusal has its line, the second is counted.
+        try check(ChromiumPasskeyChannel.refusalLines == written + 1,
+                  "hidden Little ReArc: \(ChromiumPasskeyChannel.refusalLines - written) log line(s) for its two refusals, 1 expected")
 
         window.orderFront(nil)
         try await waitAsync("the Little ReArc's page visible again", timeout: 15) { await visibility() == "visible" }
@@ -1838,7 +1929,7 @@ final class ChromiumSelfTest {
             shell.window(forLittleArc: record.id) == nil && store.littleArcWindow(withID: record.id) == nil
         }
         log("PASS passkey request from a hidden Little ReArc window (AH-02): tab \(little.tabID), window ordered out, page hidden: "
-            + lines.joined(separator: "; ") + "; window back -> step \(step.kind), page \(step.pageVisibility)")
+            + lines.joined(separator: "; ") + " (one log line, then counted); window back -> step \(step.kind), page \(step.pageVisibility)")
     }
 
     // MARK: Wave 23: HTML fullscreen (ABI 1.27)

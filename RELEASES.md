@@ -29,7 +29,15 @@ lines and this section starts empty again.
   phone or Bluetooth. Until now it was refused a moment later, when its sheet was about to
   open, and on a Mac that had never answered macOS's Bluetooth question such a page could
   bring that question up. A request you started while its page was in view stays open when you
-  switch away, as before. ReArc's log now has a line for each refused request.
+  switch away, as before. ReArc's log now says when a request is refused.
+
+**Security**
+- A passkey or security key request that you left open in a tab or window you no longer see is
+  cancelled when a page in front of you starts one. Until now it stayed open, and a touch of
+  your security key meant for the page in front could have answered the older request.
+- A page you cannot see can ask for a passkey over and over, and each try is refused. ReArc's log
+  now has one line for a tab's first refusal and counts the rest (a line at the 10th, the 100th,
+  the 1000th and so on, and the total when the tab closes), so such a page cannot fill the log.
 
 **Changes**
 - The passkey sheet and the dialogs a page opens (alerts and confirmations, HTTP sign-in, choosing a

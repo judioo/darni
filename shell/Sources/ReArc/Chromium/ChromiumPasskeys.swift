@@ -55,9 +55,14 @@ enum ChromiumPasskeyChannel {
     /// Steps and ends received, answers sent: for logs and the self-test.
     private(set) static var events = 0
     private(set) static var replies = 0
-    /// Requests the engine refused because nobody sees their page, and the last one's log line.
+    /// Requests the engine refused or cancelled because nobody sees their page, and what
+    /// the last one's log line says (written or only counted).
     private(set) static var refusals = 0
     private(set) static var lastRefusal = ""
+    /// Which of them reach the log: a tab's first, then counts. A hidden page can ask in a loop.
+    private static var refusalLog = PasskeyRefusalLog()
+    /// The lines written for them.
+    private(set) static var refusalLines = 0
     /// The requests whose first step went to the log.
     private static var logged: Set<UInt64> = []
 
@@ -74,12 +79,24 @@ enum ChromiumPasskeyChannel {
     }
 
     /// A request of a page nobody sees: the engine refused it and it never had
-    /// a sheet. One line at information level, so a launch without tracing
-    /// shows the rule at work (security review AH-02).
+    /// a sheet, or cancelled it when a visible page asked (its end event
+    /// follows and closes its sheet). At information level, so a launch
+    /// without tracing shows the rule at work (security review AH-02): one
+    /// line for a tab's first, then counts (`PasskeyRefusalLog`).
     fileprivate static func note(_ refusal: PasskeyRefusal, request: UInt64, tab: UInt64) {
         refusals += 1
         lastRefusal = refusal.logLine(request: request, tab: tab)
-        ChromiumLog.info(lastRefusal)
+        if let line = refusalLog.note(refusal, request: request, tab: tab) { write([line]) }
+    }
+
+    /// Every tab.closed: what was counted for the tab since its last line.
+    static func tabClosed(_ tab: UInt64) {
+        write(refusalLog.tabClosed(tab))
+    }
+
+    private static func write(_ lines: [String]) {
+        refusalLines += lines.count
+        lines.forEach { ChromiumLog.info($0) }
     }
 
     fileprivate static func handle(request: UInt64, tab: UInt64, ended: Bool, step: PasskeyStep?, runtime: ChromiumRuntime) {

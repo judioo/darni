@@ -266,6 +266,58 @@ final class PasskeyPromptTests: XCTestCase {
         XCTAssertEqual(odd.logLine(request: 2, tab: 1), "passkey request 2 of tab 1 refused: its page is not visible (state not reported), at its first step")
     }
 
+    /// A request whose sheet was open, cancelled because its page went out of sight and a visible page asked.
+    func testARequestCancelledForAVisiblePagesRequestHasItsLogLine() throws {
+        let json = #"{"refused":"not_visible","at":"newer_request","visibility":"hidden","request":"get","step":"qr","by_tab":"9"}"#
+        let cancelled = try XCTUnwrap(PasskeyRefusal(json: json))
+        XCTAssertEqual(cancelled, PasskeyRefusal(place: .newerRequest, visibility: "hidden", request: "get", step: "qr", byTab: 9))
+        XCTAssertEqual(cancelled.logLine(request: 4, tab: 5),
+                       "passkey request 4 of tab 5 cancelled: its page is not visible (hidden) and tab 9, which is visible, asked (get, qr)")
+        // Only a number names the other tab.
+        let odd = try XCTUnwrap(PasskeyRefusal(json: #"{"refused":"not_visible","at":"newer_request","visibility":"occluded","by_tab":"https://example.com"}"#))
+        XCTAssertEqual(odd.logLine(request: 4, tab: 5),
+                       "passkey request 4 of tab 5 cancelled: its page is not visible (occluded) and a visible page asked")
+    }
+
+    /// A hidden page that asks in a loop: a tab's first refusal has its line, the rest are counted.
+    func testRefusalsOfOneTabAreOneLineAndThenCounts() throws {
+        var log = PasskeyRefusalLog()
+        let refusal = try XCTUnwrap(PasskeyRefusal(json: #"{"refused":"not_visible","at":"focus_check","visibility":"hidden"}"#))
+        var lines: [Int: String] = [:]
+        for call in 1...1000 {
+            lines[call] = log.note(refusal, request: 0, tab: 5)
+        }
+        XCTAssertEqual(lines.keys.sorted(), [1, 10, 100, 1000])
+        XCTAssertEqual(lines[1], refusal.logLine(request: 0, tab: 5))
+        XCTAssertEqual(lines[10], "passkey requests of tab 5 refused, their page not visible: 10 so far")
+        XCTAssertEqual(lines[1000], "passkey requests of tab 5 refused, their page not visible: 1000 so far")
+        // Another tab has its own first line, and so has a page that is no tab.
+        XCTAssertEqual(log.note(refusal, request: 0, tab: 6), refusal.logLine(request: 0, tab: 6))
+        XCTAssertEqual(log.note(refusal, request: 0, tab: 0), refusal.logLine(request: 0, tab: 0))
+        XCTAssertNil(log.note(refusal, request: 0, tab: 6))
+        for _ in 2...9 { XCTAssertNil(log.note(refusal, request: 0, tab: 0)) }
+        XCTAssertEqual(log.note(refusal, request: 0, tab: 0), "passkey requests of pages that are no tab refused, their page not visible: 10 so far")
+        XCTAssertNil(log.note(refusal, request: 0, tab: 5), "the 1001st")
+
+        // A cancelled request is counted apart from the refused ones.
+        let cancelled = PasskeyRefusal(place: .newerRequest, visibility: "hidden", request: "get", step: "qr", byTab: 6)
+        XCTAssertEqual(log.note(cancelled, request: 7, tab: 5), cancelled.logLine(request: 7, tab: 5))
+        XCTAssertNil(log.note(cancelled, request: 8, tab: 5))
+
+        // The tab closes: what was counted since its last line, once, and a later tab starts again.
+        XCTAssertEqual(log.tabClosed(5), ["passkey requests of tab 5 refused, their page not visible: 1001 in all, the tab has closed",
+                                          "passkey requests of tab 5 cancelled when a visible page asked, their page not visible: 2 in all, the tab has closed"])
+        XCTAssertEqual(log.tabClosed(5), [])
+        XCTAssertEqual(log.tabClosed(6), ["passkey requests of tab 6 refused, their page not visible: 2 in all, the tab has closed"])
+        XCTAssertEqual(log.note(refusal, request: 0, tab: 5), refusal.logLine(request: 0, tab: 5))
+        XCTAssertEqual(log.tabClosed(5), [], "its one refusal has its line")
+        XCTAssertEqual(log.tabClosed(7), [], "a tab that was never refused")
+    }
+
+    func testTheCountLinesOfRefusalsFallOnPowersOfTen() {
+        XCTAssertEqual((1...100_000).filter(PasskeyRefusalLog.hasOwnLine), [1, 10, 100, 1000, 10_000, 100_000])
+    }
+
     func testAnOrdinaryEndIsNoRefusal() {
         XCTAssertNil(PasskeyRefusal(json: "{}"))
         XCTAssertNil(PasskeyRefusal(json: #"{"refused":"a_later_reason","at":"focus_check","visibility":"hidden"}"#))
