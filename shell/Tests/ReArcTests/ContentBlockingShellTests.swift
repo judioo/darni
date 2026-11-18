@@ -89,7 +89,7 @@ final class ContentBlockingShellTests: XCTestCase {
 
     private func attach(_ model: BrowserViewModel, engine: RecordingEngine) async throws {
         model.attachContentBlocking(engine: engine, engineVersion: BlocklistEngineVersion(chromiumMajor: 156),
-                                    builtInLists: try builtInBundle(), publicKey: key.publicKey.rawRepresentation)
+                                    builtInLists: try builtInBundle(), publicKeys: [key.publicKey.rawRepresentation])
         for _ in 0..<400 where !model.contentBlocking.didLoadLists { try await Task.sleep(nanoseconds: 5_000_000) }
         XCTAssertTrue(model.contentBlocking.didLoadLists)
     }

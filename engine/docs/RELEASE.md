@@ -427,6 +427,78 @@ Size and launch, release vs a dev bundle of the same HEAD:
   network-service helper before suspecting the engine.
 
 
+## Lists key
+
+The built-in ad and tracker blocking takes its lists from a signed bundle
+(`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 4). The lists key signs that bundle. It is
+not the Sparkle key and cannot update the app.
+
+- **Private key:** `~/.config/rearc/blocklists/signing.key` on the build Mac (Ed25519, mode
+  600, not in the Keychain, not in the repository).
+- **Public keys:** `shell/scripts/blocklists/blocklists-public-key.txt`, one key a line, the key
+  in use first. The app carries the same keys in the same order
+  (`BlocklistSigningKey.compiledInTexts` in `shell/Sources/SidebarModel/Blocklists.swift`), and
+  a test fails when the two differ.
+- **A bundle is accepted when any one of those keys signed it.** There is one key in ordinary
+  times. The list is there so that a key can be replaced.
+
+**What someone with the private key can do.** They can sign a bundle. To get it into an
+install they must also control what `rearc.imara.ae/blocklists/` serves, or sit on the
+network path with a certificate the Mac trusts. A signed bundle can block requests or stop
+blocking them, in installs that have blocking on. It cannot redirect a request or change
+headers: the build script, the app and the engine each refuse a bundle with such a rule.
+
+### If the lists key leaks
+
+Do these in order. Steps 1 to 3 are one release; step 4 is the next.
+
+1. **Rotate.**
+   - Delete the leaked `signing.key`. Do not keep a copy.
+   - Make the new key: `shell/scripts/blocklists/build-blocklists.py keygen`. It prints the
+     new public key.
+   - Put the new public key on the **first** line of `blocklists-public-key.txt` and first in
+     `BlocklistSigningKey.compiledInTexts`. Leave the old public key as the second entry in
+     both, for this one release.
+   - Sign the built-in bundle with the new key. This converts the same upstream files again
+     and fetches nothing:
+
+     ```sh
+     B=~/.config/rearc/blocklists/bundles
+     OLD=$(python3 -c 'import json; print(json.load(open("shell/Resources/Blocklists/manifest.json"))["version"])')
+     NEW=$(date -u +%Y%m%d%H%M)
+     shell/scripts/blocklists/build-blocklists.py build --from-bundle shell/Resources/Blocklists \
+       --raw-dir "$B/$OLD/raw" --version "$NEW" --out "$B/$NEW"
+     shell/scripts/blocklists/build-blocklists.py install "$B/$NEW" shell/Resources/Blocklists
+     ```
+
+   - Run `python3 -m unittest discover -s shell/scripts/blocklists/tests` and
+     `cd shell && swift test --filter Blocklist`, then commit the key file, `Blocklists.swift`
+     and `shell/Resources/Blocklists`.
+2. **Ship an app with the new key.** Make the release as usual and mark it critical
+   ("Critical and required updates" below). This build trusts both keys, so it goes on taking
+   the mirror's bundle whichever key signed it.
+3. **Re-sign the mirror.** `release.sh` writes `blocklists-<version>.tar.gz` and `latest.json`
+   from the app's bundle, which the new key signed in step 1. Have the site thread publish
+   them with the appcast. From then on an install that has not updated cannot verify the
+   mirror's bundle: it keeps the lists it has until it updates.
+4. **Drop the old key.** Remove the old public key from `blocklists-public-key.txt` and from
+   `BlocklistSigningKey.compiledInTexts`, and ship the next release. Until an install has this
+   release it still accepts what the leaked key signs.
+
+Notes:
+
+- **When the leak is certain and waiting a release is too long,** leave the old key out in
+  step 1 already. Steps 2 and 4 are then one release. An updated install deletes any
+  downloaded bundle the old key signed and uses its built-in one.
+- **An install that never updates trusts the old key for good.** Nothing on the mirror can
+  change that; the limits above are what bound the damage.
+- **A lost key** (no leak) takes the same steps without the hurry: no critical mark.
+- **Planned replacement:** ship the new public key as the second entry one release ahead.
+  When the key is then switched, every install that has that release already trusts it.
+- **Unattended signing:** keep the private key off any machine that signs lists without a
+  person. If a job ever does, it must run `build` with its count check on (never
+  `--allow-count-change`).
+
 ## Sparkle updates (DMG distribution)
 
 The Chromium shell pins Sparkle **2.10.1** exactly in SwiftPM. WebKit builds have no

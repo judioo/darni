@@ -5,6 +5,9 @@ import XCTest
 /// Blocklist bundles (docs/FEATURE-SPECS/CONTENT-BLOCKING.md §4 and §8,
 /// "Signature"): a good bundle, a bad signature, a hash mismatch, an older
 /// version, a wrong `min_engine`; which bundle is used; and the daily check.
+/// Also what the security pre-review asked for: a rule that does more than
+/// block or allow refuses its bundle (CB-03), and a bundle signed by any one
+/// of a short list of keys is used, so the key can be replaced (CB-05).
 /// The bundle the repository carries and the archive the pipeline packs are
 /// read too, so the shell and `build-blocklists.py` cannot drift apart.
 
@@ -23,6 +26,17 @@ private struct BundleMaker {
         var foreignKey = false
         /// Written after signing: the manifest no longer matches its signature.
         var manifestSuffix = ""
+        /// Signed with this key and not the maker's.
+        var signer: Curve25519.Signing.PrivateKey?
+        /// A list's rules file, as text, in place of its one block rule (hashed as written).
+        var rules: [String: String] = [:]
+    }
+
+    /// A rules file with one rule of each given action.
+    static func rules(actions: [String]) -> String {
+        "[" + actions.enumerated().map { index, action in
+            #"{"id":\#(index + 1),"priority":1,"action":\#(action),"condition":{"urlFilter":"||ads.test^"}}"#
+        }.joined(separator: ",") + "]"
     }
 
     @discardableResult
@@ -31,7 +45,8 @@ private struct BundleMaker {
         try FileManager.default.createDirectory(at: directory.appendingPathComponent("rules"), withIntermediateDirectories: true)
         var lists: [[String: Any]] = []
         for (index, id) in options.lists.enumerated() {
-            let rules = Data(#"[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||\#(id).ads.test^"}}]"#.utf8)
+            let rules = Data((options.rules[id]
+                ?? #"[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||\#(id).ads.test^"}}]"#).utf8)
             try rules.write(to: directory.appendingPathComponent("rules/\(id).json"))
             lists.append(["id": id, "title": id.capitalized, "homepage": "https://lists.test/\(id)", "license": "GPL-3.0",
                           "level": min(index + 1, 3),
@@ -42,7 +57,7 @@ private struct BundleMaker {
         if let created = options.created { manifest["created"] = created }
         if let minEngine = options.minEngine { manifest["min_engine"] = minEngine }
         var data = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
-        let signer = options.foreignKey ? Curve25519.Signing.PrivateKey() : key
+        let signer = options.signer ?? (options.foreignKey ? Curve25519.Signing.PrivateKey() : key)
         let signature = try signer.signature(for: data)
         data.append(Data(options.manifestSuffix.utf8))
         try data.write(to: directory.appendingPathComponent("manifest.json"))
@@ -126,19 +141,41 @@ private let engine = BlocklistEngineVersion(chromium: "156.0.8078.109")
 final class BlocklistSigningKeyTests: XCTestCase {
     private static let keyFile = shellDirectory.appendingPathComponent("scripts/blocklists/blocklists-public-key.txt")
 
-    /// The key in the app is the pipeline's committed public key. A new key
-    /// in the file alone fails here, loudly, in any build.
-    func testTheCompiledInKeyIsThePipelinesPublicKey() throws {
+    /// The keys in the app are the pipeline's committed public keys, in the
+    /// file's order. A new key in the file alone fails here, loudly, in any
+    /// build, and so does a key taken out of the file that the app still trusts.
+    func testTheCompiledInKeysAreThePipelinesPublicKeys() throws {
         let text = try String(contentsOf: Self.keyFile, encoding: .utf8)
-        let key = try XCTUnwrap(BlocklistSigningKey.parse(text), "\(Self.keyFile.path) holds no Ed25519 public key")
-        XCTAssertEqual(BlocklistSigningKey.compiledIn, key,
-                       "BlocklistSigningKey.compiledInText is not the key in \(Self.keyFile.path): no bundle will verify. Copy the file's key into it.")
-        XCTAssertEqual(text.trimmingCharacters(in: .whitespacesAndNewlines), BlocklistSigningKey.compiledInText)
+        let keys = try XCTUnwrap(BlocklistSigningKey.parseAll(text), "\(Self.keyFile.path) holds a line that is no Ed25519 public key, or no key")
+        XCTAssertEqual(BlocklistSigningKey.compiledIn, keys,
+                       "BlocklistSigningKey.compiledInTexts are not the keys in \(Self.keyFile.path): copy the file's keys into it, in its order.")
+        let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        XCTAssertEqual(lines, BlocklistSigningKey.compiledInTexts)
+    }
+
+    /// A short list (security CB-05): the key in use, and at most two more
+    /// while one is brought in or retired. A key that stays is a key that
+    /// can still sign for every install.
+    func testTheAppTrustsAShortListOfDistinctKeys() {
+        XCTAssertEqual(BlocklistSigningKey.compiledIn.count, BlocklistSigningKey.compiledInTexts.count, "a compiled-in text is not a key")
+        XCTAssertTrue((1...3).contains(BlocklistSigningKey.compiledIn.count), "\(BlocklistSigningKey.compiledIn.count) lists keys")
+        XCTAssertEqual(Set(BlocklistSigningKey.compiledIn).count, BlocklistSigningKey.compiledIn.count)
     }
 
     func testZerosAreNotAKey() {
         XCTAssertNil(BlocklistSigningKey.parse(Data(count: 32).base64EncodedString()))
-        XCTAssertNotNil(BlocklistSigningKey.compiledIn)
+        XCTAssertFalse(BlocklistSigningKey.compiledIn.isEmpty)
+    }
+
+    func testAKeyFileOfSeveralKeysHasOneALine() {
+        let first = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        let second = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+        let hex = second.map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(BlocklistSigningKey.parseAll("\(first.base64EncodedString())\n"), [first])
+        XCTAssertEqual(BlocklistSigningKey.parseAll("# in use\n\(first.base64EncodedString())\n\n  # until the next release\n \(hex) \n"), [first, second])
+        XCTAssertNil(BlocklistSigningKey.parseAll("\(first.base64EncodedString())\nnot a key\n"), "one bad line refuses the file: a key must not vanish quietly")
+        XCTAssertNil(BlocklistSigningKey.parseAll("# nothing\n"))
+        XCTAssertNil(BlocklistSigningKey.parseAll(""))
     }
 
     func testAKeyFileInEachUsualForm() {
@@ -165,7 +202,7 @@ final class BlocklistVerifierTests: XCTestCase {
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: scratch) }
 
     private func verify(_ directory: URL, key: Data? = nil, engine: BlocklistEngineVersion? = engine) -> Result<VerifiedBlocklist, BlocklistRejection> {
-        BlocklistVerifier.verify(directory: directory, source: .downloaded, publicKey: key ?? maker.publicKey, engine: engine)
+        BlocklistVerifier.verify(directory: directory, source: .downloaded, publicKeys: [key ?? maker.publicKey], engine: engine)
     }
 
     private func rejection(_ result: Result<VerifiedBlocklist, BlocklistRejection>) -> BlocklistRejection? {
@@ -202,9 +239,89 @@ final class BlocklistVerifierTests: XCTestCase {
 
         let good = try maker.make("202611180903", in: scratch)
         XCTAssertEqual(rejection(verify(good, key: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation)), .badSignature)
-        XCTAssertEqual(rejection(BlocklistVerifier.verify(directory: good, source: .downloaded, publicKey: nil, engine: engine)), .noKey,
+        XCTAssertEqual(rejection(BlocklistVerifier.verify(directory: good, source: .downloaded, publicKeys: [], engine: engine)), .noKey,
                        "a build without the lists key uses no bundle")
         XCTAssertEqual(rejection(verify(scratch.appendingPathComponent("nothing"))), .missingManifest)
+    }
+
+    // MARK: Several keys (security CB-05)
+
+    func testABundleSignedByAnyOneOfTheKeysVerifies() throws {
+        let old = Curve25519.Signing.PrivateKey(), new = Curve25519.Signing.PrivateKey()
+        func verify(_ directory: URL, keys: [Data]) -> Result<VerifiedBlocklist, BlocklistRejection> {
+            BlocklistVerifier.verify(directory: directory, source: .downloaded, publicKeys: keys, engine: engine)
+        }
+        var options = BundleMaker.Options()
+        options.signer = old
+        let signedOld = try maker.make("202611180900", in: scratch, options)
+        options.signer = new
+        let signedNew = try maker.make("202611180901", in: scratch, options)
+        let both = [new.publicKey.rawRepresentation, old.publicKey.rawRepresentation]
+
+        // The release that brings the new key in: bundles from either verify, in either order of keys.
+        XCTAssertEqual(try verify(signedOld, keys: both).get().version.description, "202611180900")
+        XCTAssertEqual(try verify(signedNew, keys: both).get().version.description, "202611180901")
+        XCTAssertNoThrow(try verify(signedOld, keys: both.reversed()).get())
+        // The release that drops the old key: what it signed is refused from then on.
+        XCTAssertEqual(rejection(verify(signedOld, keys: [new.publicKey.rawRepresentation])), .badSignature)
+        XCTAssertNoThrow(try verify(signedNew, keys: [new.publicKey.rawRepresentation]).get())
+        // A key that signed nothing here adds nothing.
+        XCTAssertEqual(rejection(verify(signedOld, keys: [maker.publicKey, new.publicKey.rawRepresentation])), .badSignature)
+        // Bytes that are no key are passed over; with nothing else, there is no key.
+        XCTAssertNoThrow(try verify(signedOld, keys: [Data(count: 5), old.publicKey.rawRepresentation]).get())
+        XCTAssertEqual(rejection(verify(signedOld, keys: [Data(count: 5)])), .noKey)
+        XCTAssertEqual(rejection(verify(signedOld, keys: [])), .noKey)
+    }
+
+    func testAChangedManifestVerifiesWithNoneOfTheKeys() throws {
+        let old = Curve25519.Signing.PrivateKey()
+        var options = BundleMaker.Options()
+        options.signer = old
+        options.manifestSuffix = " "
+        let changed = try maker.make("202611180900", in: scratch, options)
+        let result = BlocklistVerifier.verify(directory: changed, source: .downloaded,
+                                              publicKeys: [maker.publicKey, old.publicKey.rawRepresentation], engine: engine)
+        XCTAssertEqual(rejection(result), .badSignature)
+    }
+
+    // MARK: What a signed list may do (security CB-03)
+
+    /// The signature says who wrote a list. This says what a list may do:
+    /// block, allow, or allow everything in a page. A signed bundle with any
+    /// other action is refused before its directory goes to the engine.
+    func testARuleThatDoesMoreThanBlockOrAllowRefusesTheBundle() throws {
+        var version = 202_611_180_900
+        func result(_ rules: String, list: String = "easylist") throws -> BlocklistRejection? {
+            version += 1
+            var options = BundleMaker.Options()
+            options.rules = [list: rules]
+            return rejection(verify(try maker.make(String(version), in: scratch, options)))
+        }
+        let block = #"{"type":"block"}"#
+        XCTAssertNil(try result(BundleMaker.rules(actions: [block, #"{"type":"allow"}"#, #"{"type":"allowAllRequests"}"#])))
+        XCTAssertNil(try result("[]"), "an empty list is a list")
+
+        let forbidden = [
+            #"{"type":"redirect","redirect":{"url":"https://evil.test/a.js"}}"#: "redirect",
+            #"{"type":"upgradeScheme"}"#: "upgradeScheme",
+            #"{"type":"modifyHeaders","responseHeaders":[{"header":"content-security-policy","operation":"remove"}]}"#: "modifyHeaders",
+            #"{"type":"Block"}"#: "Block",
+            #"{"type":""}"#: "",
+            #"{}"#: "none",
+            #"{"type":7}"#: "none",
+        ]
+        for (action, name) in forbidden {
+            // Last among good rules: every rule is read, not the first.
+            XCTAssertEqual(try result(BundleMaker.rules(actions: [block, block, action])),
+                           .forbiddenAction(path: "rules/easylist.json", action: name), action)
+        }
+        XCTAssertEqual(try result(BundleMaker.rules(actions: [#"{"type":"redirect"}"#]), list: "peter-lowe"),
+                       .forbiddenAction(path: "rules/peter-lowe.json", action: "redirect"), "in any list of the bundle")
+
+        for notRules in [#"{"id":1}"#, "[1]", #"["block"]"#, #"[{"id":1,"priority":1,"condition":{}}]"#, #"[{"action":"block"}]"#, "not json", ""] {
+            XCTAssertEqual(try result(notRules), .badRules("rules/easylist.json"), notRules)
+        }
+        XCTAssertEqual(BlocklistVerifier.allowedRuleActions, ["block", "allow", "allowAllRequests"])
     }
 
     func testAHashMismatchIsRefused() throws {
@@ -276,7 +393,7 @@ final class BlocklistVerifierTests: XCTestCase {
     /// table's (spec §2).
     func testTheBuiltInBundleVerifiesAgainstTheCompiledInKey() throws {
         let directory = shellDirectory.appendingPathComponent("Resources/Blocklists", isDirectory: true)
-        let bundle = try BlocklistVerifier.verify(directory: directory, source: .builtIn, publicKey: BlocklistSigningKey.compiledIn,
+        let bundle = try BlocklistVerifier.verify(directory: directory, source: .builtIn, publicKeys: BlocklistSigningKey.compiledIn,
                                                   engine: BlocklistEngineVersion(chromiumMajor: 156)).get()
         XCTAssertEqual(bundle.manifest.minEngine, .chromiumMajor(156))
         XCTAssertNotNil(bundle.manifest.date)
@@ -396,11 +513,12 @@ final class BlocklistStoreTests: XCTestCase {
 
     override func tearDownWithError() throws { try? FileManager.default.removeItem(at: scratch) }
 
-    private func store(builtIn: String? = "202611010000", key: Data? = nil, noKey: Bool = false) throws -> BlocklistStore {
+    private func store(builtIn: String? = "202611010000", key: Data? = nil, noKey: Bool = false, keys: [Data]? = nil) throws -> BlocklistStore {
         var builtInURL: URL?
         if let builtIn { builtInURL = try maker.make(builtIn, in: app, named: "Blocklists") }
         let date = now
-        return BlocklistStore(configuration: .init(builtIn: builtInURL, downloads: downloads, publicKey: noKey ? nil : (key ?? maker.publicKey),
+        return BlocklistStore(configuration: .init(builtIn: builtInURL, downloads: downloads,
+                                                   publicKeys: keys ?? (noKey ? [] : [key ?? maker.publicKey]),
                                                    engine: engine, latestURL: latestURL), now: { date })
     }
 
@@ -548,6 +666,67 @@ final class BlocklistStoreTests: XCTestCase {
         let active = await store.active
         XCTAssertEqual(active?.source, .builtIn, "the bundle in use never changed")
         XCTAssertEqual(downloaded(), [], "nothing that failed is left on disk")
+    }
+
+    /// Security CB-03: a bundle the lists key signed is still refused when
+    /// one of its rules redirects a request or changes headers. It never
+    /// becomes the bundle in use, so its directory never goes to the engine.
+    func testASignedDownloadWhoseRulesDoMoreThanBlockOrAllowIsDeleted() async throws {
+        let store = try store()
+        await store.load()
+        var redirecting = BundleMaker.Options()
+        redirecting.rules = ["easylist": BundleMaker.rules(actions: [#"{"type":"block"}"#, #"{"type":"redirect","redirect":{"url":"https://evil.test/a.js"}}"#])]
+        let pack = try maker.archive("202611180900", in: scratch, redirecting)
+        let mirror = FakeMirror()
+        mirror.pages[latestURL.absoluteString] = pack.latest
+        mirror.pages["https://rearc.imara.ae/blocklists/blocklists-202611180900.tar.gz"] = pack.archive
+
+        let outcome = await store.checkForUpdate(using: mirror)
+        XCTAssertEqual(outcome, .rejected("rules/easylist.json has a rule that neither blocks nor allows (redirect)"))
+        let active = await store.active
+        XCTAssertEqual(active?.source, .builtIn, "the bundle in use never changed")
+        XCTAssertEqual(downloaded(), [], "the download is deleted")
+
+        // One that got onto disk another way is deleted at the next launch.
+        var stripping = BundleMaker.Options()
+        stripping.rules = ["peter-lowe": BundleMaker.rules(actions: [#"{"type":"modifyHeaders","responseHeaders":[{"header":"x-frame-options","operation":"remove"}]}"#])]
+        try maker.make("202611190900", in: downloads, stripping)
+        let relaunched = try self.store()
+        let used = await relaunched.load()
+        XCTAssertEqual(used?.source, .builtIn)
+        XCTAssertEqual(downloaded(), [])
+        let rejections = await relaunched.rejections
+        XCTAssertEqual(rejections, ["202611190900: rules/peter-lowe.json has a rule that neither blocks nor allows (modifyHeaders)"])
+    }
+
+    /// Security CB-05: while the lists key is replaced, the app trusts the
+    /// new key and the old one, and the mirror's bundle may carry either.
+    func testADownloadSignedByEitherOfTwoKeysIsUsed() async throws {
+        let old = Curve25519.Signing.PrivateKey()
+        var signedOld = BundleMaker.Options()
+        signedOld.signer = old
+        let mirror = FakeMirror()
+        func check(_ store: BlocklistStore, _ version: String, _ options: BundleMaker.Options) async throws -> BlocklistUpdateOutcome {
+            let pack = try maker.archive(version, in: scratch, options)
+            mirror.pages[latestURL.absoluteString] = pack.latest
+            mirror.pages["https://rearc.imara.ae/blocklists/blocklists-\(version).tar.gz"] = pack.archive
+            return await store.checkForUpdate(using: mirror)
+        }
+        // The built-in bundle is the maker's; the mirror still serves one the old key signed.
+        let both = try store(keys: [maker.publicKey, old.publicKey.rawRepresentation])
+        await both.load()
+        let fromOld = try await check(both, "202611180900", signedOld)
+        XCTAssertEqual(fromOld, .updated(BlocklistVersion("202611180900")!))
+        let fromNew = try await check(both, "202611180901", BundleMaker.Options())
+        XCTAssertEqual(fromNew, .updated(BlocklistVersion("202611180901")!))
+
+        // The release after: the old key is gone, and so is what only it signed.
+        let newOnly = try store(keys: [maker.publicKey])
+        let active = await newOnly.load()
+        XCTAssertEqual(active?.version.description, "202611180901")
+        XCTAssertEqual(downloaded(), ["202611180901"], "the bundle the dropped key signed is deleted")
+        let late = try await check(newOnly, "202611180902", signedOld)
+        XCTAssertEqual(late, .rejected("the signature does not verify"))
     }
 
     func testOnlyTheMirrorIsEverAsked() async throws {

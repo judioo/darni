@@ -106,18 +106,19 @@ public actor BlocklistStore {
         public var builtIn: URL?
         /// `<data>/Blocklists`.
         public var downloads: URL
-        /// The lists key's raw bytes; nil refuses every bundle.
-        public var publicKey: Data?
+        /// The lists keys' raw bytes: a bundle signed by any one is used.
+        /// None refuses every bundle.
+        public var publicKeys: [Data]
         public var engine: BlocklistEngineVersion?
         public var latestURL: URL
         public var limits: BlocklistArchive.Limits
 
-        public init(builtIn: URL?, downloads: URL, publicKey: Data? = BlocklistSigningKey.compiledIn,
+        public init(builtIn: URL?, downloads: URL, publicKeys: [Data] = BlocklistSigningKey.compiledIn,
                     engine: BlocklistEngineVersion? = nil, latestURL: URL = BlocklistMirror.latestURL,
                     limits: BlocklistArchive.Limits = BlocklistArchive.Limits()) {
             self.builtIn = builtIn
             self.downloads = downloads
-            self.publicKey = publicKey
+            self.publicKeys = publicKeys
             self.engine = engine
             self.latestURL = latestURL
             self.limits = limits
@@ -265,7 +266,7 @@ public actor BlocklistStore {
     }
 
     private func verify(_ directory: URL, source: VerifiedBlocklist.Source) -> Result<VerifiedBlocklist, BlocklistRejection> {
-        BlocklistVerifier.verify(directory: directory, source: source, publicKey: configuration.publicKey,
+        BlocklistVerifier.verify(directory: directory, source: source, publicKeys: configuration.publicKeys,
                                  engine: configuration.engine, fileManager: fileManager)
     }
 

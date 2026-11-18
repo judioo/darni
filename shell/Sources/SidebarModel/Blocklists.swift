@@ -9,19 +9,39 @@ import Foundation
 //     rules/<list-id>.json DNR rule arrays
 //
 // Trust rests on the lists key alone: a bundle is used only when the
-// signature verifies against the compiled-in public key and every file in
-// the directory is one the signed manifest lists, with its hash.
+// signature verifies against a compiled-in public key, every file in the
+// directory is one the signed manifest lists, with its hash, and every rule
+// blocks or allows a request and does nothing else.
 
 /// The lists key's public half, compiled into the app. Never the Sparkle
 /// key (spec §4 "Signing key").
+///
+/// A short list, so the key can be replaced (security CB-05): a bundle is
+/// used when any one of these keys signed it. One key in ordinary times.
+/// While a key is replaced there are two for a release, the new one and
+/// the one going, and then the old one is taken out
+/// (engine/docs/RELEASE.md "Lists key").
 public enum BlocklistSigningKey {
-    /// The key in `shell/scripts/blocklists/blocklists-public-key.txt`:
-    /// base64 of the raw 32 bytes. `BlocklistSigningKeyTests` fails when the
-    /// two differ, so a new key cannot ship in the file alone.
-    public static let compiledInText = "JzoQqIp57WYVyAiycJEzp8MuiD08WZ5jnZDUa8CzJEQ="
+    /// The keys in `shell/scripts/blocklists/blocklists-public-key.txt`, in
+    /// its order: base64 of the raw 32 bytes each, the key in use first.
+    /// `BlocklistSigningKeyTests` fails when the two differ, so a new key
+    /// cannot ship in the file alone, and a key taken out of the file
+    /// cannot stay in the app.
+    public static let compiledInTexts = ["JzoQqIp57WYVyAiycJEzp8MuiD08WZ5jnZDUa8CzJEQ="]
 
-    /// The compiled-in key's 32 raw bytes.
-    public static let compiledIn: Data? = parse(compiledInText)
+    /// The compiled-in keys' 32 raw bytes each.
+    public static let compiledIn: [Data] = compiledInTexts.compactMap(parse)
+
+    /// The keys of a file with one key a line (base64 or hex; `#` lines are
+    /// comments), as the pipeline's public key file is. nil when a line is
+    /// not a key or there is none.
+    public static func parseAll(_ text: String) -> [Data]? {
+        let lines = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+        let keys = lines.compactMap(parse)
+        return keys.isEmpty || keys.count != lines.count ? nil : keys
+    }
 
     /// A public key file's text: the 32 raw bytes in base64 or hex, or the
     /// 44-byte SubjectPublicKeyInfo form (`openssl pkey -pubout`), with or
@@ -219,6 +239,10 @@ public enum BlocklistRejection: Error, Equatable, Sendable {
     case hashMismatch(String)
     /// The bundle has a file (or a link) the signed manifest does not list.
     case unlistedFile(String)
+    /// A rules file is not a JSON array of rules.
+    case badRules(String)
+    /// A rule does something other than block or allow a request.
+    case forbiddenAction(path: String, action: String)
     /// The directory is named for another version than the manifest's.
     case versionMismatch(expected: String, found: String)
     case engineTooOld
@@ -236,6 +260,8 @@ public enum BlocklistRejection: Error, Equatable, Sendable {
         case .missingFile(let path): return "\(path) is missing"
         case .hashMismatch(let path): return "\(path) does not match its sha256"
         case .unlistedFile(let path): return "\(path) is not in the manifest"
+        case .badRules(let path): return "\(path) is not a list of rules"
+        case .forbiddenAction(let path, let action): return "\(path) has a rule that neither blocks nor allows (\(action))"
         case .versionMismatch(let expected, let found): return "version \(found) where \(expected) was expected"
         case .engineTooOld: return "it needs a newer engine"
         case .notNewer(let inUse, let found): return "version \(found) is not newer than \(inUse)"
@@ -255,17 +281,31 @@ public struct VerifiedBlocklist: Equatable, Sendable {
 }
 
 public enum BlocklistVerifier {
+    /// What a list's rule may do (security CB-03): block a request, allow
+    /// one, or allow everything in a page or frame. Never `redirect`,
+    /// `upgradeScheme` or `modifyHeaders`. Today Chromium ignores those from
+    /// the blocker, which has no access to any site; the day it gains access
+    /// (per-site CSS, phase 2), a rule that redirects a script or strips a
+    /// security header would put page content in the hands of whoever holds
+    /// the lists key. The build script holds the lists to the same three
+    /// actions, and the engine checks again before it loads a bundle
+    /// (`PrepareBundle`, tab/095).
+    public static let allowedRuleActions: Set<String> = ["block", "allow", "allowAllRequests"]
+
     /// Checks the bundle in `directory`: the signature over the manifest's
-    /// bytes, then the manifest, then every file. `engine` nil skips the
-    /// `min_engine` check (tests, and a shell that does not know its engine).
+    /// bytes against each of `publicKeys` until one verifies, then the
+    /// manifest, then every file and the action of every rule. `engine` nil
+    /// skips the `min_engine` check (tests, and a shell that does not know
+    /// its engine).
     public static func verify(
         directory: URL,
         source: VerifiedBlocklist.Source,
-        publicKey: Data?,
+        publicKeys: [Data],
         engine: BlocklistEngineVersion?,
         fileManager: FileManager = .default
     ) -> Result<VerifiedBlocklist, BlocklistRejection> {
-        guard let publicKey, let key = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey) else { return .failure(.noKey) }
+        let keys = publicKeys.compactMap { try? Curve25519.Signing.PublicKey(rawRepresentation: $0) }
+        guard !keys.isEmpty else { return .failure(.noKey) }
         guard let manifestData = try? Data(contentsOf: directory.appendingPathComponent(BlocklistManifest.fileName)) else {
             return .failure(.missingManifest)
         }
@@ -274,7 +314,7 @@ public enum BlocklistVerifier {
         }
         // The signature first: nothing in an unsigned manifest is read.
         guard let signature = Data(base64Encoded: signatureText.trimmingCharacters(in: .whitespacesAndNewlines)),
-              key.isValidSignature(signature, for: manifestData) else { return .failure(.badSignature) }
+              keys.contains(where: { $0.isValidSignature(signature, for: manifestData) }) else { return .failure(.badSignature) }
         let manifest: BlocklistManifest
         do {
             manifest = try BlocklistManifest.decode(manifestData)
@@ -296,9 +336,28 @@ public enum BlocklistVerifier {
         }
         for (path, expected) in manifest.files.sorted(by: { $0.key < $1.key }) {
             guard found.contains(path) else { return .failure(.missingFile(path)) }
-            guard sha256(of: directory.appendingPathComponent(path)) == expected else { return .failure(.hashMismatch(path)) }
+            // Read once: the bytes that are hashed are the bytes whose rules are read.
+            guard let rules = try? Data(contentsOf: directory.appendingPathComponent(path), options: .mappedIfSafe),
+                  sha256(of: rules) == expected else { return .failure(.hashMismatch(path)) }
+            if let rejection = ruleRejection(in: rules, path: path) { return .failure(rejection) }
         }
         return .success(VerifiedBlocklist(directory: directory, manifest: manifest, source: source))
+    }
+
+    /// nil when `rules` is a JSON array of rules whose actions are all in
+    /// `allowedRuleActions`; otherwise why the file is refused. A signed
+    /// file is refused too: the signature says who wrote the list, this
+    /// says what a list may do. The engine makes the same check with the
+    /// parser that indexes the rules, so a file two parsers read differently
+    /// does not get past both.
+    static func ruleRejection(in rules: Data, path: String) -> BlocklistRejection? {
+        guard let entries = try? JSONSerialization.jsonObject(with: rules) as? [Any] else { return .badRules(path) }
+        for entry in entries {
+            guard let rule = entry as? [String: Any], let action = rule["action"] as? [String: Any] else { return .badRules(path) }
+            guard let type = action["type"] as? String else { return .forbiddenAction(path: path, action: "none") }
+            guard allowedRuleActions.contains(type) else { return .forbiddenAction(path: path, action: String(type.prefix(40))) }
+        }
+        return nil
     }
 
     /// The bundle's regular files by relative path. A link or anything else

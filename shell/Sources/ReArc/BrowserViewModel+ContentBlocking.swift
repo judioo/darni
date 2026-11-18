@@ -132,7 +132,7 @@ extension BrowserViewModel {
         engine: ContentBlockingEngine,
         engineVersion: BlocklistEngineVersion?,
         builtInLists: URL? = ContentBlockingController.builtInListsURL,
-        publicKey: Data? = BlocklistSigningKey.compiledIn
+        publicKeys: [Data] = BlocklistSigningKey.compiledIn
     ) {
         guard !contentBlocking.isAvailable else { return }
         if let install = store.beginContentBlockingRollout(isNewInstall: isFirstRun) {
@@ -141,9 +141,9 @@ extension BrowserViewModel {
             contentBlockingLog("first launch with blocking: \(install.rawValue) install")
         }
         let downloads = Self.siblingFile(BlocklistStore.folderName, of: persistence.fileURL)
-        let lists = BlocklistStore(configuration: .init(builtIn: builtInLists, downloads: downloads, publicKey: publicKey, engine: engineVersion))
+        let lists = BlocklistStore(configuration: .init(builtIn: builtInLists, downloads: downloads, publicKeys: publicKeys, engine: engineVersion))
         contentBlocking.attach(engine: engine, lists: lists) { [weak self] id in self?.store.contentBlocking(for: id) ?? .off }
-        if publicKey == nil { contentBlockingLog("this build has no lists key: no bundle can verify and nothing is blocked") }
+        if publicKeys.isEmpty { contentBlockingLog("this build has no lists key: no bundle can verify and nothing is blocked") }
         Task { @MainActor [weak self] in
             let bundle = await lists.load()
             for rejection in await lists.rejections { self?.contentBlockingLog("bundle refused: \(rejection)") }
