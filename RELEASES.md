@@ -35,6 +35,16 @@ lines and this section starts empty again.
   The request carries no cookie or identifier, and none is made while blocking is off in every
   profile. What was blocked is counted on your Mac only.
 - Your blocking settings sync with the profile when sync is on.
+- Sign in with a passkey or a security key. When a site asks for "Face, fingerprint, PIN or
+  security key", ReArc shows its own sheet, which names the site on every step: save or use a
+  passkey on this Mac, use a phone or tablet (scan the QR code with it; ReArc reaches it over
+  Bluetooth, which macOS asks you to allow the first time), or use a USB security key with its
+  PIN and touch. Before this, such sign-ins waited and failed. Passkeys kept in iCloud Keychain
+  are not available yet.
+- The address bar has a site information button. It lists what the site may use (notifications,
+  clipboard, camera, location and the rest, and devices it was given) with Allow, Block and
+  Reset, and shows what it is using now. The site controls list the same, and a private window
+  has its own.
 
 **Security**
 - The address bar can no longer be used to disguise a site. A long address is shortened from
