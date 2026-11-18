@@ -4,12 +4,15 @@ Subject: [PATCH] P-TAB-001 built-in content blocking: "ReArc Blocker" component 
 Engine side of docs/FEATURE-SPECS/CONTENT-BLOCKING.md, phase 1. Blocking is
 Chromium's declarativeNetRequest: the lists of a blocklist bundle are the
 static rulesets of a component extension, "ReArc Blocker" (fixed manifest
-key, ID eoaoomnoofleafmoihlpjdhdceloddjm, added to the component allowlist),
-which ComponentLoader loads in every profile the host has switched blocking
-on for. A component extension is not in the extensions page or
+keys, IDs eoaoomnoofleafmoihlpjdhdceloddjm and
+kanaeoiolklalbbkdlpbfohpmgkgackf, added to the component allowlist), which
+ComponentLoader loads in every profile the host has switched blocking on
+for. There are two IDs so that a list update can load the new bundle before
+the old one goes (below); in ordinary times a profile has one blocker.
+A component extension is not in the extensions page or
 chrome.management and cannot be removed or disabled; it declares no action,
-so it is not in the toolbar (ReArcTabGetExtensionActions also leaves it out
-by ID); it runs in private windows ("incognito": "split", and component
+so it is not in the toolbar (ReArcTabGetExtensionActions also leaves both
+out by ID); it runs in private windows ("incognito": "split", and component
 extensions are always incognito-enabled).
 
 The host owns every setting. ReArcEngineSetBlocklistDirectory names a bundle
@@ -41,6 +44,27 @@ What Chromium needed worked around, all in rearc_content_blocker.cc:
 - ComponentLoader::Remove is an uninstall to RulesMonitorService, which
   deletes the dynamic rules; they are set again from the host's state after
   every load.
+- An extension cannot change the files of its rulesets without a reload, and
+  a reload leaves every open page unblocked while the new bundle's rules are
+  indexed. On a list update the new bundle is therefore loaded as the other
+  blocker, beside the one that is blocking. The old one is removed when the
+  new one has its site exceptions, its own rules and its lists on
+  (FinishTakeover; the three are separate queues in RulesMonitorService).
+  A blocker that never got ready is replaced in place, a level change during
+  an update removes the old blocker at once, and a new bundle that does not
+  load or whose lists do not come on leaves the old one blocking. Both
+  blockers' lists are on for that moment, which the bundle's size must allow
+  (build-blocklists.py check_limits). Security CB-02.
+
+What a list may do (security CB-03). PrepareBundle reads every rules file
+while it copies it and refuses the bundle when a rule's action is not
+block, allow or allowAllRequests, with the JSON reader that indexes the
+rules. The manifest the engine builds asks for declarativeNetRequest and
+nothing else: no host permissions, no content scripts. That is what makes
+Chromium ignore redirect and header rules from the blocker today;
+engine/tests/check_content_blocker_manifest.py fails when a key or a
+permission is added, and the check on the rules keeps a signed list to
+block and allow also once the manifest gains access to pages (phase 2).
 
 Site exceptions are two dynamic rules with fixed IDs at priority 1000000:
 allowAllRequests for main_frame and sub_frame requests to the hosts, and
@@ -50,7 +74,8 @@ and allowAllRequests are accepted, so synced own rules can never redirect a
 request or change headers.
 
 Blocked counts are ActionTracker's per-tab action count, which a main frame
-navigation resets. With the "action count as badge text" preference set for
+navigation resets (the sum of both blockers' while a list update has two; a
+request is blocked by one of them). With the "action count as badge text" preference set for
 the blocker, ActionTracker hands each change to
 ExtensionsAPIClient::UpdateActionCount; ChromeExtensionsAPIClient passes the
 blocker's to rearc::OnContentBlockerActionCount (it has no ExtensionAction
@@ -63,10 +88,12 @@ the files below; engine/chromium/src and its out directories were not
 touched. The new file and the four other C++ files (rearc_extension_actions,
 rearc_profile_registry, chrome_extensions_api_client, allowlist) pass
 clang -fsyntax-only with the dev build's flags, plugins and generated
-headers, run from a scratch symlink view of the tree. The two .mm files
-(one line each) were not checked, nothing was linked, and nothing has run:
-the load, the on-demand indexing, the counts and the limits with real lists
-all need an engine build and the self-test steps of the spec's section 8.
+headers, run from a scratch symlink view of the tree (again on 2026-11-18
+after the CB-02 and CB-03 changes). The two .mm files (one line each) were
+not checked, nothing was linked, and nothing has run: the load, the
+on-demand indexing, the counts, the limits with real lists and the takeover
+on a list update all need an engine build and the self-test steps of the
+spec's section 8.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/BUILD.gn,
@@ -161,17 +188,19 @@ index e875b59..0a4a09c 100644
        ExtensionRegistry::Get(context)->enabled_extensions().GetByID(
            extension_id);
 diff --git a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
-index 4fb8aaa..acacc7e 100644
+index 4fb8aaa..db56af9 100644
 --- a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
 +++ b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
-@@ -64,6 +64,11 @@ bool IsComponentExtensionAllowlisted(const std::string& extension_id) {
+@@ -64,6 +64,13 @@ bool IsComponentExtensionAllowlisted(const std::string& extension_id) {
        extension_misc::kIndigoExtensionId,
        extension_misc::kDictationConnectorExtensionId,
  #endif  // !BUILDFLAG(IS_ANDROID)
 +#if BUILDFLAG(IS_MAC)
-+      // ReArc tab/095: "ReArc Blocker", rearc::kContentBlockerExtensionId
-+      // (chrome/browser/rearc_bridge/rearc_content_blocker.h).
++      // ReArc tab/095: "ReArc Blocker", rearc::kContentBlockerExtensionIds
++      // (chrome/browser/rearc_bridge/rearc_content_blocker.h): two, because a
++      // list update loads the new lists as the second before the first goes.
 +      "eoaoomnoofleafmoihlpjdhdceloddjm",
++      "kanaeoiolklalbbkdlpbfohpmgkgackf",
 +#endif  // BUILDFLAG(IS_MAC)
    });
  
@@ -191,10 +220,10 @@ index 9667c06..9a3489e 100644
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 new file mode 100644
-index 0000000..4286835
+index 0000000..be72ead
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-@@ -0,0 +1,807 @@
+@@ -0,0 +1,1021 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -209,12 +238,20 @@ index 0000000..4286835
 +// the host says which lists, which sites are excepted and which rules are the
 +// person's own, at profile load and on every change. A profile the host has
 +// said nothing about has no blocker.
++//
++// There are two such extensions, with two IDs (kContentBlockerExtensionIds),
++// and in ordinary times one of them is loaded. On a list update the new
++// bundle is loaded as the other one, and the old one goes on blocking until
++// the new one's lists are on: an extension cannot change its rulesets'
++// files without a reload, and a reload leaves every open page unblocked
++// while 18,000 rules are indexed (security CB-02).
 +
 +#include "chrome/browser/rearc_bridge/rearc_content_blocker.h"
 +
 +#include <pthread.h>
 +
 +#include <algorithm>
++#include <array>
 +#include <iterator>
 +#include <map>
 +#include <optional>
@@ -224,11 +261,14 @@ index 0000000..4286835
 +#include <utility>
 +#include <vector>
 +
++#include "base/barrier_closure.h"
 +#include "base/check.h"
 +#include "base/files/file_enumerator.h"
 +#include "base/files/file_path.h"
 +#include "base/files/file_util.h"
 +#include "base/functional/bind.h"
++#include "base/functional/callback.h"
++#include "base/functional/callback_helpers.h"
 +#include "base/json/json_reader.h"
 +#include "base/location.h"
 +#include "base/logging.h"
@@ -275,16 +315,28 @@ index 0000000..4286835
 +namespace dnr = extensions::declarative_net_request;
 +namespace dnr_api = extensions::api::declarative_net_request;
 +
-+// The manifest key (a public key; no private half is kept, a component
-+// extension is never packed or signed). kContentBlockerExtensionId is its ID.
-+constexpr char kManifestKey[] =
++// The two blockers ("slots"): which one a bundle is loaded as.
++constexpr int kSlots = 2;
++
++// The manifest keys (public keys; no private half is kept, a component
++// extension is never packed or signed). kContentBlockerExtensionIds are their
++// IDs, in the same order.
++constexpr std::array<const char*, kSlots> kManifestKeys = {
 +    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvEGC+UlRDi7ecMDhS/vs"
 +    "R1QsD4PXCEBReGZluyxm7e30kt7Bk3K5VfBYp06Ag6BSQJkADzzsOeKqc0H0tLN2"
 +    "WPnX4qEQ7PZEwYdMF3pRpxo2UNUsy5n3+F9b6gqkdsweL3lc7+cPdZhT3CnPsbpy"
 +    "rHSdowFMwt05jYVOxxPLQpj0WCnRtL2wCyOIr9aoJcHb5bLWKLzImr/8Vil9mjAO"
 +    "yarlPMvJk/WsaOWu/DhmytgmOZ8SPVwbv3FW140iWOPLCL/VDqUk1CM6jZbIf+TO"
 +    "1tBLiOVs33fLsVJ1FKYfKVPf6crY8TIOPC6AW2OkUIjHQU6YWj8HNBrC1769AYG5"
-+    "owIDAQAB";
++    "owIDAQAB",
++    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsCltv9gqgv0tIWzYpJGz"
++    "nGERbGHpjzqgL3xLbvqh6tEM8RmJoKMhPVi2EtHFBMq8J/8HlI9kjotfTaSDMoxt"
++    "HSONV8Zgx/NOhpq6BqdLDI1gRldYR7cvvYK5SfMMA/YGgwfeWS/CzkUt2dErWOJI"
++    "rO1mTEWD08gX73krqc/weXoEgMUbhkonKJbYpl8QysWEoOz+GGY9+N7Kq8SMBYXk"
++    "da+d9IhJCLPz1+oSjFaV8aAJJKto653jeSz3i3+nR37Tyy1RHq2vSJO5V+U8xEM3"
++    "cUnL4KQOy0GJVmnbT4sIfIN5qSJdmDKv6cRzr6CPiyyEVqvNTdYVaVYyfMDdS/sk"
++    "UQIDAQAB",
++};
 +
 +// Rule priorities. A bundle's list rules use 1 to 4 (block, allow, important,
 +// important allow: "priorities" in its manifest.json). The person's own rules
@@ -303,6 +355,7 @@ index 0000000..4286835
 +constexpr size_t kMaxExceptionHosts = 10000;
 +constexpr size_t kMaxLists = 100;  // MAX_NUMBER_OF_STATIC_RULESETS
 +constexpr size_t kMaxManifestBytes = 4 * 1024 * 1024;
++constexpr size_t kMaxRulesFileBytes = 64 * 1024 * 1024;
 +constexpr size_t kMaxArgumentBytes = 8 * 1024 * 1024;
 +constexpr base::TimeDelta kCountInterval = base::Milliseconds(250);
 +
@@ -327,8 +380,14 @@ index 0000000..4286835
 +  std::vector<std::string> exception_hosts;
 +  bool has_own_rules = false;
 +  base::ListValue own_rules;  // IDs and priorities already the engine's.
-+  // The bundle version whose blocker is loaded in the profile. Empty: none.
-+  std::string loaded_version;
++  // The blockers loaded in the profile, by slot: the bundle version of each,
++  // empty for none. In ordinary times one is loaded, `current`. During a list
++  // update two are: `current` is the new bundle's, which is taking over, and
++  // the other one goes on blocking until `current` is ready (FinishTakeover).
++  std::array<std::string, kSlots> loaded;
++  int current = -1;
++  // `current` has its site exceptions, its own rules and its lists on.
++  bool current_ready = false;
 +};
 +
 +std::optional<Bundle>& CurrentBundle() {
@@ -354,17 +413,74 @@ index 0000000..4286835
 +
 +ReArcBlockedCountCallback g_count_callback = nullptr;
 +void* g_count_context = nullptr;
-+std::map<uint64_t, uint32_t>& Counts() {
-+  static base::NoDestructor<std::map<uint64_t, uint32_t>> counts;
++// A tab's count from each blocker. A request is blocked by one of them, so
++// the tab's count is the sum.
++using SlotCounts = std::array<uint32_t, kSlots>;
++std::map<uint64_t, SlotCounts>& Counts() {
++  static base::NoDestructor<std::map<uint64_t, SlotCounts>> counts;
 +  return *counts;
++}
++uint32_t Total(const SlotCounts& counts) {
++  uint32_t total = 0;
++  for (uint32_t count : counts) {
++    total += count;
++  }
++  return total;
 +}
 +std::set<uint64_t>& ChangedCounts() {
 +  static base::NoDestructor<std::set<uint64_t>> changed;
 +  return *changed;
 +}
 +
-+extensions::ExtensionId BlockerId() {
-+  return extensions::ExtensionId(kContentBlockerExtensionId);
++extensions::ExtensionId BlockerId(int slot) {
++  return extensions::ExtensionId(kContentBlockerExtensionIds[slot]);
++}
++
++// The slot of a blocker's extension ID, or -1 for any other extension.
++int BlockerSlot(std::string_view extension_id) {
++  for (int slot = 0; slot < kSlots; ++slot) {
++    if (extension_id == kContentBlockerExtensionIds[slot]) {
++      return slot;
++    }
++  }
++  return -1;
++}
++
++// What a rule of a list, and a rule of the person's own, may do: block a
++// request, allow one, or allow everything in a page or frame. Never redirect
++// a request, upgrade its scheme or change headers.
++bool IsBlockOrAllow(std::string_view action) {
++  return action == "block" || action == "allow" ||
++         action == "allowAllRequests";
++}
++
++// Security CB-03: true when `json` is a list of rules that only block and
++// allow. The host has checked the bundle's signature and hashes, which say
++// who wrote the lists, and makes this check too; it is made again here, with
++// the reader that indexes the rules (JSON_PARSE_RFC, as
++// FileBackedRulesetSource), because this is the last place before Chromium
++// acts on them. Today Chromium ignores a redirect or header rule from the
++// blocker, which has no access to any site (CompositeMatcher::GetAction,
++// RulesetManager::GetModifyHeadersActions). That stops holding the day the
++// manifest gains host access (per-site CSS, phase 2): from then on a rule
++// that redirects a script or strips a security header would put page content
++// in the hands of whoever holds the lists key. With this check a signed list
++// still only blocks and allows.
++bool OnlyBlocksAndAllows(std::string_view json) {
++  std::optional<base::ListValue> rules =
++      base::JSONReader::ReadList(json, base::JSON_PARSE_RFC);
++  if (!rules) {
++    return false;
++  }
++  for (const base::Value& value : *rules) {
++    const base::DictValue* rule = value.GetIfDict();
++    const std::string* action =
++        rule ? rule->FindStringByDottedPath("action.type") : nullptr;
++    if (!action || !IsBlockOrAllow(*action)) {
++      return false;
++    }
++  }
++  return true;
 +}
 +
 +bool IsListId(std::string_view id) {
@@ -447,8 +563,18 @@ index 0000000..4286835
 +    }
 +    for (const BundleList& list : bundle.lists) {
 +      const std::string name = list.id + ".json";
-+      if (!base::CopyFile(source.AppendASCII("rules").AppendASCII(name),
-+                          rules.AppendASCII(name))) {
++      // Read, checked and written from memory: the bytes that were checked
++      // are the bytes Chromium indexes.
++      std::string text;
++      if (!base::ReadFileToStringWithMaxSize(
++              source.AppendASCII("rules").AppendASCII(name), &text,
++              kMaxRulesFileBytes) ||
++          !OnlyBlocksAndAllows(text) ||
++          !base::WriteFile(rules.AppendASCII(name), text)) {
++        LOG(ERROR) << "ReArc Blocker: list " << list.id << " of bundle "
++                   << bundle.version
++                   << " is unreadable or has a rule that neither blocks nor "
++                      "allows; the bundle is refused";
 +        base::DeletePathRecursively(bundle.directory);
 +        return std::nullopt;
 +      }
@@ -478,13 +604,23 @@ index 0000000..4286835
 +// until the host's lists are applied (ApplyRulesets). A component extension's
 +// rulesets are not indexed at install as a packed extension's are, and
 +// RulesMonitorService indexes a ruleset the first time it is switched on.
-+base::DictValue BlockerManifest(const Bundle& bundle) {
++//
++// Security CB-03: the manifest asks for one permission, declarativeNetRequest,
++// and nothing else. No host permissions, no content scripts, no background
++// script, no pages. That is what makes the blocker unable to read or change a
++// page, and what makes Chromium ignore any rule of it that is not block or
++// allow. engine/tests/check_content_blocker_manifest.py fails when a key or a
++// permission is added here. Phase 2 (per-site CSS) needs access to pages:
++// before the manifest gains it, OnlyBlocksAndAllows above must still stand
++// between a signed list and Chromium, and the security review must see the
++// change.
++base::DictValue BlockerManifest(const Bundle& bundle, int slot) {
 +  base::DictValue manifest;
 +  manifest.Set("manifest_version", 3);
 +  manifest.Set("name", "ReArc Blocker");
 +  manifest.Set("description", "ReArc's built-in ad and tracker blocking.");
 +  manifest.Set("version", ExtensionVersion(bundle.version));
-+  manifest.Set("key", kManifestKey);
++  manifest.Set("key", kManifestKeys[slot]);
 +  manifest.Set("incognito", "split");
 +  base::ListValue permissions;
 +  permissions.Append("declarativeNetRequest");
@@ -503,23 +639,24 @@ index 0000000..4286835
 +  return manifest;
 +}
 +
-+// The profile, its state and its loaded blocker, when all three exist.
++// The profile, its state and its blocker loaded in `slot`, when all three
++// exist.
 +struct Loaded {
 +  raw_ptr<Profile> profile = nullptr;
 +  raw_ptr<ProfileState> state = nullptr;
 +  raw_ptr<const extensions::Extension> extension = nullptr;
 +  raw_ptr<dnr::RulesMonitorService> service = nullptr;
 +};
-+std::optional<Loaded> FindLoaded(uint64_t profile_id) {
++std::optional<Loaded> FindLoaded(uint64_t profile_id, int slot) {
 +  Profile* profile = FindBridgeProfile(profile_id);
 +  auto state = States().find(profile_id);
-+  if (!profile || state == States().end() ||
-+      state->second.loaded_version.empty()) {
++  if (!profile || state == States().end() || slot < 0 || slot >= kSlots ||
++      state->second.loaded[slot].empty()) {
 +    return std::nullopt;
 +  }
 +  const extensions::Extension* extension =
 +      extensions::ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(
-+          BlockerId());
++          BlockerId(slot));
 +  dnr::RulesMonitorService* service = dnr::RulesMonitorService::Get(profile);
 +  if (!extension || !service) {
 +    return std::nullopt;
@@ -531,6 +668,16 @@ index 0000000..4286835
 +  if (error) {
 +    LOG(ERROR) << "ReArc Blocker: " << what << ": " << *error;
 +  }
++}
++
++// A dynamic rule update ended, well or not: `done` runs either way. A blocker
++// whose exceptions or own rules Chromium refused still takes over from the
++// one before it; the refusal is the same in both.
++void OnDynamicRulesSet(const char* what,
++                       base::OnceClosure done,
++                       std::optional<std::string> error) {
++  LogRuleError(what, std::move(error));
++  std::move(done).Run();
 +}
 +
 +base::DictValue RuleValue(int id,
@@ -551,9 +698,11 @@ index 0000000..4286835
 +// (allowAllRequests on its document requests) and nothing an excepted host's
 +// documents ask for (allow by initiator), above every list and own rule.
 +// A host covers its subdomains, as declarativeNetRequest's domain lists do.
-+void ApplyExceptions(uint64_t profile_id) {
-+  std::optional<Loaded> loaded = FindLoaded(profile_id);
++// `done` runs when the blocker in `slot` has them, or has nothing to get.
++void ApplyExceptions(uint64_t profile_id, int slot, base::OnceClosure done) {
++  std::optional<Loaded> loaded = FindLoaded(profile_id, slot);
 +  if (!loaded || !loaded->state->has_exceptions) {
++    std::move(done).Run();
 +    return;
 +  }
 +  std::vector<dnr_api::Rule> rules;
@@ -582,15 +731,18 @@ index 0000000..4286835
 +  }
 +  loaded->service->UpdateDynamicRules(
 +      *loaded->extension, {kExceptionFrameRuleId, kExceptionInitiatorRuleId},
-+      std::move(rules), base::BindOnce(&LogRuleError, "site exceptions"));
++      std::move(rules),
++      base::BindOnce(&OnDynamicRulesSet, "site exceptions", std::move(done)));
 +}
 +
 +// The person's own rules replace the whole own-rule ID range. Chromium applies
 +// a dynamic rule update whole or not at all: a rule it refuses (a regular
 +// expression RE2 cannot compile) leaves the earlier own rules in place.
-+void ApplyOwnRules(uint64_t profile_id) {
-+  std::optional<Loaded> loaded = FindLoaded(profile_id);
++// `done` runs when the blocker in `slot` has them, or has nothing to get.
++void ApplyOwnRules(uint64_t profile_id, int slot, base::OnceClosure done) {
++  std::optional<Loaded> loaded = FindLoaded(profile_id, slot);
 +  if (!loaded || !loaded->state->has_own_rules) {
++    std::move(done).Run();
 +    return;
 +  }
 +  std::vector<int> remove;
@@ -607,7 +759,7 @@ index 0000000..4286835
 +  }
 +  loaded->service->UpdateDynamicRules(
 +      *loaded->extension, std::move(remove), std::move(rules),
-+      base::BindOnce(&LogRuleError, "own rules"));
++      base::BindOnce(&OnDynamicRulesSet, "own rules", std::move(done)));
 +}
 +
 +// The manifest IDs of the lists the host wants on in this profile.
@@ -625,16 +777,30 @@ index 0000000..4286835
 +  return ids;
 +}
 +
++// The lists of the blocker in `slot` are as the host wants them: `done` runs.
++// Not after an error: a blocker whose lists did not come on blocks nothing,
++// and must not take over from one that does.
++void OnRulesetsApplied(base::OnceClosure done,
++                       std::optional<std::string> error) {
++  if (error) {
++    LogRuleError("lists", std::move(error));
++    return;
++  }
++  std::move(done).Run();
++}
++
 +// Second step of ApplyRulesets, when the blocker's rulesets have loaded:
 +// switches on what is wanted and not loaded, and off what is loaded and not
 +// wanted. A ruleset that is on stays loaded as it is.
 +void ApplyRulesetDifference(uint64_t profile_id,
++                            int slot,
 +                            std::string version,
++                            base::OnceClosure done,
 +                            std::optional<std::string> error) {
 +  LogRuleError("lists", std::move(error));
-+  std::optional<Loaded> loaded = FindLoaded(profile_id);
++  std::optional<Loaded> loaded = FindLoaded(profile_id, slot);
 +  const std::optional<Bundle>& bundle = CurrentBundle();
-+  if (!loaded || !bundle || loaded->state->loaded_version != version ||
++  if (!loaded || !bundle || loaded->state->loaded[slot] != version ||
 +      bundle->version != version) {
 +    return;  // Unloaded or replaced since; the newer load applies its own.
 +  }
@@ -660,25 +826,27 @@ index 0000000..4286835
 +  std::set_difference(on.begin(), on.end(), wanted.begin(), wanted.end(),
 +                      std::inserter(disable, disable.begin()));
 +  if (enable.empty() && disable.empty()) {
++    std::move(done).Run();
 +    return;
 +  }
 +  loaded->service->UpdateEnabledStaticRulesets(
 +      *loaded->extension, std::move(disable), std::move(enable),
-+      base::BindOnce(&LogRuleError, "lists"));
++      base::BindOnce(&OnRulesetsApplied, std::move(done)));
 +}
 +
-+// Switches the profile's rulesets to the host's lists. The service runs one
-+// ruleset update at a time and none before the extension's first load is
-+// done, so an empty update is the point at which the loaded set is known.
-+void ApplyRulesets(uint64_t profile_id) {
-+  std::optional<Loaded> loaded = FindLoaded(profile_id);
++// Switches the rulesets of the blocker in `slot` to the host's lists; `done`
++// runs once they are. The service runs one ruleset update at a time and none
++// before the extension's first load is done, so an empty update is the point
++// at which the loaded set is known.
++void ApplyRulesets(uint64_t profile_id, int slot, base::OnceClosure done) {
++  std::optional<Loaded> loaded = FindLoaded(profile_id, slot);
 +  if (!loaded) {
 +    return;
 +  }
 +  loaded->service->UpdateEnabledStaticRulesets(
 +      *loaded->extension, {}, {},
-+      base::BindOnce(&ApplyRulesetDifference, profile_id,
-+                     loaded->state->loaded_version));
++      base::BindOnce(&ApplyRulesetDifference, profile_id, slot,
++                     loaded->state->loaded[slot], std::move(done)));
 +}
 +
 +void DeliverCounts() {
@@ -690,7 +858,7 @@ index 0000000..4286835
 +  for (uint64_t tab_id : ChangedCounts()) {
 +    auto count = Counts().find(tab_id);
 +    if (count != Counts().end()) {
-+      changed.emplace_back(tab_id, count->second);
++      changed.emplace_back(tab_id, Total(count->second));
 +    }
 +  }
 +  ChangedCounts().clear();
@@ -708,14 +876,14 @@ index 0000000..4286835
 +      std::move(changed)));
 +}
 +
-+// Records a tab's count. The host hears of changes together, at most once
-+// per kCountInterval.
-+void SetCount(uint64_t tab_id, uint32_t count) {
-+  auto [entry, inserted] = Counts().try_emplace(tab_id, 0);
-+  if (entry->second == count) {
++// Records a tab's count from the blocker in `slot`. The host hears of changes
++// together, at most once per kCountInterval.
++void SetCount(uint64_t tab_id, int slot, uint32_t count) {
++  auto [entry, inserted] = Counts().try_emplace(tab_id, SlotCounts{});
++  if (entry->second[slot] == count) {
 +    return;
 +  }
-+  entry->second = count;
++  entry->second[slot] = count;
 +  ChangedCounts().insert(tab_id);
 +  static base::NoDestructor<base::OneShotTimer> timer;
 +  if (!timer->IsRunning()) {
@@ -723,9 +891,11 @@ index 0000000..4286835
 +  }
 +}
 +
-+// The blocker went from `profile`: ActionTracker drops its counts with the
-+// rulesets, so the tabs of the profile and of its private windows are at 0.
-+void ClearCounts(Profile* profile) {
++// The blocker in `slot` went from `profile`: ActionTracker drops its counts
++// with the rulesets, so they are gone from the tabs of the profile and of its
++// private windows. After a list update a page's count starts again from what
++// the new blocker blocks; the next navigation resets it anyway.
++void ClearCounts(Profile* profile, int slot) {
 +  for (uint64_t tab_id : TabRegistry::Get().SessionIds()) {
 +    TabSession* session = TabRegistry::Get().FindSession(tab_id);
 +    if (!session) {
@@ -734,8 +904,45 @@ index 0000000..4286835
 +    Profile* owner = Profile::FromBrowserContext(
 +        session->web_contents()->GetBrowserContext());
 +    if (owner->GetOriginalProfile() == profile) {
-+      SetCount(tab_id, 0);
++      SetCount(tab_id, slot, 0);
 +    }
++  }
++}
++
++// Removes the blocker in `slot` from the profile. Chromium treats a removed
++// component extension as uninstalled and deletes its dynamic rules, which is
++// why they are set again after every load (ApplyState).
++void Unload(Profile* profile, ProfileState& state, int slot) {
++  extensions::ComponentLoader* loader =
++      extensions::ComponentLoader::Get(profile);
++  if (loader && loader->Exists(BlockerId(slot))) {
++    loader->Remove(BlockerId(slot));
++    ClearCounts(profile, slot);
++  }
++  state.loaded[slot].clear();
++  if (state.current == slot) {
++    state.current = -1;
++    state.current_ready = false;
++  }
++}
++
++// The blocker in `slot`, loaded for bundle `version`, has its site
++// exceptions, its own rules and its lists on. Only now does the blocker of
++// the bundle before it go: no open page was without its lists in between.
++void FinishTakeover(uint64_t profile_id, int slot, std::string version) {
++  Profile* profile = FindBridgeProfile(profile_id);
++  auto found = States().find(profile_id);
++  if (!profile || found == States().end()) {
++    return;
++  }
++  ProfileState& state = found->second;
++  if (state.current != slot || state.loaded[slot] != version) {
++    return;  // Unloaded or replaced since; the newer load finishes its own.
++  }
++  state.current_ready = true;
++  const int other = kSlots - 1 - slot;
++  if (!state.loaded[other].empty()) {
++    Unload(profile, state, other);
 +  }
 +}
 +
@@ -755,38 +962,69 @@ index 0000000..4286835
 +  }
 +  const std::optional<Bundle>& bundle = CurrentBundle();
 +  const bool wanted = state.level > 0 && bundle.has_value();
-+  if (wanted && state.loaded_version == bundle->version) {
-+    ApplyRulesets(profile_id);
-+    return;
-+  }
-+  // Off, or another bundle: the blocker of the old one goes. Chromium treats
-+  // a removed component extension as uninstalled and deletes its dynamic
-+  // rules, which is why they are set again after every load below.
-+  if (loader->Exists(BlockerId())) {
-+    loader->Remove(BlockerId());
-+    ClearCounts(profile);
-+  }
-+  state.loaded_version.clear();
 +  if (!wanted) {
++    // Off: no blocker in the profile.
++    for (int slot = 0; slot < kSlots; ++slot) {
++      Unload(profile, state, slot);
++    }
 +    return;
 +  }
-+  if (loader->Add(BlockerManifest(*bundle), bundle->directory) != BlockerId() ||
++  if (state.current >= 0 && state.loaded[state.current] == bundle->version) {
++    // The level or the lists changed. A blocker of the bundle before, still
++    // loaded because a list update is under way, knows only that bundle's
++    // lists: it goes now, so that the change applies whole.
++    const int slot = state.current;
++    const int other = kSlots - 1 - slot;
++    if (!state.loaded[other].empty()) {
++      Unload(profile, state, other);
++    }
++    ApplyRulesets(profile_id, slot,
++                  state.current_ready
++                      ? base::DoNothing()
++                      : base::BindOnce(&FinishTakeover, profile_id, slot,
++                                       bundle->version));
++    return;
++  }
++  // Another bundle (security CB-02). When the blocker of the bundle before
++  // is ready, it stays and goes on blocking, and the new bundle is loaded as
++  // the other blocker; FinishTakeover removes the old one once the new one's
++  // lists are on. A blocker that is not ready yet blocks nothing (the first
++  // load of a launch, or a takeover that a still newer bundle overtakes): the
++  // new bundle takes its place, and what was blocking before it stays. With
++  // no current blocker (none yet, or the last load failed) a free slot is
++  // taken, so that one that is still blocking is left alone.
++  int slot = state.loaded[0].empty() ? 0 : kSlots - 1;
++  if (state.current >= 0) {
++    slot = state.current_ready ? kSlots - 1 - state.current : state.current;
++  }
++  if (!state.loaded[slot].empty()) {
++    Unload(profile, state, slot);
++  }
++  if (loader->Add(BlockerManifest(*bundle, slot), bundle->directory) !=
++          BlockerId(slot) ||
 +      !extensions::ExtensionRegistry::Get(profile)
 +           ->enabled_extensions()
-+           .Contains(BlockerId())) {
++           .Contains(BlockerId(slot))) {
++    // What was blocking stays; the next change tries again.
 +    LOG(ERROR) << "ReArc Blocker: bundle " << bundle->version
 +               << " did not load";
 +    return;
 +  }
-+  state.loaded_version = bundle->version;
++  state.loaded[slot] = bundle->version;
++  state.current = slot;
++  state.current_ready = false;
 +  // ActionTracker hands the per-tab count of blocked requests to
 +  // ExtensionsAPIClient::UpdateActionCount for an extension with this
 +  // preference; OnContentBlockerActionCount takes it from there.
 +  dnr::PrefsHelper(*extensions::ExtensionPrefs::Get(profile))
-+      .SetUseActionCountAsBadgeText(BlockerId(), true);
-+  ApplyExceptions(profile_id);
-+  ApplyOwnRules(profile_id);
-+  ApplyRulesets(profile_id);
++      .SetUseActionCountAsBadgeText(BlockerId(slot), true);
++  // Three steps, each on a queue of its own in RulesMonitorService, so none
++  // is known to end before another: the blocker is ready after all three.
++  base::RepeatingClosure step = base::BarrierClosure(
++      3, base::BindOnce(&FinishTakeover, profile_id, slot, bundle->version));
++  ApplyExceptions(profile_id, slot, step);
++  ApplyOwnRules(profile_id, slot, step);
++  ApplyRulesets(profile_id, slot, step);
 +}
 +
 +// Applies once the profile's extension system is ready: the host may speak
@@ -843,7 +1081,8 @@ index 0000000..4286835
 +                                 const std::string& extension_id,
 +                                 int tab_id,
 +                                 int action_count) {
-+  if (extension_id != kContentBlockerExtensionId) {
++  const int slot = BlockerSlot(extension_id);
++  if (slot < 0) {
 +    return false;
 +  }
 +  CHECK(pthread_main_np());
@@ -856,7 +1095,7 @@ index 0000000..4286835
 +  for (uint64_t id : TabRegistry::Get().SessionIds()) {
 +    TabSession* session = TabRegistry::Get().FindSession(id);
 +    if (session && session->web_contents() == contents) {
-+      SetCount(id, static_cast<uint32_t>(std::max(action_count, 0)));
++      SetCount(id, slot, static_cast<uint32_t>(std::max(action_count, 0)));
 +      break;
 +    }
 +  }
@@ -946,8 +1185,11 @@ index 0000000..4286835
 +  rearc::ProfileState& state = rearc::States()[profile_id];
 +  state.has_exceptions = true;
 +  state.exception_hosts.assign(hosts.begin(), hosts.end());
-+  // With no blocker loaded this waits in the state for the next load.
-+  rearc::ApplyExceptions(profile_id);
++  // With no blocker loaded this waits in the state for the next load. During
++  // a list update both blockers get it: the old one is still the one blocking.
++  for (int slot = 0; slot < rearc::kSlots; ++slot) {
++    rearc::ApplyExceptions(profile_id, slot, base::DoNothing());
++  }
 +  return REARC_OK;
 +}
 +
@@ -968,8 +1210,7 @@ index 0000000..4286835
 +        rule ? rule->FindStringByDottedPath("action.type") : nullptr;
 +    // Own rules reach the engine through the host's settings and their sync:
 +    // they may block and allow, never redirect or rewrite headers.
-+    if (!action || (*action != "block" && *action != "allow" &&
-+                    *action != "allowAllRequests")) {
++    if (!action || !rearc::IsBlockOrAllow(*action)) {
 +      return REARC_INVALID_ARGUMENT;
 +    }
 +    const int priority = std::clamp(rule->FindInt("priority").value_or(1), 1,
@@ -983,7 +1224,9 @@ index 0000000..4286835
 +  rearc::ProfileState& state = rearc::States()[profile_id];
 +  state.has_own_rules = true;
 +  state.own_rules = std::move(*list);
-+  rearc::ApplyOwnRules(profile_id);
++  for (int slot = 0; slot < rearc::kSlots; ++slot) {
++    rearc::ApplyOwnRules(profile_id, slot, base::DoNothing());
++  }
 +  return REARC_OK;
 +}
 +
@@ -992,7 +1235,7 @@ index 0000000..4286835
 +  auto count = rearc::Counts().find(tab_id);
 +  return count != rearc::Counts().end() &&
 +                 rearc::TabRegistry::Get().FindSession(tab_id)
-+             ? count->second
++             ? rearc::Total(count->second)
 +             : 0;
 +}
 +
@@ -1004,10 +1247,10 @@ index 0000000..4286835
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.h b/chrome/browser/rearc_bridge/rearc_content_blocker.h
 new file mode 100644
-index 0000000..10eaac3
+index 0000000..b47788b
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.h
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,49 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1015,7 +1258,9 @@ index 0000000..10eaac3
 +#ifndef CHROME_BROWSER_REARC_BRIDGE_REARC_CONTENT_BLOCKER_H_
 +#define CHROME_BROWSER_REARC_BRIDGE_REARC_CONTENT_BLOCKER_H_
 +
++#include <array>
 +#include <string>
++#include <string_view>
 +
 +namespace content {
 +class BrowserContext;
@@ -1023,19 +1268,29 @@ index 0000000..10eaac3
 +
 +namespace rearc {
 +
-+// content_blocking (ABI 1.66): the ID of "ReArc Blocker", the built-in
++// content_blocking (ABI 1.66): the IDs of "ReArc Blocker", the built-in
 +// component extension whose declarativeNetRequest rulesets are the blocklists
-+// the host names (rearc_content_blocker.cc). It follows from the manifest key
-+// there, and chrome/browser/extensions/component_extensions_allowlist/
-+// allowlist.cc carries the same string.
-+inline constexpr char kContentBlockerExtensionId[] =
-+    "eoaoomnoofleafmoihlpjdhdceloddjm";
++// the host names (rearc_content_blocker.cc). Two IDs, because a list update
++// loads the new bundle as the second blocker before the first goes; in
++// ordinary times a profile has one. They follow from the manifest keys there,
++// and chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
++// carries the same strings.
++inline constexpr std::array<const char*, 2> kContentBlockerExtensionIds = {
++    "eoaoomnoofleafmoihlpjdhdceloddjm",
++    "kanaeoiolklalbbkdlpbfohpmgkgackf",
++};
++
++// True for either blocker's extension ID.
++inline constexpr bool IsContentBlockerExtensionId(std::string_view id) {
++  return id == kContentBlockerExtensionIds[0] ||
++         id == kContentBlockerExtensionIds[1];
++}
 +
 +// From ChromeExtensionsAPIClient::UpdateActionCount: the number of requests
 +// `extension_id` has blocked in the page of the tab with extension tab ID
 +// `tab_id`, as declarativeNetRequest's ActionTracker counts it (a new page
-+// starts again). True for the blocker: the count is the host's then, and the
-+// caller must not look for the toolbar action the blocker does not have.
++// starts again). True for a blocker: the count is the host's then, and the
++// caller must not look for the toolbar action a blocker does not have.
 +// Main thread only.
 +bool OnContentBlockerActionCount(content::BrowserContext* context,
 +                                 const std::string& extension_id,
@@ -1152,7 +1407,7 @@ index e6629d3..9cf2033 100644
  
  void ReArcEngineSetLifecycleCallbacks(
 diff --git a/chrome/browser/rearc_bridge/rearc_extension_actions.cc b/chrome/browser/rearc_bridge/rearc_extension_actions.cc
-index 5aa5dd8..ee885af 100644
+index 5aa5dd8..4801c51 100644
 --- a/chrome/browser/rearc_bridge/rearc_extension_actions.cc
 +++ b/chrome/browser/rearc_bridge/rearc_extension_actions.cc
 @@ -19,6 +19,7 @@
@@ -1169,7 +1424,7 @@ index 5aa5dd8..ee885af 100644
    }
 +  // The built-in blocker is not a toolbar extension (it declares no action
 +  // either; this keeps it out whatever its manifest says).
-+  if (id == kContentBlockerExtensionId) {
++  if (IsContentBlockerExtensionId(id)) {
 +    return nullptr;
 +  }
    *out = extensions::ExtensionActionManager::Get(context)->GetExtensionAction(

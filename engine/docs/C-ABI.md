@@ -2664,8 +2664,9 @@ nothing below has run. Hosts gate on the feature. No struct changes.
 
 Blocking is Chromium's declarativeNetRequest. The lists of a blocklist bundle are the
 static rulesets of a component extension, "ReArc Blocker"
-(`eoaoomnoofleafmoihlpjdhdceloddjm`), loaded in every profile the host has switched
-blocking on for. It is not in the extensions page, `chrome.management` or
+(`eoaoomnoofleafmoihlpjdhdceloddjm`; during a list update a second one,
+`kanaeoiolklalbbkdlpbfohpmgkgackf`, see "List updates"), loaded in every profile the host
+has switched blocking on for. It is not in the extensions page, `chrome.management` or
 `ReArcTabGetExtensionActions`, cannot be removed or disabled, and applies in private
 windows. The host is the source of truth: it tells the engine the state at profile load
 and on every change. The engine keeps it in memory only, and a profile the host has said
@@ -2674,7 +2675,7 @@ nothing about has no blocker. `profile_id` is never an off-the-record profile
 
 | Function | Contract |
 |---|---|
-| `ReArcEngineSetBlocklistDirectory(utf8_path)` | The directory of a bundle the host has verified (`manifest.json`, `rules/<list id>.json`): an absolute path, read once. The engine copies the rules to `<user data dir>/ReArc Blocker/<version>`, where Chromium also writes its index, so the directory may be read-only and inside the app, and the host may delete it once a later call has taken effect. Every profile with blocking on gets the blocker of this bundle; site exceptions and own rules are set again. A directory the engine cannot read or copy leaves the bundle in use (logged). Null or a relative path: `invalid_argument`. Deferred, no completion. |
+| `ReArcEngineSetBlocklistDirectory(utf8_path)` | The directory of a bundle the host has verified (`manifest.json`, `rules/<list id>.json`): an absolute path, read once. The engine copies the rules to `<user data dir>/ReArc Blocker/<version>`, where Chromium also writes its index, so the directory may be read-only and inside the app, and the host may delete it once a later call has taken effect. Every profile with blocking on gets the blocker of this bundle; site exceptions and own rules are set again. While the rules are copied each one is read: a bundle with a rule whose action is not `block`, `allow` or `allowAllRequests` is refused. A directory the engine cannot read or copy, or a bundle it refuses, leaves the bundle in use (logged). Null or a relative path: `invalid_argument`. Deferred, no completion. |
 | `ReArcProfileSetContentBlocking(profile, level, enabled_list_ids_json)` | `level` 0 off (the profile has no blocker), 1 trackers, 2 ads and trackers, 3 strict. `enabled_list_ids_json`: a JSON array of the bundle's list ids to switch on, all others off; null for the lists of the level (a list's `level` in the bundle's manifest is the lowest level with it). An id the bundle in use lacks is skipped and applies when a later bundle has it. Another level or malformed JSON: `invalid_argument`. Before a bundle is named the state waits. |
 | `ReArcProfileSetBlockingExceptions(profile, hosts_json)` | Replaces the profile's site exceptions: a JSON array of at most 10,000 hosts, lower-case ASCII (punycode), no scheme, port or path. A host covers its subdomains. Nothing is blocked in a page or frame of an excepted host, nor a request one of its documents makes, whatever the lists and own rules say. Applies to requests from then on; the host reloads the tab. Kept while blocking is off. |
 | `ReArcProfileSetOwnBlockingRules(profile, dnr_rules_json)` | Replaces the person's own rules: a JSON array of at most 5,000 declarativeNetRequest rules with action `block`, `allow` or `allowAllRequests`. Any other action is `invalid_argument`, so own rules (which sync) never redirect a request or change headers. The engine numbers them (their `id` is ignored) and keeps the order of their priorities, 1 to 100, above every list rule and below the site exceptions. A rule that does not parse: `invalid_argument`, nothing changes. A rule Chromium refuses at indexing (a regular expression RE2 cannot compile) fails the whole replacement and leaves the earlier own rules (logged; there is no completion yet). |
@@ -2696,13 +2697,38 @@ install, so the manifest the engine builds enables none and the lists are switch
 with `RulesMonitorService::UpdateEnabledStaticRulesets`, which indexes a ruleset on
 first use. Only the difference between the loaded and the wanted rulesets is applied. The
 extension version is the bundle version (`202611180857` as `2026.1118.857`), so a new
-bundle is an extension update. Level 0 and a bundle change remove the blocker; Chromium
-then deletes its dynamic rules, and the engine sets exceptions and own rules again after
-each load. The engine's rule copies of other bundle versions are deleted when a new
-bundle is prepared.
+bundle is an extension update. Level 0 removes the blocker; Chromium then deletes its
+dynamic rules, and the engine sets exceptions and own rules again after each load. The
+engine's rule copies of other bundle versions are deleted when a new bundle is prepared.
+
+**List updates.** An extension cannot change its rulesets' files without a reload, and a
+reload would leave every open page unblocked while the new rules are indexed. A new bundle
+is therefore loaded as a second blocker, with the second ID, beside the one that is
+blocking. The old one is removed when the new one has its site exceptions, its own rules
+and its lists on. From then on the profile has one blocker again, under the other ID; the
+two IDs change places at every update.
+
+- A blocker that never got ready (the first load of a launch still indexing, or an update
+  that a newer bundle overtakes) blocks nothing and is replaced in place.
+- A level or list change during an update removes the old blocker at once, so the change
+  applies whole.
+- A new bundle that does not load, or whose lists do not come on, leaves the old blocker
+  blocking (logged).
+- For that moment both bundles' lists are on. `build-blocklists.py` fails a bundle two of
+  which would not fit Chromium's global rule pool.
+
+**What a list may do.** The manifest the engine builds asks for one permission,
+`declarativeNetRequest`: no host permissions, no content scripts, no background script.
+Chromium ignores a redirect or header rule from an extension without access to the site,
+so a list can block and allow and nothing else, and the blocker cannot read or change a
+page. The engine also refuses a bundle with any other rule action (above), so this still
+holds if the manifest ever gains access to pages. `engine/tests/check_content_blocker_manifest.py`
+fails when a manifest key or permission is added.
 
 **Counts** are declarativeNetRequest's per-tab action count (`ActionTracker`), taken in
-`ChromeExtensionsAPIClient::UpdateActionCount` for the blocker's ID.
+`ChromeExtensionsAPIClient::UpdateActionCount` for the blockers' IDs. While a list update
+has two blockers a tab's count is the sum (one of them blocks a request). When the old
+blocker goes, what it counted in the pages that are open goes with it.
 
 **Known limits.** Between a profile's load and the host's first call nothing is blocked
 (a few requests of a restored tab can pass). `$popup` filters have no
@@ -2712,6 +2738,8 @@ Chromium's 2 KB compiled size are skipped by its indexer with a warning.
 **Tests:** `engine/tests/check_abi166_imports.py` compares every ABI 1.65 struct layout,
 checks that the header adds exactly these six functions and typechecks gated Swift
 adoption. It passes against the patched header (`REARC_TEST_ABI_HEADER_DIR`); it does not
-need a build. No host test exists yet. The spec's self-test (a local page with known ad
+need a build. `engine/tests/check_content_blocker_manifest.py` reads the patch: the
+manifest's keys and its one permission, and that every rules file goes through the action
+check. No host test exists yet. The spec's self-test (a local page with known ad
 and tracker URLs: blocked at level 2, allowed with a site exception and at level 0, and
 the count) is the first check once an engine with the patch is built.
