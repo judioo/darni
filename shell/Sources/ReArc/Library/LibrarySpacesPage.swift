@@ -24,43 +24,115 @@ struct LibrarySpacesOverlay: View {
     }
 }
 
-/// Each space is a full-height themed column, with its sidebar and the
-/// existing space menu. Horizontal scrolling keeps large libraries usable.
+/// Every space as a card, as in Arc's Spaces page: 240 pt cards 24 pt apart
+/// on the window's theme, each with its sidebar, an edit button, and at its
+/// foot the move handle and the space menu. Dragging the handle moves the
+/// space among its profile's spaces; the cards between make room as it goes.
 struct LibrarySpacesPage: View {
     let model: BrowserViewModel
     let window: SidebarWindowID?
+    @State private var drag: CardDrag?
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// The card being dragged by its handle, within its profile.
+    struct CardDrag: Equatable {
+        var space: Space.ID
+        var profile: Profile.ID
+        var source: Int
+        var count: Int
+        var translation: CGFloat
+
+        var destination: Int {
+            LibrarySpaceCards.destination(from: source, translation: Double(translation), count: count)
+        }
+    }
+
+    private static let margin: CGFloat = 24
 
     var body: some View {
         GeometryReader { geometry in
             let groups = LibrarySpaces.groups(in: model.store)
-            let count = groups.reduce(0) { $0 + $1.rows.count }
-            let width = max(180, min(280, geometry.size.width / CGFloat(max(count, 1))))
+            let cardHeight = max(240, geometry.size.height - 2 * Self.margin)
             ScrollView(.horizontal) {
-                HStack(spacing: 0) {
+                HStack(spacing: CGFloat(LibrarySpaceCards.gap)) {
                     ForEach(groups, id: \.profile.id) { group in
-                        ForEach(group.rows) { row in
-                            LibrarySpaceColumn(model: model, row: row, window: window)
-                                .frame(width: width)
+                        ForEach(Array(group.rows.enumerated()), id: \.element.id) { index, row in
+                            card(row, index: index, profile: group.profile.id, count: group.rows.count)
+                                .frame(width: CGFloat(LibrarySpaceCards.width), height: cardHeight)
                         }
-                        Button { model.beginSpaceCreation(profileID: group.profile.id) } label: {
-                            Label("New Space…", systemImage: "plus")
-                                .frame(width: 140, height: geometry.size.height)
-                                .background(.regularMaterial)
-                        }
-                        .buttonStyle(.plain)
+                        newSpaceButton(profile: group.profile.id)
+                            .frame(height: cardHeight)
                     }
                 }
+                .padding(Self.margin)
                 .frame(minHeight: geometry.size.height, alignment: .top)
             }
+            .scrollIndicators(.hidden)
         }
+        .background(windowBackdrop)
+    }
+
+    /// The window's own theme behind the cards, as Arc shows its gradient.
+    private var windowBackdrop: some View {
+        let theme = model.space(in: window).theme
+        return SpaceThemeFill(palette: SpaceThemePalette(
+            theme: theme, darkAppearance: theme.appearance.isDark(systemDark: SystemAppearance.isDark(colorScheme))))
+    }
+
+    private func card(_ row: LibrarySpaceRow, index: Int, profile: Profile.ID, count: Int) -> some View {
+        let dragging = drag?.space == row.id
+        let shift = drag.map { $0.profile == profile && !dragging
+            ? LibrarySpaceCards.shift(of: index, dragging: $0.source, to: $0.destination) : 0 } ?? 0
+        return LibrarySpaceCard(
+            model: model, row: row, window: window, isDragged: dragging,
+            onDrag: { translation in
+                drag = CardDrag(space: row.id, profile: profile, source: index, count: count, translation: translation)
+            },
+            onDrop: {
+                guard let finished = drag else { return }
+                withAnimation(.spring(duration: 0.28, bounce: 0.12)) {
+                    drag = nil
+                    if finished.destination != finished.source { model.moveSpace(finished.space, toIndex: finished.destination) }
+                }
+            },
+            onMove: { offset in
+                withAnimation(.spring(duration: 0.28, bounce: 0.12)) { model.moveSpace(row.id, toIndex: index + offset) }
+            }
+        )
+        .offset(x: dragging ? drag?.translation ?? 0 : CGFloat(shift) * CGFloat(LibrarySpaceCards.stride))
+        .zIndex(dragging ? 1 : 0)
+        .animation(dragging ? nil : .spring(duration: 0.25, bounce: 0.1), value: shift)
+    }
+
+    private func newSpaceButton(profile: Profile.ID) -> some View {
+        Button { model.beginSpaceCreation(profileID: profile) } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(.regularMaterial))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("New Space…")
+        .accessibilityLabel("New Space")
     }
 }
 
-private struct LibrarySpaceColumn: View {
+private struct LibrarySpaceCard: View {
     let model: BrowserViewModel
     let row: LibrarySpaceRow
     let window: SidebarWindowID?
-    @State private var collapsed: Set<UUID> = []
+    let isDragged: Bool
+    /// The handle moved this far along the row since the drag began.
+    let onDrag: (CGFloat) -> Void
+    let onDrop: () -> Void
+    /// VoiceOver and the menu: one place left (-1) or right (+1).
+    let onMove: (Int) -> Void
+    /// Folders and groups opened or closed here, against the sidebar's own state.
+    @State private var toggled: Set<UUID> = []
+    @State private var handleHovered = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -69,57 +141,131 @@ private struct LibrarySpaceColumn: View {
         let palette = SpaceThemePalette(theme: space.theme,
                                         darkAppearance: space.theme.appearance.isDark(systemDark: SystemAppearance.isDark(colorScheme)))
         let foreground: Color = palette.prefersLightForeground ? .white : .black.opacity(0.8)
+        let shape = RoundedRectangle(cornerRadius: CGFloat(LibrarySpaceCards.cornerRadius), style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
-            Button { model.openLibrarySpace(space.id) } label: {
-                HStack(spacing: 8) {
-                    SpaceIconView(iconName: space.iconName, size: 18)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(space.name).font(.headline).lineLimit(1)
-                        Text(row.profileName).font(.caption).opacity(0.7)
-                    }
-                    Spacer(minLength: 0)
-                    if model.space(in: window).id == space.id { Image(systemName: "checkmark") }
-                }
-                .padding(16)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            header(space)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     entries(model.store.favorites(in: space.profileID).map(SidebarEntry.tab))
-                    if !content.pinned.isEmpty {
-                        sectionTitle("Pinned")
-                        entries(content.pinned)
+                    entries(content.pinned)
+                    if !content.pinned.isEmpty || !content.today.isEmpty {
+                        Rectangle().fill(foreground.opacity(0.15)).frame(height: 1)
+                            .padding(.horizontal, 8).padding(.vertical, 8)
                     }
-                    sectionTitle("Today")
                     entries(content.today)
                 }
                 .padding(.horizontal, 10)
             }
+            .scrollIndicators(.never)
+            Spacer(minLength: 0)
+            footer(space, foreground: foreground)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .foregroundStyle(foreground)
-        .frame(maxHeight: .infinity)
         .background(SpaceThemeFill(palette: palette))
-        .overlay(alignment: .trailing) { Rectangle().fill(foreground.opacity(0.12)).frame(width: 1) }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(foreground.opacity(0.08)))
+        .shadow(color: .black.opacity(isDragged ? 0.28 : 0.1), radius: isDragged ? 18 : 6, y: isDragged ? 8 : 2)
+        .scaleEffect(isDragged ? 1.02 : 1)
         .contextMenu { SpaceContextMenu(model: model, space: space) }
     }
 
-    private func sectionTitle(_ title: String) -> some View {
-        Text(title).font(.caption.weight(.semibold)).opacity(0.6).padding(.vertical, 10).padding(.leading, 8)
+    private func header(_ space: Space) -> some View {
+        HStack(spacing: 8) {
+            Button { model.openLibrarySpace(space.id) } label: {
+                HStack(spacing: 8) {
+                    SpaceIconView(iconName: space.iconName, size: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(space.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Text(row.profileName).font(.system(size: 10)).opacity(0.6).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    if model.space(in: window).id == space.id {
+                        Image(systemName: "checkmark").font(.system(size: 11, weight: .semibold)).accessibilityLabel("Current space")
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button { model.spaceEditorID = space.id } label: {
+                Image(systemName: "pencil").font(.system(size: 12, weight: .medium))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(0.6)
+            .help("Edit Theme and Icon…")
+            .accessibilityLabel("Edit \(space.name)")
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 10)
+    }
+
+    /// Arc's foot: the move handle on the left, the space menu on the right.
+    private func footer(_ space: Space, foreground: Color) -> some View {
+        HStack {
+            Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(foreground.opacity(handleHovered || isDragged ? 0.12 : 0)))
+                .contentShape(Rectangle())
+                .opacity(0.65)
+                .onHover { inside in
+                    handleHovered = inside
+                    if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                        .onChanged { onDrag($0.translation.width) }
+                        .onEnded { _ in onDrop() }
+                )
+                .help("Drag to move this space")
+                .accessibilityElement()
+                .accessibilityLabel("Move \(space.name)")
+                .accessibilityAdjustableAction { direction in
+                    switch direction {
+                    case .increment: onMove(1)
+                    case .decrement: onMove(-1)
+                    @unknown default: break
+                    }
+                }
+            Spacer()
+            Menu {
+                Button("Move Left") { onMove(-1) }
+                Button("Move Right") { onMove(1) }
+                Divider()
+                SpaceContextMenu(model: model, space: space)
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 13, weight: .semibold))
+                    .frame(width: 26, height: 26).contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .opacity(0.65)
+            .accessibilityLabel("\(space.name) options")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
     }
 
     private func entries(_ entries: [SidebarEntry]) -> some View {
-        let expanded = Set(SidebarTree.folders(entries).map(\.id) + SidebarTree.tabGroups(entries).map(\.id)).subtracting(collapsed)
+        // As the sidebar has them (Arc shows a closed folder closed); groups open.
+        let base = model.store.expandedFolderIDs.union(SidebarTree.tabGroups(entries).map(\.id))
+        let expanded = base.symmetricDifference(toggled)
         return ForEach(SidebarRowItem.rows(entries, expanded: expanded, selected: nil)) { item in
             Button { open(item.entry) } label: {
                 HStack(spacing: 8) {
                     glyph(item.entry).frame(width: 18, height: 18)
-                    Text(title(item.entry)).font(.system(size: 14)).lineLimit(1)
+                    Text(title(item.entry))
+                        .font(.system(size: 14, weight: item.entry.isFolder || item.entry.isTabGroup ? .semibold : .regular))
+                        .lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, CGFloat(item.depth) * 12 + 8)
                 .padding(.trailing, 8)
-                .frame(height: 36)
+                .frame(height: CGFloat(LibrarySpaceCards.rowHeight))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -150,7 +296,7 @@ private struct LibrarySpaceColumn: View {
 
     private func open(_ entry: SidebarEntry) {
         if entry.isFolder || entry.isTabGroup {
-            if !collapsed.insert(entry.id).inserted { collapsed.remove(entry.id) }
+            if !toggled.insert(entry.id).inserted { toggled.remove(entry.id) }
             return
         }
         model.selectSpace(row.id)

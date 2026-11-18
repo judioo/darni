@@ -415,6 +415,36 @@ enum LibrarySearch {
     }
 }
 
+/// Library › Spaces lays every space out as a card, and a card's move handle
+/// (Arc's ✥ at the card's foot) drags it to a new place among its profile's
+/// spaces. Measured on the owner's Arc screenshot of 2026-11-18: 240 pt cards,
+/// 24 pt apart, 10 pt corners, 41 pt rows.
+public enum LibrarySpaceCards {
+    public static let width: Double = 240
+    public static let gap: Double = 24
+    public static let cornerRadius: Double = 10
+    public static let rowHeight: Double = 41
+    /// One card's step along the row.
+    public static var stride: Double { width + gap }
+
+    /// Where a card dragged `translation` points from `index` lands: whole card
+    /// steps, rounded, kept among the profile's `count` spaces. It is the index
+    /// `SidebarStore.moveSpace(_:toIndex:)` takes.
+    public static func destination(from index: Int, translation: Double, count: Int) -> Int {
+        guard count > 0 else { return index }
+        let steps = Int((translation / stride).rounded())
+        return max(0, min(count - 1, index + steps))
+    }
+
+    /// How many steps a card that is not dragged moves to make room: one
+    /// toward the place the dragged card left, or none.
+    public static func shift(of index: Int, dragging source: Int, to destination: Int) -> Int {
+        if source < destination, index > source, index <= destination { return -1 }
+        if destination < source, index >= destination, index < source { return 1 }
+        return 0
+    }
+}
+
 /// The Spaces panel's unfold and fold, measured in the Library recording.
 public enum LibrarySpacesMotion {
     public static func duration(opening: Bool) -> Double { opening ? 0.08 : 0.17 }
