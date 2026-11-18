@@ -83,6 +83,13 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         menu.autoenablesItems = false
         menu.delegate = self
         table.headerView?.menu = menu
+        // A row: double-click or Show Tab brings a tab or a frame's tab forward.
+        let rowMenu = NSMenu()
+        rowMenu.autoenablesItems = false
+        rowMenu.delegate = self
+        table.menu = rowMenu
+        table.target = self
+        table.doubleAction = #selector(showClickedTab(_:))
         table.setAccessibilityLabel("Tasks")
         tableView = table
 
@@ -164,10 +171,26 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         }
     }
 
+    // MARK: Show Tab
+
+    @objc private func showClickedTab(_ sender: Any?) {
+        guard let table = tableView, rows.indices.contains(table.clickedRow) else { return }
+        controller.showTab(of: rows[table.clickedRow])
+    }
+
+    private func fillRowMenu(_ menu: NSMenu) {
+        guard let table = tableView, rows.indices.contains(table.clickedRow) else { return }
+        let row = rows[table.clickedRow]
+        let show = ClosureMenuItem("Show Tab") { [weak self] in self?.controller.showTab(of: row) }
+        show.isEnabled = controller.canShowTab(of: row)
+        menu.addItem(show)
+    }
+
     // MARK: Header menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu === tableView?.menu { return fillRowMenu(menu) }
         for column in TaskManagerColumn.allCases {
             let item = ClosureMenuItem(column.title) { [weak self] in self?.controller.columns.toggle(column) }
             item.state = controller.columns.isVisible(column) ? .on : .off

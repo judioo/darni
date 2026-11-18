@@ -20,6 +20,15 @@ protocol TaskManagerSource: AnyObject {
     /// Ends the process as Chrome's End task does. False: it was not ended
     /// (already gone, or not one of the engine's).
     func endProcess(_ pid: Int32) async -> Bool
+    /// Whether the engine tab is a page of the shell's that can be brought forward.
+    func canShowTab(_ engineTabID: UInt64) -> Bool
+    /// Brings the engine tab's window forward and selects the tab in its space.
+    func showTab(_ engineTabID: UInt64)
+}
+
+extension TaskManagerSource {
+    func canShowTab(_ engineTabID: UInt64) -> Bool { false }
+    func showTab(_ engineTabID: UInt64) {}
 }
 
 /// ReArc itself as the only process: the WebKit shell, and the Chromium
@@ -160,6 +169,19 @@ final class TaskManagerController {
         if !selection.isSubset(of: live) { selection.formIntersection(live) }
     }
 
+    // MARK: Show Tab
+
+    /// A "Tab:" or "Subframe:" row whose tab can be brought forward.
+    @MainActor func canShowTab(of row: TaskManagerRow) -> Bool {
+        row.engineTabID.map(source.canShowTab) ?? false
+    }
+
+    /// Double-click or Show Tab: the row's tab, in its window and space.
+    @MainActor func showTab(of row: TaskManagerRow) {
+        guard let id = row.engineTabID, source.canShowTab(id) else { return }
+        source.showTab(id)
+    }
+
     // MARK: End task
 
     /// The selected processes End task would end: never ReArc itself.
@@ -194,5 +216,12 @@ extension BrowserViewModel {
     func showTaskManager() {
         if taskManagerWindow == nil { taskManagerWindow = TaskManagerWindowController(controller: taskManager) }
         taskManagerWindow?.showWindow(nil)
+    }
+
+    /// The Task Manager's Show Tab: the last focused browser window comes
+    /// forward and shows the tab there (its profile, space and folder open).
+    func showTabFromTaskManager(_ tabID: Tab.ID) {
+        if let window = store.keyWindowID { windowPresenter?.focusBrowserWindow(window) }
+        showTab(tabID)
     }
 }

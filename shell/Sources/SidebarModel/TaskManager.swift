@@ -259,6 +259,13 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
     public var usage: TaskManagerUsage
     public var isKillable: Bool
 
+    /// The engine tab a "Tab:" or "Subframe:" row belongs to: double-click
+    /// or Show Tab brings that tab forward.
+    public var engineTabID: UInt64? {
+        if case .tab(let id) = icon { return id }
+        return nil
+    }
+
     /// The cell's text. A figure of the whole process is blank on every row but the group's first.
     public func text(for column: TaskManagerColumn) -> String {
         if column.isSharedByGroup, !isFirstInGroup { return "" }

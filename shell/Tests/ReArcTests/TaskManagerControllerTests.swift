@@ -34,6 +34,12 @@ private final class FakeTaskManagerSource: TaskManagerSource {
         processes.removeAll { $0.pid == pid }
         return true
     }
+
+    /// Engine tabs that are pages of a space; the others (a private window's) cannot be shown.
+    var showable: Set<UInt64> = []
+    private(set) var shown: [UInt64] = []
+    func canShowTab(_ engineTabID: UInt64) -> Bool { showable.contains(engineTabID) }
+    func showTab(_ engineTabID: UInt64) { shown.append(engineTabID) }
 }
 
 /// Window › Task Manager: the window's state over a made-up process list.
@@ -71,6 +77,32 @@ final class TaskManagerControllerTests: XCTestCase {
     private func settle(_ what: String = "the reading", until condition: () -> Bool) async {
         for _ in 0 ..< 200 where !condition() { await Task.yield() }
         XCTAssertTrue(condition(), "timed out waiting for \(what)")
+    }
+
+    // MARK: Show Tab
+
+    func testShowTabBringsATabOrAFramesTabForwardAndNothingElse() {
+        let source = makeSource()
+        source.showable = [1, 3]
+        source.processes.append(TaskManagerProcess(
+            pid: 320, kind: .renderer, tabIDs: [1],
+            details: .init(mainFrameTabIDs: [], subframeTabIDs: [1], site: "https://accounts.example")
+        ))
+        let controller = makeController(source)
+        controller.category = .all
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
+        let row = { (title: String) in controller.rows.first { $0.title == title }! }
+
+        XCTAssertTrue(controller.canShowTab(of: row("Tab: Mail")))
+        XCTAssertTrue(controller.canShowTab(of: row("Subframe: https://accounts.example")), "a frame shows the tab it sits in")
+        XCTAssertFalse(controller.canShowTab(of: row("Tab: News")), "a page the shell cannot show")
+        XCTAssertFalse(controller.canShowTab(of: row("GPU Process")))
+
+        controller.showTab(of: row("Subframe: https://accounts.example"))
+        controller.showTab(of: row("Tab: News"))
+        controller.showTab(of: row("Browser"))
+        controller.showTab(of: row("Tab: Bank"))
+        XCTAssertEqual(source.shown, [1, 3])
     }
 
     // MARK: Readings

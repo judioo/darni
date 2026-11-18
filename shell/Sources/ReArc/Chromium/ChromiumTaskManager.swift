@@ -53,6 +53,22 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         return TaskManagerProcessControl.terminate(pid)
     }
 
+    /// A tab of a space (not a Little Arc, a private window's or DevTools).
+    func canShowTab(_ engineTabID: UInt64) -> Bool {
+        shellTabID(engineTabID) != nil
+    }
+
+    func showTab(_ engineTabID: UInt64) {
+        guard let id = shellTabID(engineTabID) else { return }
+        model.showTabFromTaskManager(id)
+    }
+
+    private func shellTabID(_ engineTabID: UInt64) -> Tab.ID? {
+        guard let engine = runtime.engine(forTab: engineTabID), !engine.profileKey.isOffTheRecord,
+              model.store.tab(withID: engine.shellID) != nil else { return nil }
+        return engine.shellID
+    }
+
     private func engineProcesses() async -> [ChromiumProcessInfo] {
         guard runtime.isReady, !runtime.isStopping else { return [] }
         return await ChromiumPerfMetrics.shared.processes(withDetails: runtime.capabilities.taskManager)
