@@ -57,10 +57,34 @@ Google Password Manager steps (the enclave, its PIN and recovery windows)
 are reported as "unsupported": they need a signed-in Chrome profile with
 password sync, which a ReArc profile is not.
 
-Built into the release engine on 2026-11-18 (overlay 85a7a97594,
+After the pre-merge security review (security/PRE-passkeys-site-permissions.md,
+2026-11-18):
+- PK-03. A request whose asking frame is no http or https page is cancelled
+  when it reaches a step with UI, as one from a page that is no tab. An
+  extension page may claim any site it has host access to as the relying
+  party (ExtensionCanAssertRpId), and the host's sheet names the relying
+  party, not the asker.
+- PK-05. Each step carries "attestation" (none, model, serial) and
+  "stored_on_key" (no, maybe, yes): Chromium's PossibleAttestationWarning and
+  PossibleResidentKeyWarning on the touch steps, for the host to say before
+  the touch.
+- PK-06. Respond holds the host to what it was told. Any action but cancel
+  is refused while the model's ui_disabled_ is set ("busy"); a published step
+  takes one answer, and the next is for the step published after it; start
+  over on an error step needs offer_try_again_in_ui, as Chromium's error
+  sheets do. Continue on the fingerprint step and on the manual Bluetooth
+  step runs a one-time callback the controller does not null-check
+  (authenticator_request_dialog_controller.cc, OnBioEnrollmentDone and
+  ContinueWithFlowAfterBleAdapterPowered): each is run once per step, since
+  a second run is a CHECK failure that ends the browser.
+
+Built into the release engine on 2026-11-18 (overlay e6f031f180,
 out/ReArc-codecs-arm64): the framework exports both functions and
-engine/tests/check_abi168_imports.py passes. Nothing here has run: the
-flows need the host's sheet on screen, a real phone and a security key.
+engine/tests/check_abi168_imports.py passes. Run on screen with the host's
+sheet on webauthn.io: the choice of ways, the QR code, the security key
+step, "this Mac" up to macOS's Touch ID prompt, cancel, a second request
+and a tab closed in the middle. Not run: a real phone, a security key, and
+so the PIN, fingerprint and error steps.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,
@@ -130,7 +154,7 @@ index 503b6c5..8b2aa0b 100644
  }  // namespace rearc
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index f638567..3e13178 100644
+index f638567..4feedba 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -142,7 +166,7 @@ index f638567..3e13178 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1813,6 +1813,84 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
+@@ -1813,6 +1813,95 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
  REARC_ENGINE_EXPORT void ReArcEngineSetSitePermissionsChangedCallback(
      ReArcSitePermissionsChangedCallback callback, void* context);
  
@@ -159,8 +183,10 @@ index f638567..3e13178 100644
 +// same step again, changed). phase 1: the request is over (done, cancelled,
 +// failed or its page gone); close the sheet, no reply. A request that needs
 +// no dialog (a sign-in page's passkey autofill, a silent failure) sends
-+// nothing at all. Without a callback, and for a page that is no registry tab,
-+// a request that reaches a step with UI is cancelled.
++// nothing at all. Without a callback, for a page that is no registry tab and
++// for an asking frame that is no http or https page (an extension page, which
++// may claim a site it has access to as the relying party), a request that
++// reaches a step with UI is cancelled.
 +//
 +// json is a UTF-8 object; a host ignores keys it does not know and treats a
 +// step it does not know as "unsupported". 64-bit numbers are decimal strings.
@@ -192,6 +218,11 @@ index f638567..3e13178 100644
 +//   "busy": the engine works; only Cancel answers. "can_choose_another":
 +//     start over (5) leads to "choose". "can_try_again": an error step may
 +//     start over.
++//   "attestation": what a touch of a security key tells the site: "none",
++//     "model" (its make and model) or "serial" (enterprise attestation: which
++//     key it is). "stored_on_key": a record of the visit is kept on the key:
++//     "no", "maybe" or "yes". Chromium warns of both on the touch steps
++//     ("security_key", "touch_again"); a host says them before the touch.
 +//   "mechanisms": "index", "kind" ("passkey" with "source", "phone",
 +//     "security_key", "this_mac", "icloud_keychain", "password", "google",
 +//     "other"), "name" and "description" (Chromium's strings; a passkey's
@@ -216,9 +247,13 @@ index f638567..3e13178 100644
 +// "pin" steps; for a new PIN the host has asked twice and compared); 4 choose
 +// accounts[index] ("account"); 5 start over (another way, or try again).
 +// An action the step does not take, and any but cancel while no step with UI
-+// is shown: invalid_state. An index out of range, an empty or over-long PIN,
-+// an unknown action: invalid_argument. A request that is over: not_found.
-+// The next step, or the end, arrives as an event.
++// is shown: invalid_state. Each step event takes one answer: any but cancel
++// while "busy", after the step's answer and before the next event, and a
++// start over on an error step without "can_try_again", is invalid_state too
++// (opening System Settings on "bluetooth_denied" may be repeated). An index
++// out of range, an empty or over-long PIN, an unknown action:
++// invalid_argument. A request that is over: not_found. The next step, or the
++// end, arrives as an event.
 +REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
 +                                                     uint32_t action,
 +                                                     uint32_t index,
@@ -266,10 +301,10 @@ index f8c5938..24a7044 100644
    ABIDetachFind(id);
 diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.cc b/chrome/browser/rearc_bridge/rearc_webauthn.cc
 new file mode 100644
-index 0000000..389182b
+index 0000000..b527a6c
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_webauthn.cc
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,725 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -315,6 +350,7 @@ index 0000000..389182b
 +#include "device/fido/public/fido_types.h"
 +#include "third_party/abseil-cpp/absl/functional/overload.h"
 +#include "url/origin.h"
++#include "url/url_constants.h"
 +
 +namespace rearc {
 +namespace {
@@ -491,6 +527,64 @@ index 0000000..389182b
 +  return "none";
 +}
 +
++// The steps that say a request failed. Chromium's sheets offer "try again"
++// there only while the model's offer_try_again_in_ui holds, and never after a
++// timeout.
++bool IsErrorStep(Step step) {
++  switch (step) {
++    case Step::kCableV2Error:
++    case Step::kClientPinErrorSoftBlock:
++    case Step::kClientPinErrorHardBlock:
++    case Step::kClientPinErrorAuthenticatorRemoved:
++    case Step::kErrorNoAvailableTransports:
++    case Step::kErrorNoPasskeys:
++    case Step::kErrorInternalUnrecognized:
++    case Step::kTimedOut:
++    case Step::kKeyNotRegistered:
++    case Step::kKeyAlreadyRegistered:
++    case Step::kMissingCapability:
++    case Step::kStorageFull:
++      return true;
++    default:
++      return false;
++  }
++}
++
++// What touching a security key tells the site, as Chromium's sheets warn on
++// the touch steps (sheet_models.cc, PossibleAttestationWarning): its make and
++// model, or with enterprise attestation its serial number.
++const char* AttestationName(const Model& model) {
++  if (!model.attestation_conveyance_preference) {
++    return "none";
++  }
++  switch (*model.attestation_conveyance_preference) {
++    case device::AttestationConveyancePreference::kNone:
++      return "none";
++    case device::AttestationConveyancePreference::kIndirect:
++    case device::AttestationConveyancePreference::kDirect:
++      return "model";
++    case device::AttestationConveyancePreference::
++        kEnterpriseIfRPListedOnAuthenticator:
++    case device::AttestationConveyancePreference::kEnterpriseApprovedByBrowser:
++      return "serial";
++  }
++  return "none";
++}
++
++// Whether a record of the visit is kept on the security key (sheet_models.cc,
++// PossibleResidentKeyWarning).
++const char* StoredOnKeyName(const Model& model) {
++  switch (model.resident_key_requirement) {
++    case device::ResidentKeyRequirement::kDiscouraged:
++      return "no";
++    case device::ResidentKeyRequirement::kPreferred:
++      return "maybe";
++    case device::ResidentKeyRequirement::kRequired:
++      return "yes";
++  }
++  return "no";
++}
++
 +void Deliver(uint64_t expected,
 +             uint64_t request_id,
 +             uint64_t tab_id,
@@ -518,7 +612,17 @@ index 0000000..389182b
 +        generation_ = session->content_generation();
 +      }
 +    }
-+    origin_ = frame->GetLastCommittedOrigin().Serialize();
++    const url::Origin& origin = frame->GetLastCommittedOrigin();
++    origin_ = origin.Serialize();
++    // Only a web page gets the host's sheet. An extension page may claim any
++    // site it has host access to as the relying party
++    // (ExtensionCanAssertRpId), and the sheet names the relying party, not
++    // who asks: such a request is cancelled when it reaches a step with UI,
++    // as one from a page that is no tab.
++    if (origin.scheme() != url::kHttpScheme &&
++        origin.scheme() != url::kHttpsScheme) {
++      tab_id_ = 0;
++    }
 +    model_->AddObserver(this);
 +    Prompts().emplace(id_, this);
 +  }
@@ -528,7 +632,11 @@ index 0000000..389182b
 +  bool shown() const { return shown_ && !ended_; }
 +
 +  // Model::Observer:
-+  void OnStepTransition() override { Publish(); }
++  void OnStepTransition() override {
++    // A new step has its own one-time callbacks.
++    spent_ = false;
++    Publish();
++  }
 +  void OnSheetModelChanged() override { Publish(); }
 +  void OnBluetoothPoweredStateChanged() override { Publish(); }
 +  void OnModelDestroyed(Model* model) override {
@@ -573,6 +681,12 @@ index 0000000..389182b
 +    if (model->should_dialog_be_closed()) {
 +      return REARC_INVALID_STATE;
 +    }
++    // While the engine works, Chromium's own buttons are disabled but Cancel;
++    // and a published step takes one answer: the next one is for the step
++    // that follows it.
++    if (model->ui_disabled_ || answered_) {
++      return REARC_INVALID_STATE;
++    }
 +    switch (action) {
 +      case 1:
 +        // The list is on these two steps only (the second shows the first
@@ -584,6 +698,7 @@ index 0000000..389182b
 +        if (index >= model->mechanisms.size()) {
 +          return REARC_INVALID_ARGUMENT;
 +        }
++        answered_ = true;
 +        // A copy: the callback rebuilds the list it is stored in.
 +        base::RepeatingClosure(model->mechanisms[index].callback).Run();
 +        return REARC_OK;
@@ -599,6 +714,7 @@ index 0000000..389182b
 +        if (pin.empty() || pin.size() > 63 || !base::IsStringUTF8(pin)) {
 +          return REARC_INVALID_ARGUMENT;
 +        }
++        answered_ = true;
 +        model->OnHavePIN(base::UTF8ToUTF16(pin));
 +        return REARC_OK;
 +      }
@@ -609,6 +725,7 @@ index 0000000..389182b
 +        if (index >= model->creds.size()) {
 +          return REARC_INVALID_ARGUMENT;
 +        }
++        answered_ = true;
 +        if (step == Step::kSelectAccount) {
 +          model->OnAccountSelected(index);
 +        } else {
@@ -617,10 +734,13 @@ index 0000000..389182b
 +        return REARC_OK;
 +      case 5:
 +        // The request is over once it timed out: Chromium's sheet has only
-+        // Close there.
-+        if (step == Step::kTimedOut) {
++        // Close there. Its other error sheets offer "try again" only while
++        // the model says so.
++        if (step == Step::kTimedOut ||
++            (IsErrorStep(step) && !model->offer_try_again_in_ui)) {
 +          return REARC_INVALID_STATE;
 +        }
++        answered_ = true;
 +        model->StartOver();
 +        return REARC_OK;
 +      default:
@@ -631,35 +751,55 @@ index 0000000..389182b
 + private:
 +  // The sheet's accept button, step by step (chrome/browser/ui/webauthn/
 +  // sheet_models.cc, the OnAccept of each sheet).
-+  static ReArcStatus Continue(Model* model, Step step) {
++  // The flags are set before the call into the model, which can end the
++  // request and delete this object.
++  ReArcStatus Continue(Model* model, Step step) {
 +    switch (step) {
 +      case Step::kSelectPriorityMechanism:
 +        if (!model->priority_mechanism_index ||
 +            *model->priority_mechanism_index >= model->mechanisms.size()) {
 +          return REARC_INVALID_STATE;
 +        }
++        answered_ = true;
 +        model->OnUserConfirmedPriorityMechanism();
 +        return REARC_OK;
 +      case Step::kBlePowerOnManual:
-+        if (!model->ble_adapter_is_powered) {
++        // The controller runs a one-time callback here without a null check.
++        if (!model->ble_adapter_is_powered || spent_) {
 +          return REARC_INVALID_STATE;
 +        }
++        answered_ = true;
++        spent_ = true;
 +        model->ContinueWithFlowAfterBleAdapterPowered();
 +        return REARC_OK;
 +      case Step::kBlePowerOnAutomatic:
++        answered_ = true;
 +        model->PowerOnBleAdapter();
 +        return REARC_OK;
 +      case Step::kBlePermissionMac:
-+        // System Settings > Privacy & Security > Bluetooth.
++        // System Settings > Privacy & Security > Bluetooth. It changes
++        // nothing in the request and may be asked for again.
 +        model->OpenBlePreferences();
 +        return REARC_OK;
 +      case Step::kOffTheRecordInterstitial:
++        answered_ = true;
 +        model->OnOffTheRecordInterstitialAccepted();
 +        return REARC_OK;
 +      case Step::kChromeProfileCreatePasskey:
++        answered_ = true;
 +        model->OnChromeProfileCreatePasskeyAccepted();
 +        return REARC_OK;
 +      case Step::kInlineBioEnrollment:
++        // The controller runs a one-time callback here without a null check
++        // (authenticator_request_dialog_controller.cc, OnBioEnrollmentDone),
++        // and the step stays while the key finishes: a second Continue would
++        // be a CHECK failure. Spent until the step changes, whatever is
++        // published meanwhile.
++        if (spent_) {
++          return REARC_INVALID_STATE;
++        }
++        answered_ = true;
++        spent_ = true;
 +        model->OnBioEnrollmentDone();
 +        return REARC_OK;
 +      default:
@@ -693,6 +833,8 @@ index 0000000..389182b
 +      return;
 +    }
 +    shown_ = true;
++    // What goes out now is what the next answer is for.
++    answered_ = false;
 +    ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 0u, Describe(step)));
 +  }
 +
@@ -723,6 +865,10 @@ index 0000000..389182b
 +    document.Set("busy", model.ui_disabled_);
 +    document.Set("can_choose_another", model.mechanisms.size() > 1);
 +    document.Set("can_try_again", model.offer_try_again_in_ui);
++    // What a touch of a security key gives the site, for the host to say
++    // before the touch.
++    document.Set("attestation", AttestationName(model));
++    document.Set("stored_on_key", StoredOnKeyName(model));
 +
 +    if (step == Step::kMechanismSelection ||
 +        step == Step::kSelectPriorityMechanism) {
@@ -798,6 +944,10 @@ index 0000000..389182b
 +  // A step with UI went to the host; the end of the request does too.
 +  bool shown_ = false;
 +  bool ended_ = false;
++  // The step last published has its answer; the next publish clears it.
++  bool answered_ = false;
++  // This step's one-time callback has run; only a new step clears it.
++  bool spent_ = false;
 +  base::WeakPtrFactory<Prompt> weak_{this};
 +};
 +

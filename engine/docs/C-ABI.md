@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
 ABI **1.68** (major remains 1 for existing hosts), bridge **0.78.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay 85a7a97594, has all three, and 096 and 097 have not run yet). Public header:
+(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2828,7 +2828,7 @@ gated Swift adoption. It passes against the built tree. No host test and no self
 
 ## WebAuthn steps (1.68)
 
-Feature `webauthn_prompts`, patch `tab/097`, built and not yet run. Spec:
+Feature `webauthn_prompts`, patch `tab/097`, built and run on screen (no phone or key yet). Spec:
 [PASSKEYS-AND-SITE-PERMISSIONS](../../docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md), part 1. Chromium shows a
 passkey or security key request in a Views dialog on the tab's `WebContentsModalDialogManager`.
 A bridge tab has none, so before this channel no dialog opened and the request waited until the
@@ -2838,11 +2838,13 @@ the host's answers call the model as the dialog's buttons do.
 | Function | Semantics |
 |---|---|
 | `ReArcEngineSetWebAuthnCallback(callback, context)` | `callback(context, request_id, tab_id, phase, json)`. phase 0: a step; the first one of a request opens the host's sheet, later ones replace what it shows. phase 1: the request is over; close, no reply. Replacing or clearing the callback cancels the requests it was shown. |
-| `ReArcWebAuthnRespond(request, action, index, text)` | 0 cancel (any step); 1 choose `mechanisms[index]`; 2 continue; 3 the PIN in `text` (1 to 63 bytes of UTF-8); 4 choose `accounts[index]`; 5 start over. An action the shown step does not take: `invalid_state`. Bad index, PIN or action: `invalid_argument`. A request that is over: `not_found`. |
+| `ReArcWebAuthnRespond(request, action, index, text)` | 0 cancel (any step); 1 choose `mechanisms[index]`; 2 continue; 3 the PIN in `text` (1 to 63 bytes of UTF-8); 4 choose `accounts[index]`; 5 start over. An action the shown step does not take: `invalid_state`. Each step event takes one answer: any action but cancel while `busy`, or after the step's answer and before the next event, is `invalid_state` too (opening System Settings on `bluetooth_denied` may be repeated). Bad index, PIN or action: `invalid_argument`. A request that is over: `not_found`. |
 
 A request that needs no dialog sends nothing: a sign-in page's passkey autofill request runs on
 every load. Without a callback, and for a page that is no registry tab, a request that reaches a
-step with UI is cancelled, never left waiting.
+step with UI is cancelled, never left waiting. So is one whose asking frame is no http or https
+page: an extension page may claim any site it has host access to as the relying party, and the
+sheet names the relying party, not the asker (security review PK-03).
 
 **Steps** (`step` in the JSON; the names are the ABI's and do not follow Chromium's enum):
 
@@ -2869,7 +2871,17 @@ step with UI is cancelled, never left waiting.
 
 Common keys: `request` (`get` or `create`), `rp_id`, `origin`, `profile_id`,
 `content_generation`, `private`, `busy` (only Cancel answers), `can_choose_another`,
-`can_try_again`.
+`can_try_again` (an error step takes 5 only with it), `attestation` (`none`, `model`: a touch
+tells the site the key's make and model, `serial`: with enterprise attestation, which key it
+is) and `stored_on_key` (`no`, `maybe`, `yes`: a record of the visit is kept on the key).
+Chromium's dialog warns of the last two on `security_key` and `touch_again`; the host says them
+before the touch.
+
+**One answer per step.** The engine holds the host to what it told it (security review PK-06).
+Continue on `fingerprint_enroll` and on the manual `bluetooth_off` runs a one-time callback in
+Chromium that has no null check, so a second one would be a `CHECK` failure that ends the
+browser: each is taken once per step, whatever is published meanwhile. A host disables its
+buttons after an answer until the next event.
 
 **Secrets.** The `qr` text lets a phone join this one request, and a PIN unlocks a security key.
 The host shows the first and sends the second; neither goes to a log, a crash report or disk.
@@ -2884,5 +2896,7 @@ iCloud Keychain needs Apple's `com.apple.developer.web-browser.public-key-creden
 entitlement and is not offered without it. Hybrid needs macOS's Bluetooth permission for the
 app (the `bluetooth_denied` step when it is refused).
 
-**Tests:** the import check above. Nothing in this channel has run: it needs the host's sheet
-on screen, a phone and a security key.
+**Tests:** the import check above. Run on screen on webauthn.io (2026-11-18): the choice of
+ways, the QR code, the security key step, "this Mac" up to macOS's Touch ID prompt, cancel, a
+second request, a tab closed in the middle. Not run: a phone, a security key, and so the PIN,
+fingerprint and error steps, and the refusals above.

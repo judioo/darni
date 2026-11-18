@@ -44,7 +44,7 @@ per-site rule) and WEB_APP_INSTALLATION. Not done: page info's metrics, the
 rules).
 
 Built into the release engine on 2026-11-18 (overlay 3e4292f933, then
-85a7a97594 with tab/097, out/ReArc-codecs-arm64): the framework exports the
+e6f031f180 with tab/097, out/ReArc-codecs-arm64): the framework exports the
 four functions and engine/tests/check_abi168_imports.py passes. Nothing has
 run: no host test, no self-test step, nothing on screen.
 
