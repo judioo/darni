@@ -3398,6 +3398,10 @@ extension ChromiumSelfTest {
                 store.setContentBlocking(saved, for: profileID)
                 model.contentBlockingSettingsChanged()
             }
+            // The tab's first load (run 0) ends before any numbered load starts: its commit
+            // arriving after load 1 began put run 0 back in the sidebar, and a selection
+            // change then reloaded it over load 1.
+            _ = try await blockingFixtureLoad(0, engine)
             @MainActor func settings() -> ContentBlockingSettings { store.contentBlocking(for: profileID) }
             @MainActor func count() -> Int? { model.contentBlocking.blockedCount?(engine) }
             @MainActor func row() throws -> SiteControlCenter.SettingRow {
