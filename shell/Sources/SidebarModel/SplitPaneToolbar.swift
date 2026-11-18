@@ -72,6 +72,12 @@ public struct SplitPaneToolbarLayout: Equatable {
     /// cannot reorder or push away what follows.
     public static func addressParts(_ url: URL?) -> (host: String, rest: String)? {
         guard let url, url.absoluteString != "about:blank" else { return nil }
+        // `blob:` carries its origin's address: its host is shortened from the left like any
+        // other, so a long host under an attacker's domain still shows that domain.
+        if url.scheme?.lowercased() == "blob", let inner = URL(string: String(url.absoluteString.dropFirst("blob:".count))),
+           inner.host()?.isEmpty == false, let parts = addressParts(inner) {
+            return ("blob:" + parts.host, parts.rest)
+        }
         guard let host = url.host(), !host.isEmpty else {
             // No host (`about:blank#…`, `blob:`, `data:`, `file:`, `view-source:`): the first
             // part never truncates, so it is the scheme and what follows up to a `?` or `#`,

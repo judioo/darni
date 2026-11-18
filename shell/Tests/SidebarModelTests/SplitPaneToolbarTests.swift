@@ -88,6 +88,11 @@ final class SplitPaneToolbarTests: XCTestCase {
         let file = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "file:///\(padding)/statement.pdf")))
         XCTAssertLessThanOrEqual(file.host.count, SplitPaneToolbarLayout.hostLimit)
         XCTAssertEqual(file.host + file.rest, "file:///\(padding)/statement.pdf")
+        let blob = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string:
+            "blob:https://accounts.google.com.verify-session.signin.secure-login.portal.evil.example/6f1c-\(padding)")))
+        XCTAssertTrue(blob.host.hasPrefix("blob:…"), blob.host)
+        XCTAssertTrue(blob.host.hasSuffix("evil.example"), blob.host)
+        XCTAssertTrue(blob.rest.hasPrefix("/6f1c-"))
         for url in ["about:blank?\(padding)", "blob:https://a.example/\(padding)", "data:text/html,\(padding)", "view-source:\(padding)"] {
             let parts = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: url)), url)
             XCTAssertLessThanOrEqual(parts.host.count, SplitPaneToolbarLayout.hostLimit, url)
