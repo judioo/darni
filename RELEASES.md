@@ -19,19 +19,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1118.968 — 2026-11-18
-
 **New**
-- Arc's 56 space icons are in ReArc's icon pickers, in Arc's order, followed by the icons ReArc
-  already had (house, briefcase, globe, graduation cap, game controller, cart, brush, hammer,
-  camera, chart, cup). Icons of spaces imported from Arc, such as Arc's code and planet icons, now
-  show instead of nothing. SF Symbols has no planet, egg, pizza or skull, so a globe, an oval, a
-  takeaway bag and theatre masks stand in for them.
-- Library › Spaces: drag a space's ✥ handle, at the foot of its card, to change the order of your
-  spaces, or use the card's ··· menu (Move Left, Move Right). The order is the one the sidebar,
-  ⌃1…9 and the space switcher use.
-- Task Manager: double-click a tab or subframe, or right-click it and choose Show Tab, to see
-  that tab in its window and space.
 - ReArc can block ads and trackers itself, with no extension. A new install has it on, at the
   level Ads and trackers. If you already use ReArc, nothing changes until you turn it on: the
   sidebar offers it once, and the switch is in Settings › Profiles under Your Data and Settings,
@@ -47,6 +35,20 @@ lines and this section starts empty again.
   The request carries no cookie or identifier, and none is made while blocking is off in every
   profile. What was blocked is counted on your Mac only.
 - Your blocking settings sync with the profile when sync is on.
+
+## ReArc 2026.1118.968 — 2026-11-18
+
+**New**
+- Arc's 56 space icons are in ReArc's icon pickers, in Arc's order, followed by the icons ReArc
+  already had (house, briefcase, globe, graduation cap, game controller, cart, brush, hammer,
+  camera, chart, cup). Icons of spaces imported from Arc, such as Arc's code and planet icons, now
+  show instead of nothing. SF Symbols has no planet, egg, pizza or skull, so a globe, an oval, a
+  takeaway bag and theatre masks stand in for them.
+- Library › Spaces: drag a space's ✥ handle, at the foot of its card, to change the order of your
+  spaces, or use the card's ··· menu (Move Left, Move Right). The order is the one the sidebar,
+  ⌃1…9 and the space switcher use.
+- Task Manager: double-click a tab or subframe, or right-click it and choose Show Tab, to see
+  that tab in its window and space.
 
 **Fixes**
 - Swiping to a space (or switching to it any other way) no longer opens a tab by itself. The
