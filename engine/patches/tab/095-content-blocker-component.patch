@@ -1,0 +1,1189 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 built-in content blocking: "ReArc Blocker" component extension (ABI 1.66)
+
+Engine side of docs/FEATURE-SPECS/CONTENT-BLOCKING.md, phase 1. Blocking is
+Chromium's declarativeNetRequest: the lists of a blocklist bundle are the
+static rulesets of a component extension, "ReArc Blocker" (fixed manifest
+key, ID eoaoomnoofleafmoihlpjdhdceloddjm, added to the component allowlist),
+which ComponentLoader loads in every profile the host has switched blocking
+on for. A component extension is not in the extensions page or
+chrome.management and cannot be removed or disabled; it declares no action,
+so it is not in the toolbar (ReArcTabGetExtensionActions also leaves it out
+by ID); it runs in private windows ("incognito": "split", and component
+extensions are always incognito-enabled).
+
+The host owns every setting. ReArcEngineSetBlocklistDirectory names a bundle
+it has verified, ReArcProfileSetContentBlocking the level and lists of a
+profile, ReArcProfileSetBlockingExceptions its excepted sites and
+ReArcProfileSetOwnBlockingRules the person's own rules. The engine keeps
+what it was told in memory only, and a profile the host has said nothing
+about has no blocker: an existing install's pages do not change until the
+host switches blocking on.
+
+What Chromium needed worked around, all in rearc_content_blocker.cc:
+
+- A component extension's rulesets are not indexed at install
+  (ExtensionRegistrar::AddComponentExtension passes no ruleset install
+  prefs), so a ruleset enabled in the manifest fails to load for want of a
+  checksum. The manifest the engine builds enables none; the lists are
+  switched on with RulesMonitorService::UpdateEnabledStaticRulesets, which
+  indexes a ruleset on first use and records its checksum. An empty update
+  first marks the end of the extension's own load, then only the difference
+  between the loaded and the wanted rulesets is applied.
+- The index is written next to the rules (<extension>/_metadata/
+  generated_indexed_rulesets), and the host's bundle may be inside the
+  signed app. The engine copies the rules to
+  <user data dir>/ReArc Blocker/<version> (blocking pool, once per version,
+  a "complete" marker written last) and loads the extension from there.
+- The extension version is the bundle version (202611180857 as
+  2026.1118.857): a new bundle is an update, which clears the old checksums
+  and enabled set in ExtensionPrefs.
+- ComponentLoader::Remove is an uninstall to RulesMonitorService, which
+  deletes the dynamic rules; they are set again from the host's state after
+  every load.
+
+Site exceptions are two dynamic rules with fixed IDs at priority 1000000:
+allowAllRequests for main_frame and sub_frame requests to the hosts, and
+allow for requests the hosts' documents initiate. Own rules take IDs from
+1000 and priorities 11 to 110, above the lists' 1 to 4; only block, allow
+and allowAllRequests are accepted, so synced own rules can never redirect a
+request or change headers.
+
+Blocked counts are ActionTracker's per-tab action count, which a main frame
+navigation resets. With the "action count as badge text" preference set for
+the blocker, ActionTracker hands each change to
+ExtensionsAPIClient::UpdateActionCount; ChromeExtensionsAPIClient passes the
+blocker's to rearc::OnContentBlockerActionCount (it has no ExtensionAction
+to badge), which maps the extension tab ID to the registry tab.
+ReArcTabGetBlockedCount reads it, and ReArcEngineSetBlockedCountCallback
+hears changes together at most every 250 ms.
+
+NOT BUILT. Written against the overlay at 2ba09186f1 from a scratch copy of
+the files below; engine/chromium/src and its out directories were not
+touched. The new file and the four other C++ files (rearc_extension_actions,
+rearc_profile_registry, chrome_extensions_api_client, allowlist) pass
+clang -fsyntax-only with the dev build's flags, plugins and generated
+headers, run from a scratch symlink view of the tree. The two .mm files
+(one line each) were not checked, nothing was linked, and nothing has run:
+the load, the on-demand indexing, the counts and the limits with real lists
+all need an engine build and the self-test steps of the spec's section 8.
+
+Touches: chrome/app/framework.exports, chrome/app/framework.order,
+chrome/browser/BUILD.gn,
+chrome/browser/extensions/api/chrome_extensions_api_client.cc,
+chrome/browser/extensions/component_extensions_allowlist/allowlist.cc,
+chrome/browser/rearc_bridge/{rearc_abi_internal.h, rearc_content_blocker.cc
+(new), rearc_content_blocker.h (new), rearc_engine_abi.h,
+rearc_engine_abi.mm, rearc_engine_entry_mac.mm, rearc_extension_actions.cc,
+rearc_profile_registry.cc}.
+
+Bridge 0.76.0, ABI 1.66, feature content_blocking. No struct changes.
+
+Last rebased: 2026-11-18 onto Chromium 156.0.8078.109 (overlay 2ba09186f1).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 0ab68d4..170cab9 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -44,6 +44,12 @@ _ReArcEngineSetViewPresentationCallback
+ _ReArcMetricsGetHistogram
+ _ReArcEngineGetProcesses
+ _ReArcEngineGetProcessDetails
++_ReArcEngineSetBlocklistDirectory
++_ReArcProfileSetContentBlocking
++_ReArcProfileSetBlockingExceptions
++_ReArcProfileSetOwnBlockingRules
++_ReArcTabGetBlockedCount
++_ReArcEngineSetBlockedCountCallback
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index be0ed9c..05cb8f9 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -51,6 +51,12 @@ _ReArcEngineSetViewPresentationCallback
+ _ReArcMetricsGetHistogram
+ _ReArcEngineGetProcesses
+ _ReArcEngineGetProcessDetails
++_ReArcEngineSetBlocklistDirectory
++_ReArcProfileSetContentBlocking
++_ReArcProfileSetBlockingExceptions
++_ReArcProfileSetOwnBlockingRules
++_ReArcTabGetBlockedCount
++_ReArcEngineSetBlockedCountCallback
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index ca79954..f51bf70 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1486,6 +1486,8 @@ source_set("core") {
+     sources += [
+       "rearc_bridge/browserless_tab_helpers.cc",
+       "rearc_bridge/browserless_tab_helpers.h",
++      "rearc_bridge/rearc_content_blocker.cc",
++      "rearc_bridge/rearc_content_blocker.h",
+       "rearc_bridge/rearc_downloads_abi.cc",
+       "rearc_bridge/rearc_history_abi.cc",
+       "rearc_bridge/rearc_search_abi.cc",
+diff --git a/chrome/browser/extensions/api/chrome_extensions_api_client.cc b/chrome/browser/extensions/api/chrome_extensions_api_client.cc
+index e875b59..0a4a09c 100644
+--- a/chrome/browser/extensions/api/chrome_extensions_api_client.cc
++++ b/chrome/browser/extensions/api/chrome_extensions_api_client.cc
+@@ -16,6 +16,9 @@
+ #include "base/task/single_thread_task_runner.h"
+ #include "build/build_config.h"
+ #include "build/chromeos_buildflags.h"
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/rearc_bridge/rearc_content_blocker.h"
++#endif
+ #include "chrome/browser/extensions/api/automation_internal/chrome_automation_internal_api_delegate.h"
+ #include "chrome/browser/extensions/api/declarative_content/chrome_content_rules_registry.h"
+ #include "chrome/browser/extensions/api/declarative_content/default_content_predicate_evaluators.h"
+@@ -266,6 +269,15 @@ void ChromeExtensionsAPIClient::UpdateActionCount(
+     int tab_id,
+     int action_count,
+     bool clear_badge_text) {
++#if BUILDFLAG(IS_MAC)
++  // ReArc tab/095: the built-in blocker has no toolbar action. Its count of
++  // blocked requests in the tab's page goes to the host.
++  if (rearc::OnContentBlockerActionCount(context, extension_id, tab_id,
++                                         action_count)) {
++    return;
++  }
++#endif
++
+   const Extension* extension =
+       ExtensionRegistry::Get(context)->enabled_extensions().GetByID(
+           extension_id);
+diff --git a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
+index 4fb8aaa..acacc7e 100644
+--- a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
++++ b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
+@@ -64,6 +64,11 @@ bool IsComponentExtensionAllowlisted(const std::string& extension_id) {
+       extension_misc::kIndigoExtensionId,
+       extension_misc::kDictationConnectorExtensionId,
+ #endif  // !BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_MAC)
++      // ReArc tab/095: "ReArc Blocker", rearc::kContentBlockerExtensionId
++      // (chrome/browser/rearc_bridge/rearc_content_blocker.h).
++      "eoaoomnoofleafmoihlpjdhdceloddjm",
++#endif  // BUILDFLAG(IS_MAC)
+   });
+ 
+   if (kAllowed.contains(extension_id)) {
+diff --git a/chrome/browser/rearc_bridge/rearc_abi_internal.h b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+index 9667c06..9a3489e 100644
+--- a/chrome/browser/rearc_bridge/rearc_abi_internal.h
++++ b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+@@ -45,5 +45,8 @@ bool ABIDiscardServicesBusy(uint64_t tab_id);
+ // ABI 1.46 media capture (rearc_media_capture.cc), driven by the services hooks.
+ void ABIAttachMediaCapture(uint64_t tab_id);
+ void ABIDetachMediaCapture(uint64_t tab_id);
++// ABI 1.66 content blocking (rearc_content_blocker.cc): forgets what the host
++// said about a bridge profile that is going away.
++void ABIDetachContentBlocker(uint64_t profile_id);
+ }  // namespace rearc
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
+new file mode 100644
+index 0000000..4286835
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
+@@ -0,0 +1,807 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// content_blocking (ABI 1.66): built-in ad and tracker blocking. The host
++// verifies a blocklist bundle (signature, file hashes) and names its
++// directory. The engine copies the bundle's rules into the user data
++// directory, because declarativeNetRequest writes its index next to the rules
++// and the host's copy may be inside the signed app, and loads them as the
++// static rulesets of a component extension, "ReArc Blocker", in every profile
++// the host has switched blocking on for. Nothing here is the source of truth:
++// the host says which lists, which sites are excepted and which rules are the
++// person's own, at profile load and on every change. A profile the host has
++// said nothing about has no blocker.
++
++#include "chrome/browser/rearc_bridge/rearc_content_blocker.h"
++
++#include <pthread.h>
++
++#include <algorithm>
++#include <iterator>
++#include <map>
++#include <optional>
++#include <set>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/check.h"
++#include "base/files/file_enumerator.h"
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/location.h"
++#include "base/logging.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/no_destructor.h"
++#include "base/one_shot_event.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/task_traits.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "base/values.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/extensions/component_loader.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/rearc_bridge/browserless_tab_helpers.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_engine_abi.h"
++#include "chrome/browser/rearc_bridge/rearc_profile_registry.h"
++#include "chrome/browser/rearc_bridge/tab_registry.h"
++#include "chrome/browser/rearc_bridge/tab_session.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_contents.h"
++#include "extensions/browser/api/declarative_net_request/composite_matcher.h"
++#include "extensions/browser/api/declarative_net_request/prefs_helper.h"
++#include "extensions/browser/api/declarative_net_request/rules_monitor_service.h"
++#include "extensions/browser/api/declarative_net_request/ruleset_manager.h"
++#include "extensions/browser/extension_prefs.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_system.h"
++#include "extensions/common/api/declarative_net_request.h"
++#include "extensions/common/api/declarative_net_request/constants.h"
++#include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/extension_id.h"
++
++namespace rearc {
++namespace {
++
++namespace dnr = extensions::declarative_net_request;
++namespace dnr_api = extensions::api::declarative_net_request;
++
++// The manifest key (a public key; no private half is kept, a component
++// extension is never packed or signed). kContentBlockerExtensionId is its ID.
++constexpr char kManifestKey[] =
++    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvEGC+UlRDi7ecMDhS/vs"
++    "R1QsD4PXCEBReGZluyxm7e30kt7Bk3K5VfBYp06Ag6BSQJkADzzsOeKqc0H0tLN2"
++    "WPnX4qEQ7PZEwYdMF3pRpxo2UNUsy5n3+F9b6gqkdsweL3lc7+cPdZhT3CnPsbpy"
++    "rHSdowFMwt05jYVOxxPLQpj0WCnRtL2wCyOIr9aoJcHb5bLWKLzImr/8Vil9mjAO"
++    "yarlPMvJk/WsaOWu/DhmytgmOZ8SPVwbv3FW140iWOPLCL/VDqUk1CM6jZbIf+TO"
++    "1tBLiOVs33fLsVJ1FKYfKVPf6crY8TIOPC6AW2OkUIjHQU6YWj8HNBrC1769AYG5"
++    "owIDAQAB";
++
++// Rule priorities. A bundle's list rules use 1 to 4 (block, allow, important,
++// important allow: "priorities" in its manifest.json). The person's own rules
++// keep their order and sit above every list rule, and a site exception is
++// above everything.
++constexpr int kMaxOwnRulePriority = 100;
++constexpr int kOwnRulePriorityOffset = 10;
++constexpr int kSiteExceptionPriority = 1000000;
++
++// Dynamic rule IDs. Fixed, so a replacement needs no knowledge of what an
++// earlier session left on disk.
++constexpr int kExceptionFrameRuleId = 1;
++constexpr int kExceptionInitiatorRuleId = 2;
++constexpr int kFirstOwnRuleId = 1000;
++constexpr size_t kMaxOwnRules = 5000;
++constexpr size_t kMaxExceptionHosts = 10000;
++constexpr size_t kMaxLists = 100;  // MAX_NUMBER_OF_STATIC_RULESETS
++constexpr size_t kMaxManifestBytes = 4 * 1024 * 1024;
++constexpr size_t kMaxArgumentBytes = 8 * 1024 * 1024;
++constexpr base::TimeDelta kCountInterval = base::Milliseconds(250);
++
++struct BundleList {
++  std::string id;
++  int level = 0;  // The lowest blocking level that includes it; 0: none does.
++};
++
++// The bundle in use: the engine's copy of what the host named.
++struct Bundle {
++  std::string version;       // YYYYMMDDHHMM, manifest.json "version".
++  base::FilePath directory;  // <user data dir>/ReArc Blocker/<version>.
++  std::vector<BundleList> lists;
++};
++
++// What the host has said about one profile (never an off-the-record one).
++struct ProfileState {
++  int level = 0;
++  bool names_lists = false;  // Else the lists of `level`.
++  std::vector<std::string> list_ids;
++  bool has_exceptions = false;
++  std::vector<std::string> exception_hosts;
++  bool has_own_rules = false;
++  base::ListValue own_rules;  // IDs and priorities already the engine's.
++  // The bundle version whose blocker is loaded in the profile. Empty: none.
++  std::string loaded_version;
++};
++
++std::optional<Bundle>& CurrentBundle() {
++  static base::NoDestructor<std::optional<Bundle>> bundle;
++  return *bundle;
++}
++std::map<uint64_t, ProfileState>& States() {
++  static base::NoDestructor<std::map<uint64_t, ProfileState>> states;
++  return *states;
++}
++// Counts the newest ReArcEngineSetBlocklistDirectory call: the result of an
++// older one is dropped.
++uint64_t g_bundle_request = 0;
++// Bundles are prepared one after another: each run deletes the copies of
++// other versions, which must not be one a second run is writing.
++scoped_refptr<base::SequencedTaskRunner> BundleRunner() {
++  static base::NoDestructor<scoped_refptr<base::SequencedTaskRunner>> runner(
++      base::ThreadPool::CreateSequencedTaskRunner(
++          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
++           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
++  return *runner;
++}
++
++ReArcBlockedCountCallback g_count_callback = nullptr;
++void* g_count_context = nullptr;
++std::map<uint64_t, uint32_t>& Counts() {
++  static base::NoDestructor<std::map<uint64_t, uint32_t>> counts;
++  return *counts;
++}
++std::set<uint64_t>& ChangedCounts() {
++  static base::NoDestructor<std::set<uint64_t>> changed;
++  return *changed;
++}
++
++extensions::ExtensionId BlockerId() {
++  return extensions::ExtensionId(kContentBlockerExtensionId);
++}
++
++bool IsListId(std::string_view id) {
++  return !id.empty() && id.size() <= 63 && id.front() != '-' &&
++         std::ranges::all_of(id, [](char c) {
++           return base::IsAsciiLower(c) || base::IsAsciiDigit(c) || c == '-';
++         });
++}
++
++bool IsBundleVersion(std::string_view version) {
++  return version.size() == 12 &&
++         std::ranges::all_of(version,
++                             [](char c) { return base::IsAsciiDigit(c); });
++}
++
++// "202611180857" as an extension version, "2026.1118.857": three numbers
++// below 65536 that order as the bundle versions do.
++std::string ExtensionVersion(const std::string& version) {
++  unsigned year = 0, day = 0, minute = 0;
++  base::StringToUint(version.substr(0, 4), &year);
++  base::StringToUint(version.substr(4, 4), &day);
++  base::StringToUint(version.substr(8, 4), &minute);
++  return base::NumberToString(year) + "." + base::NumberToString(day) + "." +
++         base::NumberToString(minute);
++}
++
++// A host as declarativeNetRequest takes it: lower-case ASCII (punycode for an
++// international name), no scheme, port, path or brackets.
++bool IsHost(std::string_view host) {
++  return !host.empty() && host.size() <= 253 && host.front() != '.' &&
++         host.back() != '.' && host.front() != '-' &&
++         host.find("..") == std::string_view::npos &&
++         std::ranges::all_of(host, [](char c) {
++           return base::IsAsciiLower(c) || base::IsAsciiDigit(c) || c == '-' ||
++                  c == '.' || c == '_';
++         });
++}
++
++// On BundleRunner(). Reads the host's bundle and makes the engine's copy of
++// its rules, once per bundle version. `keep` is the copy in use until the
++// reply.
++std::optional<Bundle> PrepareBundle(const base::FilePath& source,
++                                    const base::FilePath& root,
++                                    const base::FilePath& keep) {
++  std::string json;
++  if (!base::ReadFileToStringWithMaxSize(source.AppendASCII("manifest.json"),
++                                         &json, kMaxManifestBytes)) {
++    return std::nullopt;
++  }
++  std::optional<base::DictValue> manifest =
++      base::JSONReader::ReadDict(json, base::JSON_PARSE_RFC);
++  if (!manifest) {
++    return std::nullopt;
++  }
++  const std::string* version = manifest->FindString("version");
++  const base::ListValue* lists = manifest->FindList("lists");
++  if (!version || !IsBundleVersion(*version) || !lists || lists->empty() ||
++      lists->size() > kMaxLists) {
++    return std::nullopt;
++  }
++  Bundle bundle;
++  bundle.version = *version;
++  bundle.directory = root.AppendASCII(*version);
++  std::set<std::string> seen;
++  for (const base::Value& value : *lists) {
++    const base::DictValue* entry = value.GetIfDict();
++    const std::string* id = entry ? entry->FindString("id") : nullptr;
++    if (!id || !IsListId(*id) || !seen.insert(*id).second) {
++      return std::nullopt;
++    }
++    bundle.lists.push_back({*id, entry->FindInt("level").value_or(0)});
++  }
++  // The marker is written last: a copy without it was interrupted.
++  const base::FilePath complete = bundle.directory.AppendASCII("complete");
++  if (!base::PathExists(complete)) {
++    base::DeletePathRecursively(bundle.directory);
++    const base::FilePath rules = bundle.directory.AppendASCII("rules");
++    if (!base::CreateDirectory(rules)) {
++      return std::nullopt;
++    }
++    for (const BundleList& list : bundle.lists) {
++      const std::string name = list.id + ".json";
++      if (!base::CopyFile(source.AppendASCII("rules").AppendASCII(name),
++                          rules.AppendASCII(name))) {
++        base::DeletePathRecursively(bundle.directory);
++        return std::nullopt;
++      }
++    }
++    if (!base::WriteFile(complete, bundle.version)) {
++      base::DeletePathRecursively(bundle.directory);
++      return std::nullopt;
++    }
++  }
++  // Copies of other versions, with the indexes Chromium wrote into them.
++  std::vector<base::FilePath> old;
++  base::FileEnumerator copies(root, /*recursive=*/false,
++                              base::FileEnumerator::DIRECTORIES);
++  for (base::FilePath copy = copies.Next(); !copy.empty();
++       copy = copies.Next()) {
++    if (copy != bundle.directory && copy != keep) {
++      old.push_back(copy);
++    }
++  }
++  for (const base::FilePath& copy : old) {
++    base::DeletePathRecursively(copy);
++  }
++  return bundle;
++}
++
++// The component extension's manifest: one static ruleset per list, none on
++// until the host's lists are applied (ApplyRulesets). A component extension's
++// rulesets are not indexed at install as a packed extension's are, and
++// RulesMonitorService indexes a ruleset the first time it is switched on.
++base::DictValue BlockerManifest(const Bundle& bundle) {
++  base::DictValue manifest;
++  manifest.Set("manifest_version", 3);
++  manifest.Set("name", "ReArc Blocker");
++  manifest.Set("description", "ReArc's built-in ad and tracker blocking.");
++  manifest.Set("version", ExtensionVersion(bundle.version));
++  manifest.Set("key", kManifestKey);
++  manifest.Set("incognito", "split");
++  base::ListValue permissions;
++  permissions.Append("declarativeNetRequest");
++  manifest.Set("permissions", std::move(permissions));
++  base::ListValue resources;
++  for (const BundleList& list : bundle.lists) {
++    base::DictValue resource;
++    resource.Set("id", list.id);
++    resource.Set("enabled", false);
++    resource.Set("path", "rules/" + list.id + ".json");
++    resources.Append(std::move(resource));
++  }
++  base::DictValue rulesets;
++  rulesets.Set("rule_resources", std::move(resources));
++  manifest.Set("declarative_net_request", std::move(rulesets));
++  return manifest;
++}
++
++// The profile, its state and its loaded blocker, when all three exist.
++struct Loaded {
++  raw_ptr<Profile> profile = nullptr;
++  raw_ptr<ProfileState> state = nullptr;
++  raw_ptr<const extensions::Extension> extension = nullptr;
++  raw_ptr<dnr::RulesMonitorService> service = nullptr;
++};
++std::optional<Loaded> FindLoaded(uint64_t profile_id) {
++  Profile* profile = FindBridgeProfile(profile_id);
++  auto state = States().find(profile_id);
++  if (!profile || state == States().end() ||
++      state->second.loaded_version.empty()) {
++    return std::nullopt;
++  }
++  const extensions::Extension* extension =
++      extensions::ExtensionRegistry::Get(profile)->enabled_extensions().GetByID(
++          BlockerId());
++  dnr::RulesMonitorService* service = dnr::RulesMonitorService::Get(profile);
++  if (!extension || !service) {
++    return std::nullopt;
++  }
++  return Loaded{profile, &state->second, extension, service};
++}
++
++void LogRuleError(const char* what, std::optional<std::string> error) {
++  if (error) {
++    LOG(ERROR) << "ReArc Blocker: " << what << ": " << *error;
++  }
++}
++
++base::DictValue RuleValue(int id,
++                          int priority,
++                          const char* action,
++                          base::DictValue condition) {
++  base::DictValue rule;
++  rule.Set("id", id);
++  rule.Set("priority", priority);
++  base::DictValue action_value;
++  action_value.Set("type", action);
++  rule.Set("action", std::move(action_value));
++  rule.Set("condition", std::move(condition));
++  return rule;
++}
++
++// Site exceptions: nothing is blocked in a page or frame of an excepted host
++// (allowAllRequests on its document requests) and nothing an excepted host's
++// documents ask for (allow by initiator), above every list and own rule.
++// A host covers its subdomains, as declarativeNetRequest's domain lists do.
++void ApplyExceptions(uint64_t profile_id) {
++  std::optional<Loaded> loaded = FindLoaded(profile_id);
++  if (!loaded || !loaded->state->has_exceptions) {
++    return;
++  }
++  std::vector<dnr_api::Rule> rules;
++  if (!loaded->state->exception_hosts.empty()) {
++    base::ListValue hosts;
++    for (const std::string& host : loaded->state->exception_hosts) {
++      hosts.Append(host);
++    }
++    base::ListValue frames;
++    frames.Append("main_frame");
++    frames.Append("sub_frame");
++    base::DictValue frame_condition;
++    frame_condition.Set("requestDomains", hosts.Clone());
++    frame_condition.Set("resourceTypes", std::move(frames));
++    base::DictValue initiator_condition;
++    initiator_condition.Set("initiatorDomains", std::move(hosts));
++    auto add = [&rules](const base::DictValue& value) {
++      auto rule = dnr_api::Rule::FromValue(value);
++      CHECK(rule.has_value());
++      rules.push_back(std::move(*rule));
++    };
++    add(RuleValue(kExceptionFrameRuleId, kSiteExceptionPriority,
++                  "allowAllRequests", std::move(frame_condition)));
++    add(RuleValue(kExceptionInitiatorRuleId, kSiteExceptionPriority, "allow",
++                  std::move(initiator_condition)));
++  }
++  loaded->service->UpdateDynamicRules(
++      *loaded->extension, {kExceptionFrameRuleId, kExceptionInitiatorRuleId},
++      std::move(rules), base::BindOnce(&LogRuleError, "site exceptions"));
++}
++
++// The person's own rules replace the whole own-rule ID range. Chromium applies
++// a dynamic rule update whole or not at all: a rule it refuses (a regular
++// expression RE2 cannot compile) leaves the earlier own rules in place.
++void ApplyOwnRules(uint64_t profile_id) {
++  std::optional<Loaded> loaded = FindLoaded(profile_id);
++  if (!loaded || !loaded->state->has_own_rules) {
++    return;
++  }
++  std::vector<int> remove;
++  remove.reserve(kMaxOwnRules);
++  for (size_t i = 0; i < kMaxOwnRules; ++i) {
++    remove.push_back(kFirstOwnRuleId + static_cast<int>(i));
++  }
++  std::vector<dnr_api::Rule> rules;
++  for (const base::Value& value : loaded->state->own_rules) {
++    auto rule = dnr_api::Rule::FromValue(value);
++    if (rule.has_value()) {  // Checked when the host set them.
++      rules.push_back(std::move(*rule));
++    }
++  }
++  loaded->service->UpdateDynamicRules(
++      *loaded->extension, std::move(remove), std::move(rules),
++      base::BindOnce(&LogRuleError, "own rules"));
++}
++
++// The manifest IDs of the lists the host wants on in this profile.
++std::vector<std::string> WantedLists(const ProfileState& state,
++                                     const Bundle& bundle) {
++  if (state.names_lists) {
++    return state.list_ids;
++  }
++  std::vector<std::string> ids;
++  for (const BundleList& list : bundle.lists) {
++    if (list.level > 0 && list.level <= state.level) {
++      ids.push_back(list.id);
++    }
++  }
++  return ids;
++}
++
++// Second step of ApplyRulesets, when the blocker's rulesets have loaded:
++// switches on what is wanted and not loaded, and off what is loaded and not
++// wanted. A ruleset that is on stays loaded as it is.
++void ApplyRulesetDifference(uint64_t profile_id,
++                            std::string version,
++                            std::optional<std::string> error) {
++  LogRuleError("lists", std::move(error));
++  std::optional<Loaded> loaded = FindLoaded(profile_id);
++  const std::optional<Bundle>& bundle = CurrentBundle();
++  if (!loaded || !bundle || loaded->state->loaded_version != version ||
++      bundle->version != version) {
++    return;  // Unloaded or replaced since; the newer load applies its own.
++  }
++  const dnr::DNRManifestData::ManifestIDToRulesetMap& rulesets =
++      dnr::DNRManifestData::GetManifestIDToRulesetMap(*loaded->extension);
++  std::set<dnr::RulesetID> wanted;
++  for (const std::string& id : WantedLists(*loaded->state, *bundle)) {
++    auto found = rulesets.find(id);
++    // A list this bundle does not have is skipped.
++    if (found != rulesets.end()) {
++      wanted.insert(found->second->id);
++    }
++  }
++  std::set<dnr::RulesetID> on;
++  if (dnr::CompositeMatcher* matcher =
++          loaded->service->ruleset_manager()->GetMatcherForExtension(
++              loaded->extension->id())) {
++    on = matcher->ComputeStaticRulesetIDs();
++  }
++  std::set<dnr::RulesetID> enable, disable;
++  std::set_difference(wanted.begin(), wanted.end(), on.begin(), on.end(),
++                      std::inserter(enable, enable.begin()));
++  std::set_difference(on.begin(), on.end(), wanted.begin(), wanted.end(),
++                      std::inserter(disable, disable.begin()));
++  if (enable.empty() && disable.empty()) {
++    return;
++  }
++  loaded->service->UpdateEnabledStaticRulesets(
++      *loaded->extension, std::move(disable), std::move(enable),
++      base::BindOnce(&LogRuleError, "lists"));
++}
++
++// Switches the profile's rulesets to the host's lists. The service runs one
++// ruleset update at a time and none before the extension's first load is
++// done, so an empty update is the point at which the loaded set is known.
++void ApplyRulesets(uint64_t profile_id) {
++  std::optional<Loaded> loaded = FindLoaded(profile_id);
++  if (!loaded) {
++    return;
++  }
++  loaded->service->UpdateEnabledStaticRulesets(
++      *loaded->extension, {}, {},
++      base::BindOnce(&ApplyRulesetDifference, profile_id,
++                     loaded->state->loaded_version));
++}
++
++void DeliverCounts() {
++  // Tabs that are gone take their counts with them.
++  std::erase_if(Counts(), [](const auto& entry) {
++    return !TabRegistry::Get().FindSession(entry.first);
++  });
++  std::vector<std::pair<uint64_t, uint32_t>> changed;
++  for (uint64_t tab_id : ChangedCounts()) {
++    auto count = Counts().find(tab_id);
++    if (count != Counts().end()) {
++      changed.emplace_back(tab_id, count->second);
++    }
++  }
++  ChangedCounts().clear();
++  if (changed.empty() || !g_count_callback) {
++    return;
++  }
++  ABIPost(base::BindOnce(
++      [](std::vector<std::pair<uint64_t, uint32_t>> counts) {
++        for (const auto& [tab_id, count] : counts) {
++          if (g_count_callback) {
++            g_count_callback(g_count_context, tab_id, count);
++          }
++        }
++      },
++      std::move(changed)));
++}
++
++// Records a tab's count. The host hears of changes together, at most once
++// per kCountInterval.
++void SetCount(uint64_t tab_id, uint32_t count) {
++  auto [entry, inserted] = Counts().try_emplace(tab_id, 0);
++  if (entry->second == count) {
++    return;
++  }
++  entry->second = count;
++  ChangedCounts().insert(tab_id);
++  static base::NoDestructor<base::OneShotTimer> timer;
++  if (!timer->IsRunning()) {
++    timer->Start(FROM_HERE, kCountInterval, base::BindOnce(&DeliverCounts));
++  }
++}
++
++// The blocker went from `profile`: ActionTracker drops its counts with the
++// rulesets, so the tabs of the profile and of its private windows are at 0.
++void ClearCounts(Profile* profile) {
++  for (uint64_t tab_id : TabRegistry::Get().SessionIds()) {
++    TabSession* session = TabRegistry::Get().FindSession(tab_id);
++    if (!session) {
++      continue;
++    }
++    Profile* owner = Profile::FromBrowserContext(
++        session->web_contents()->GetBrowserContext());
++    if (owner->GetOriginalProfile() == profile) {
++      SetCount(tab_id, 0);
++    }
++  }
++}
++
++// Brings the profile's blocker in line with its state and the bundle in use:
++// loads it, replaces it when the bundle changed, or removes it.
++void ApplyState(uint64_t profile_id) {
++  Profile* profile = FindBridgeProfile(profile_id);
++  auto found = States().find(profile_id);
++  if (!profile || found == States().end()) {
++    return;
++  }
++  ProfileState& state = found->second;
++  extensions::ComponentLoader* loader =
++      extensions::ComponentLoader::Get(profile);
++  if (!loader) {
++    return;
++  }
++  const std::optional<Bundle>& bundle = CurrentBundle();
++  const bool wanted = state.level > 0 && bundle.has_value();
++  if (wanted && state.loaded_version == bundle->version) {
++    ApplyRulesets(profile_id);
++    return;
++  }
++  // Off, or another bundle: the blocker of the old one goes. Chromium treats
++  // a removed component extension as uninstalled and deletes its dynamic
++  // rules, which is why they are set again after every load below.
++  if (loader->Exists(BlockerId())) {
++    loader->Remove(BlockerId());
++    ClearCounts(profile);
++  }
++  state.loaded_version.clear();
++  if (!wanted) {
++    return;
++  }
++  if (loader->Add(BlockerManifest(*bundle), bundle->directory) != BlockerId() ||
++      !extensions::ExtensionRegistry::Get(profile)
++           ->enabled_extensions()
++           .Contains(BlockerId())) {
++    LOG(ERROR) << "ReArc Blocker: bundle " << bundle->version
++               << " did not load";
++    return;
++  }
++  state.loaded_version = bundle->version;
++  // ActionTracker hands the per-tab count of blocked requests to
++  // ExtensionsAPIClient::UpdateActionCount for an extension with this
++  // preference; OnContentBlockerActionCount takes it from there.
++  dnr::PrefsHelper(*extensions::ExtensionPrefs::Get(profile))
++      .SetUseActionCountAsBadgeText(BlockerId(), true);
++  ApplyExceptions(profile_id);
++  ApplyOwnRules(profile_id);
++  ApplyRulesets(profile_id);
++}
++
++// Applies once the profile's extension system is ready: the host may speak
++// for a profile while its extensions are still loading.
++void ScheduleApply(uint64_t profile_id) {
++  Profile* profile = FindBridgeProfile(profile_id);
++  if (!profile) {
++    return;
++  }
++  extensions::ExtensionSystem::Get(profile)->ready().Post(
++      FROM_HERE, base::BindOnce(&ApplyState, profile_id));
++}
++
++void OnBundlePrepared(uint64_t request, std::optional<Bundle> bundle) {
++  if (request != g_bundle_request) {
++    return;  // The host has named another directory since.
++  }
++  if (!bundle) {
++    LOG(ERROR) << "ReArc Blocker: the blocklist directory could not be read "
++                  "or copied; the bundle in use stays";
++    return;
++  }
++  CurrentBundle() = std::move(*bundle);
++  for (const auto& [profile_id, state] : States()) {
++    ScheduleApply(profile_id);
++  }
++}
++
++// The profile a content blocking call is for: a registered profile that is
++// not off the record (private windows follow their profile).
++ReArcStatus CheckProfile(uint64_t profile_id) {
++  Profile* profile = FindBridgeProfile(profile_id);
++  if (!profile) {
++    return REARC_PROFILE_NOT_FOUND;
++  }
++  return profile->IsOffTheRecord() ? REARC_INVALID_ARGUMENT : REARC_OK;
++}
++
++// A JSON array argument, or nullopt when it is not one or is too long.
++std::optional<base::ListValue> ReadList(const char* json) {
++  if (!json) {
++    return std::nullopt;
++  }
++  const std::string_view text(json);
++  if (text.size() > kMaxArgumentBytes) {
++    return std::nullopt;
++  }
++  return base::JSONReader::ReadList(text, base::JSON_PARSE_RFC);
++}
++
++}  // namespace
++
++bool OnContentBlockerActionCount(content::BrowserContext* context,
++                                 const std::string& extension_id,
++                                 int tab_id,
++                                 int action_count) {
++  if (extension_id != kContentBlockerExtensionId) {
++    return false;
++  }
++  CHECK(pthread_main_np());
++  content::WebContents* contents = FindBrowserlessExtensionTab(
++      tab_id, Profile::FromBrowserContext(context)->GetOriginalProfile(),
++      /*include_incognito=*/true);
++  if (!contents) {
++    return true;  // Not a host tab (or closing): nobody shows its count.
++  }
++  for (uint64_t id : TabRegistry::Get().SessionIds()) {
++    TabSession* session = TabRegistry::Get().FindSession(id);
++    if (session && session->web_contents() == contents) {
++      SetCount(id, static_cast<uint32_t>(std::max(action_count, 0)));
++      break;
++    }
++  }
++  return true;
++}
++
++void ABIDetachContentBlocker(uint64_t profile_id) {
++  CHECK(pthread_main_np());
++  States().erase(profile_id);
++}
++
++}  // namespace rearc
++
++ReArcStatus ReArcEngineSetBlocklistDirectory(const char* utf8_path) {
++  CHECK(pthread_main_np());
++  if (!utf8_path) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  const base::FilePath source = base::FilePath::FromUTF8Unsafe(utf8_path);
++  if (!source.IsAbsolute() || source.ReferencesParent()) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  if (!g_browser_process || !g_browser_process->profile_manager()) {
++    return REARC_ENGINE_NOT_READY;
++  }
++  const base::FilePath root =
++      g_browser_process->profile_manager()->user_data_dir().AppendASCII(
++          "ReArc Blocker");
++  const std::optional<rearc::Bundle>& current = rearc::CurrentBundle();
++  rearc::BundleRunner()->PostTaskAndReplyWithResult(
++      FROM_HERE,
++      base::BindOnce(&rearc::PrepareBundle, source, root,
++                     current ? current->directory : base::FilePath()),
++      base::BindOnce(&rearc::OnBundlePrepared, ++rearc::g_bundle_request));
++  return REARC_OK;
++}
++
++ReArcStatus ReArcProfileSetContentBlocking(uint64_t profile_id,
++                                           int32_t level,
++                                           const char* enabled_list_ids_json) {
++  CHECK(pthread_main_np());
++  if (auto status = rearc::CheckProfile(profile_id)) {
++    return status;
++  }
++  if (level < 0 || level > 3) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  std::vector<std::string> ids;
++  if (enabled_list_ids_json) {
++    std::optional<base::ListValue> list =
++        rearc::ReadList(enabled_list_ids_json);
++    if (!list || list->size() > rearc::kMaxLists) {
++      return REARC_INVALID_ARGUMENT;
++    }
++    for (const base::Value& value : *list) {
++      if (!value.is_string() || !rearc::IsListId(value.GetString())) {
++        return REARC_INVALID_ARGUMENT;
++      }
++      ids.push_back(value.GetString());
++    }
++  }
++  rearc::ProfileState& state = rearc::States()[profile_id];
++  state.level = level;
++  state.names_lists = enabled_list_ids_json != nullptr;
++  state.list_ids = std::move(ids);
++  rearc::ScheduleApply(profile_id);
++  return REARC_OK;
++}
++
++ReArcStatus ReArcProfileSetBlockingExceptions(uint64_t profile_id,
++                                              const char* hosts_json) {
++  CHECK(pthread_main_np());
++  if (auto status = rearc::CheckProfile(profile_id)) {
++    return status;
++  }
++  std::optional<base::ListValue> list = rearc::ReadList(hosts_json);
++  if (!list || list->size() > rearc::kMaxExceptionHosts) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  std::set<std::string> hosts;
++  for (const base::Value& value : *list) {
++    if (!value.is_string() || !rearc::IsHost(value.GetString())) {
++      return REARC_INVALID_ARGUMENT;
++    }
++    hosts.insert(value.GetString());
++  }
++  rearc::ProfileState& state = rearc::States()[profile_id];
++  state.has_exceptions = true;
++  state.exception_hosts.assign(hosts.begin(), hosts.end());
++  // With no blocker loaded this waits in the state for the next load.
++  rearc::ApplyExceptions(profile_id);
++  return REARC_OK;
++}
++
++ReArcStatus ReArcProfileSetOwnBlockingRules(uint64_t profile_id,
++                                            const char* dnr_rules_json) {
++  CHECK(pthread_main_np());
++  if (auto status = rearc::CheckProfile(profile_id)) {
++    return status;
++  }
++  std::optional<base::ListValue> list = rearc::ReadList(dnr_rules_json);
++  if (!list || list->size() > rearc::kMaxOwnRules) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  int next_id = rearc::kFirstOwnRuleId;
++  for (base::Value& value : *list) {
++    base::DictValue* rule = value.GetIfDict();
++    const std::string* action =
++        rule ? rule->FindStringByDottedPath("action.type") : nullptr;
++    // Own rules reach the engine through the host's settings and their sync:
++    // they may block and allow, never redirect or rewrite headers.
++    if (!action || (*action != "block" && *action != "allow" &&
++                    *action != "allowAllRequests")) {
++      return REARC_INVALID_ARGUMENT;
++    }
++    const int priority = std::clamp(rule->FindInt("priority").value_or(1), 1,
++                                    rearc::kMaxOwnRulePriority);
++    rule->Set("id", next_id++);
++    rule->Set("priority", priority + rearc::kOwnRulePriorityOffset);
++    if (!rearc::dnr_api::Rule::FromValue(*rule).has_value()) {
++      return REARC_INVALID_ARGUMENT;
++    }
++  }
++  rearc::ProfileState& state = rearc::States()[profile_id];
++  state.has_own_rules = true;
++  state.own_rules = std::move(*list);
++  rearc::ApplyOwnRules(profile_id);
++  return REARC_OK;
++}
++
++uint32_t ReArcTabGetBlockedCount(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  auto count = rearc::Counts().find(tab_id);
++  return count != rearc::Counts().end() &&
++                 rearc::TabRegistry::Get().FindSession(tab_id)
++             ? count->second
++             : 0;
++}
++
++void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
++                                        void* context) {
++  CHECK(pthread_main_np());
++  rearc::g_count_callback = callback;
++  rearc::g_count_context = callback ? context : nullptr;
++}
+diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.h b/chrome/browser/rearc_bridge/rearc_content_blocker.h
+new file mode 100644
+index 0000000..10eaac3
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_content_blocker.h
+@@ -0,0 +1,37 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_REARC_BRIDGE_REARC_CONTENT_BLOCKER_H_
++#define CHROME_BROWSER_REARC_BRIDGE_REARC_CONTENT_BLOCKER_H_
++
++#include <string>
++
++namespace content {
++class BrowserContext;
++}  // namespace content
++
++namespace rearc {
++
++// content_blocking (ABI 1.66): the ID of "ReArc Blocker", the built-in
++// component extension whose declarativeNetRequest rulesets are the blocklists
++// the host names (rearc_content_blocker.cc). It follows from the manifest key
++// there, and chrome/browser/extensions/component_extensions_allowlist/
++// allowlist.cc carries the same string.
++inline constexpr char kContentBlockerExtensionId[] =
++    "eoaoomnoofleafmoihlpjdhdceloddjm";
++
++// From ChromeExtensionsAPIClient::UpdateActionCount: the number of requests
++// `extension_id` has blocked in the page of the tab with extension tab ID
++// `tab_id`, as declarativeNetRequest's ActionTracker counts it (a new page
++// starts again). True for the blocker: the count is the host's then, and the
++// caller must not look for the toolbar action the blocker does not have.
++// Main thread only.
++bool OnContentBlockerActionCount(content::BrowserContext* context,
++                                 const std::string& extension_id,
++                                 int tab_id,
++                                 int action_count);
++
++}  // namespace rearc
++
++#endif  // CHROME_BROWSER_REARC_BRIDGE_REARC_CONTENT_BLOCKER_H_
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 9fb894d..4c800f7 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 65, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 66, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -1684,6 +1684,67 @@ typedef void (*ReArcProcessDetailsCallback)(void* context,
+ REARC_ENGINE_EXPORT ReArcStatus ReArcEngineGetProcessDetails(
+     ReArcProcessDetailsCallback completion, void* context);
+ 
++// Content blocking (content_blocking, ABI 1.66): built-in ad and tracker
++// blocking with Chromium's declarativeNetRequest. The engine loads the lists
++// of a blocklist bundle as the static rulesets of a hidden component
++// extension, "ReArc Blocker" (not in the extensions page, chrome.management
++// or the extension actions; it cannot be removed or disabled; it applies in
++// private windows). The host is the source of truth: it tells the engine the
++// state at profile load and on every change, and a profile it has said
++// nothing about has no blocker. profile_id is never an off-the-record
++// profile (invalid_argument): private windows follow their profile.
++//
++// The directory of a bundle the host has verified (manifest.json and
++// rules/<list id>.json, docs/FEATURE-SPECS/CONTENT-BLOCKING.md section 4):
++// an absolute path, read once. The engine copies the rules into
++// <user data dir>/ReArc Blocker/<version>, where Chromium also writes its
++// index, so the directory may be read-only and inside the app, and the host
++// may delete it once a later call has taken effect. Every profile with
++// blocking on gets the blocker of this bundle; a directory the engine cannot
++// read or copy leaves the bundle in use (logged). Deferred, no completion.
++REARC_ENGINE_EXPORT ReArcStatus ReArcEngineSetBlocklistDirectory(
++    const char* utf8_path);
++// level: 0 off (no blocker in the profile), 1 trackers, 2 ads and trackers,
++// 3 strict. enabled_list_ids_json: a JSON array of the bundle's list ids to
++// switch on, and all others off; null for the lists of the level (a list's
++// "level" in the bundle's manifest.json is the lowest level with it). An id
++// the bundle in use does not have is skipped, and applies when a later bundle
++// has it. Other levels and malformed JSON are invalid_argument.
++REARC_ENGINE_EXPORT ReArcStatus ReArcProfileSetContentBlocking(
++    uint64_t profile_id, int32_t level, const char* enabled_list_ids_json);
++// Replaces the profile's site exceptions. hosts_json: a JSON array of at
++// most 10,000 hosts, lower-case ASCII (punycode), without scheme, port or
++// path; a host covers its subdomains. Nothing is blocked in a page or frame
++// of an excepted host, nor a request one of its documents makes, whatever
++// the lists and the person's own rules say. A change applies to requests
++// from then on; the host reloads the tab. Kept while blocking is off and
++// applied when it is switched on.
++REARC_ENGINE_EXPORT ReArcStatus ReArcProfileSetBlockingExceptions(
++    uint64_t profile_id, const char* hosts_json);
++// Replaces the person's own rules. dnr_rules_json: a JSON array of at most
++// 5,000 declarativeNetRequest rules with action block, allow or
++// allowAllRequests (anything else is invalid_argument: own rules never
++// redirect or change headers). The engine numbers them and keeps the order of
++// their priorities (1 to 100) above every list rule and below the site
++// exceptions. A rule that does not parse is invalid_argument and nothing
++// changes. One Chromium refuses later, at indexing (a regular expression RE2
++// cannot compile), fails the whole replacement and leaves the earlier own
++// rules (logged).
++REARC_ENGINE_EXPORT ReArcStatus ReArcProfileSetOwnBlockingRules(
++    uint64_t profile_id, const char* dnr_rules_json);
++// Requests the blocker has blocked in the tab's current page: a main frame
++// navigation to another document starts again from what blocked that
++// navigation's own request. 0 for an unknown tab and with blocking off.
++// Requests an exception or allow rule let through are not counted.
++REARC_ENGINE_EXPORT uint32_t ReArcTabGetBlockedCount(uint64_t tab_id);
++// The count of a tab changed. Changes are delivered together, at most every
++// 250 ms, each tab with its latest count. Null disables delivery.
++typedef void (*ReArcBlockedCountCallback)(void* context,
++                                          uint64_t tab_id,
++                                          uint32_t blocked_count);
++REARC_ENGINE_EXPORT void ReArcEngineSetBlockedCountCallback(
++    ReArcBlockedCountCallback callback, void* context);
++
+ #ifdef __cplusplus
+ }  // extern "C"
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 1b5c48d..07c8356 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -990,6 +990,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "key_equivalent_events" ||
+          std::string(feature) == "perf_metrics" ||
+          std::string(feature) == "task_manager" ||
++         std::string(feature) == "content_blocking" ||
+          std::string(feature) == "early_window" ||
+          std::string(feature) == "media_capture" ||
+          std::string(feature) == "search_engines" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index e6629d3..9cf2033 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.75.0";
++  return "0.76.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_extension_actions.cc b/chrome/browser/rearc_bridge/rearc_extension_actions.cc
+index 5aa5dd8..ee885af 100644
+--- a/chrome/browser/rearc_bridge/rearc_extension_actions.cc
++++ b/chrome/browser/rearc_bridge/rearc_extension_actions.cc
+@@ -19,6 +19,7 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/rearc_bridge/ipc_tab_events.h"
+ #include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_content_blocker.h"
+ #include "chrome/browser/rearc_bridge/rearc_profile_registry.h"
+ #include "chrome/browser/rearc_bridge/tab_registry.h"
+ #include "chrome/browser/ui/extensions/extension_popup_types.h"  // nogncheck
+@@ -253,6 +254,11 @@ const extensions::Extension* ActionExtension(content::BrowserContext* context,
+                      !extensions::util::IsIncognitoEnabled(id, context))) {
+     return nullptr;
+   }
++  // The built-in blocker is not a toolbar extension (it declares no action
++  // either; this keeps it out whatever its manifest says).
++  if (id == kContentBlockerExtensionId) {
++    return nullptr;
++  }
+   *out = extensions::ExtensionActionManager::Get(context)->GetExtensionAction(
+       *extension);
+   return *out ? extension : nullptr;
+diff --git a/chrome/browser/rearc_bridge/rearc_profile_registry.cc b/chrome/browser/rearc_bridge/rearc_profile_registry.cc
+index 4998198..5edf8b6 100644
+--- a/chrome/browser/rearc_bridge/rearc_profile_registry.cc
++++ b/chrome/browser/rearc_bridge/rearc_profile_registry.cc
+@@ -61,6 +61,7 @@ void UnregisterBridgeProfile(Profile* profile) {
+   ABICancelExtensionTabs(0, BridgeProfileId(profile));
+   DetachExtensionActions(profile);
+   ABIDetachDownloads(BridgeProfileId(profile));
++  ABIDetachContentBlocker(BridgeProfileId(profile));
+   if (BridgeProfileId(profile) == default_id) {
+     default_id = 0;
+   }
