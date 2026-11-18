@@ -23,7 +23,7 @@
 {"id":22,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"&ad_slot="}},
 {"id":23,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"|https://ads.example/exact|"}},
 {"id":24,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"|http://start.example/"}},
-{"id":25,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"swf|"}},
+{"id":25,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":".swf|"}},
 {"id":26,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"/wildcard/*/middle^"}},
 {"id":27,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"||wild.example/*/pixel.gif?"}},
 {"id":28,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"/path/with/%C3%BCnicode"}},

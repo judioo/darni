@@ -8,6 +8,7 @@ key (Ed25519; never the Sparkle key).
 
   build-blocklists.py build --out DIR [--key FILE | --no-sign] [--from-bundle DIR [--raw-dir DIR]]
                             [--lists ID,ID] [--with-regional] [--version YYYYMMDDHHMM]
+                            [--previous DIR] [--allow-count-change] [--public-key FILE]
   build-blocklists.py verify DIR [--public-key FILE]
   build-blocklists.py pack DIR --out DIR [--base-url URL] [--public-key FILE]
   build-blocklists.py install DIR DEST [--public-key FILE]
@@ -18,7 +19,12 @@ build     writes DIR/{manifest.json, manifest.json.sig, rules/<id>.json, raw/<id
           fetches nothing. They are read from that bundle's raw/ or, for a copy without one
           (the app's, the repository's), from --raw-dir, and must match the sha256 its signed
           manifest records, so a release converts exactly what that bundle was built from.
-verify    checks the signature against the committed public key and every file's sha256.
+          Each list is compared with the bundle this one replaces (--previous, by default the
+          repository's shell/Resources/Blocklists): a rule or host count that moved by more than
+          25% fails the build, and the exceptions the list gained are printed. Read them, then
+          build again with --allow-count-change when the move is the list's own.
+verify    checks the signature against the committed public keys (any one of them) and every
+          file's sha256.
 pack      verifies, then writes the mirror files: blocklists-<version>.tar.gz and latest.json
           ({version, url, sha256}). The archive holds what the app uses (no raw/).
 install   verifies, then copies what the app uses (no raw/) to DEST. The repository's
@@ -56,6 +62,28 @@ FORMAT = 1
 MIN_ENGINE = 156
 USER_AGENT = "blocklist-builder/1"
 MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
+# The bundle in the repository: what a new bundle replaces in the app.
+BUILT_IN_BUNDLE = HERE.parent.parent / "Resources" / "Blocklists"
+
+# The lists key signs what the upstream lists say (security CB-04), so the build looks at what
+# it is about to sign.
+# A filter for every site must say something about the address: a pattern with fewer letters
+# than this (anchors and wildcards aside), or one that matches every address in BROAD_PROBES
+# under http or under https, is refused when the rule is an exception or blocks pages and frames.
+MIN_BROAD_PATTERN_CHARS = 4
+BROAD_PROBES = (
+    "example.com/",
+    "a.test/index.html?x=1",
+    "b.example.org/p/q.js",
+    "cdn.example.net/assets/app.css",
+)
+# A list whose rule count or host count moved by more than this share against the bundle it
+# replaces fails the build (--allow-count-change builds it all the same). Moves of up to
+# COUNT_CHANGE_SLACK rules never fail: a list of a few rules doubles by gaining one.
+MAX_COUNT_CHANGE = 0.25
+COUNT_CHANGE_SLACK = 20
+# Exceptions a list gained that the build prints in full; the rest are counted.
+MAX_PRINTED_EXCEPTIONS = 40
 
 # Chromium's limits (extensions/common/api/declarative_net_request.webidl and
 # extensions/browser/api/declarative_net_request/constants.h at the pinned 156).
@@ -412,6 +440,63 @@ def convert_pattern(pattern, condition):
     condition["urlFilter"] = stripped
 
 
+def url_filter_regex(url_filter):
+    """A Python regular expression for a DNR urlFilter (`||` domain anchor, `|` anchors, `*`,
+    `^` separator), as Chromium matches it: close enough to ask what a pattern can match."""
+    prefix, suffix = "", ""
+    if url_filter.startswith("||"):
+        prefix, url_filter = r"^[a-z][a-z0-9+.-]*://(?:[^/?#]*\.)?", url_filter[2:]
+    elif url_filter.startswith("|"):
+        prefix, url_filter = "^", url_filter[1:]
+    if url_filter.endswith("|"):
+        suffix, url_filter = "$", url_filter[:-1]
+    body = "".join(
+        ".*" if char == "*" else r"(?:[^A-Za-z0-9_.%-]|$)" if char == "^" else re.escape(char)
+        for char in url_filter
+    )
+    return prefix + body + suffix
+
+
+def matches_every_address(condition):
+    """True when the rule's urlFilter or regexFilter matches every address in BROAD_PROBES
+    under one scheme, or is shorter than MIN_BROAD_PATTERN_CHARS, or is missing."""
+    if "regexFilter" in condition:
+        text, expression = condition["regexFilter"], condition["regexFilter"]
+    elif "urlFilter" in condition:
+        text = re.sub(r"[|*^]", "", condition["urlFilter"])
+        expression = url_filter_regex(condition["urlFilter"])
+    else:
+        return True
+    if len(text) < MIN_BROAD_PATTERN_CHARS:
+        return True
+    flags = 0 if condition.get("isUrlFilterCaseSensitive") else re.IGNORECASE
+    try:
+        return any(all(re.search(expression, f"{scheme}://{probe}", flags) for probe in BROAD_PROBES)
+                   for scheme in ("https", "http"))
+    except (re.error, RecursionError, OverflowError):
+        return False
+
+
+def is_too_broad(rule):
+    """True for a rule no list should carry (security CB-04): it names no domain, its pattern
+    says next to nothing about the address, and it is an exception (one line then switches
+    blocking off everywhere) or a block rule that takes pages or frames (one line then blocks
+    every page). A block rule for other request kinds is left to the list: it breaks pages,
+    visibly, and blocks nothing a person asked to see."""
+    condition = rule["condition"]
+    if "requestDomains" in condition or "initiatorDomains" in condition:
+        return False
+    if not matches_every_address(condition):
+        return False
+    if rule["action"]["type"] != "block":
+        return True
+    types = condition.get("resourceTypes")
+    if types is not None:
+        return bool({"main_frame", "sub_frame"} & set(types))
+    # Without resourceTypes DNR matches everything but main_frame.
+    return "sub_frame" not in condition.get("excludedResourceTypes", [])
+
+
 def convert_network_filter(text):
     """DNR rules (without ids) for one network filter line. Raises Dropped."""
     exception = text.startswith("@@")
@@ -501,7 +586,7 @@ def convert_network_filter(text):
         rules.append({"priority": priority, "action": {"type": "allowAllRequests"}, "condition": page})
         types = types - {"main_frame"}
         if not types:
-            return rules
+            return refuse_broad(rules)
     if types:
         condition["resourceTypes"] = [kind for kind in ALL_RESOURCE_TYPES if kind in types]
     elif excluded_types:
@@ -514,6 +599,13 @@ def convert_network_filter(text):
         "action": {"type": "allow" if exception else "block"},
         "condition": condition,
     })
+    return refuse_broad(rules)
+
+
+def refuse_broad(rules):
+    """`rules`, unless one of them is too broad to sign: then the whole filter is dropped."""
+    if any(is_too_broad(rule) for rule in rules):
+        raise Dropped("too-broad")
     return rules
 
 
@@ -540,9 +632,11 @@ def new_stats():
     }
 
 
-def convert_list(text, list_format="abp"):
+def convert_list(text, list_format="abp", refused=None):
     """(rules, stats, header) for a filter list's text. Rules get ids from 1 in order: first the
-    rules for whole hosts, merged by everything but the host, then the rest in list order."""
+    rules for whole hosts, merged by everything but the host, then the rest in list order.
+    `refused`: a list that gets the lines dropped as too broad, for the build's log (the stats
+    only count them: they go into the signed manifest, and a list's text does not belong there)."""
     stats = new_stats()
     header = {}
     converted = []  # (line, [rule, ...])
@@ -585,6 +679,8 @@ def convert_list(text, list_format="abp"):
         except Dropped as dropped:
             if dropped.reason == "badfilter":
                 bad.add(re.sub(r"(?:\$|,)badfilter\b", "", line))
+            elif dropped.reason == "too-broad" and refused is not None:
+                refused.append(line)
             stats["dropped"][dropped.reason] = stats["dropped"].get(dropped.reason, 0) + 1
     seen = set()
     host_groups = {}  # condition without the host -> rule
@@ -688,6 +784,8 @@ def validate_rules(rules):
                 bad(key)
         if condition.get("domainType") not in (None, "firstParty", "thirdParty"):
             bad("domainType")
+        if is_too_broad(rule):
+            bad("too broad: no domain and a pattern that matches every address")
 
 
 def rules_json(rules):
@@ -732,6 +830,10 @@ def check_limits(lists):
             problems.append(f"{name}: {len(members)} rulesets enabled together, the limit is {MAX_NUMBER_OF_ENABLED_STATIC_RULESETS}")
         if rules > MAX_RULES_PER_RULESET:
             problems.append(f"{name}: {rules} rules enabled together, above the guaranteed {GUARANTEED_MINIMUM_STATIC_RULES} plus the whole global pool of {MAX_STATIC_RULES_PER_PROFILE}")
+        elif 2 * max(0, rules - GUARANTEED_MINIMUM_STATIC_RULES) > MAX_STATIC_RULES_PER_PROFILE:
+            # On a list update the engine switches the new bundle's lists on before the old
+            # bundle's go (tab/095, security CB-02), each in a blocker of its own.
+            problems.append(f"{name}: {rules} rules; during a list update two bundles are on at once, and twice the {rules - GUARANTEED_MINIMUM_STATIC_RULES} rules above the guaranteed minimum is more than the global pool of {MAX_STATIC_RULES_PER_PROFILE}")
         if regex > MAX_NUMBER_OF_REGEX_RULES:
             problems.append(f"{name}: {regex} regex rules enabled together, the limit is {MAX_NUMBER_OF_REGEX_RULES}")
     return problems, report
@@ -879,20 +981,36 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def fetch(url):
-    """The bytes at an https URL. No cookies, no identifying headers."""
+class HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to another https address (security CB-04): a list fetched over
+    plain http is whatever the network says it is."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.lower().startswith("https://"):
+            raise BuildError(f"{req.full_url}: redirected to {newurl}, which is not https")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+OPENER = urllib.request.build_opener(HttpsOnlyRedirects)
+
+
+def fetch(url, opener=None):
+    """The bytes at an https URL, over https at every hop. No cookies, no identifying headers."""
     if not url.startswith("https://"):
         raise BuildError(f"{url}: only https sources")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/plain, */*"})
     last = None
     for _ in range(3):
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with (opener or OPENER).open(request, timeout=60) as response:
+                final = response.geturl()
                 data = response.read(MAX_DOWNLOAD_BYTES + 1)
                 encoding = response.headers.get("Content-Encoding", "")
         except OSError as error:  # URLError, timeouts, resets
             last = error
             continue
+        if not final.lower().startswith("https://"):
+            raise BuildError(f"{url}: answered from {final}, which is not https")
         if encoding == "gzip":
             data = gzip.decompress(data)
         if len(data) > MAX_DOWNLOAD_BYTES:
@@ -926,11 +1044,39 @@ def new_version(now=None):
     return now.strftime("%Y%m%d%H%M")
 
 
+def count_changes(entry, before):
+    """The counts of a list that moved by more than MAX_COUNT_CHANGE against `before`, the same
+    list's manifest entry in the bundle it replaces, as text. The rule count alone would miss a
+    list of hosts, which is one rule however many hosts it names."""
+    moved = []
+    for key, name in (("count", "rules"), ("request_domains", "hosts")):
+        old, new = before["rules"].get(key, 0), entry["rules"].get(key, 0)
+        change = abs(new - old)
+        if change > COUNT_CHANGE_SLACK and change > MAX_COUNT_CHANGE * old:
+            share = f"{(new - old) / old:+.0%}" if old else "from none"
+            moved.append(f"{old} to {new} {name} ({share})")
+    return moved
+
+
+def exception_keys(rules):
+    """The allow and allowAllRequests rules of a list as comparable text (no id)."""
+    return {
+        json.dumps({key: rule[key] for key in ("priority", "action", "condition")}, sort_keys=True)
+        for rule in rules if rule["action"]["type"] != "block"
+    }
+
+
 def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None, raw_dir=None,
-                 version=None, now=None, fetcher=fetch, log=print):
+                 version=None, now=None, fetcher=fetch, log=print, previous=None,
+                 previous_public_key=None, allow_count_change=False):
     """Writes a bundle to `out` (replaced) and returns its manifest. Raw list text comes from
     `from_bundle`'s raw/ files (a bundle signed by `from_public_key` when that is given), from
-    `raw_dir` (<id>.txt), or from each list's URL."""
+    `raw_dir` (<id>.txt), or from each list's URL.
+
+    `previous`: the bundle this one replaces (signed by `previous_public_key` when that is
+    given). A list whose counts moved by more than MAX_COUNT_CHANGE against it fails the build
+    unless `allow_count_change`, and the exceptions each list gained are logged."""
+    replaced_bundle = previous
     now = now or datetime.datetime.now(datetime.timezone.utc)
     version = version or new_version(now)
     if not re.fullmatch(r"\d{12}", version):
@@ -941,6 +1087,13 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
         previous_manifest = verify_bundle(from_bundle, from_public_key,
                                           require_signature=from_public_key is not None)
         previous = {entry["id"]: entry for entry in previous_manifest["lists"]}
+    replaced, moved = None, []
+    if replaced_bundle:
+        replaced_bundle = Path(replaced_bundle)
+        replaced_manifest = verify_bundle(replaced_bundle, previous_public_key,
+                                          require_signature=previous_public_key is not None)
+        replaced = {entry["id"]: entry for entry in replaced_manifest["lists"]}
+        log(f"comparing with bundle {replaced_manifest['version']} in {replaced_bundle}")
     entries, payload = [], {}
     for item in lists:
         list_id = item["id"]
@@ -966,7 +1119,10 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
             log(f"fetching {list_id}: {item['url']}")
             raw = fetcher(item["url"])
         text = decode_list(raw, list_id)
-        rules, stats, header = convert_list(text, item.get("format", "abp"))
+        refused = []
+        rules, stats, header = convert_list(text, item.get("format", "abp"), refused)
+        for line in refused:
+            log(f"{list_id}: refused as too broad: {line[:200]}")
         if stats["network"] < item.get("min_filters", 0):
             raise BuildError(f"{list_id}: {stats['network']} network filters, expected at least "
                              f"{item['min_filters']} (a cut-off or wrong download?)")
@@ -1008,6 +1164,31 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
         entries.append(entry)
         log(f"{list_id}: {counts['rules']} rules ({counts['regex']} regex) from {stats['converted']} of "
             f"{stats['network']} network filters; dropped {sum(stats['dropped'].values())}")
+        if replaced is None:
+            continue
+        if list_id not in replaced:
+            log(f"{list_id}: not in the bundle this one replaces; nothing to compare")
+            continue
+        for change in count_changes(entry, replaced[list_id]):
+            moved.append(f"{list_id}: {change}")
+        try:
+            before = json.loads((replaced_bundle / "rules" / f"{list_id}.json").read_bytes())
+        except (OSError, ValueError):
+            raise BuildError(f"{replaced_bundle}: rules/{list_id}.json cannot be read") from None
+        gained = sorted(exception_keys(rules) - exception_keys(before))
+        if gained:
+            log(f"{list_id}: {len(gained)} exception(s) the replaced bundle did not have:")
+            for text in gained[:MAX_PRINTED_EXCEPTIONS]:
+                log(f"  {text[:300]}")
+            if len(gained) > MAX_PRINTED_EXCEPTIONS:
+                log(f"  and {len(gained) - MAX_PRINTED_EXCEPTIONS} more")
+    if moved:
+        report = "\n  ".join(moved)
+        if not allow_count_change:
+            raise BuildError(
+                f"a list moved by more than {MAX_COUNT_CHANGE:.0%} against the bundle it replaces:\n  "
+                f"{report}\nRead what changed upstream, then build with --allow-count-change")
+        log(f"lists that moved by more than {MAX_COUNT_CHANGE:.0%} (allowed by --allow-count-change):\n  {report}")
     problems, report = check_limits(entries)
     for name, level in report["levels"].items():
         log(f"level {name}: {level['rules']} rules, {level['regex']} regex, "
@@ -1050,16 +1231,25 @@ def build_bundle(out, lists, *, key=None, from_bundle=None, from_public_key=None
     return manifest
 
 
-def read_public_key(path=None):
+def read_public_keys(path=None):
+    """The lists keys a bundle may be signed with: one base64 key a line, `#` lines are
+    comments. The first is the key in use; a later one is a key being retired or brought in
+    (engine/docs/RELEASE.md "Lists key"). The app accepts the same keys
+    (BlocklistSigningKey.compiledInTexts)."""
     path = Path(path or PUBLIC_KEY_FILE)
     if not path.is_file():
         raise BuildError(f"no public key at {path}")
-    return "".join(path.read_text().split())
+    keys = [line.strip() for line in path.read_text().splitlines()]
+    keys = [line for line in keys if line and not line.startswith("#")]
+    if not keys:
+        raise BuildError(f"no public key in {path}")
+    return keys
 
 
 def verify_bundle(bundle, public_key=None, require_signature=True):
     """The manifest of a bundle whose signature (unless not required) and file hashes hold.
-    Raises BuildError naming the first thing that does not."""
+    `public_key`: one key or several, any of which may have signed; the committed keys when
+    None. Raises BuildError naming the first thing that does not."""
     bundle = Path(bundle)
     manifest_path = bundle / "manifest.json"
     if not manifest_path.is_file():
@@ -1069,7 +1259,10 @@ def verify_bundle(bundle, public_key=None, require_signature=True):
         signature_path = bundle / "manifest.json.sig"
         if not signature_path.is_file():
             raise BuildError(f"{bundle}: no manifest.json.sig")
-        if not verify_signature(manifest_bytes, signature_path.read_text(), public_key or read_public_key()):
+        keys = public_key or read_public_keys()
+        keys = [keys] if isinstance(keys, str) else list(keys)
+        signature = signature_path.read_text()
+        if not any(verify_signature(manifest_bytes, signature, key) for key in keys):
             raise BuildError(f"{bundle}: the signature does not match manifest.json and the lists key")
     try:
         manifest = json.loads(manifest_bytes)
@@ -1171,6 +1364,15 @@ def main(argv=None):
     build.add_argument("--lists", help="comma-separated list ids (default: every non-regional list)")
     build.add_argument("--with-regional", action="store_true")
     build.add_argument("--version", help="YYYYMMDDHHMM (default: now, UTC)")
+    build.add_argument("--previous", type=Path,
+                       help="the signed bundle this one replaces, to compare each list's counts "
+                            "with (default: the repository's shell/Resources/Blocklists)")
+    build.add_argument("--public-key", type=Path,
+                       help="the keys --from-bundle and --previous must be signed with "
+                            "(default: the committed keys)")
+    build.add_argument("--allow-count-change", action="store_true",
+                       help=f"build although a list's rule or host count moved by more than "
+                            f"{MAX_COUNT_CHANGE:.0%} against --previous")
     verify = commands.add_parser("verify", help="check a bundle's signature and file hashes")
     verify.add_argument("bundle", type=Path)
     verify.add_argument("--public-key", type=Path)
@@ -1196,21 +1398,29 @@ def main(argv=None):
                 lists = select_lists([entry["id"] for entry in previous["lists"]], False)
             from_key = None
             if args.from_bundle and not args.from_unsigned:
-                from_key = read_public_key()
+                from_key = read_public_keys(args.public_key)
+            previous = args.previous
+            if previous is None and (BUILT_IN_BUNDLE / "manifest.json").is_file():
+                previous = BUILT_IN_BUNDLE
+            if previous is None:
+                print("no bundle to compare with (--previous): the lists' counts are not checked")
             manifest = build_bundle(
                 args.out, lists, key=None if args.no_sign else args.key, from_bundle=args.from_bundle,
-                from_public_key=from_key, raw_dir=args.raw_dir, version=args.version)
+                from_public_key=from_key, raw_dir=args.raw_dir, version=args.version,
+                previous=previous,
+                previous_public_key=read_public_keys(args.public_key) if previous else None,
+                allow_count_change=args.allow_count_change)
             if not args.no_sign:
                 verify_bundle(args.out, public_key_of(args.key))
             print(f"bundle {manifest['version']} in {args.out}" + (" (unsigned)" if args.no_sign else ""))
         elif args.command == "verify":
-            manifest = verify_bundle(args.bundle, read_public_key(args.public_key))
+            manifest = verify_bundle(args.bundle, read_public_keys(args.public_key))
             print(f"ok: bundle {manifest['version']}, {len(manifest['lists'])} lists")
         elif args.command == "pack":
-            latest = pack_bundle(args.bundle, args.out, args.base_url, read_public_key(args.public_key))
+            latest = pack_bundle(args.bundle, args.out, args.base_url, read_public_keys(args.public_key))
             print(json.dumps(latest))
         elif args.command == "install":
-            manifest = install_bundle(args.bundle, args.destination, read_public_key(args.public_key))
+            manifest = install_bundle(args.bundle, args.destination, read_public_keys(args.public_key))
             print(f"installed bundle {manifest['version']} in {args.destination}")
         elif args.command == "keygen":
             created = generate_key(args.key)

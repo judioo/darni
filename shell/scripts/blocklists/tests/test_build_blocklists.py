@@ -1,5 +1,7 @@
 """The blocklist builder (build-blocklists.py): filter conversion against golden files, dropped
-filter counts, Chromium's DNR limits, the Ed25519 signature and the bundle's file hashes.
+filter counts, Chromium's DNR limits, the Ed25519 signature and the bundle's file hashes, and
+what the build refuses to sign (security CB-04): filters for every site, a list whose counts
+jumped, and a fetch that left https.
 No network: lists come from golden files and throwaway directories, keys are made per test.
 
 Run: python3 -m unittest discover -s shell/scripts/blocklists/tests
@@ -122,10 +124,10 @@ class FilterFormTests(unittest.TestCase):
         self.assertEqual(rule("||ads.example")["condition"], {"urlFilter": "||ads.example"})
 
     def test_third_party_and_first_party(self):
-        self.assertEqual(rule("/a$third-party")["condition"]["domainType"], "thirdParty")
-        self.assertEqual(rule("/a$~third-party")["condition"]["domainType"], "firstParty")
-        self.assertEqual(rule("/a$1p")["condition"]["domainType"], "firstParty")
-        self.assertEqual(rule("/a$~first-party")["condition"]["domainType"], "thirdParty")
+        self.assertEqual(rule("/ads.js$third-party")["condition"]["domainType"], "thirdParty")
+        self.assertEqual(rule("/ads.js$~third-party")["condition"]["domainType"], "firstParty")
+        self.assertEqual(rule("/ads.js$1p")["condition"]["domainType"], "firstParty")
+        self.assertEqual(rule("/ads.js$~first-party")["condition"]["domainType"], "thirdParty")
 
     def test_domain_option_becomes_initiator_domains(self):
         condition = rule("/a$domain=b.example|~c.b.example|A.example")["condition"]
@@ -134,16 +136,16 @@ class FilterFormTests(unittest.TestCase):
 
     def test_resource_types(self):
         self.assertEqual(rule("/a$script,image")["condition"]["resourceTypes"], ["script", "image"])
-        self.assertEqual(rule("/a$xmlhttprequest,subdocument")["condition"]["resourceTypes"],
+        self.assertEqual(rule("/ads.js$xmlhttprequest,subdocument")["condition"]["resourceTypes"],
                          ["sub_frame", "xmlhttprequest"])
 
     def test_only_excluded_types_never_reach_the_main_frame(self):
         # DNR would match main_frame once excludedResourceTypes is given without it.
-        self.assertEqual(rule("/a$~script")["condition"]["excludedResourceTypes"], ["main_frame", "script"])
+        self.assertEqual(rule("/ads.js$~script")["condition"]["excludedResourceTypes"], ["main_frame", "script"])
 
     def test_no_types_leaves_dnr_default_which_skips_the_main_frame(self):
-        self.assertNotIn("resourceTypes", rule("/a")["condition"])
-        self.assertNotIn("excludedResourceTypes", rule("/a")["condition"])
+        self.assertNotIn("resourceTypes", rule("/ads.js")["condition"])
+        self.assertNotIn("excludedResourceTypes", rule("/ads.js")["condition"])
 
     def test_exception_is_an_allow_rule_above_block_rules(self):
         allow = rule("@@||ads.example/ok/")
@@ -151,8 +153,8 @@ class FilterFormTests(unittest.TestCase):
         self.assertGreater(allow["priority"], rule("||ads.example/ok/")["priority"])
 
     def test_important_beats_exceptions(self):
-        self.assertGreater(rule("/a$important")["priority"], rule("@@/a")["priority"])
-        self.assertGreater(rule("@@/a$important")["priority"], rule("/a$important")["priority"])
+        self.assertGreater(rule("/ads.js$important")["priority"], rule("@@/ads.js")["priority"])
+        self.assertGreater(rule("@@/ads.js$important")["priority"], rule("/ads.js$important")["priority"])
 
     def test_list_priorities_stay_below_the_site_exception_priority(self):
         self.assertLess(bb.PRIORITY_IMPORTANT_ALLOW, bb.PRIORITY_SITE_EXCEPTION)
@@ -225,7 +227,7 @@ class FilterFormTests(unittest.TestCase):
         self.assertEqual(stats["cosmetic"], {"hide": 1, "exception": 1, "procedural": 1, "scriptlet": 1})
 
     def test_duplicates_are_counted_once(self):
-        rules, stats, _ = bb.convert_list("/a\n/a\n||b.example^\n||B.example^\n")
+        rules, stats, _ = bb.convert_list("/ads.js\n/ads.js\n||b.example^\n||B.example^\n")
         self.assertEqual(len(rules), 2)
         self.assertEqual((stats["converted"], stats["duplicate"]), (2, 2))
 
@@ -241,7 +243,7 @@ class FilterFormTests(unittest.TestCase):
 
 class ValidateRulesTests(unittest.TestCase):
     def good(self):
-        return {"id": 1, "priority": 1, "action": {"type": "block"}, "condition": {"urlFilter": "/a"}}
+        return {"id": 1, "priority": 1, "action": {"type": "block"}, "condition": {"urlFilter": "/ads/"}}
 
     def test_a_good_rule_passes(self):
         bb.validate_rules([self.good()])
@@ -296,9 +298,17 @@ class LimitTests(TemporaryDirectoryCase):
         self.assertTrue(any(problem.startswith("a: 330001 rules") for problem in problems), problems)
 
     def test_a_level_above_the_guaranteed_rules_plus_the_global_pool(self):
-        problems, _ = bb.check_limits([self.entry("a", 1, 200000), self.entry("b", 3, 200000)])
+        problems, _ = bb.check_limits([self.entry("a", 1, 150000), self.entry("b", 3, 250000)])
         self.assertTrue(any(problem.startswith("strict: 400000 rules") for problem in problems), problems)
         self.assertFalse(any(problem.startswith("trackers:") for problem in problems), problems)
+
+    def test_a_level_two_bundles_of_which_do_not_fit_the_global_pool(self):
+        # A list update has the new bundle's lists on before the old bundle's go (tab/095).
+        fits, _ = bb.check_limits([self.entry("a", 1, 180000)])
+        self.assertEqual(fits, [])
+        problems, _ = bb.check_limits([self.entry("a", 1, 180001)])
+        self.assertTrue(any(problem.startswith("trackers: 180001 rules; during a list update")
+                            for problem in problems), problems)
 
     def test_regional_lists_count_only_towards_all(self):
         problems, report = bb.check_limits([self.entry("a", 1, 10), self.entry("de", 0, 5)])
@@ -331,6 +341,326 @@ class LimitTests(TemporaryDirectoryCase):
     def test_only_https_sources(self):
         with self.assertRaises(bb.BuildError):
             bb.fetch("http://example.org/list.txt")
+
+
+class TooBroadTests(TemporaryDirectoryCase):
+    """Security CB-04: one line of an upstream list must not switch blocking off everywhere or
+    block every page. Such a filter names no domain and next to nothing of the address."""
+
+    def refused(self, text):
+        with self.subTest(text):
+            with self.assertRaises(bb.Dropped) as dropped:
+                bb.convert_network_filter(text)
+            self.assertEqual(dropped.exception.reason, "too-broad", text)
+
+    def test_an_exception_for_every_site_is_refused(self):
+        for text in ("@@.$document", "@@/$document", "@@*$document", "@@$document", "@@.", "@@/$image",
+                     "@@://$script", "@@|http$document", "@@|https://$document,script", "@@.js",
+                     r"@@/^https?:\/\//$document", "@@/.*/$document",
+                     "@@.$document,important", "@@.$document,third-party", "@@.$document,to=~a.example"):
+            self.refused(text)
+
+    def test_a_block_rule_that_takes_every_page_or_frame_is_refused(self):
+        for text in (".$all", ".$document", "/$subdocument", ".", "/", "://", "|http", ".$~script",
+                     "*$document", ".$document,script", r"/^https?:/$document", ".$all,important"):
+            self.refused(text)
+
+    def test_a_short_block_rule_for_other_request_kinds_is_the_lists_own(self):
+        self.assertEqual(rule(".js$script")["condition"], {"urlFilter": ".js", "resourceTypes": ["script"]})
+        self.assertEqual(rule("/a$~subdocument")["condition"],
+                         {"urlFilter": "/a", "excludedResourceTypes": ["main_frame", "sub_frame"]})
+
+    def test_a_domain_makes_a_short_pattern_a_rule(self):
+        self.assertEqual(bb.convert_network_filter("@@.$document,domain=shop.example"), [{
+            "priority": 2, "action": {"type": "allowAllRequests"},
+            "condition": {"initiatorDomains": ["shop.example"], "urlFilter": ".", "resourceTypes": ["main_frame"]}}])
+        self.assertEqual(rule("@@/$image,to=cdn.example")["action"], {"type": "allow"})
+        self.assertEqual(rule(".$subdocument,domain=shop.example")["action"], {"type": "block"})
+        self.assertEqual(rule("@@||page.example^$document")["action"], {"type": "allowAllRequests"})
+
+    def test_a_pattern_that_says_where_stays(self):
+        self.assertEqual(rule("@@/ads.txt")["condition"], {"urlFilter": "/ads.txt"})
+        self.assertEqual(rule("/adframe.$subdocument")["action"], {"type": "block"})
+        self.assertEqual(rule("@@||ads.example/ok/")["action"], {"type": "allow"})
+        self.assertEqual(rule(r"@@/banner\d+\.png$/$image")["action"], {"type": "allow"})
+
+    def test_a_document_exception_with_a_broad_half_goes_whole(self):
+        # $document,script is two rules; neither is kept when the filter is refused.
+        self.refused("@@.$document,script")
+
+    def test_the_check_on_written_rules_refuses_one_too(self):
+        page = {"id": 1, "priority": 2, "action": {"type": "allowAllRequests"},
+                "condition": {"urlFilter": ".", "resourceTypes": ["main_frame"]}}
+        everything = {"id": 1, "priority": 1, "action": {"type": "block"},
+                      "condition": {"regexFilter": "^https?://", "resourceTypes": ["main_frame", "script"]}}
+        no_pattern = {"id": 1, "priority": 2, "action": {"type": "allow"},
+                      "condition": {"domainType": "thirdParty"}}
+        for broken in (page, everything, no_pattern):
+            with self.subTest(broken), self.assertRaises(bb.BuildError) as failure:
+                bb.validate_rules([broken])
+            self.assertIn("too broad", str(failure.exception))
+        bb.validate_rules([dict(page, condition=dict(page["condition"], requestDomains=["a.example"]))])
+
+    def test_the_build_drops_the_line_counts_it_and_says_which(self):
+        lines = []
+        raw = self.raw_dir(dict(RAW, ads=RAW["ads"] + "@@.$document\n.$all\n"))
+        manifest = bb.build_bundle(self.tmp / "bundle", LISTS, raw_dir=raw, now=NOW, log=lines.append)
+        ads = manifest["lists"][1]
+        self.assertEqual(ads["filters"]["dropped"]["too-broad"], 2)
+        self.assertEqual(ads["rules"]["allow_all_requests"], 0)
+        self.assertIn("ads: refused as too broad: @@.$document", lines)
+        self.assertIn("ads: refused as too broad: .$all", lines)
+        rules = json.loads((self.tmp / "bundle/rules/ads.json").read_text())
+        self.assertFalse(any(bb.is_too_broad(entry) for entry in rules))
+
+    def test_the_committed_bundle_has_no_such_rule(self):
+        bundle = REPO / "shell" / "Resources" / "Blocklists"
+        for path in sorted((bundle / "rules").glob("*.json")):
+            broad = [entry for entry in json.loads(path.read_text()) if bb.is_too_broad(entry)]
+            self.assertEqual(broad, [], path.name)
+
+
+def path_filters(count):
+    return "".join(f"/track{index}/pixel.gif\n" for index in range(count))
+
+
+def host_filters(count):
+    return "".join(f"||h{index}.example^\n" for index in range(count))
+
+
+class CountChangeTests(TemporaryDirectoryCase):
+    """Security CB-04: a list whose rule or host count moved by more than a quarter against the
+    bundle it replaces fails the build until someone has read why."""
+
+    def setUp(self):
+        super().setUp()
+        self.signing_key = self.key()
+        self.public = bb.public_key_of(self.signing_key)
+        self.lines = []
+
+    def build(self, name, trackers, ads=RAW["ads"], previous=None, **options):
+        raw = self.tmp / f"raw-{name}"
+        raw.mkdir()
+        (raw / "trackers.txt").write_text(trackers)
+        (raw / "ads.txt").write_text(ads)
+        out = self.tmp / name
+        if previous is not None:
+            options.setdefault("previous_public_key", self.public)
+        bb.build_bundle(out, LISTS, key=self.signing_key, raw_dir=raw, now=NOW, log=self.lines.append,
+                        previous=previous, **options)
+        return out
+
+    def test_a_list_that_moved_a_little_builds(self):
+        before = self.build("before", path_filters(100))
+        self.build("grown", path_filters(125), previous=before)
+        self.build("shrunk", path_filters(75), previous=before)
+        self.assertIn(f"comparing with bundle 202611180930 in {before}", self.lines)
+
+    def test_a_list_that_grew_by_more_than_a_quarter_fails_the_build(self):
+        before = self.build("before", path_filters(100))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("after", path_filters(126), previous=before)
+        self.assertIn("trackers: 100 to 126 rules (+26%)", str(failure.exception))
+        self.assertIn("--allow-count-change", str(failure.exception))
+        self.assertNotIn("ads:", str(failure.exception))
+        self.assertFalse((self.tmp / "after").exists())
+
+    def test_a_list_that_shrank_by_more_than_a_quarter_fails_the_build(self):
+        before = self.build("before", path_filters(100))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("after", path_filters(74), previous=before)
+        self.assertIn("trackers: 100 to 74 rules (-26%)", str(failure.exception))
+
+    def test_a_host_list_is_one_rule_so_its_hosts_are_counted(self):
+        before = self.build("before", host_filters(400))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("after", host_filters(200), previous=before)
+        self.assertIn("trackers: 400 to 200 hosts (-50%)", str(failure.exception))
+        self.assertNotIn("1 to 1 rules", str(failure.exception))
+
+    def test_a_list_that_lost_everything_fails_and_one_that_was_empty_too(self):
+        before = self.build("before", path_filters(100))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("emptied", "! nothing\n", previous=before)
+        self.assertIn("trackers: 100 to 0 rules (-100%)", str(failure.exception))
+        empty = self.build("empty", "! nothing\n")
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("filled", path_filters(100), previous=empty)
+        self.assertIn("trackers: 0 to 100 rules (from none)", str(failure.exception))
+
+    def test_a_few_rules_more_or_less_never_fail(self):
+        before = self.build("before", path_filters(4))
+        self.build("after", path_filters(4 + bb.COUNT_CHANGE_SLACK), previous=before)
+        with self.assertRaises(bb.BuildError):
+            self.build("more", path_filters(5 + bb.COUNT_CHANGE_SLACK), previous=before)
+
+    def test_the_override_builds_and_says_what_moved(self):
+        before = self.build("before", path_filters(100))
+        out = self.build("after", path_filters(200), previous=before, allow_count_change=True)
+        self.assertEqual(bb.verify_bundle(out, self.public)["lists"][0]["rules"]["count"], 200)
+        self.assertTrue(any("trackers: 100 to 200 rules (+100%)" in line and "--allow-count-change" in line
+                            for line in self.lines), self.lines)
+
+    def test_a_list_the_replaced_bundle_does_not_have_is_not_compared(self):
+        raw = self.raw_dir()
+        before = self.tmp / "before"
+        bb.build_bundle(before, LISTS[:1], key=self.signing_key, raw_dir=raw, now=NOW, log=self.lines.append)
+        bb.build_bundle(self.tmp / "after", LISTS, key=self.signing_key, raw_dir=raw, now=NOW,
+                        log=self.lines.append, previous=before, previous_public_key=self.public)
+        self.assertIn("ads: not in the bundle this one replaces; nothing to compare", self.lines)
+
+    def test_the_replaced_bundle_must_be_signed_with_the_lists_key(self):
+        before = self.build("before", path_filters(100))
+        other = bb.public_key_of(self.key("other.key"))
+        with self.assertRaises(bb.BuildError) as failure:
+            self.build("after", path_filters(100), previous=before, previous_public_key=other)
+        self.assertIn("signature", str(failure.exception))
+        manifest = json.loads((before / "manifest.json").read_text())
+        manifest["lists"][0]["rules"]["count"] = 1000
+        (before / "manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaises(bb.BuildError):
+            self.build("again", path_filters(1000), previous=before)
+
+    def test_the_exceptions_a_list_gained_are_printed(self):
+        before = self.build("before", path_filters(100))
+        self.lines.clear()
+        gained = path_filters(100) + "@@||cdn.example/ok/\n@@||shop.example^$document\n"
+        self.build("after", gained, previous=before)
+        self.assertIn("trackers: 2 exception(s) the replaced bundle did not have:", self.lines)
+        printed = [line for line in self.lines if line.startswith("  {")]
+        self.assertEqual(len(printed), 2)
+        self.assertTrue(any('"allowAllRequests"' in line and "shop.example" in line for line in printed))
+        self.assertTrue(any('"urlFilter": "||cdn.example/ok/"' in line for line in printed))
+        self.lines.clear()
+        self.build("same", gained, previous=self.tmp / "after")
+        self.assertFalse(any("exception(s)" in line for line in self.lines), self.lines)
+
+    def test_many_gained_exceptions_are_counted_past_the_first(self):
+        before = self.build("before", path_filters(200))
+        more = bb.MAX_PRINTED_EXCEPTIONS + 5
+        gained = path_filters(200) + "".join(f"@@||cdn.example/ok{index}/\n" for index in range(more))
+        self.build("after", gained, previous=before)
+        self.assertIn(f"trackers: {more} exception(s) the replaced bundle did not have:", self.lines)
+        self.assertIn("  and 5 more", self.lines)
+
+    def test_the_command_compares_with_previous_and_takes_the_override(self):
+        public = self.tmp / "public.txt"
+        public.write_text(self.public + "\n")
+        raw = self.tmp / "raw"
+        raw.mkdir()
+        (raw / "peter-lowe.txt").write_text(host_filters(1200))
+        common = ("--key", self.signing_key, "--raw-dir", raw, "--lists", "peter-lowe", "--public-key", public)
+        first = run("build", "--out", self.tmp / "first", *common, "--previous", self.tmp / "none")
+        self.assertEqual(first.returncode, 1)
+        self.assertIn("no manifest.json", first.stderr)
+        # Against the repository's bundle by default, which these 1,200 hosts are far from.
+        default = run("build", "--out", self.tmp / "first", "--key", self.signing_key, "--raw-dir", raw,
+                      "--lists", "peter-lowe")
+        self.assertEqual(default.returncode, 1)
+        self.assertIn("peter-lowe:", default.stderr)
+        self.assertIn("hosts", default.stderr)
+        first = run("build", "--out", self.tmp / "first", "--key", self.signing_key, "--raw-dir", raw,
+                    "--lists", "peter-lowe", "--allow-count-change")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        (raw / "peter-lowe.txt").write_text(host_filters(2400))
+        second = run("build", "--out", self.tmp / "second", *common, "--previous", self.tmp / "first")
+        self.assertEqual(second.returncode, 1)
+        self.assertIn("peter-lowe: 1200 to 2400 hosts (+100%)", second.stderr)
+        self.assertFalse((self.tmp / "second").exists())
+        allowed = run("build", "--out", self.tmp / "second", *common, "--previous", self.tmp / "first",
+                      "--allow-count-change")
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertIn("peter-lowe: 1200 to 2400 hosts (+100%)", allowed.stdout)
+
+
+class FakeResponse:
+    def __init__(self, url, body=b"||a.example^\n", encoding=""):
+        self.url, self.body, self.headers = url, body, {"Content-Encoding": encoding}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def geturl(self):
+        return self.url
+
+    def read(self, _limit):
+        return self.body
+
+
+class FetchTests(unittest.TestCase):
+    """Security CB-04: a list is fetched over https at every hop."""
+
+    def request(self):
+        return bb.urllib.request.Request("https://lists.example/list.txt")
+
+    def test_a_redirect_that_leaves_https_is_refused(self):
+        handler = bb.HttpsOnlyRedirects()
+        for target in ("http://lists.example/list.txt", "HTTP://lists.example/list.txt",
+                       "ftp://lists.example/list.txt", "//lists.example/list.txt", "/list.txt"):
+            with self.subTest(target), self.assertRaises(bb.BuildError) as failure:
+                handler.redirect_request(self.request(), None, 302, "Found", {}, target)
+            self.assertIn("not https", str(failure.exception))
+
+    def test_a_redirect_to_https_is_followed(self):
+        followed = bb.HttpsOnlyRedirects().redirect_request(
+            self.request(), None, 301, "Moved", {}, "https://mirror.example/list.txt")
+        self.assertEqual(followed.full_url, "https://mirror.example/list.txt")
+
+    def test_fetch_uses_the_https_only_redirects(self):
+        handlers = [type(handler) for handler in bb.OPENER.handlers]
+        self.assertIn(bb.HttpsOnlyRedirects, handlers)
+        # In place of urllib's own redirect handler, not beside it.
+        self.assertEqual([handler for handler in handlers
+                          if issubclass(handler, bb.urllib.request.HTTPRedirectHandler)],
+                         [bb.HttpsOnlyRedirects])
+
+    def test_a_refused_redirect_fails_the_fetch_at_once(self):
+        opener = mock.Mock()
+        opener.open.side_effect = bb.BuildError("redirected to http://x, which is not https")
+        with self.assertRaises(bb.BuildError):
+            bb.fetch("https://lists.example/list.txt", opener=opener)
+        self.assertEqual(opener.open.call_count, 1)
+
+    def test_an_answer_from_another_scheme_is_refused(self):
+        opener = mock.Mock()
+        opener.open.return_value = FakeResponse("http://lists.example/list.txt")
+        with self.assertRaises(bb.BuildError) as failure:
+            bb.fetch("https://lists.example/list.txt", opener=opener)
+        self.assertIn("answered from http://lists.example/list.txt", str(failure.exception))
+
+    def test_an_https_answer_is_returned_and_a_network_error_tried_again(self):
+        opener = mock.Mock()
+        opener.open.side_effect = [OSError("reset"), FakeResponse("https://mirror.example/list.txt")]
+        self.assertEqual(bb.fetch("https://lists.example/list.txt", opener=opener), b"||a.example^\n")
+        self.assertEqual(opener.open.call_count, 2)
+
+    def test_a_redirect_through_a_local_server_to_http_is_refused(self):
+        # The handler inside a real opener: a loopback server answers 302 to an http address.
+        import http.server
+        import threading
+
+        class Redirect(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/plain")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        # fetch itself refuses an http start, so the opener is asked directly.
+        with self.assertRaises(bb.BuildError) as failure:
+            bb.OPENER.open(f"http://127.0.0.1:{server.server_port}/start", timeout=10)
+        self.assertIn("which is not https", str(failure.exception))
 
 
 class BundleTests(TemporaryDirectoryCase):
@@ -586,6 +916,63 @@ class CrossBackendTests(TemporaryDirectoryCase):
         self.assertTrue(bb.verify_signature(b"manifest", from_openssl, openssl_public))
 
 
+class SeveralKeysTests(TemporaryDirectoryCase):
+    """Security CB-05: the lists key can be replaced. For one release a bundle may be signed with
+    either of two keys, the key in use and the one that follows it."""
+
+    def setUp(self):
+        super().setUp()
+        self.old_key, self.new_key = self.key("old.key"), self.key("new.key")
+        self.old_public, self.new_public = bb.public_key_of(self.old_key), bb.public_key_of(self.new_key)
+        self.signed_old, _ = self.bundle("signed-old", key=self.old_key)
+        self.signed_new, _ = self.bundle("signed-new", key=self.new_key)
+
+    def test_a_bundle_verifies_when_any_one_key_signed_it(self):
+        for keys in ([self.old_public, self.new_public], [self.new_public, self.old_public],
+                     (self.new_public, self.old_public)):
+            self.assertEqual(bb.verify_bundle(self.signed_old, keys)["version"], "202611180930")
+            self.assertEqual(bb.verify_bundle(self.signed_new, keys)["version"], "202611180930")
+
+    def test_a_dropped_key_no_longer_verifies(self):
+        bb.verify_bundle(self.signed_new, [self.new_public])
+        with self.assertRaises(bb.BuildError) as failure:
+            bb.verify_bundle(self.signed_old, [self.new_public])
+        self.assertIn("signature", str(failure.exception))
+        stranger = bb.public_key_of(self.key("stranger.key"))
+        with self.assertRaises(bb.BuildError):
+            bb.verify_bundle(self.signed_old, [stranger, self.new_public])
+
+    def test_a_changed_manifest_verifies_with_no_key(self):
+        manifest = self.signed_old / "manifest.json"
+        manifest.write_bytes(manifest.read_bytes().replace(b'"Trackers"', b'"trackers"'))
+        with self.assertRaises(bb.BuildError):
+            bb.verify_bundle(self.signed_old, [self.old_public, self.new_public])
+
+    def test_the_key_file_holds_a_key_a_line(self):
+        path = self.tmp / "keys.txt"
+        path.write_text(f"# the key in use\n{self.new_public}\n\n  # until the next release\n {self.old_public} \n")
+        self.assertEqual(bb.read_public_keys(path), [self.new_public, self.old_public])
+        path.write_text("# none\n\n")
+        with self.assertRaises(bb.BuildError):
+            bb.read_public_keys(path)
+        with self.assertRaises(bb.BuildError):
+            bb.read_public_keys(self.tmp / "missing.txt")
+
+    def test_the_commands_take_a_file_of_several_keys(self):
+        both = self.tmp / "both.txt"
+        both.write_text(f"{self.new_public}\n{self.old_public}\n")
+        only_new = self.tmp / "new.txt"
+        only_new.write_text(f"{self.new_public}\n")
+        self.assertEqual(run("verify", self.signed_old, "--public-key", both).returncode, 0)
+        self.assertEqual(run("verify", self.signed_new, "--public-key", both).returncode, 0)
+        refused = run("verify", self.signed_old, "--public-key", only_new)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("signature", refused.stderr)
+        packed = run("pack", self.signed_old, "--out", self.tmp / "mirror", "--public-key", both)
+        self.assertEqual(packed.returncode, 0, packed.stderr)
+        self.assertEqual(run("pack", self.signed_old, "--out", self.tmp / "mirror2", "--public-key", only_new).returncode, 1)
+
+
 class CommandLineTests(TemporaryDirectoryCase):
     def test_build_verify_pack_install(self):
         key = self.tmp / "keys" / "signing.key"
@@ -595,8 +982,9 @@ class CommandLineTests(TemporaryDirectoryCase):
         self.assertEqual(made.stdout.strip(), public.read_text().strip())
         raw = self.raw_dir({"peter-lowe": "".join(f"||h{i}.example^\n" for i in range(1200))})
         out = self.tmp / "bundle"
+        # --allow-count-change: these 1,200 hosts are compared with the repository's bundle.
         built = run("build", "--out", out, "--key", key, "--raw-dir", raw, "--lists", "peter-lowe",
-                    "--version", "202611180930")
+                    "--version", "202611180930", "--allow-count-change")
         self.assertEqual(built.returncode, 0, built.stderr)
         self.assertIn("peter-lowe: 1 rules", built.stdout)
         verified = run("verify", out, "--public-key", public)
@@ -648,13 +1036,17 @@ class CommittedBundleTests(unittest.TestCase):
     BUNDLE = REPO / "shell" / "Resources" / "Blocklists"
 
     def test_the_public_key_is_an_ed25519_key_and_not_sparkles(self):
-        public = bb.read_public_key()
-        self.assertEqual(len(base64.b64decode(public, validate=True)), 32)
+        keys = bb.read_public_keys()
+        # The key in use, and at most two more while one is brought in or retired (RELEASE.md).
+        self.assertTrue(1 <= len(keys) <= 3, keys)
+        self.assertEqual(len(set(keys)), len(keys))
         sparkle = (REPO / "shell/scripts/release/sparkle-public-key.txt").read_text().strip()
-        self.assertNotEqual(public, sparkle)
+        for public in keys:
+            self.assertEqual(len(base64.b64decode(public, validate=True)), 32)
+            self.assertNotEqual(public, sparkle)
 
     def test_the_built_in_bundle_verifies_against_the_committed_key(self):
-        manifest = bb.verify_bundle(self.BUNDLE, bb.read_public_key())
+        manifest = bb.verify_bundle(self.BUNDLE, bb.read_public_keys())
         self.assertEqual([entry["id"] for entry in manifest["lists"]],
                          ["easyprivacy", "peter-lowe", "easylist", "fanboy-annoyance", "easylist-cookie"])
         for entry in manifest["lists"]:

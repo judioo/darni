@@ -27,7 +27,7 @@
 &ad_slot=
 |https://ads.example/exact|
 |http://start.example/
-swf|
+.swf|
 */wildcard/*/middle^
 ||wild.example/*/pixel.gif?
 /path/with/ünicode
@@ -106,6 +106,12 @@ $removeparam=/^utm_/
 ||excluded-entity.example/x$domain=~shop.*
 $third-party
 *$script
+@@.$document
+@@/$image
+@@|http$document,script
+.$all
+/$subdocument
+://
 ||space example^
 ||bad.example^$elemhide
 ||strict.example^$strict3p

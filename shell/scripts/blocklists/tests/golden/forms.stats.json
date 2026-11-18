@@ -1,8 +1,8 @@
 {
  "stats": {
-  "lines": 127,
+  "lines": 133,
   "comments": 17,
-  "network": 96,
+  "network": 102,
   "converted": 64,
   "duplicate": 3,
   "dropped": {
@@ -19,7 +19,7 @@
    "regex-unsupported": 3,
    "removeparam": 3,
    "response-rewrite": 1,
-   "too-broad": 2,
+   "too-broad": 8,
    "unknown-option": 1,
    "unsupported-option": 1,
    "webrtc": 1
