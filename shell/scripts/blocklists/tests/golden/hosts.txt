@@ -1,0 +1,14 @@
+# Title: Golden hosts
+# comment
+127.0.0.1 localhost
+127.0.0.1 localhost.localdomain
+::1 localhost
+0.0.0.0 0.0.0.0
+
+0.0.0.0 ads.hosts.example
+127.0.0.1 tracker.hosts.example  # trailing comment
+plain.hosts.example
+0.0.0.0 ADS.Hosts.Example
+0.0.0.0 bücher.example
+0.0.0.0 nodots
+0.0.0.0 bad_host!.example
