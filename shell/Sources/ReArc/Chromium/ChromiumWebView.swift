@@ -217,6 +217,7 @@ final class ChromiumHostView: NSView {
         ChromiumRuntime.shared.registerLease(attachment.attachment_id, host: self)
         engine.leaseChanged(attachment.attachment_id, host: self)
         updateVisibility()
+        engine.returnOwedPageFocus()
     }
 
     /// Ends this host's lease. `detach` is false when the engine already
@@ -243,13 +244,13 @@ final class ChromiumHostView: NSView {
         ReArcViewRelease(lease.retained)
         engine.leaseChanged(nil, host: self)
         if pageHadFocus, let window {
-            // The tab's next host (the split pane now showing it) attaches in
-            // the same update; give its page the focus back after that update,
-            // unless something else took focus meanwhile.
-            DispatchQueue.main.async { [engine] in
-                guard window.firstResponder === window, engine.leaseHolder?.window === window else { return }
-                engine.focusPage()
-            }
+            // The tab's next host (the split pane now showing it) gives its page
+            // the focus back, unless something else took focus meanwhile: after
+            // this update when that host attached in it, else when it attaches
+            // (`attach`). A busy Mac attaches it a turn or more later, and the
+            // page then stayed without the keyboard.
+            engine.owePageFocus(in: window)
+            DispatchQueue.main.async { [engine] in engine.returnOwedPageFocus() }
         }
     }
 

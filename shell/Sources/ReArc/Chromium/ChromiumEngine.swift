@@ -163,6 +163,8 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
     @ObservationIgnored let mediaCaptureSubject = CurrentValueSubject<MediaCaptureState, Never>(.idle)
     /// The host holding this tab's single attachment lease.
     @ObservationIgnored private weak var host: ChromiumHostView?
+    /// The focus the tab's next host owes its page (`owePageFocus`).
+    @ObservationIgnored private var owedPageFocus: OwedPageFocus?
     /// Every host currently showing this tab (windows, panes); only `host` is attached.
     @ObservationIgnored private var displayHosts: [WeakHost] = []
 
@@ -1576,6 +1578,41 @@ extension ChromiumEngine: PageFocusing {
     func focusPage() -> Bool {
         leaseHolder?.focusPage() ?? false
     }
+
+    /// The page had the keyboard when its host in `window` let the lease go
+    /// (one page becoming a split pane): the tab's next host there owes it
+    /// the focus, for a short while.
+    func owePageFocus(in window: NSWindow) {
+        owedPageFocus = OwedPageFocus(window: window, until: Date().addingTimeInterval(OwedPageFocus.lifetime))
+    }
+
+    /// Pays `owePageFocus`: once a host in that window holds the lease and
+    /// its page view is up, the page is first responder again. Asked a turn
+    /// after the old host let go and again when a host attaches. Nothing is
+    /// owed any more when something else took the focus, the window went or
+    /// the time passed.
+    func returnOwedPageFocus() {
+        guard let owed = owedPageFocus else { return }
+        guard let window = owed.window, Date() < owed.until, window.firstResponder === window else {
+            owedPageFocus = nil
+            return
+        }
+        guard leaseHolder?.window === window, focusPage() else {
+            ChromiumLog.trace("tab \(tabID) page focus still owed: \(leaseHolder?.window === window ? "its page view is not up" : "no host in the window yet")")
+            return
+        }
+        owedPageFocus = nil
+    }
+}
+
+/// See `ChromiumEngine.owePageFocus`.
+struct OwedPageFocus {
+    /// Long enough for the next host of a busy Mac, short enough that a tab
+    /// shown again later does not take the keyboard by itself.
+    static let lifetime: TimeInterval = 2
+
+    weak var window: NSWindow?
+    var until: Date
 }
 
 extension ChromiumEngine: PageElementLocating {
