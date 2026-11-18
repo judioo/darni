@@ -767,3 +767,29 @@ public struct PasskeyRefusalLog {
         cancelled ? "cancelled when a visible page asked, their page not visible" : "refused, their page not visible"
     }
 }
+
+/// Which first-step lines reach the log, as `PasskeyRefusalLog` does for
+/// refusals: a visible page can start a request and abort it in a loop, one
+/// first step each time (security review of 2026.1118.1027, addendum 3). A
+/// tab's first request's line in full, then a count at the 10th, 100th, 1000th
+/// and so on, and the total when the tab closes if any went unwritten.
+public struct PasskeyFirstStepLog {
+    private var counts: [UInt64: Int] = [:]
+
+    public init() {}
+
+    /// The line to write for this request's first step; nil when it is only counted.
+    public mutating func note(_ line: String, tab: UInt64) -> String? {
+        let count = counts[tab, default: 0] + 1
+        counts[tab] = count
+        if count == 1 { return line }
+        guard PasskeyRefusalLog.hasOwnLine(count) else { return nil }
+        return "passkey requests of tab \(tab) reached their first step: \(count) so far"
+    }
+
+    public mutating func tabClosed(_ tab: UInt64) -> String? {
+        guard let count = counts.removeValue(forKey: tab), !PasskeyRefusalLog.hasOwnLine(count) else { return nil }
+        return "passkey requests of tab \(tab) reached their first step: \(count) in all, the tab has closed"
+    }
+}
+

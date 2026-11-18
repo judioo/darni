@@ -324,4 +324,18 @@ final class PasskeyPromptTests: XCTestCase {
         XCTAssertNil(PasskeyRefusal(json: #"{"refused":"not_visible","at":"somewhere_new","visibility":"hidden"}"#))
         XCTAssertNil(PasskeyRefusal(json: "not json"))
     }
+
+    /// Addendum 3: a visible page starting and aborting requests in a loop writes its
+    /// first-step line once, then counts.
+    func testFirstStepLinesAreLimitedPerTab() {
+        var log = PasskeyFirstStepLog()
+        let written = (1...150).compactMap { log.note("passkey request \($0) of tab 4: first step qr (get), page visible", tab: 4) }
+        XCTAssertEqual(written.count, 3, "the first line, then the 10th and the 100th")
+        XCTAssertEqual(written[0], "passkey request 1 of tab 4: first step qr (get), page visible")
+        XCTAssertEqual(written[2], "passkey requests of tab 4 reached their first step: 100 so far")
+        XCTAssertEqual(log.tabClosed(4), "passkey requests of tab 4 reached their first step: 150 in all, the tab has closed")
+        XCTAssertNil(log.tabClosed(4), "the count went with the tab")
+        XCTAssertEqual(log.note("line", tab: 5), "line", "another tab has its own first line")
+    }
 }
+

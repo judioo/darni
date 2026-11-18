@@ -63,8 +63,9 @@ enum ChromiumPasskeyChannel {
     private static var refusalLog = PasskeyRefusalLog()
     /// The lines written for them.
     private(set) static var refusalLines = 0
-    /// The requests whose first step went to the log.
+    /// The requests whose first step was noted, and which of those lines reach the log.
     private static var logged: Set<UInt64> = []
+    private static var firstStepLog = PasskeyFirstStepLog()
 
     /// At `ready`, before any tab exists, so no request falls to the engine's no-host cancel.
     static func register(runtime: ChromiumRuntime, context: UnsafeMutableRawPointer) {
@@ -91,7 +92,7 @@ enum ChromiumPasskeyChannel {
 
     /// Every tab.closed: what was counted for the tab since its last line.
     static func tabClosed(_ tab: UInt64) {
-        write(refusalLog.tabClosed(tab))
+        write(refusalLog.tabClosed(tab) + [firstStepLog.tabClosed(tab)].compactMap { $0 })
     }
 
     private static func write(_ lines: [String]) {
@@ -103,8 +104,9 @@ enum ChromiumPasskeyChannel {
         events += 1
         if ended {
             logged.remove(request)
-        } else if let step, logged.insert(request).inserted {
-            ChromiumLog.info(step.firstStepLogLine(request: request, tab: tab))
+        } else if let step, logged.insert(request).inserted,
+                  let line = firstStepLog.note(step.firstStepLogLine(request: request, tab: tab), tab: tab) {
+            ChromiumLog.info(line)
         }
         guard let engine = runtime.engine(forTab: tab) else {
             // A tab the shell does not know cannot show a sheet: the conservative answer, at once.
