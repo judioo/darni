@@ -2731,6 +2731,9 @@ blocker. At a profile's first load the engine loads the one blocker whose marker
 bundle in use, and only that one, so Chromium brings up its lists and dynamic rules with the
 extension (one load for both, as the last session left them, until this launch's updates
 end). No marker, one of another version, or both blockers marked: the first ID loads fresh.
+The host may give a profile its level before the bundle it named is copied: the engine then
+loads nothing and leaves the markers as they are. A marker goes only with its blocker (when
+blocking is switched off, or when the other blocker has taken over).
 
 **Held navigations.** While a profile with a level above 0 has no ready blocker (a fresh
 load, or no bundle named yet), its http and https navigations, main frames and subframes,

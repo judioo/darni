@@ -209,4 +209,29 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
         XCTAssertEqual(SelfTestBlockingFixture.readyMarkers(inPreferences: [Data("not json".utf8)]), [nil, nil])
         XCTAssertEqual(SelfTestBlockingFixture.readyMarkers(inPreferences: []), [nil, nil])
     }
+
+    /// Every cold launch is the same shell profile, so on a used user data
+    /// folder the engine opens the folder the first launch adopted. A profile
+    /// with a new ID gets a named folder of its own there: such a launch met
+    /// nothing of the last session's blocker, and "the same profile again"
+    /// passed without testing it.
+    func testColdLaunchesShareOneEngineProfile() {
+        let id = SelfTestBlockingFixture.coldProfileID
+        XCTAssertEqual(SidebarStore(defaultProfileID: id).profiles.map(\.id), [id])
+        XCTAssertEqual(SidebarStore(defaultProfileID: id).spaces.map(\.profileID), [id])
+        let engine = ChromiumProfileStoragePlan.Engine(canOpenDirectory: true, startupDirectory: ChromiumProfileStorageMap.defaultDirectory)
+        func plan(_ profile: UUID, _ map: ChromiumProfileStorageMap) -> ChromiumProfileStoragePlan {
+            ChromiumProfileStoragePlan.plan(for: profile, map: map, legacyOwner: profile, engine: engine, namedDirectoryExists: { _ in false })
+        }
+        var map = ChromiumProfileStorageMap()
+        XCTAssertEqual(plan(id, map), .adoptDefault)
+        map.recordDirectory(ChromiumProfileStorageMap.defaultDirectory, for: id)
+        XCTAssertEqual(plan(id, map), .directory(ChromiumProfileStorageMap.defaultDirectory))
+        let other = UUID()
+        let key = ChromiumProfileKey.storageKey(for: other)
+        XCTAssertEqual(plan(other, map), .named(key))
+        let folder = ChromiumProfileStoragePlan.namedDirectoryName(forKey: key)
+        XCTAssertEqual(SelfTestBlockingFixture.namedProfileFolders(in: ["Default", folder, "System Profile", "ReArc Blocker"]), [folder])
+        XCTAssertEqual(SelfTestBlockingFixture.namedProfileFolders(in: ["Default", "ReArc Blocker", "Local State"]), [])
+    }
 }

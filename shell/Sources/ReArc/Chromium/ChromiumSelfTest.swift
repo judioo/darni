@@ -1171,8 +1171,18 @@ final class ChromiumSelfTest {
         }
         try checkOneLease(engineA, "split pane A")
         try checkOneLease(companion, "split companion")
-        try await wait("tab A's page focused again in its split pane", timeout: 5) {
-            engineA.leaseHolder?.pageKeyView.map { first.firstResponder === $0 } ?? false
+        do {
+            try await wait("tab A's page focused again in its split pane", timeout: 5) {
+                engineA.leaseHolder?.pageKeyView.map { first.firstResponder === $0 } ?? false
+            }
+        } catch {
+            // Who has the focus instead, and whether this app and window could take it at all.
+            let responder = first.firstResponder.map { $0 === first ? "the window itself" : NSStringFromClass(Swift.type(of: $0)) } ?? "none"
+            throw Failure(description: "\(error); first responder: \(responder); window key \(first.isKeyWindow), app active \(NSApp.isActive), "
+                + "key window '\(NSApp.keyWindow?.title ?? "none")', frontmost \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "none") "
+                + "(pid \(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0), this is \(ProcessInfo.processInfo.processIdentifier)), "
+                + "attached sheet \(first.attachedSheet.map { NSStringFromClass(Swift.type(of: $0)) } ?? "none"), "
+                + "windows: \(NSApp.windows.filter(\.isVisible).map { "\(NSStringFromClass(Swift.type(of: $0))) '\($0.title)'" }.joined(separator: ", "))")
         }
         log("PASS Split View: tab \(engineA.tabID) lease \(engineA.attachmentID ?? 0) and companion tab \(companion.tabID) "
             + "lease \(companion.attachmentID ?? 0) attached side by side in window 1")
@@ -3616,14 +3626,24 @@ extension ChromiumSelfTest {
             let told = lines.filter { $0.contains("COLD-BLOCKING") || $0.contains("ReArc Blocker") }
             for line in told { log("cold launch, \(label): \(line)") }
             guard child.status == 0, let passed = told.last(where: { $0.contains("COLD-BLOCKING PASS") }) else {
+                // The launch's own account of blocking (bundles, list checks, what the engine was
+                // told), which is otherwise only in its log; the log itself stays for the reader.
+                for line in lines.filter({ $0.contains("content blocking:") }).suffix(40) { log("cold launch, \(label): \(line)") }
                 let failed = lines.filter { $0.contains("FAIL") }.suffix(4).joined(separator: " | ")
-                throw Failure(description: "content blocking cold launch, \(label), ended with status \(child.status): "
+                throw Failure(description: "content blocking cold launch, \(label), ended with status \(child.status) (its log: \(child.log.path)): "
                     + (failed.isEmpty ? String(child.output.suffix(600)) : failed))
             }
+            try? FileManager.default.removeItem(at: child.log)
             return "\(label): " + (passed.components(separatedBy: "COLD-BLOCKING PASS").last?.trimmingCharacters(in: .whitespaces) ?? "")
         }
         /// The engine's markers after a launch, slot 0 first, against what they must be.
         @MainActor func expectMarkers(_ profile: URL, _ wanted: [String?], _ label: String, _ why: String) throws {
+            // One engine profile for every launch on this folder: a second one means the launch did
+            // not meet the blocker of the launches before it, and its markers would be read beside theirs.
+            let folders = (try? FileManager.default.contentsOfDirectory(atPath: profile.path)) ?? []
+            let named = SelfTestBlockingFixture.namedProfileFolders(in: folders)
+            try check(named.isEmpty, "content blocking cold launch, \(label): the launch ran in an engine profile of its own "
+                + "(\(named.joined(separator: ", "))) instead of the folder's first one")
             let found = Self.readyMarkers(userDataDir: profile)
             try check(found == wanted, "content blocking cold launch, \(label): the engine's ready-blocker markers are "
                 + "\(found.map { $0 ?? "none" }), not \(wanted.map { $0 ?? "none" }): \(why)")
@@ -3737,14 +3757,16 @@ extension ChromiumSelfTest {
     }
 
     /// Runs this executable again as the cold launch for blocking and waits
-    /// for it to end. Its output goes to a file, so a full pipe cannot stall it.
+    /// for it to end. Its output goes to a file, so a full pipe cannot stall
+    /// it. The file (`log`) is the caller's to delete: a launch that failed
+    /// leaves it, and the failure names it.
     @MainActor
-    private func runColdLaunch(executable: URL, arguments: [String], timeout: TimeInterval) async throws -> (status: Int32, output: String) {
+    private func runColdLaunch(executable: URL, arguments: [String], timeout: TimeInterval) async throws
+        -> (status: Int32, output: String, log: URL) {
         let logFile = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-\(UUID().uuidString).log")
         guard FileManager.default.createFile(atPath: logFile.path, contents: nil) else {
             throw Failure(description: "could not create the cold launch's log \(logFile.path)")
         }
-        defer { try? FileManager.default.removeItem(at: logFile) }
         let output = try FileHandle(forWritingTo: logFile)
         defer { try? output.close() }
         let process = Process()
@@ -3758,11 +3780,12 @@ extension ChromiumSelfTest {
             if Date() > deadline {
                 process.terminate()
                 let tail = String(decoding: (try? Data(contentsOf: logFile)) ?? Data(), as: UTF8.self).suffix(600)
-                throw Failure(description: "the cold launch for blocking was still running after \(Int(timeout)) s: \(tail)")
+                throw Failure(description: "the cold launch for blocking was still running after \(Int(timeout)) s "
+                    + "(its log: \(logFile.path)): \(tail)")
             }
             try await Task.sleep(for: .milliseconds(200))
         }
-        return (process.terminationStatus, String(decoding: (try? Data(contentsOf: logFile)) ?? Data(), as: UTF8.self))
+        return (process.terminationStatus, String(decoding: (try? Data(contentsOf: logFile)) ?? Data(), as: UTF8.self), logFile)
     }
 
     /// The cold launch itself (`--rearc-selftest-cold-blocking`), in place
@@ -3795,15 +3818,22 @@ extension ChromiumSelfTest {
         // or the one the self-test keeps from launch to launch.
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-shell-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        if let lists = SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldListsFlag, in: arguments) {
-            try FileManager.default.createSymbolicLink(at: scratch.appendingPathComponent(BlocklistStore.folderName),
-                                                       withDestinationURL: URL(fileURLWithPath: lists, isDirectory: true))
+        // The kept folder is moved in and, at the end, back out: a real folder, as a person's is.
+        // Through a link the store cannot list its own downloads (`contentsOfDirectory(at:)` does
+        // not open a link to a folder), so a bundle it had just put in place "did not verify in place".
+        let kept = SelfTestBlockingFixture.value(of: SelfTestBlockingFixture.coldListsFlag, in: arguments)
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let downloads = scratch.appendingPathComponent(BlocklistStore.folderName, isDirectory: true)
+        if let kept { try FileManager.default.moveItem(at: kept, to: downloads) }
+        defer {
+            if let kept { try? FileManager.default.moveItem(at: downloads, to: kept) }
+            try? FileManager.default.removeItem(at: scratch)
         }
         // The key this run's self-test made, beside the compiled-in ones, for the takeover's bundle.
         runtime.selfTestListsKey = SelfTestBlockingFixture.coldListsKey(arguments)
 
-        let store = SidebarStore()
+        // The same shell profile at every launch, so the same engine profile on a used user data folder.
+        let store = SidebarStore(defaultProfileID: SelfTestBlockingFixture.coldProfileID)
         let tab = store.addTab(kind: .today, title: "Blocking", url: SelfTestBlockingFixture.pageURL(base: serverBase, run: 1))
         store.selectTab(tab.id)
         let owner = store.profiles.first?.id
@@ -3889,11 +3919,23 @@ extension ChromiumSelfTest {
                 throw Failure(description: "COLD-BLOCKING FAIL: the takeover step has no update folder")
             }
             let before = model.contentBlocking.bundle?.version
+            let inUse = before.map(String.init(describing:)) ?? "none"
+            // The launch's own check (no mirror) ends first: one check runs at a time.
+            try await wait("the launch's list check to end", timeout: 15) { !model.contentBlocking.isCheckingLists }
             model.contentBlocking.fetcher = SelfTestFileMirror(folder: URL(fileURLWithPath: update, isDirectory: true))
-            try await wait("the newer bundle to be in use (now \(before.map(String.init(describing:)) ?? "none"))", timeout: 30) {
-                if model.contentBlocking.bundle?.version != before { return true }
-                if !model.contentBlocking.isCheckingLists { model.checkBlocklists() }
-                return false
+            model.checkBlocklists()
+            try check(model.contentBlocking.isCheckingLists, "COLD-BLOCKING FAIL: the list check did not start (blocking on somewhere: "
+                + "\(store.isContentBlockingOnAnywhere), lists \(model.contentBlocking.lists == nil ? "none" : "attached"), bundle \(inUse))")
+            try await wait("the list check with the update's mirror to end (bundle \(inUse))", timeout: 30) { !model.contentBlocking.isCheckingLists }
+            // One check, and what it ended with: unreachable, rejected and why, or updated.
+            let outcome = model.contentBlocking.lastCheck.map { "\($0)" } ?? "nothing"
+            let refused = await model.contentBlocking.lists?.rejections ?? []
+            log("COLD-BLOCKING list check: \(outcome); bundle \(model.contentBlocking.bundle.map { "\($0.version) (\($0.source))" } ?? "none")"
+                + (refused.isEmpty ? "" : "; refused: \(refused.suffix(4).joined(separator: "; "))"))
+            guard case .updated? = model.contentBlocking.lastCheck, model.contentBlocking.bundle?.version != before else {
+                throw Failure(description: "COLD-BLOCKING FAIL: the list check did not bring the newer bundle: it ended with \(outcome), "
+                    + "bundle \(inUse) still in use" + (refused.isEmpty ? "" : "; refused: \(refused.suffix(4).joined(separator: "; "))")
+                    + "; last events: \(model.contentBlockingEvents.suffix(4).joined(separator: "; "))")
             }
             let after = model.contentBlocking.bundle.map { "\($0.version) (\($0.source))" } ?? "none"
             // Through the takeover the old blocker blocks until the new one's lists are on.
