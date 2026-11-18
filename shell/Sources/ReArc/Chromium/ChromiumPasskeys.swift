@@ -81,9 +81,15 @@ enum ChromiumPasskeyChannel {
             respond(request, .cancel)
             return engine.pagePrompts.endPasskey(id: request)
         }
+        guard step.isFromWebPage else {
+            // The engine cancels these itself; an engine that did not gets the same answer here.
+            ChromiumLog.info("passkey request \(request) tab \(tab): not asked by a web page; cancelled")
+            respond(request, .cancel)
+            return engine.pagePrompts.endPasskey(id: request)
+        }
         ChromiumLog.trace("passkey request \(request) tab \(tab) step \(step.kind) busy \(step.isBusy)")
         engine.pagePrompts.presentPasskey(id: request, step: step) { action in
-            respond(request, action)
+            respond(request, action) == .rearcOK
         }
     }
 

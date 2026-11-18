@@ -73,7 +73,8 @@ final class PagePromptCenter {
     struct Passkey: Identifiable {
         let id: UInt64
         var step: PasskeyStep
-        fileprivate let reply: (PasskeyAction) -> Void
+        /// True when the engine took the answer.
+        fileprivate let reply: (PasskeyAction) -> Bool
     }
 
     /// What the suggestion list does with the engine (Chromium ABI 1.34).
@@ -137,6 +138,10 @@ final class PagePromptCenter {
     var passkeyPinConfirmation = ""
     /// What the sheet found wrong with the PIN before sending it.
     private(set) var passkeyPinProblem: String?
+    /// The step has its answer and the engine's next step has not arrived:
+    /// the sheet's buttons but Cancel wait (the engine takes one answer per
+    /// step; security review PK-06).
+    private(set) var passkeyAwaitsStep = false
     @ObservationIgnored private var certificateQueue: [ClientCertificate] = []
 
     @ObservationIgnored private var dialogQueue: [Dialog] = []
@@ -415,12 +420,13 @@ final class PagePromptCenter {
     /// A step of request `id`: the first one opens the sheet, later ones
     /// replace what it shows. A second request on the same page takes the
     /// sheet over, and the first is cancelled (one sheet, one answer).
-    func presentPasskey(id: UInt64, step: PasskeyStep, reply: @escaping (PasskeyAction) -> Void) {
+    func presentPasskey(id: UInt64, step: PasskeyStep, reply: @escaping (PasskeyAction) -> Bool) {
         if let current = passkey, current.id != id {
             count(&cancelled, "passkey")
             passkey = nil
-            current.reply(.cancel)
+            _ = current.reply(.cancel)
         }
+        passkeyAwaitsStep = false
         let previous = passkey?.step
         // A typed PIN survives a redraw of the same step, and nothing else.
         if previous?.kind != step.kind || previous?.pinError != step.pinError || previous?.isBusy != step.isBusy {
@@ -434,25 +440,35 @@ final class PagePromptCenter {
         guard passkey?.id == id else { return }
         count(&cancelled, "passkey")
         clearPasskeyPin()
+        passkeyAwaitsStep = false
         passkey = nil
     }
 
     /// The sheet's buttons. The sheet stays until the engine sends the next
-    /// step or the end, so a refused answer leaves it as it was.
+    /// step or the end, so a refused answer leaves it as it was. An answer
+    /// the engine took is the step's only one: the buttons wait for the
+    /// next step, and a second click sends nothing.
     func answerPasskey(_ action: PasskeyAction) {
         guard let current = passkey else { return }
-        count(&answered, "passkey")
         if action == .cancel {
+            count(&answered, "passkey")
             // Cancel always ends the request; the sheet goes at once.
             clearPasskeyPin()
+            passkeyAwaitsStep = false
             passkey = nil
+            _ = current.reply(action)
+            return
         }
-        current.reply(action)
+        guard !passkeyAwaitsStep, !current.step.isBusy else { return }
+        count(&answered, "passkey")
+        // Opening System Settings changes nothing in the request: no step follows it.
+        let repeatable = current.step.kind == .bluetoothDenied && action == .proceed
+        if current.reply(action), !repeatable, passkey?.id == current.id { passkeyAwaitsStep = true }
     }
 
     /// Sends the typed PIN when it may be sent; else says why not.
     func submitPasskeyPin() {
-        guard let current = passkey, case .pin(let mode) = current.step.kind, !current.step.isBusy else { return }
+        guard let current = passkey, case .pin(let mode) = current.step.kind, !current.step.isBusy, !passkeyAwaitsStep else { return }
         if let problem = PasskeyPin.problem(pin: passkeyPin, confirmation: passkeyPinConfirmation, mode: mode,
                                             minLength: current.step.pinMinLength) {
             passkeyPinProblem = problem
@@ -461,7 +477,7 @@ final class PagePromptCenter {
         let pin = passkeyPin
         clearPasskeyPin()
         count(&answered, "passkey")
-        current.reply(.pin(pin))
+        if current.reply(.pin(pin)), passkey?.id == current.id { passkeyAwaitsStep = true }
     }
 
     private func clearPasskeyPin() {
@@ -726,7 +742,7 @@ final class PagePromptCenter {
         if let request = passkey {
             passkey = nil
             clearPasskeyPin()
-            request.reply(.cancel)
+            _ = request.reply(.cancel)
         }
         hideAutofill()
         if let chooser = fileChooser {

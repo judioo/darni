@@ -76,10 +76,17 @@ final class SiteAccessTests: XCTestCase {
         XCTAssertEqual(rows["Notifications"], [.allow, .reset], "reset ends an embargo")
         XCTAssertEqual(rows["Pop-ups and redirects"], [], "policy decides: a label")
         XCTAssertEqual(rows["Sound"], [.allow], "the default applies: there is no rule to reset")
-        XCTAssertEqual(rows["Bluetooth devices"], [.allow, .block])
+        XCTAssertEqual(rows["Bluetooth devices"], [.block], "a device guard asks or blocks: the engine refuses Allow (PK-09)")
         XCTAssertEqual(rows["YubiKey OTP+FIDO+CCID"], [.removeDevice])
         XCTAssertEqual(rows["Bluetooth device"], [], "a policy grant")
         XCTAssertEqual(SiteControlCenter.SettingAction.removeDevice.title, "Remove Access")
+        // A guard the person blocked goes back to asking with Reset; one blocked by default has nothing to offer.
+        for guardType in ["usb-guard", "hid-guard", "serial-guard", "bluetooth-guard", "bluetooth-scanning"] {
+            XCTAssertEqual(SiteControlCenter.siteAccessActions(.init(type: guardType, setting: .block, source: .user)), [.reset], guardType)
+            XCTAssertEqual(SiteControlCenter.siteAccessActions(.init(type: guardType, setting: .block, source: .siteDefault)), [], guardType)
+            XCTAssertEqual(SiteControlCenter.siteAccessActions(.init(type: guardType, setting: .ask, source: .siteDefault)), [.block], guardType)
+        }
+        XCTAssertEqual(SiteControlCenter.siteAccessActions(.init(type: "notifications", setting: .block, source: .user)), [.allow, .reset])
     }
 
     func testThePanelShowsTheEnginesRowsInsteadOfTheShellsRecord() throws {

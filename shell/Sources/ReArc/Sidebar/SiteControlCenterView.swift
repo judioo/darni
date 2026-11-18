@@ -85,7 +85,8 @@ extension BrowserViewModel {
         case .sitePermission, .siteDevice:
             // The engine's own state: it checks that the page is still on the site the row was shown for.
             if action == .openSiteSettings { return openSiteSettings(origin: site.origin) }
-            siteAccessModel(for: engine)?.perform(action, on: row)
+            // With the origin this view showed, not the one the model holds by now.
+            siteAccessModel(for: engine)?.perform(action, on: row, origin: site.origin)
         case .reloadToApply:
             if action == .reloadPage { engine.reload(ignoringCache: false) }
         case .permission(let key):

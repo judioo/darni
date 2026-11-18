@@ -44,6 +44,10 @@ struct SiteInfoButton: View {
     let site: SiteControlCenter.Site
     /// The address's ink, for the idle glyph.
     var ink: Color
+    /// The popover's links to the Site Control Center and Chromium's Site
+    /// Settings, which open in the main window on the profile's own rules.
+    /// A private window has neither: its rules are its session's.
+    var showsPanelLinks = true
     @State private var isShown = false
 
     var body: some View {
@@ -62,7 +66,7 @@ struct SiteInfoButton: View {
         .accessibilityLabel("Site information")
         .accessibilityValue(badge.help)
         .popover(isPresented: $isShown, arrowEdge: .bottom) {
-            SiteInfoPopoverView(model: model, engine: engine, site: site) { isShown = false }
+            SiteInfoPopoverView(model: model, engine: engine, site: site, showsPanelLinks: showsPanelLinks) { isShown = false }
         }
         .transformPreference(AddressBarFocusPreference.self) { $0 = $0 || isShown }
     }
@@ -80,6 +84,7 @@ struct SiteInfoPopoverView: View {
     let model: BrowserViewModel
     let engine: any WebEngine
     let site: SiteControlCenter.Site
+    var showsPanelLinks = true
     let dismiss: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -115,7 +120,9 @@ struct SiteInfoPopoverView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 6)
             if rows.isEmpty {
-                Text("This site has no permissions of its own. It asks before it uses your camera, location or devices.")
+                Text(access?.isPrivate == true
+                    ? "This site has no permissions in this private window. It asks before it uses your camera, location or devices."
+                    : "This site has no permissions of its own. It asks before it uses your camera, location or devices.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -129,33 +136,38 @@ struct SiteInfoPopoverView: View {
                     }
                 }
             }
-            Divider().padding(.top, 10).padding(.bottom, 8)
-            HStack {
-                if model.sitePermissionsLiveInEngine {
-                    Button("Site Settings…") {
-                        dismiss()
-                        model.openSiteSettings(origin: site.origin)
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .help("Every setting for \(site.host)")
-                }
-                Spacer()
-                Button("Site Controls") {
-                    dismiss()
-                    // Once this popover has closed: two popovers do not open at once.
-                    DispatchQueue.main.async { model.showSiteControlCenter() }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .help("Extensions, capture and the site's other settings")
-            }
+            if showsPanelLinks { panelLinks }
         }
         .padding(12)
         .frame(width: Self.width, alignment: .leading)
         // Asked for when the popover opens, so it shows what holds now.
         .task { model.siteAccessModel(for: engine)?.refresh() }
+    }
+
+    @ViewBuilder
+    private var panelLinks: some View {
+        Divider().padding(.top, 10).padding(.bottom, 8)
+        HStack {
+            if model.sitePermissionsLiveInEngine {
+                Button("Site Settings…") {
+                    dismiss()
+                    model.openSiteSettings(origin: site.origin)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .help("Every setting for \(site.host)")
+            }
+            Spacer()
+            Button("Site Controls") {
+                dismiss()
+                // Once this popover has closed: two popovers do not open at once.
+                DispatchQueue.main.async { model.showSiteControlCenter() }
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+            .help("Extensions, capture and the site's other settings")
+        }
     }
 }

@@ -171,14 +171,23 @@ public struct PasskeyStep: Equatable, Sendable {
     public var attempts: Int?
     public var samples: Int?
     public var samplesRemaining: Int?
+    /// The account the page names for a new passkey. The page chooses it:
+    /// it is cleaned (`pageText`) and shown on a line of its own, never
+    /// inside one of ReArc's sentences.
     public var userName: String
+    /// What a touch of a security key tells the site: "none", "model" (its
+    /// make and model) or "serial" (enterprise attestation: which key it is).
+    public var attestation: String
+    /// A record of the visit is kept on the security key: "no", "maybe", "yes".
+    public var storedOnKey: String
 
     public init(kind: Kind, isCreate: Bool = false, relyingParty: String = "", origin: String = "", isPrivate: Bool = false,
                 isBusy: Bool = false, canChooseAnother: Bool = false, canTryAgain: Bool = true,
                 mechanisms: [Mechanism] = [], priority: Int? = nil, accounts: [Account] = [], qr: String? = nil,
                 securityKeyToo: Bool = false, bluetoothOn: Bool = false, canPowerOnBluetooth: Bool = false,
                 pinMinLength: Int = 4, pinAttempts: Int? = nil, pinError: String = "none", attempts: Int? = nil,
-                samples: Int? = nil, samplesRemaining: Int? = nil, userName: String = "") {
+                samples: Int? = nil, samplesRemaining: Int? = nil, userName: String = "",
+                attestation: String = "none", storedOnKey: String = "no") {
         self.kind = kind
         self.isCreate = isCreate
         self.relyingParty = relyingParty
@@ -200,7 +209,34 @@ public struct PasskeyStep: Equatable, Sendable {
         self.attempts = attempts
         self.samples = samples
         self.samplesRemaining = samplesRemaining
-        self.userName = userName
+        self.userName = PasskeyStep.pageText(userName)
+        self.attestation = attestation
+        self.storedOnKey = storedOnKey
+    }
+
+    /// The longest page-chosen text the sheet shows.
+    public static let pageTextLimit = 64
+
+    /// A name the page chose (an account, a display name), made safe to
+    /// show: control, format and direction-override characters and line
+    /// breaks are removed, and it is cut at a fixed length. It then reads as
+    /// one short line that cannot pose as the sheet's own text or push the
+    /// buttons out of the window.
+    public static func pageText(_ raw: String, limit: Int = pageTextLimit) -> String {
+        var scalars = String.UnicodeScalarView()
+        for scalar in raw.unicodeScalars {
+            switch scalar.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate, .privateUse, .unassigned:
+                // A line break or a tab separated two words.
+                if scalar == "\n" || scalar == "\r" || scalar == "\t" || scalar == "\u{2028}" || scalar == "\u{2029}" {
+                    scalars.append(" ")
+                }
+            default:
+                scalars.append(scalar)
+            }
+        }
+        let text = String(scalars).split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
+        return text.count > limit ? String(text.prefix(limit)) + "…" : text
     }
 
     /// The engine's JSON for a step. Nil when it is not the object the ABI describes.
@@ -220,13 +256,17 @@ public struct PasskeyStep: Equatable, Sendable {
             canTryAgain: object["can_try_again"] as? Bool ?? false,
             mechanisms: (object["mechanisms"] as? [[String: Any]] ?? []).compactMap { row in
                 guard let index = row["index"] as? Int, index >= 0 else { return nil }
-                return Mechanism(index: index, kind: row["kind"] as? String ?? "other", name: row["name"] as? String ?? "",
-                                 detail: row["description"] as? String ?? "", source: row["source"] as? String ?? "")
+                // A passkey's name is its account, which a page chose.
+                return Mechanism(index: index, kind: row["kind"] as? String ?? "other",
+                                 name: PasskeyStep.pageText(row["name"] as? String ?? ""),
+                                 detail: PasskeyStep.pageText(row["description"] as? String ?? ""),
+                                 source: row["source"] as? String ?? "")
             },
             priority: object["priority"] as? Int,
             accounts: (object["accounts"] as? [[String: Any]] ?? []).compactMap { row in
                 guard let index = row["index"] as? Int, index >= 0 else { return nil }
-                return Account(index: index, name: row["name"] as? String ?? "", displayName: row["display_name"] as? String ?? "",
+                return Account(index: index, name: PasskeyStep.pageText(row["name"] as? String ?? ""),
+                               displayName: PasskeyStep.pageText(row["display_name"] as? String ?? ""),
                                source: row["source"] as? String ?? "")
             },
             qr: (object["qr"] as? String).flatMap { $0.isEmpty ? nil : $0 },
@@ -239,7 +279,9 @@ public struct PasskeyStep: Equatable, Sendable {
             attempts: object["attempts"] as? Int,
             samples: object["samples"] as? Int,
             samplesRemaining: object["samples_remaining"] as? Int,
-            userName: (user["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? user["display_name"] as? String ?? ""
+            userName: (user["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? user["display_name"] as? String ?? "",
+            attestation: object["attestation"] as? String ?? "none",
+            storedOnKey: object["stored_on_key"] as? String ?? "no"
         )
     }
 
@@ -266,9 +308,24 @@ public struct PasskeyStep: Equatable, Sendable {
         return PageOrigin.promptHost(origin) ?? "this site"
     }
 
+    /// The asking frame is a web page. An extension page may claim a site it
+    /// has access to as the relying party, and the sheet names the relying
+    /// party: such a request gets no sheet (security review PK-03).
+    public var isFromWebPage: Bool {
+        origin.hasPrefix("https://") || origin.hasPrefix("http://")
+    }
+
+    /// The one line every step starts with: the site the request is for and
+    /// whether a passkey is made or used. Touching a key or scanning the
+    /// code is the person's consent to this site, whichever step the request
+    /// opens on.
+    public var requestLine: String {
+        isCreate ? "Create a passkey for \(site)" : "Sign in to \(site)"
+    }
+
     public var title: String {
         switch kind {
-        case .choose, .confirm: return isCreate ? "Create a passkey for \(site)" : "Sign in to \(site)"
+        case .choose, .confirm: return isCreate ? "Choose where to save your passkey" : "Choose how to sign in"
         case .securityKey: return "Insert your security key and touch it"
         case .qr: return isCreate ? "Save a passkey on a phone or tablet" : "Use a passkey on a phone or tablet"
         case .phoneConnecting: return "Connecting to your device…"
@@ -283,7 +340,7 @@ public struct PasskeyStep: Equatable, Sendable {
         case .touchAgain: return "Touch your security key again"
         case .fingerprintEnroll: return "Add your fingerprint to the security key"
         case .verifyAgain: return "Try your fingerprint again"
-        case .account: return "Choose an account for \(site)"
+        case .account: return "Choose an account"
         case .createThisMac: return "Save a passkey on this Mac?"
         case .system, .hidden: return ""
         case .unsupported: return "This way to sign in is not available in ReArc"
@@ -306,8 +363,7 @@ public struct PasskeyStep: Equatable, Sendable {
 
     public var message: String {
         switch kind {
-        case .choose: return isCreate ? "Choose where to save your passkey." : "Choose how to sign in."
-        case .confirm, .account, .system, .hidden, .touchAgain: return ""
+        case .choose, .confirm, .account, .system, .hidden, .touchAgain: return ""
         case .securityKey: return "Plug it into this Mac if it is not already, then touch its button or sensor."
         case .qr:
             let scan = "Scan this code with the camera of the device. Keep the device near this Mac with Bluetooth on."
@@ -333,8 +389,8 @@ public struct PasskeyStep: Equatable, Sendable {
         case .verifyAgain:
             return attempts.map { "\($0) attempt\($0 == 1 ? "" : "s") left." } ?? ""
         case .createThisMac:
-            let who = userName.isEmpty ? "" : " for \(userName)"
-            let kept = "A passkey\(who) at \(site) will be kept by ReArc on this Mac, protected by Touch ID or your Mac password. "
+            // The account's name is the page's text: it has a line of its own (`accountLine`).
+            let kept = "The passkey will be kept by ReArc on this Mac, protected by Touch ID or your Mac password. "
                 + "It does not sync to your other devices."
             return isPrivate ? kept + " It stays after you close this private window." : kept
         case .unsupported: return canChooseAnother ? "Choose another way to sign in." : ""
@@ -353,6 +409,34 @@ public struct PasskeyStep: Equatable, Sendable {
             case .keyRemoved: return "Insert it again and try once more."
             }
         }
+    }
+
+    /// The account a new passkey is for, on the step that confirms it: the
+    /// page's own text, on its own line.
+    public var accountLine: String? {
+        kind == .createThisMac && !userName.isEmpty ? userName : nil
+    }
+
+    /// What touching a security key gives the site, said before the touch as
+    /// Chromium's dialog does: on the steps a key can be touched at.
+    public var keyNotices: [String] {
+        switch kind {
+        case .securityKey, .touchAgain: break
+        case .qr where securityKeyToo: break
+        default: return []
+        }
+        var notices: [String] = []
+        switch attestation {
+        case "model": notices.append("\(site) will learn the make and model of your security key.")
+        case "serial": notices.append("\(site) wants to learn the ID number of your security key. It will know exactly which key you use.")
+        default: break
+        }
+        switch storedOnKey {
+        case "yes": notices.append("A record of your visit to this site will be kept on your security key.")
+        case "maybe": notices.append("A record of your visit to this site may be kept on your security key.")
+        default: break
+        }
+        return notices
     }
 
     /// The engine's complaint about the last PIN, if any.
@@ -395,7 +479,7 @@ public struct PasskeyStep: Equatable, Sendable {
             return bluetoothOn ? ("Continue", .proceed) : nil
         case .bluetoothDenied: return ("Open System Settings", .proceed)
         case .fingerprintEnroll: return ((samplesRemaining ?? 1) <= 0 ? "Done" : "Skip", .proceed)
-        case .phoneError: return ("Try Again", .startOver)
+        case .phoneError: return canTryAgain ? ("Try Again", .startOver) : nil
         case .failure(let failure):
             // The request is over after a timeout: only Close.
             return failure != .timeout && canTryAgain ? ("Try Again", .startOver) : nil

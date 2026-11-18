@@ -16,7 +16,9 @@ final class PasskeyPromptTests: XCTestCase {
         """))
         XCTAssertEqual(step.kind, .choose)
         XCTAssertFalse(step.isCreate)
-        XCTAssertEqual(step.title, "Sign in to login.microsoft.com")
+        XCTAssertEqual(step.requestLine, "Sign in to login.microsoft.com")
+        XCTAssertEqual(step.title, "Choose how to sign in")
+        XCTAssertTrue(step.isFromWebPage)
         XCTAssertEqual(step.listedMechanisms.map(\.title), ["ada@example.com", "Phone or Tablet", "USB Security Key", "Something new"])
         // The shell's own words: never "Chrome profile".
         XCTAssertEqual(step.listedMechanisms.map(\.subtitle),
@@ -141,8 +143,77 @@ final class PasskeyPromptTests: XCTestCase {
         XCTAssertFalse(busy.offersAnotherWay)
         XCTAssertTrue(busy.showsProgress)
         XCTAssertTrue(busy.isCreate)
-        XCTAssertTrue(busy.message.contains("for ada@example.com at example.com"))
+        XCTAssertEqual(busy.requestLine, "Create a passkey for example.com")
+        XCTAssertEqual(busy.accountLine, "ada@example.com", "the page's text has a line of its own")
+        XCTAssertFalse(busy.message.contains("ada"), "and is no part of ReArc's sentence")
         XCTAssertTrue(busy.message.contains("does not sync"))
+    }
+
+    /// Security review PK-03: a request can open on any of these steps, and a
+    /// touch or a scan is consent to the site. Each one names it, the same way.
+    func testEveryStepNamesTheSiteTheRequestIsFor() throws {
+        for name in ["choose", "confirm", "security_key", "qr", "phone_connecting", "phone_connected", "phone_error", "bluetooth_off",
+                     "bluetooth_denied", "private_notice", "pin", "pin_setup", "pin_change", "touch_again", "fingerprint_enroll",
+                     "verify_again", "account", "create_this_mac", "error_timeout", "error_key_not_registered", "a_later_step"] {
+            let get = try XCTUnwrap(PasskeyStep(json: #"{"step":"\#(name)","request":"get","rp_id":"example.com","origin":"https://login.example.com"}"#))
+            XCTAssertEqual(get.requestLine, "Sign in to example.com", name)
+            let create = try XCTUnwrap(PasskeyStep(json: #"{"step":"\#(name)","request":"create","rp_id":"example.com","origin":"https://login.example.com"}"#))
+            XCTAssertEqual(create.requestLine, "Create a passkey for example.com", name)
+        }
+    }
+
+    /// An extension page may claim a site it has access to as the relying
+    /// party; the sheet names the relying party, so such a request gets none.
+    func testOnlyAWebPageGetsTheSheet() throws {
+        func from(_ origin: String) throws -> Bool {
+            try XCTUnwrap(PasskeyStep(json: #"{"step":"choose","rp_id":"accounts.example.com","origin":"\#(origin)"}"#)).isFromWebPage
+        }
+        XCTAssertTrue(try from("https://accounts.example.com"))
+        XCTAssertTrue(try from("http://localhost:8080"))
+        XCTAssertFalse(try from("chrome-extension://abcdefghijklmnopabcdefghijklmnop"))
+        XCTAssertFalse(try from("null"))
+        XCTAssertFalse(try from(""))
+    }
+
+    /// Security review PK-04: a page chooses the account's name freely.
+    func testTextThePageChoosesIsOneShortCleanLine() throws {
+        XCTAssertEqual(PasskeyStep.pageText("ada@example.com"), "ada@example.com")
+        XCTAssertEqual(PasskeyStep.pageText("ada\n\nReArc says: type your password\tnow"), "ada ReArc says: type your password now")
+        // Direction overrides and zero-width characters go; the letters stay in the order they were sent.
+        XCTAssertEqual(PasskeyStep.pageText("ab\u{202E}dc\u{2066}e\u{200B}f\u{0007}"), "abdcef")
+        let long = PasskeyStep.pageText(String(repeating: "x", count: 500))
+        XCTAssertEqual(long.count, PasskeyStep.pageTextLimit + 1)
+        XCTAssertTrue(long.hasSuffix("…"))
+
+        let step = try XCTUnwrap(PasskeyStep(json: """
+        {"step":"create_this_mac","request":"create","rp_id":"example.com","origin":"https://example.com",
+         "user":{"name":"ada\\n at bank.example will be deleted. Continue to keep it","display_name":""}}
+        """))
+        XCTAssertEqual(step.accountLine, "ada at bank.example will be deleted. Continue to keep it")
+        XCTAssertFalse(step.message.contains("bank.example"))
+        let accounts = try XCTUnwrap(PasskeyStep(json: #"{"step":"account","rp_id":"example.com","accounts":[{"index":0,"name":"a\u202Eb\nc","display_name":"\#(String(repeating: "y", count: 300))"}]}"#))
+        XCTAssertEqual(accounts.accounts[0].title, "ab c")
+        XCTAssertEqual(accounts.accounts[0].subtitle.count, PasskeyStep.pageTextLimit + 1)
+        XCTAssertNil(accounts.accountLine, "only the step that confirms a new passkey has the line")
+    }
+
+    /// Security review PK-05: what a touch gives the site is said before the touch.
+    func testTheKeyStepsCarryChromiumsNotices() throws {
+        func notices(_ step: String, _ rest: String) throws -> [String] {
+            try XCTUnwrap(PasskeyStep(json: #"{"step":"\#(step)","request":"create","rp_id":"example.com"\#(rest)}"#)).keyNotices
+        }
+        XCTAssertEqual(try notices("security_key", ""), [])
+        XCTAssertEqual(try notices("security_key", #","attestation":"none","stored_on_key":"no""#), [])
+        XCTAssertEqual(try notices("security_key", #","attestation":"model","stored_on_key":"maybe""#),
+                       ["example.com will learn the make and model of your security key.",
+                        "A record of your visit to this site may be kept on your security key."])
+        XCTAssertEqual(try notices("touch_again", #","attestation":"serial","stored_on_key":"yes""#),
+                       ["example.com wants to learn the ID number of your security key. It will know exactly which key you use.",
+                        "A record of your visit to this site will be kept on your security key."])
+        // The QR step only when a key can be touched there too; never on a step without a key.
+        XCTAssertEqual(try notices("qr", #","qr":"FIDO:/1","security_key_too":true,"attestation":"model""#).count, 1)
+        XCTAssertEqual(try notices("qr", #","qr":"FIDO:/1","attestation":"model""#), [])
+        XCTAssertEqual(try notices("create_this_mac", #","attestation":"model","stored_on_key":"yes""#), [])
     }
 
     func testTheSiteIsTheRelyingPartyElseThePagesHost() throws {

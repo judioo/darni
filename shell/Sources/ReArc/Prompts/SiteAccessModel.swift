@@ -70,17 +70,20 @@ final class SiteAccessModel {
     }
 
     /// Allow, block or reset one of the site's settings, or take a device
-    /// away. The engine checks that the page is still on `access.origin`; a
-    /// page that went elsewhere changes nothing. True when the engine took it.
+    /// away. `origin` is the site the row was shown for, from the view that
+    /// drew it: the engine checks it against the page, and a page that went
+    /// elsewhere changes nothing. The model's own answer is not used for it:
+    /// by the click it may already be the next site's (security review
+    /// PK-02). True when the engine took it.
     @discardableResult
-    func perform(_ action: SiteControlCenter.SettingAction, on row: SiteControlCenter.SettingRow) -> Bool {
-        guard let access else { return false }
+    func perform(_ action: SiteControlCenter.SettingAction, on row: SiteControlCenter.SettingRow, origin: String) -> Bool {
+        guard !origin.isEmpty else { return false }
         let done: Bool
         switch (row.kind, action) {
-        case (.sitePermission(let type), .allow): done = setPermission?(access.origin, type, 1) ?? false
-        case (.sitePermission(let type), .block): done = setPermission?(access.origin, type, 2) ?? false
-        case (.sitePermission(let type), .reset): done = setPermission?(access.origin, type, 0) ?? false
-        case (.siteDevice(let kind, let key), .removeDevice): done = revokeDevice?(access.origin, kind, key) ?? false
+        case (.sitePermission(let type), .allow): done = setPermission?(origin, type, 1) ?? false
+        case (.sitePermission(let type), .block): done = setPermission?(origin, type, 2) ?? false
+        case (.sitePermission(let type), .reset): done = setPermission?(origin, type, 0) ?? false
+        case (.siteDevice(let kind, let key), .removeDevice): done = revokeDevice?(origin, kind, key) ?? false
         default: return false
         }
         if done { needsReload = true }

@@ -172,6 +172,13 @@ public struct SiteAccessType: Equatable, Sendable {
         }
     }
 
+    /// The setting can be "allow". The device guards cannot: a site gets a
+    /// device only through a chooser, so they are "ask" or "block" and the
+    /// engine refuses Allow for them (Chromium's content settings registry).
+    public static func takesAllow(_ type: String) -> Bool {
+        !["usb-guard", "hid-guard", "serial-guard", "bluetooth-guard", "bluetooth-scanning"].contains(type)
+    }
+
     /// SF Symbols has no Bluetooth mark; radio waves stand for it.
     public static let bluetoothSymbol = "dot.radiowaves.left.and.right"
 
@@ -253,11 +260,13 @@ extension SiteControlCenter {
     /// (or an embargo) to take away.
     public static func siteAccessActions(_ permission: SiteAccess.Permission) -> [SettingAction] {
         guard permission.isChangeable else { return [] }
+        // A device guard takes no Allow (PK-09): a blocked one goes back to asking with Reset.
+        let takesAllow = SiteAccessType.takesAllow(permission.type)
         var actions: [SettingAction]
         switch permission.setting {
         case .allow: actions = [.block]
-        case .block: actions = [.allow]
-        case .ask: actions = [.allow, .block]
+        case .block: actions = takesAllow ? [.allow] : []
+        case .ask: actions = takesAllow ? [.allow, .block] : [.block]
         }
         if permission.source == .user || permission.source == .embargo { actions.append(.reset) }
         return actions

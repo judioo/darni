@@ -22,6 +22,15 @@ struct PasskeySheet: View {
                 .contentShape(Rectangle())
                 .onTapGesture {}
             VStack(alignment: .leading, spacing: 12) {
+                // The same line on every step: who the request is for. A touch or a
+                // scan is consent to this site, whichever step the request opens on.
+                Label(step.requestLine, systemImage: "globe")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    // A long name keeps its end: the registrable domain.
+                    .truncationMode(.head)
+                    .accessibilityIdentifier("passkeyRequestLine")
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Image(systemName: step.symbol)
                         .font(.system(size: 15, weight: .semibold))
@@ -30,10 +39,24 @@ struct PasskeySheet: View {
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let account = step.accountLine {
+                    // The page's own text: one line, apart from what ReArc says.
+                    Label(account, systemImage: "person.crop.circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .accessibilityLabel("Account: \(account)")
+                }
                 if !step.message.isEmpty {
                     Text(step.message)
                         .font(.system(size: 13))
                         .foregroundStyle(step.pinProblem != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.primary))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(step.keyNotices, id: \.self) { notice in
+                    Label(notice, systemImage: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 content
@@ -53,6 +76,9 @@ struct PasskeySheet: View {
         .accessibilityAddTraits(.isModal)
     }
 
+    /// The engine works, or the step has its answer: only Cancel answers.
+    private var isLocked: Bool { step.isBusy || prompts.passkeyAwaitsStep }
+
     private var isProblem: Bool {
         switch step.kind {
         case .failure, .phoneError, .unsupported: return true
@@ -68,20 +94,20 @@ struct PasskeySheet: View {
     private var content: some View {
         switch step.kind {
         case .choose, .confirm:
-            VStack(spacing: 6) {
+            PasskeyChoiceList(count: step.listedMechanisms.count) {
                 ForEach(step.listedMechanisms) { mechanism in
                     PasskeyChoiceRow(symbol: mechanism.symbol, title: mechanism.title, subtitle: mechanism.subtitle,
-                                     isButton: step.kind == .choose && !step.isBusy) {
+                                     isButton: step.kind == .choose, isEnabled: !isLocked) {
                         prompts.answerPasskey(.chooseMechanism(mechanism.index))
                     }
                 }
             }
         case .account:
-            VStack(spacing: 6) {
+            PasskeyChoiceList(count: step.accounts.count) {
                 ForEach(step.accounts) { account in
                     PasskeyChoiceRow(symbol: "person.crop.circle", title: account.title,
                                      subtitle: account.subtitle.isEmpty ? PasskeyStep.sourceLabel(account.source) : account.subtitle,
-                                     isButton: !step.isBusy) {
+                                     isButton: true, isEnabled: !isLocked) {
                         prompts.answerPasskey(.chooseAccount(account.index))
                     }
                 }
@@ -119,14 +145,14 @@ struct PasskeySheet: View {
                         .foregroundStyle(.orange)
                 }
             }
-            .disabled(step.isBusy)
+            .disabled(isLocked)
         default:
             EmptyView()
         }
-        if step.showsProgress {
+        if step.showsProgress || prompts.passkeyAwaitsStep {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(step.isBusy ? "Working…" : "Waiting for your device…")
+                Text(isLocked ? "Working…" : "Waiting for your device…")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -138,6 +164,7 @@ struct PasskeySheet: View {
             if step.offersAnotherWay {
                 Button("Another Way") { prompts.answerPasskey(.startOver) }
                     .help("Choose another way to sign in")
+                    .disabled(isLocked)
             }
             Spacer()
             Button(step.dismissTitle) { prompts.answerPasskey(.cancel) }
@@ -146,11 +173,12 @@ struct PasskeySheet: View {
                 Button("Continue") { prompts.submitPasskeyPin() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(step.isBusy || prompts.passkeyPin.isEmpty)
+                    .disabled(isLocked || prompts.passkeyPin.isEmpty)
             } else if let primary = step.primary {
                 Button(primary.title) { prompts.answerPasskey(primary.action) }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
+                    .disabled(isLocked)
             }
         }
     }
@@ -163,6 +191,8 @@ private struct PasskeyChoiceRow: View {
     let title: String
     let subtitle: String
     let isButton: Bool
+    /// False while the sheet waits for the engine: the row stays, dimmed.
+    var isEnabled = true
     let action: () -> Void
     @State private var isHovering = false
 
@@ -194,13 +224,37 @@ private struct PasskeyChoiceRow: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.primary.opacity(isHovering && isButton ? 0.10 : 0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(Color.primary.opacity(isHovering && isButton && isEnabled ? 0.10 : 0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
+            .opacity(isButton && !isEnabled ? 0.5 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(!isButton)
+        .disabled(!isButton || !isEnabled)
         .onHover { isHovering = $0 }
         .accessibilityLabel(subtitle.isEmpty ? title : "\(title), \(subtitle)")
+    }
+}
+
+/// The ways to sign in, or the accounts: a short list as it is, a long one
+/// (a site can hold many passkeys) in a scroll view of fixed height, so the
+/// buttons below it stay in the window.
+private struct PasskeyChoiceList<Rows: View>: View {
+    let count: Int
+    @ViewBuilder var rows: Rows
+
+    /// Rows shown without scrolling; a row is about 46 points high.
+    static var visibleRows: Int { 5 }
+
+    var body: some View {
+        if count > Self.visibleRows {
+            ScrollView {
+                VStack(spacing: 6) { rows }
+            }
+            // Half a row more: it shows that the list goes on.
+            .frame(height: CGFloat(Self.visibleRows) * 52 + 20)
+        } else {
+            VStack(spacing: 6) { rows }
+        }
     }
 }
 
