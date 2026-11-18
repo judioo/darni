@@ -307,10 +307,17 @@ public extension Space {
     /// The SF Symbol to draw for a stored icon name: an Arc icon name (from an
     /// import made before Arc's names were mapped) is drawn as its symbol; any
     /// other symbol-shaped name as itself; an emoji or a letter gives nil.
+    ///
+    /// A symbol the picker offers is always itself. One of them, `cloud` (Arc's
+    /// `cloudOutline`), is also an Arc name, for the filled cloud: read as that,
+    /// choosing the outline cloud drew the filled one.
     static func symbolToDraw(for iconName: String) -> String? {
+        if pickerSymbols.contains(iconName) { return iconName }
         if let mapped = ArcSpaceIcons.symbol(forArcName: iconName) { return mapped }
         return isSymbolName(iconName) ? iconName : nil
     }
+
+    private static let pickerSymbols = Set(iconChoices)
 
     /// SF Symbol names are lowercase ASCII words joined by dots; anything else
     /// (an emoji or a letter) is drawn as text.

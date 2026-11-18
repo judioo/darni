@@ -72,6 +72,16 @@ final class ArcSpaceIconTests: XCTestCase {
         XCTAssertNil(Space.symbolToDraw(for: "🌿"))
     }
 
+    /// Whatever the picker offers is stored by its symbol name and must draw as that symbol.
+    /// `cloud` is both a picker symbol (Arc's cloudOutline) and Arc's name for the filled cloud.
+    func testEveryPickerChoiceDrawsAsItself() {
+        for symbol in Space.iconChoices {
+            XCTAssertEqual(Space.symbolToDraw(for: symbol), symbol)
+        }
+        XCTAssertEqual(Space.symbolToDraw(for: "cloud"), "cloud")
+        XCTAssertEqual(Space.symbolToDraw(for: "cloudOutline"), "cloud")
+    }
+
     func testAnArcImportMapsNamedIcons() {
         XCTAssertEqual(ArcSidebarReader.icon(["icon": "code"]), .sfSymbol(name: "chevron.left.forwardslash.chevron.right"))
         XCTAssertEqual(ArcSidebarReader.icon(["icon": "fileTrayFull"]), .sfSymbol(name: "tray.full.fill"), "camelCase names were dropped before")
