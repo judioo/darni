@@ -72,7 +72,16 @@ public struct SplitPaneToolbarLayout: Equatable {
     /// cannot reorder or push away what follows.
     public static func addressParts(_ url: URL?) -> (host: String, rest: String)? {
         guard let url, url.absoluteString != "about:blank" else { return nil }
-        guard let host = url.host(), !host.isEmpty else { return (url.absoluteString, "") }
+        guard let host = url.host(), !host.isEmpty else {
+            // No host (`about:blank#…`, `blob:`, `data:`, `file:`, `view-source:`): the first
+            // part never truncates, so it is the scheme and what follows up to a `?` or `#`,
+            // at most `hostLimit` characters; the page-chosen rest goes to the part that
+            // truncates (security AG-01, hostless addresses).
+            let whole = url.absoluteString
+            let cut = whole.firstIndex(where: { $0 == "?" || $0 == "#" }) ?? whole.endIndex
+            let head = String(whole[..<cut].prefix(hostLimit))
+            return (head, readable(String(whole.dropFirst(head.count))))
+        }
         var bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         if bareHost.contains(":") { bareHost = "[\(bareHost)]" }
         if let port = url.port { bareHost += ":\(port)" }

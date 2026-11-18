@@ -8,6 +8,9 @@ import SidebarModel
 enum ReArcMain {
     @MainActor
     static func main() {
+        // A log line to a closed pipe must not end ReArc: Chromium ignores SIGPIPE once the
+        // engine is up, and this covers the lines written before that (security AG-02).
+        signal(SIGPIPE, SIG_IGN)
         // Before anything else (RC-0.1.0-602 T-04): a shipped bundle runs only on its own data.
         if let refusal = ShippedBuild.launchRefusal(arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment) {
             StandardError.write("ReArc: \(refusal)\n")

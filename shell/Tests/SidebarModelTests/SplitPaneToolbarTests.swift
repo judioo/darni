@@ -80,6 +80,18 @@ final class SplitPaneToolbarTests: XCTestCase {
         XCTAssertEqual(spaces.rest, "/a%20%20%20%20b?q=%0Ax")
         let readable = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "https://example.com/caf%C3%A9")))
         XCTAssertEqual(readable.rest, "/café", "ordinary letters still read decoded")
+        // Hostless addresses: the slot that never truncates stays short; the page's text truncates.
+        let padding = String(repeating: "x", count: 300)
+        let blank = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "about:blank#\(padding)mybank.example/login")))
+        XCTAssertEqual(blank.host, "about:blank")
+        XCTAssertTrue(blank.rest.hasPrefix("#"))
+        let file = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "file:///\(padding)/statement.pdf")))
+        XCTAssertLessThanOrEqual(file.host.count, SplitPaneToolbarLayout.hostLimit)
+        XCTAssertEqual(file.host + file.rest, "file:///\(padding)/statement.pdf")
+        for url in ["about:blank?\(padding)", "blob:https://a.example/\(padding)", "data:text/html,\(padding)", "view-source:\(padding)"] {
+            let parts = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: url)), url)
+            XCTAssertLessThanOrEqual(parts.host.count, SplitPaneToolbarLayout.hostLimit, url)
+        }
     }
 }
 
