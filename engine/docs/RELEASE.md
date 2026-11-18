@@ -450,15 +450,18 @@ headers: the build script, the app and the engine each refuse a bundle with such
 
 ### If the lists key leaks
 
-Do these in order. Steps 1 to 3 are one release; step 4 is the next.
+One release. The app of that release trusts the new key and no longer the leaked one: there
+is no release in which both are trusted. Keeping the leaked key for one more release would
+buy nothing. The new app's built-in bundle is newer than any download, and the mirror is
+signed with the new key in the same release.
 
 1. **Rotate.**
    - Delete the leaked `signing.key`. Do not keep a copy.
    - Make the new key: `shell/scripts/blocklists/build-blocklists.py keygen`. It prints the
      new public key.
-   - Put the new public key on the **first** line of `blocklists-public-key.txt` and first in
-     `BlocklistSigningKey.compiledInTexts`. Leave the old public key as the second entry in
-     both, for this one release.
+   - Put the new public key on the **first** line of `blocklists-public-key.txt`. Leave the
+     leaked public key on the second line until the next sub-step is done: the build checks
+     the bundle it converts again, which the leaked key signed.
    - Sign the built-in bundle with the new key. This converts the same upstream files again
      and fetches nothing:
 
@@ -471,33 +474,56 @@ Do these in order. Steps 1 to 3 are one release; step 4 is the next.
      shell/scripts/blocklists/build-blocklists.py install "$B/$NEW" shell/Resources/Blocklists
      ```
 
+   - **Take the leaked public key out**: delete its line from `blocklists-public-key.txt`, and
+     make the new key the only entry of `BlocklistSigningKey.compiledInTexts`.
    - Run `python3 -m unittest discover -s shell/scripts/blocklists/tests` and
      `cd shell && swift test --filter Blocklist`, then commit the key file, `Blocklists.swift`
-     and `shell/Resources/Blocklists`.
-2. **Ship an app with the new key.** Make the release as usual and mark it critical
-   ("Critical and required updates" below). This build trusts both keys, so it goes on taking
-   the mirror's bundle whichever key signed it.
-3. **Re-sign the mirror.** `release.sh` writes `blocklists-<version>.tar.gz` and `latest.json`
-   from the app's bundle, which the new key signed in step 1. Have the site thread publish
-   them with the appcast. From then on an install that has not updated cannot verify the
-   mirror's bundle: it keeps the lists it has until it updates.
-4. **Drop the old key.** Remove the old public key from `blocklists-public-key.txt` and from
-   `BlocklistSigningKey.compiledInTexts`, and ship the next release. Until an install has this
-   release it still accepts what the leaked key signs.
+     and `shell/Resources/Blocklists`. The tests check that the built-in bundle verifies with
+     the one key that is left.
+2. **Ship the app.** Make the release as usual. An install that updates deletes any
+   downloaded bundle the leaked key signed and uses its built-in one.
+   - **Mark the release critical only if a bad bundle was served**: the mirror held, or an
+     install took, a bundle that this script did not build. Then people are being attacked and
+     should update today ("Critical and required updates" below).
+   - A leak with no sign of use is an ordinary release. The critical mark is kept for what is
+     attacked, and a leaked lists key by itself needs the mirror or the network path as well
+     (above).
+3. **Re-sign the mirror, in the same release.** `release.sh` writes
+   `blocklists-<version>.tar.gz` and `latest.json` from the app's bundle, which the new key
+   signed in step 1. Have the site thread publish them with the appcast. From then on an
+   install that has not updated cannot verify the mirror's bundle: it keeps the lists it has
+   until it updates.
 
 Notes:
 
-- **When the leak is certain and waiting a release is too long,** leave the old key out in
-  step 1 already. Steps 2 and 4 are then one release. An updated install deletes any
-  downloaded bundle the old key signed and uses its built-in one.
-- **An install that never updates trusts the old key for good.** Nothing on the mirror can
+- **An install that never updates trusts the leaked key for good.** Nothing on the mirror can
   change that; the limits above are what bound the damage.
-- **A lost key** (no leak) takes the same steps without the hurry: no critical mark.
-- **Planned replacement:** ship the new public key as the second entry one release ahead.
-  When the key is then switched, every install that has that release already trusts it.
-- **Unattended signing:** keep the private key off any machine that signs lists without a
-  person. If a job ever does, it must run `build` with its count check on (never
-  `--allow-count-change`).
+- **A lost key** (no leak) takes the same steps and is never critical.
+
+### Planned replacement
+
+Only here are two keys trusted at once. The overlap lets every install that has the first
+release go on taking the mirror's bundle when the key is switched. It is not for a leak.
+
+1. **Release N: bring the new key in.** Make it beside the one in use
+   (`build-blocklists.py keygen --key ~/.config/rearc/blocklists/signing-next.key`) and add its
+   public key as the **second** entry of `blocklists-public-key.txt` and of
+   `BlocklistSigningKey.compiledInTexts`. Bundles are still signed with the old key.
+2. **Release N+1: switch.** Move `signing-next.key` to `signing.key`, put the new public key
+   first and the old one second in both places, and sign the built-in bundle again as in the
+   leak steps. The mirror is signed with the new key from this release on; an install with
+   release N or later accepts it.
+3. **Release N+2: drop the old key** from both places.
+
+### Unattended signing
+
+Keep the private key off any machine that signs lists without a person. If a job ever does,
+it runs `build` with every check on:
+
+- never `--allow-count-change`;
+- never `--accept-gained-page-exceptions`. A list that gained an exception for whole pages or
+  frames fails the job, and a person reads the exceptions the build printed before building
+  with that flag by hand.
 
 ## Sparkle updates (DMG distribution)
 

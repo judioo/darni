@@ -18,8 +18,9 @@ import Foundation
 ///
 /// A short list, so the key can be replaced (security CB-05): a bundle is
 /// used when any one of these keys signed it. One key in ordinary times.
-/// While a key is replaced there are two for a release, the new one and
-/// the one going, and then the old one is taken out
+/// While a key is replaced as planned there are two for a release, the
+/// new one and the one going, and then the old one is taken out. A leaked
+/// key is taken out in the release that brings the new one
 /// (engine/docs/RELEASE.md "Lists key").
 public enum BlocklistSigningKey {
     /// The keys in `shell/scripts/blocklists/blocklists-public-key.txt`, in
