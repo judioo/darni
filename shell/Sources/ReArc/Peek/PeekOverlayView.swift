@@ -323,9 +323,11 @@ enum PeekAddress {
         guard let host = url.host(), !host.isEmpty else { return (url.absoluteString, "") }
         let port = url.port.map { ":\($0)" } ?? ""
         let scheme = url.scheme?.lowercased() == "https" ? "" : "\(url.scheme ?? "")://"
-        var rest = url.path(percentEncoded: false)
+        // Decoded for reading, with control and direction characters left encoded, as in the
+        // card toolbar (`SplitPaneToolbarLayout.readable`, security AG-01).
+        var rest = SplitPaneToolbarLayout.readable(url.path(percentEncoded: false))
         if rest == "/" { rest = "" }
-        if let query = url.query(percentEncoded: false), !query.isEmpty { rest += "?" + query }
+        if let query = url.query(percentEncoded: false), !query.isEmpty { rest += "?" + SplitPaneToolbarLayout.readable(query) }
         return (PageOrigin.shortenedHost(scheme + host + port, limit: 64), rest)
     }
 }

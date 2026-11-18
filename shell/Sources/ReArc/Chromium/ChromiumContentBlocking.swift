@@ -35,8 +35,7 @@ struct ChromiumContentBlockingCalls {
 
     /// Every symbol, or nothing: half an interface is not used.
     static func resolve() -> ChromiumContentBlockingCalls? {
-        let found = symbols.map { dlsym(UnsafeMutableRawPointer(bitPattern: -2), $0) }
-        guard found.allSatisfy({ $0 != nil }) else { return nil }
+        guard let found = ChromiumSymbols.resolve(symbols) else { return nil }
         return ChromiumContentBlockingCalls(
             setDirectory: unsafeBitCast(found[0], to: SetDirectory.self),
             setBlocking: unsafeBitCast(found[1], to: SetBlocking.self),
@@ -49,7 +48,7 @@ struct ChromiumContentBlockingCalls {
 
     /// The symbols this engine lacks (logs, and the self-test's ABI-GAP line).
     static var missingSymbols: [String] {
-        symbols.filter { dlsym(UnsafeMutableRawPointer(bitPattern: -2), $0) == nil }
+        ChromiumSymbols.missing(symbols)
     }
 }
 

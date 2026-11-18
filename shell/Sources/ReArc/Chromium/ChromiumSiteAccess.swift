@@ -34,8 +34,7 @@ struct ChromiumSiteAccessCalls {
 
     /// Every symbol, or nothing: half an interface is not used.
     static func resolve() -> ChromiumSiteAccessCalls? {
-        let found = symbols.map { dlsym(UnsafeMutableRawPointer(bitPattern: -2), $0) }
-        guard found.allSatisfy({ $0 != nil }) else { return nil }
+        guard let found = ChromiumSymbols.resolve(symbols) else { return nil }
         return ChromiumSiteAccessCalls(
             get: unsafeBitCast(found[0], to: Get.self),
             setPermission: unsafeBitCast(found[1], to: SetPermission.self),
@@ -45,7 +44,7 @@ struct ChromiumSiteAccessCalls {
     }
 
     static var missingSymbols: [String] {
-        symbols.filter { dlsym(UnsafeMutableRawPointer(bitPattern: -2), $0) == nil }
+        ChromiumSymbols.missing(symbols)
     }
 }
 

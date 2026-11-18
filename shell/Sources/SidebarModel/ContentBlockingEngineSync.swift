@@ -59,10 +59,10 @@ public final class ContentBlockingEngineSync {
     }
 
     /// The bundle in use; nil while none has verified.
-    public var activeBundle: VerifiedBlocklist? { bundle }
+    var activeBundle: VerifiedBlocklist? { bundle }
 
     /// The lists and levels the settings are read against: the bundle's.
-    public var lists: [ContentBlockingList] { ContentBlockingLists.lists(of: bundle?.manifest) }
+    var lists: [ContentBlockingList] { ContentBlockingLists.lists(of: bundle?.manifest) }
 
     /// A bundle was verified (launch, or an update): the engine gets its
     /// directory once a profile has blocking on, and any profile whose lists

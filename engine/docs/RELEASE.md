@@ -25,6 +25,8 @@ distribution.
 | `release/entitlements/` | `app`, `helper-renderer`, `helper-gpu` entitlements, copied from `chrome/app/*-entitlements.plist` at the pin. |
 | `release/version.py` | ReArc's version, `YYYY.MMDD.<build>`, from a RELEASES.md heading or a commit; checks the heading, names the DMG and the tag (see Versioning). |
 | `release/rebrand-bundle.py` | Run by `bundle-chromium.sh` before signing. Puts ReArc's name and icon where the engine's localized strings still say Chromium: the two alerts helpers macOS shows as the notifying app, and the permission reasons in the app's `InfoPlist.strings`. Prints the helpers it changed, which the bundle step signs again ad hoc. |
+| `blocklists/build-blocklists.py` | The built-in blocklists (see "Lists key" below and `docs/FEATURE-SPECS/CONTENT-BLOCKING.md` §4). `build` converts the pinned upstream filter lists to the engine's rules and signs the manifest. `install` verifies a bundle and copies it without the raw lists: `bundle-chromium.sh` runs it to put the bundle in the app. `pack` verifies the app's bundle and writes `blocklists-<version>.tar.gz` and `latest.json`: `release.sh` runs it into `<dist>/blocklists`, and `--blocklists DIR` copies the two files out. Its tests are in `blocklists/tests`. |
+| `blocklists/blocklists-public-key.txt` | The lists keys a bundle may be signed with, the key in use first. The app carries the same keys (`BlocklistSigningKey.compiledInTexts`). |
 | `release/signing-env.sh` | Shared loader for `shell/signing.local.env`. Environment wins, and it never prints a value. |
 | `release/dmg-background.swift` | Draws the DMG background (brand canvas and cobalt arrow). |
 

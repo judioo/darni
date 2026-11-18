@@ -265,6 +265,8 @@ final class Wave26LittleArcModelTests: XCTestCase {
     func testAddressPlaceholderAndEditingText() {
         XCTAssertEqual(LittleArcChrome.addressText(for: URL(string: "https://www.example.com/a/b?c=1")), "example.com")
         XCTAssertEqual(LittleArcChrome.addressText(for: URL(string: "http://docs.test:8080/x")), "docs.test")
+        let long = LittleArcChrome.addressText(for: URL(string: "https://login.accounts.example.com.\(String(repeating: "a", count: 80)).evil.test/x"))
+        XCTAssertTrue(long.hasSuffix("evil.test") && !long.contains("accounts.example.com"), "a long host keeps its registrable end: \(long)")
         XCTAssertEqual(LittleArcChrome.addressText(for: URL(string: "file:///tmp/a.html")), "file:///tmp/a.html")
         XCTAssertEqual(LittleArcChrome.addressText(for: URL(string: "about:blank")), "")
         XCTAssertEqual(LittleArcChrome.addressText(for: nil), "")

@@ -1474,7 +1474,7 @@ def main(argv=None):
     install.add_argument("--public-key", type=Path)
     keygen = commands.add_parser("keygen", help="create the signing key unless it exists")
     keygen.add_argument("--key", type=Path, default=DEFAULT_KEY)
-    keygen.add_argument("--public-key", type=Path, help="also write the public key here")
+    keygen.add_argument("--public-key", type=Path, help="also write the public key to this new file")
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -1512,6 +1512,11 @@ def main(argv=None):
             manifest = install_bundle(args.bundle, args.destination, read_public_keys(args.public_key))
             print(f"installed bundle {manifest['version']} in {args.destination}")
         elif args.command == "keygen":
+            # One key and nothing else is written: over the committed key list that would
+            # drop its header and the key being retired (RELEASE.md, "Lists key").
+            if args.public_key and args.public_key.exists():
+                raise BuildError(f"{args.public_key} exists and keygen would replace it with one key; "
+                                 "add the printed key to it by hand (engine/docs/RELEASE.md, \"Lists key\")")
             created = generate_key(args.key)
             public = public_key_of(args.key)
             if args.public_key:

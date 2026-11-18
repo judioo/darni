@@ -36,6 +36,11 @@ final class Wave31LookSnapshotTests: XCTestCase {
         }
     }
 
+    /// The card toolbar's address: its two parts side by side (`SplitPaneToolbarLayout.addressParts`).
+    private func address(_ url: URL) -> String? {
+        SplitPaneToolbarLayout.addressParts(url).map { $0.host + $0.rest }
+    }
+
     func testChromeColoursComeFromTheTheme() {
         let light = ThemeChromeColors(theme: .arcDefault, dark: false)
         let dark = ThemeChromeColors(theme: .arcDefault, dark: true)
@@ -46,10 +51,10 @@ final class Wave31LookSnapshotTests: XCTestCase {
         XCTAssertEqual(ThemeChromeColors.outsideSpaces(dark: true).title, dark.title)
         XCTAssertEqual(ThemeChromeColors.outsideSpaces(dark: true).toast, dark.toast)
         XCTAssertEqual(ThemeChromeColors.outsideSpaces(dark: false).toast, ThemeChromeColors.fallback.toast)
-        XCTAssertEqual(CardToolbarView.displayURL(URL(string: "https://www.github.com/example/notes?tab=1")!), "github.com/example/notes?tab=1")
-        XCTAssertEqual(CardToolbarView.displayURL(URL(string: "https://arc.net/")!), "arc.net")
-        XCTAssertNil(CardToolbarView.displayURL(URL(string: "about:blank")!))
-        XCTAssertEqual(CardToolbarView.displayURL(URL(string: "http://localhost:3000/extension-auth?a=1")!), "localhost:3000/extension-auth?a=1")
+        XCTAssertEqual(address(URL(string: "https://www.github.com/example/notes?tab=1")!), "github.com/example/notes?tab=1")
+        XCTAssertEqual(address(URL(string: "https://arc.net/")!), "arc.net")
+        XCTAssertNil(address(URL(string: "about:blank")!))
+        XCTAssertEqual(address(URL(string: "http://localhost:3000/extension-auth?a=1")!), "localhost:3000/extension-auth?a=1")
         XCTAssertTrue(ToolbarURLPreference.defaultValue, "URL in toolbar is the default, as in the user's Arc")
         XCTAssertEqual(SidebarWidth.standard, 228, "Arc's stored sidebar width")
     }

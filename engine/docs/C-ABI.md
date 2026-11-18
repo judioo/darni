@@ -2659,9 +2659,9 @@ count itself has no engine test.
 ## Content blocking (ABI 1.66, bridge 0.76.0)
 
 Patch `tab/095-content-blocker-component`, feature `content_blocking`. Spec:
-`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`. **Not built yet:** the patch was written
-against the overlay without an engine build (its header says what was checked), so
-nothing below has run. Hosts gate on the feature. No struct changes.
+`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`. **Built:** the release engine of 2026-11-18
+(`out/ReArc-codecs-arm64`) has it. The patch header says which builds, and what the
+security review ran on them. Hosts gate on the feature. No struct changes.
 
 Blocking is Chromium's declarativeNetRequest. The lists of a blocklist bundle are the
 static rulesets of a component extension, "ReArc Blocker"

@@ -95,6 +95,33 @@ private struct PromptAnchor: NSViewRepresentable {
     }
 }
 
+// MARK: - Tab-scoped sheets
+
+/// The frame of a sheet that makes one page wait (a script's dialog, HTTP
+/// sign-in, a certificate, a passkey request): the page dims under it and
+/// takes no clicks, and the sheet sits near its top on the system's material.
+/// The sidebar, other tabs and windows keep working. The caller adds what
+/// Escape does and marks the whole as modal.
+struct PageSheet<Content: View>: View {
+    let width: CGFloat
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.black.opacity(0.22)
+                .contentShape(Rectangle())
+                .onTapGesture {}
+            VStack(alignment: .leading, spacing: 12) { content }
+                .padding(18)
+                .frame(width: width)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+                .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
+                .padding(.top, 64)
+        }
+    }
+}
+
 // MARK: - JavaScript dialog
 
 /// A tab-scoped sheet: it dims and blocks only this page, so the sidebar,
@@ -107,60 +134,49 @@ private struct JavaScriptDialogSheet: View {
     private var request: JavaScriptDialogRequest { dialog.request }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.22)
-                .contentShape(Rectangle())
-                .onTapGesture {}
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: request.kind == .beforeUnload ? "exclamationmark.triangle.fill" : "globe")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(request.kind == .beforeUnload ? Color.orange : Color.secondary)
-                    Text(request.title)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                if !request.displayMessage.isEmpty {
-                    ScrollView {
-                        Text(request.displayMessage)
-                            .font(.system(size: 13))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 220)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                if request.showsTextField {
-                    TextField("", text: $prompts.dialogText)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($fieldFocused)
-                        .onSubmit { prompts.answerDialog(accept: true) }
-                }
-                if dialog.offersSuppression {
-                    Toggle("Don't allow this page to create more dialogs", isOn: $prompts.suppressDialogs)
-                        .toggleStyle(.checkbox)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 8) {
-                    Spacer()
-                    if request.showsCancel {
-                        Button(request.kind == .beforeUnload ? "Stay" : "Cancel") { prompts.answerDialog(accept: false) }
-                            .keyboardShortcut(.cancelAction)
-                    }
-                    Button(request.acceptTitle) { prompts.answerDialog(accept: true) }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                }
-                .controlSize(.regular)
+        PageSheet(width: 400) {
+            HStack(spacing: 10) {
+                Image(systemName: request.kind == .beforeUnload ? "exclamationmark.triangle.fill" : "globe")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(request.kind == .beforeUnload ? Color.orange : Color.secondary)
+                Text(request.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .padding(18)
-            .frame(width: 400)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
-            .padding(.top, 64)
+            if !request.displayMessage.isEmpty {
+                ScrollView {
+                    Text(request.displayMessage)
+                        .font(.system(size: 13))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            if request.showsTextField {
+                TextField("", text: $prompts.dialogText)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($fieldFocused)
+                    .onSubmit { prompts.answerDialog(accept: true) }
+            }
+            if dialog.offersSuppression {
+                Toggle("Don't allow this page to create more dialogs", isOn: $prompts.suppressDialogs)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                if request.showsCancel {
+                    Button(request.kind == .beforeUnload ? "Stay" : "Cancel") { prompts.answerDialog(accept: false) }
+                        .keyboardShortcut(.cancelAction)
+                }
+                Button(request.acceptTitle) { prompts.answerDialog(accept: true) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.regular)
         }
         .onExitCommand {
             if request.showsCancel { prompts.answerDialog(accept: false) } else { prompts.answerDialog(accept: true) }
@@ -469,56 +485,45 @@ private struct HTTPAuthSheet: View {
     private enum Field { case username, password }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.22)
-                .contentShape(Rectangle())
-                .onTapGesture {}
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.badge.key.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(challenge.title).font(.headline)
-                }
-                Text(challenge.message)
-                    .font(.system(size: 13))
-                    .fixedSize(horizontal: false, vertical: true)
-                if let note = challenge.realmNote {
-                    Text(note)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if challenge.isInsecure {
-                    Label("Your connection to this site is not private.", systemImage: "lock.open.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.orange)
-                }
-                TextField("Username", text: $prompts.authUsername)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.username)
-                    .focused($focused, equals: .username)
-                    .onSubmit { focused = .password }
-                SecureField("Password", text: $prompts.authPassword)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.password)
-                    .focused($focused, equals: .password)
-                    .onSubmit { prompts.answerHTTPAuth(signIn: true) }
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Cancel") { prompts.answerHTTPAuth(signIn: false) }
-                        .keyboardShortcut(.cancelAction)
-                    Button("Sign In") { prompts.answerHTTPAuth(signIn: true) }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                }
+        PageSheet(width: 380) {
+            HStack(spacing: 10) {
+                Image(systemName: "person.badge.key.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(challenge.title).font(.headline)
             }
-            .padding(18)
-            .frame(width: 380)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
-            .padding(.top, 64)
+            Text(challenge.message)
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            if let note = challenge.realmNote {
+                Text(note)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if challenge.isInsecure {
+                Label("Your connection to this site is not private.", systemImage: "lock.open.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+            }
+            TextField("Username", text: $prompts.authUsername)
+                .textFieldStyle(.roundedBorder)
+                .textContentType(.username)
+                .focused($focused, equals: .username)
+                .onSubmit { focused = .password }
+            SecureField("Password", text: $prompts.authPassword)
+                .textFieldStyle(.roundedBorder)
+                .textContentType(.password)
+                .focused($focused, equals: .password)
+                .onSubmit { prompts.answerHTTPAuth(signIn: true) }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel") { prompts.answerHTTPAuth(signIn: false) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Sign In") { prompts.answerHTTPAuth(signIn: true) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
         }
         .onExitCommand { prompts.answerHTTPAuth(signIn: false) }
         .onAppear { focused = .username }
@@ -536,46 +541,35 @@ private struct ClientCertificateSheet: View {
 
     var body: some View {
         let identities = request.sortedIdentities()
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.22)
-                .contentShape(Rectangle())
-                .onTapGesture {}
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.text.rectangle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(request.title).font(.headline)
-                }
-                Text(request.message)
-                    .font(.system(size: 13))
-                    .fixedSize(horizontal: false, vertical: true)
-                if !identities.isEmpty {
-                    ScrollView {
-                        VStack(spacing: 2) {
-                            ForEach(identities) { identity in row(identity) }
-                        }
-                    }
-                    .frame(maxHeight: 220)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
-                }
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button("Cancel") { prompts.answerClientCertificate(nil) }
-                        .keyboardShortcut(.cancelAction)
-                    Button("OK") { prompts.answerClientCertificate(prompts.selectedCertificate) }
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                        .disabled(prompts.selectedCertificate == nil)
-                }
+        PageSheet(width: 440) {
+            HStack(spacing: 10) {
+                Image(systemName: "person.text.rectangle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(request.title).font(.headline)
             }
-            .padding(18)
-            .frame(width: 440)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
-            .padding(.top, 64)
+            Text(request.message)
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            if !identities.isEmpty {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(identities) { identity in row(identity) }
+                    }
+                }
+                .frame(maxHeight: 220)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Cancel") { prompts.answerClientCertificate(nil) }
+                    .keyboardShortcut(.cancelAction)
+                Button("OK") { prompts.answerClientCertificate(prompts.selectedCertificate) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(prompts.selectedCertificate == nil)
+            }
         }
         .onExitCommand { prompts.answerClientCertificate(nil) }
         .accessibilityElement(children: .contain)

@@ -5,10 +5,12 @@ import Foundation
 public enum LittleArcChrome {
     /// What the collapsed address shows: the host for web pages (Arc's
     /// command-bar placeholder), the whole URL otherwise, nothing for a blank page.
+    /// A long host is cut from the left, so its registrable domain always shows
+    /// (`PageOrigin.shortenedHost`, security N-06 and AG-01).
     public static func addressText(for url: URL?) -> String {
         guard let url, url.absoluteString != "about:blank" else { return "" }
         if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https", let host = url.host() {
-            return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            return PageOrigin.shortenedHost(host.hasPrefix("www.") ? String(host.dropFirst(4)) : host)
         }
         return url.absoluteString
     }

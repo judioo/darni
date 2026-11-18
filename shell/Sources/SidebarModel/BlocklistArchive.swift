@@ -121,25 +121,19 @@ public enum BlocklistArchive {
 
             switch header[156] {
             case 0, UInt8(ascii: "0"), UInt8(ascii: "7"):
-                guard isSafe(name), seen.insert(name).inserted else { throw Failure.unsafeEntry(name) }
+                guard BlocklistManifest.isPlainRelativePath(name), seen.insert(name).inserted else { throw Failure.unsafeEntry(name) }
                 guard entries.count < limits.files else { throw Failure.tooLarge }
                 entries.append(Entry(path: name, data: Data(content)))
             case UInt8(ascii: "5"):
                 // A directory: made when a file needs it.
                 let directory = name.hasSuffix("/") ? String(name.dropLast()) : name
-                guard directory.isEmpty || directory == "." || isSafe(directory) else { throw Failure.unsafeEntry(name) }
+                guard directory.isEmpty || directory == "." || BlocklistManifest.isPlainRelativePath(directory) else { throw Failure.unsafeEntry(name) }
             default:
                 // Links, devices, pipes and pax or GNU extension headers have no place in a bundle.
                 throw Failure.unsafeEntry(name)
             }
         }
         return entries
-    }
-
-    /// As `BlocklistManifest.isSafePath`, with the manifest's own names allowed.
-    private static func isSafe(_ path: String) -> Bool {
-        guard !path.isEmpty, path.utf8.count <= 512, !path.hasPrefix("/"), !path.contains("\\"), !path.contains("\0") else { return false }
-        return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
     }
 
     private static func text(_ field: ArraySlice<UInt8>) -> String {

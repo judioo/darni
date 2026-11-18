@@ -17,57 +17,46 @@ struct PasskeySheet: View {
     private enum Field { case pin, confirmation }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.22)
-                .contentShape(Rectangle())
-                .onTapGesture {}
-            VStack(alignment: .leading, spacing: 12) {
-                // The same line on every step: who the request is for. A touch or a
-                // scan is consent to this site, whichever step the request opens on.
-                Label(step.requestLine, systemImage: "globe")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    // A long name keeps its end: the registrable domain.
-                    .truncationMode(.head)
-                    .accessibilityIdentifier("passkeyRequestLine")
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: step.symbol)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(isProblem ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
-                    Text(step.title)
-                        .font(.headline)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let account = step.accountLine {
-                    // The page's own text: one line, apart from what ReArc says.
-                    Label(account, systemImage: "person.crop.circle")
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityLabel("Account: \(account)")
-                }
-                if !step.message.isEmpty {
-                    Text(step.message)
-                        .font(.system(size: 13))
-                        .foregroundStyle(step.pinProblem != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.primary))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(step.keyNotices, id: \.self) { notice in
-                    Label(notice, systemImage: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                content
-                footer
+        PageSheet(width: 400) {
+            // The same line on every step: who the request is for. A touch or a
+            // scan is consent to this site, whichever step the request opens on.
+            Label(step.requestLine, systemImage: "globe")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                // A long name keeps its end: the registrable domain.
+                .truncationMode(.head)
+                .accessibilityIdentifier("passkeyRequestLine")
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: step.symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isProblem ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                Text(step.title)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(18)
-            .frame(width: 400)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
-            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
-            .padding(.top, 64)
+            if let account = step.accountLine {
+                // The page's own text: one line, apart from what ReArc says.
+                Label(account, systemImage: "person.crop.circle")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityLabel("Account: \(account)")
+            }
+            if !step.message.isEmpty {
+                Text(step.message)
+                    .font(.system(size: 13))
+                    .foregroundStyle(step.pinProblem != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.primary))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(step.keyNotices, id: \.self) { notice in
+                Label(notice, systemImage: "info.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            content
+            footer
         }
         .onExitCommand { prompts.answerPasskey(.cancel) }
         .onAppear { focusPin() }

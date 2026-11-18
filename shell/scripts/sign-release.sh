@@ -18,6 +18,8 @@
 #   iCloud, as bundle-chromium.sh: REARC_ICLOUD_CONTAINER, REARC_ICLOUD_ENVIRONMENT and a
 #   profile, REARC_RELEASE_PROVISIONING_PROFILE (Developer ID profile) or else
 #   REARC_PROVISIONING_PROFILE (development profile, this Mac only).
+#   REARC_WEBAUTHN_KEYCHAIN_GROUP=1 also signs in the keychain group for "this Mac" passkeys,
+#   when the profile allows it. Off by default (icloud-signing.sh).
 # Environment wins over shell/signing.local.env, which is read the same way as by
 # bundle-chromium.sh.
 set -euo pipefail

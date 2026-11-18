@@ -2,6 +2,7 @@ import AppKit
 import ArcBenchCore
 import CoreGraphics
 import Foundation
+import SidebarModel
 
 // arc-vs-rearc: the same interactions timed in Arc and in ReArc from outside,
 // by keystrokes and the target window's pixels (docs/ARC-VS-REARC-BENCH.md).
@@ -20,7 +21,7 @@ scenarios: \(ScenarioCatalog.groups.joined(separator: ", "))
 Full description: scripts/arc-vs-rearc.sh --help and docs/ARC-VS-REARC-BENCH.md.
 """
 
-func stderr(_ message: String) { FileHandle.standardError.write((message + "\n").data(using: .utf8)!) }
+func stderr(_ message: String) { StandardError.write(message + "\n") }
 
 /// The process chain above this one: TCC grants Screen Recording and
 /// Accessibility to the responsible app at the top (a terminal, T3 Code…).

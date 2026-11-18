@@ -138,13 +138,6 @@ struct CardToolbarView: View {
         CardToolbarButton(symbol: symbol, help: help, enabled: enabled, action: action)
     }
 
-    /// The full address without its scheme or `www.` (Arc's
-    /// `toolbarShowFullURLsEnabledPreference`); nil for a blank page. A port
-    /// stays (`localhost:3000`). A split's pane rows show the same address in
-    /// two tones, so both come from `SplitPaneToolbarLayout.addressParts`.
-    static func displayURL(_ url: URL) -> String? {
-        SplitPaneToolbarLayout.addressParts(url).map { $0.host + $0.rest }
-    }
 }
 
 /// Measured greys (§4.4): enabled glyphs and the address, disabled glyphs,

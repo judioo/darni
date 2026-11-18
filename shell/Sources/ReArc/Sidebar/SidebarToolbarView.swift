@@ -195,11 +195,14 @@ struct SidebarURLField: View {
         .help(url?.absoluteString ?? "Open the command bar (⌘L)")
     }
 
-    /// The domain, without `www.`; nil for blank pages.
+    /// The domain, without `www.`; nil for blank pages. A long host is cut from the left, so
+    /// its registrable domain always shows, as in the card toolbar (`PageOrigin.shortenedHost`,
+    /// security N-06 and AG-01): the field truncates in the middle, which kept a
+    /// trusted-looking start in view.
     static func displayHost(_ url: URL) -> String? {
         if url.absoluteString == "about:blank" { return nil }
         guard let host = url.host(), !host.isEmpty else { return url.absoluteString }
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        return PageOrigin.shortenedHost(host.hasPrefix("www.") ? String(host.dropFirst(4)) : host)
     }
 
     @ViewBuilder
