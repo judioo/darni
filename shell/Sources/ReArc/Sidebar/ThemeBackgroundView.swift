@@ -200,6 +200,14 @@ struct ThemeChromeColors: Equatable {
     }
 
     static let fallback = ThemeChromeColors(theme: .arcDefault, dark: false)
+    private static let fallbackDark = ThemeChromeColors(theme: .arcDefault, dark: true)
+
+    /// For a window that shows a page outside any space (a Little ReArc, a
+    /// private window): the default theme in the window's appearance. Such a
+    /// window sets no `themeChrome`, and `fallback` is light whatever the
+    /// appearance, so the page's themed cards (`PromptCardChrome`) would be
+    /// light cards in a dark window.
+    static func outsideSpaces(dark: Bool) -> ThemeChromeColors { dark ? fallbackDark : fallback }
 
     /// 43.5 % of the way to white fits #2731FF → #858AFF to a level.
     static func selection(accent: SpaceColor) -> SpaceColor {

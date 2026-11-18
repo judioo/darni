@@ -7,6 +7,7 @@ import SidebarModel
 struct LittleArcWindowView: View {
     @Bindable var model: BrowserViewModel
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.colorScheme) private var colorScheme
     let windowID: LittleArcWindow.ID
 
     /// The smallest the window goes: the content's minimum, and the floor of `defaultSize`.
@@ -38,6 +39,8 @@ struct LittleArcWindowView: View {
                     toolbar(for: record, engine: engine)
                     Divider()
                     engine.makeView()
+                        // No space here: the page's cards take the default theme in this window's appearance.
+                        .environment(\.themeChrome, .outsideSpaces(dark: colorScheme == .dark))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .pageStatus(engine.activity) { engine.reload() }
                         .findBar(model.findBar, for: engine)

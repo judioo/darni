@@ -104,12 +104,15 @@ extension BrowserViewModel {
 struct PrivateWindowView: View {
     @Bindable var model: BrowserViewModel
     let window: PrivateWindowModel
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
             window.engine.makeView()
+                // No space here: the page's cards take the default theme in this window's appearance.
+                .environment(\.themeChrome, .outsideSpaces(dark: colorScheme == .dark))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .findBar(model.findBar, for: window.engine)
         }

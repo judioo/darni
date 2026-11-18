@@ -42,6 +42,10 @@ final class Wave31LookSnapshotTests: XCTestCase {
         XCTAssertFalse(light.isDark)
         XCTAssertTrue(dark.isDark)
         XCTAssertNotEqual(light.title, dark.title)
+        // A Little ReArc or private window has no space: its page's cards follow the window's appearance.
+        XCTAssertEqual(ThemeChromeColors.outsideSpaces(dark: true).title, dark.title)
+        XCTAssertEqual(ThemeChromeColors.outsideSpaces(dark: true).toast, dark.toast)
+        XCTAssertEqual(ThemeChromeColors.outsideSpaces(dark: false).toast, ThemeChromeColors.fallback.toast)
         XCTAssertEqual(CardToolbarView.displayURL(URL(string: "https://www.github.com/example/notes?tab=1")!), "github.com/example/notes?tab=1")
         XCTAssertEqual(CardToolbarView.displayURL(URL(string: "https://arc.net/")!), "arc.net")
         XCTAssertNil(CardToolbarView.displayURL(URL(string: "about:blank")!))
