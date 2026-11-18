@@ -3809,9 +3809,11 @@ extension ChromiumSelfTest {
         let owner = store.profiles.first?.id
         let little = store.createLittleArcWindow(url: SelfTestBlockingFixture.pageURL(base: serverBase, run: 2), title: "Blocking", profileID: owner)
         blockingRun = 2
-        if step == .off, let owner {
-            // Settled before the model loads: the rollout gives a new install's level only to a profile with none.
-            store.setContentBlocking(.off, for: owner)
+        if step == .off {
+            // Settled before the model loads, as an existing install: its profiles stay Off. Setting
+            // `.off` on a profile with no settings changes nothing (no settings already read as Off),
+            // and the model's rollout then counted a new install and gave it Ads and trackers.
+            store.beginContentBlockingRollout(isNewInstall: false)
         }
         // As ChromiumShell.makeModel does: the owner is named before the model loads the tab.
         runtime.legacyDefaultOwner = owner
