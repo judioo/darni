@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
 ABI **1.68** (major remains 1 for existing hosts), bridge **0.78.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; no engine build contains 096 or 097 yet). Public header:
+(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay 85a7a97594, has all three, and 096 and 097 have not run yet). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2778,7 +2778,7 @@ the launch after a list update's takeover, with the ready-blocker markers read a
 
 ## Site permissions (1.67)
 
-Feature `site_permissions`, patch `tab/096`, not built yet. Spec:
+Feature `site_permissions`, patch `tab/096`, built and not yet run. Spec:
 [PASSKEYS-AND-SITE-PERMISSIONS](../../docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md), part 2. What Chromium
 holds for the site of a tab's page, so the host's site panel shows the real state and not only
 what was answered in the host's own prompt (1.20). The state stays Chromium's: the profile's
@@ -2824,12 +2824,11 @@ shows "reload this page" then. The host offers Reload after a change.
 
 **Tests:** `engine/tests/check_abi168_imports.py` compares every ABI 1.66 struct layout, checks
 that the header adds exactly the six functions of 1.67 and 1.68 and no struct, and typechecks
-gated Swift adoption. It passes against the patched header (`REARC_TEST_ABI_HEADER_DIR`) without
-a build. No host test and no self-test step exist yet.
+gated Swift adoption. It passes against the built tree. No host test and no self-test step exist yet.
 
 ## WebAuthn steps (1.68)
 
-Feature `webauthn_prompts`, patch `tab/097`, not built yet. Spec:
+Feature `webauthn_prompts`, patch `tab/097`, built and not yet run. Spec:
 [PASSKEYS-AND-SITE-PERMISSIONS](../../docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md), part 1. Chromium shows a
 passkey or security key request in a Views dialog on the tab's `WebContentsModalDialogManager`.
 A bridge tab has none, so before this channel no dialog opened and the request waited until the
@@ -2885,5 +2884,5 @@ iCloud Keychain needs Apple's `com.apple.developer.web-browser.public-key-creden
 entitlement and is not offered without it. Hybrid needs macOS's Bluetooth permission for the
 app (the `bluetooth_denied` step when it is refused).
 
-**Tests:** the import check above. Nothing in this channel has run: it needs a build, the
-host's sheet, a phone and a security key.
+**Tests:** the import check above. Nothing in this channel has run: it needs the host's sheet
+on screen, a phone and a security key.

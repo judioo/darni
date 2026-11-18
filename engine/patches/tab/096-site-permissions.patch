@@ -43,10 +43,10 @@ per-site rule) and WEB_APP_INSTALLATION. Not done: page info's metrics, the
 "reload to apply" infobar (the host says so) and storage access (two-site
 rules).
 
-Not built. Type-checked with the tree's clang against overlay 67d25d5cf4
-(rearc_site_permissions.cc and rearc_services_abi.cc, -fsyntax-only with
-core's flags, Chromium's plugins on): no diagnostic of its own. The .mm
-hunks (a feature name, the bridge version) cannot be checked that way.
+Built into the release engine on 2026-11-18 (overlay 3e4292f933, then
+85a7a97594 with tab/097, out/ReArc-codecs-arm64): the framework exports the
+four functions and engine/tests/check_abi168_imports.py passes. Nothing has
+run: no host test, no self-test step, nothing on screen.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,

@@ -57,11 +57,10 @@ Google Password Manager steps (the enclave, its PIN and recovery windows)
 are reported as "unsupported": they need a signed-in Chrome profile with
 password sync, which a ReArc profile is not.
 
-Not built. Type-checked with the tree's clang against overlay 67d25d5cf4
-(rearc_webauthn.cc, chrome_authenticator_request_delegate.cc,
-chrome_web_authentication_delegate.cc, rearc_services_abi.cc): no
-diagnostic of its own. Nothing here has run: the flows need a build, the
-host's sheet and a real phone and security key.
+Built into the release engine on 2026-11-18 (overlay 85a7a97594,
+out/ReArc-codecs-arm64): the framework exports both functions and
+engine/tests/check_abi168_imports.py passes. Nothing here has run: the
+flows need the host's sheet on screen, a real phone and a security key.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,
