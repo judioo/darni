@@ -1,0 +1,901 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 site permissions for the host's site panel (ABI 1.67)
+
+Engine side of docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md, part 2.
+The owner: "There is no way to check what this site has access to after the
+permission bubbles have gone." The host's Site Control Center listed only
+what was answered in its own prompt; what a site may really do is in
+Chromium: the profile's HostContentSettingsMap, the permission
+auto-blocker's embargo and the device chooser contexts.
+
+ReArcTabGetSitePermissions answers for the site of the tab's page (the
+primary main frame's committed origin, http and https only) with one JSON
+object: every setting a site can have, in page info's order, each with its
+state (allow, block, ask), the default, where the state comes from (the
+site's own rule, the default, policy, an extension, an embargo), whether
+page info would list it ("held") and whether the person may change it; the
+USB, HID, serial and Bluetooth devices chosen for the site; and what the
+page uses now (camera, microphone and screen from
+MediaStreamCaptureIndicator, location and devices from
+WebContents::IsCapabilityActive). JSON, as ReArcEngineGetProcessDetails: a
+host calls it by symbol lookup, and a later key needs no struct change.
+
+ReArcTabSetSitePermission allows, blocks or resets one setting, as
+PageInfo::OnSitePermissionChanged does: HostContentSettingsMap::
+SetNarrowestContentSetting, and anything but "block" lifts an embargo. It
+takes the origin the host showed and refuses (invalid_state) when the tab
+is on another site by now, so a click meant for one site never changes the
+next. A setting under policy or an extension is refused.
+ReArcTabRevokeSiteDevice takes a chosen device away
+(ObjectPermissionContextBase::RevokeObjectPermission).
+ReArcEngineSetSitePermissionsChangedCallback says that a tab's answer
+changed: a per-tab watch observes the profile's HostContentSettingsMap (the
+listed types, the chooser data and the auto-blocker's data, for patterns
+that match the tab's site) and WebContentsObserver::OnCapabilityTypesChanged.
+One queued call per tab, no state in the event.
+
+The rules are page info's (components/page_info/page_info.cc:
+PresentSitePermissions, ShouldShowPermission, OnSitePermissionChanged),
+written against the map because PageInfo needs a PageInfoUI and
+ChromePageInfoDelegate. Left out of the list: ADS (Chrome's ad filter is
+not ReArc's blocking), AUTO_PICTURE_IN_PICTURE (the host has its own
+per-site rule) and WEB_APP_INSTALLATION. Not done: page info's metrics, the
+"reload to apply" infobar (the host says so) and storage access (two-site
+rules).
+
+Built into the release engine on 2026-11-18 (overlay 3e4292f933, then
+e6f031f180 with tab/097, out/ReArc-codecs-arm64): the framework exports the
+four functions and engine/tests/check_abi168_imports.py passes. Nothing has
+run: no host test, no self-test step, nothing on screen.
+
+Touches: chrome/app/framework.exports, chrome/app/framework.order,
+chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,
+rearc_engine_abi.h, rearc_engine_abi.mm, rearc_engine_entry_mac.mm,
+rearc_services_abi.cc, rearc_site_permissions.cc (new)}.
+
+Bridge 0.77.0, ABI 1.67, feature site_permissions. No struct changes.
+
+Last rebased: 2026-11-18 onto Chromium 156.0.8078.109 (overlay 67d25d5cf4).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 170cab9..614ec7b 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -50,6 +50,10 @@ _ReArcProfileSetBlockingExceptions
+ _ReArcProfileSetOwnBlockingRules
+ _ReArcTabGetBlockedCount
+ _ReArcEngineSetBlockedCountCallback
++_ReArcTabGetSitePermissions
++_ReArcTabSetSitePermission
++_ReArcTabRevokeSiteDevice
++_ReArcEngineSetSitePermissionsChangedCallback
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 05cb8f9..0bac800 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -57,6 +57,10 @@ _ReArcProfileSetBlockingExceptions
+ _ReArcProfileSetOwnBlockingRules
+ _ReArcTabGetBlockedCount
+ _ReArcEngineSetBlockedCountCallback
++_ReArcTabGetSitePermissions
++_ReArcTabSetSitePermission
++_ReArcTabRevokeSiteDevice
++_ReArcEngineSetSitePermissionsChangedCallback
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index f51bf70..e599356 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1491,6 +1491,7 @@ source_set("core") {
+       "rearc_bridge/rearc_downloads_abi.cc",
+       "rearc_bridge/rearc_history_abi.cc",
+       "rearc_bridge/rearc_search_abi.cc",
++      "rearc_bridge/rearc_site_permissions.cc",
+       "rearc_bridge/rearc_fullscreen.cc",
+       "rearc_bridge/rearc_fullscreen.h",
+       "rearc_bridge/rearc_key_equivalents.cc",
+diff --git a/chrome/browser/rearc_bridge/rearc_abi_internal.h b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+index 9a3489e..503b6c5 100644
+--- a/chrome/browser/rearc_bridge/rearc_abi_internal.h
++++ b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+@@ -48,5 +48,9 @@ void ABIDetachMediaCapture(uint64_t tab_id);
+ // ABI 1.66 content blocking (rearc_content_blocker.cc): forgets what the host
+ // said about a bridge profile that is going away.
+ void ABIDetachContentBlocker(uint64_t profile_id);
++// ABI 1.67 site permissions (rearc_site_permissions.cc), driven by the
++// services hooks: the watch that tells the host a tab's answer changed.
++void ABIAttachSitePermissions(uint64_t tab_id);
++void ABIDetachSitePermissions(uint64_t tab_id);
+ }  // namespace rearc
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 4c800f7..f638567 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 66, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 67, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -1745,6 +1745,74 @@ typedef void (*ReArcBlockedCountCallback)(void* context,
+ REARC_ENGINE_EXPORT void ReArcEngineSetBlockedCountCallback(
+     ReArcBlockedCountCallback callback, void* context);
+ 
++// Site permissions (site_permissions, ABI 1.67): what Chromium holds for the
++// site of the tab's page, for a site information panel. The site is the
++// primary main frame's committed origin, http and https only. The state is
++// Chromium's (HostContentSettingsMap, the permission auto-blocker's embargo,
++// the USB, HID, serial and Bluetooth device grants); the host keeps none of it
++// and asks again on the change callback, on a navigation and on a
++// media_capture event.
++//
++// json is a UTF-8 object; a host ignores keys it does not know:
++//   "origin": the site, serialized ("https://example.com"); "" for a page
++//     without one (an empty tab, a file, an internal page), and then no
++//     other key.
++//   "off_the_record": the tab's profile is a private one.
++//   "permissions": every setting a site can have, in Chromium's page info
++//     order. "type": Chromium's name of the content setting, as in its
++//     content settings registry ("notifications", "geolocation",
++//     "media-stream-camera", "media-stream-mic", "clipboard", "usb-guard",
++//     "bluetooth-guard", "local-network", ...). "setting" and "default":
++//     "allow", "block" or "ask"; default is what the site has without a rule
++//     of its own. "source": "default" (no rule for the site), "user" (the
++//     person's rule for the site), "policy", "extension", "embargo" (blocked
++//     for a while after repeated dismissals) or "other". "held": page info
++//     would list it (a rule for the site, a setting the person does not
++//     control, an embargo, or a default the person changed away from asking).
++//     "changeable": ReArcTabSetSitePermission may change it (false under
++//     policy or an extension). "one_time": allowed for this visit only.
++//   "devices": the devices the person chose for the site. "kind": "usb",
++//     "hid", "serial" or "bluetooth"; "key": the grant's identity for
++//     ReArcTabRevokeSiteDevice; "name": Chromium's display name;
++//     "changeable": false for a policy grant.
++//   "in_use": what the page uses now: "camera", "microphone", "screen",
++//     "location", "bluetooth", "usb", "hid", "serial".
++// Snapshot at call time, delivered deferred, exactly once, borrowed. Popups,
++// panels and DevTools answer like any tab.
++typedef void (*ReArcSitePermissionsCallback)(void* context,
++                                             ReArcStatus status,
++                                             uint64_t tab_id,
++                                             const char* json);
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabGetSitePermissions(
++    uint64_t tab_id, ReArcSitePermissionsCallback completion, void* context);
++// Changes one setting of the tab's site, as Chromium's page info does.
++// origin: the "origin" the host showed. The tab's site is another one by now
++// (a navigation since): invalid_state, and nothing changes. type: a "type" of
++// the list (others invalid_argument). setting: 0 reset (the site's rule goes;
++// the default applies again, and an embargo ends), 1 allow, 2 block. A row
++// that is not changeable: invalid_state. A value the type does not take:
++// unsupported. Chromium persists the rule in the tab's profile (a private
++// profile's rules end with it). A page already loaded may keep what it had
++// until it is reloaded; the host reloads or says so.
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabSetSitePermission(uint64_t tab_id,
++                                                          const char* origin,
++                                                          const char* type,
++                                                          uint32_t setting);
++// Takes a chosen device from the site again. origin as above; kind and key
++// from "devices". No such grant: not_found. A policy grant: invalid_state.
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabRevokeSiteDevice(uint64_t tab_id,
++                                                         const char* origin,
++                                                         const char* kind,
++                                                         const char* key);
++// The answer for a tab changed: a setting of its profile that applies to its
++// site, a device grant, or a device the page started or stopped using. At
++// most one call per tab is queued; the event carries no state. Never after
++// tab.closed. Null disables delivery.
++typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
++                                                    uint64_t tab_id);
++REARC_ENGINE_EXPORT void ReArcEngineSetSitePermissionsChangedCallback(
++    ReArcSitePermissionsChangedCallback callback, void* context);
++
+ #ifdef __cplusplus
+ }  // extern "C"
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 07c8356..5d68e4f 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -991,6 +991,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "perf_metrics" ||
+          std::string(feature) == "task_manager" ||
+          std::string(feature) == "content_blocking" ||
++         std::string(feature) == "site_permissions" ||
+          std::string(feature) == "early_window" ||
+          std::string(feature) == "media_capture" ||
+          std::string(feature) == "search_engines" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index 9cf2033..4521ae0 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.76.0";
++  return "0.77.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_services_abi.cc b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+index 5e804b2..f8c5938 100644
+--- a/chrome/browser/rearc_bridge/rearc_services_abi.cc
++++ b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+@@ -1235,6 +1235,7 @@ void ABIAttachServices(uint64_t id) {
+   Pages().emplace(id, std::make_unique<PageServices>(*s));
+   ABIAttachFind(id);
+   ABIAttachMediaCapture(id);
++  ABIAttachSitePermissions(id);
+ }
+ void ABIDetachServices(uint64_t id) {
+   CHECK(pthread_main_np());
+@@ -1250,6 +1251,7 @@ void ABIDetachServices(uint64_t id) {
+   ABICancelJavaScriptDialogs(id);
+   ABIDetachFind(id);
+   ABIDetachMediaCapture(id);
++  ABIDetachSitePermissions(id);
+   Pages().erase(id);
+ }
+ bool ABIHasServiceFeature(const char* feature) {
+diff --git a/chrome/browser/rearc_bridge/rearc_site_permissions.cc b/chrome/browser/rearc_bridge/rearc_site_permissions.cc
+new file mode 100644
+index 0000000..0c81fd0
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_site_permissions.cc
+@@ -0,0 +1,645 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Site permissions (site_permissions, ABI 1.67): what Chromium holds for the
++// site of a tab's page, for the host's site information panel. The state is
++// Chromium's own (HostContentSettingsMap, the permission auto-blocker and the
++// device chooser contexts); nothing is kept here. The rules for what a site
++// "holds" and for a change follow components/page_info/page_info.cc
++// (PresentSitePermissions, ShouldShowPermission, OnSitePermissionChanged),
++// which needs a PageInfoUI and Browser UI the bridge does not have.
++
++#include <pthread.h>
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <variant>
++#include <vector>
++
++#include "base/check.h"
++#include "base/feature_list.h"
++#include "base/functional/bind.h"
++#include "base/json/json_writer.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/values.h"
++#include "chrome/browser/bluetooth/bluetooth_chooser_context_factory.h"
++#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
++#include "chrome/browser/hid/hid_chooser_context.h"
++#include "chrome/browser/hid/hid_chooser_context_factory.h"
++#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
++#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
++#include "chrome/browser/permissions/permission_decision_auto_blocker_factory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/tab_registry.h"
++#include "chrome/browser/rearc_bridge/tab_session.h"
++#include "chrome/browser/serial/serial_chooser_context.h"
++#include "chrome/browser/serial/serial_chooser_context_factory.h"
++#include "chrome/browser/usb/usb_chooser_context.h"
++#include "chrome/browser/usb/usb_chooser_context_factory.h"
++#include "components/content_settings/core/browser/content_settings_observer.h"
++#include "components/content_settings/core/browser/content_settings_type_set.h"
++#include "components/content_settings/core/browser/host_content_settings_map.h"
++#include "components/content_settings/core/browser/permission_settings_info.h"
++#include "components/content_settings/core/browser/permission_settings_registry.h"
++#include "components/content_settings/core/browser/website_settings_info.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
++#include "components/content_settings/core/common/content_settings.h"
++#include "components/content_settings/core/common/content_settings_pattern.h"
++#include "components/content_settings/core/common/content_settings_types.h"
++#include "components/content_settings/core/common/content_settings_utils.h"
++#include "components/permissions/contexts/bluetooth_chooser_context.h"
++#include "components/permissions/object_permission_context_base.h"
++#include "components/permissions/permission_decision_auto_blocker.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_capability_type.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/browser/web_contents_user_data.h"
++#include "content/public/common/content_features.h"
++#include "url/gurl.h"
++#include "url/origin.h"
++#include "url/url_constants.h"
++
++namespace rearc {
++namespace {
++
++using content_settings::PermissionSettingsInfo;
++using content_settings::SettingSource;
++
++ReArcSitePermissionsChangedCallback host = nullptr;
++void* host_context = nullptr;
++uint64_t epoch = 0;
++
++// The settings a site can hold, in page info's order (kPermissionType in
++// components/page_info/page_info.cc, the desktop entries). Left out: ADS
++// (Chrome's own ad filter, not ReArc's blocking), AUTO_PICTURE_IN_PICTURE (the
++// host has its own per-site rule) and WEB_APP_INSTALLATION (no installed web
++// apps). Only one of the two geolocation types is live (see IsLive).
++constexpr ContentSettingsType kTypes[] = {
++    ContentSettingsType::GEOLOCATION,
++    ContentSettingsType::GEOLOCATION_WITH_OPTIONS,
++    ContentSettingsType::MEDIASTREAM_CAMERA,
++    ContentSettingsType::CAMERA_PAN_TILT_ZOOM,
++    ContentSettingsType::MEDIASTREAM_MIC,
++    ContentSettingsType::SENSORS,
++    ContentSettingsType::NOTIFICATIONS,
++    ContentSettingsType::JAVASCRIPT,
++    ContentSettingsType::IMAGES,
++    ContentSettingsType::POPUPS,
++    ContentSettingsType::WINDOW_MANAGEMENT,
++    ContentSettingsType::BACKGROUND_SYNC,
++    ContentSettingsType::SOUND,
++    ContentSettingsType::AUTOMATIC_DOWNLOADS,
++    ContentSettingsType::MIDI_SYSEX,
++    ContentSettingsType::CLIPBOARD_READ_WRITE,
++    ContentSettingsType::USB_GUARD,
++    ContentSettingsType::HID_GUARD,
++    ContentSettingsType::SERIAL_GUARD,
++    ContentSettingsType::FILE_SYSTEM_WRITE_GUARD,
++    ContentSettingsType::LOCAL_FONTS,
++    ContentSettingsType::BLUETOOTH_GUARD,
++    ContentSettingsType::BLUETOOTH_SCANNING,
++    ContentSettingsType::HAND_TRACKING,
++    ContentSettingsType::VR,
++    ContentSettingsType::AR,
++    ContentSettingsType::IDLE_DETECTION,
++    ContentSettingsType::FEDERATED_IDENTITY_API,
++    ContentSettingsType::CAPTURED_SURFACE_CONTROL,
++    ContentSettingsType::AUTOMATIC_FULLSCREEN,
++    ContentSettingsType::KEYBOARD_LOCK,
++    ContentSettingsType::POINTER_LOCK,
++    ContentSettingsType::LOCAL_NETWORK,
++    ContentSettingsType::LOOPBACK_NETWORK,
++};
++
++// Device grants (page info's kChooserUIInfo): the ABI's kind, and the
++// website setting whose change says a grant came or went.
++struct DeviceKind {
++  const char* name;
++  ContentSettingsType data_type;
++};
++constexpr DeviceKind kDeviceKinds[] = {
++    {"usb", ContentSettingsType::USB_CHOOSER_DATA},
++    {"hid", ContentSettingsType::HID_CHOOSER_DATA},
++    {"serial", ContentSettingsType::SERIAL_CHOOSER_DATA},
++    {"bluetooth", ContentSettingsType::BLUETOOTH_CHOOSER_DATA},
++};
++
++bool IsLive(ContentSettingsType type) {
++  if (type == ContentSettingsType::GEOLOCATION ||
++      type == ContentSettingsType::GEOLOCATION_WITH_OPTIONS) {
++    return type == content_settings::GeolocationContentSettingsType();
++  }
++  return true;
++}
++
++const PermissionSettingsInfo* InfoFor(ContentSettingsType type) {
++  return content_settings::PermissionSettingsRegistry::GetInstance()->Get(type);
++}
++
++// The ABI's name of a type: Chromium's own, from the content settings
++// registry ("notifications", "media-stream-camera", "usb-guard").
++const std::string* NameOf(ContentSettingsType type) {
++  const content_settings::WebsiteSettingsInfo* info =
++      content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++  return info ? &info->name() : nullptr;
++}
++
++std::optional<ContentSettingsType> TypeNamed(std::string_view name) {
++  for (ContentSettingsType type : kTypes) {
++    const std::string* candidate = NameOf(type);
++    if (IsLive(type) && InfoFor(type) && candidate && *candidate == name) {
++      return type;
++    }
++  }
++  return std::nullopt;
++}
++
++const char* SettingName(const PermissionSettingsInfo& info,
++                        const PermissionSetting& setting) {
++  if (info.delegate().IsBlocked(setting)) {
++    return "block";
++  }
++  if (info.delegate().IsUndecided(setting)) {
++    return "ask";
++  }
++  return info.delegate().IsAnyPermissionAllowed(setting) ? "allow" : "ask";
++}
++
++// Allow or block in the type's own form: most types hold a ContentSetting,
++// location with accuracy options a GeolocationSetting.
++PermissionSetting MakeSetting(const PermissionSettingsInfo& info, bool allow) {
++  if (std::holds_alternative<GeolocationSetting>(
++          info.GetInitialDefaultSetting())) {
++    const PermissionOption option =
++        allow ? PermissionOption::kAllowed : PermissionOption::kDenied;
++    return GeolocationSetting{option, option};
++  }
++  return allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK;
++}
++
++// The site of the tab's page: the primary main frame's committed origin,
++// http and https only. Nothing for an empty tab, a file or an internal page.
++std::optional<url::Origin> SiteOf(content::WebContents* contents) {
++  if (!contents) {
++    return std::nullopt;
++  }
++  const url::Origin& origin =
++      contents->GetPrimaryMainFrame()->GetLastCommittedOrigin();
++  if (origin.opaque() || (origin.scheme() != url::kHttpScheme &&
++                          origin.scheme() != url::kHttpsScheme)) {
++    return std::nullopt;
++  }
++  return origin;
++}
++
++permissions::ObjectPermissionContextBase* DeviceContext(
++    Profile* profile,
++    ContentSettingsType data_type) {
++  switch (data_type) {
++    case ContentSettingsType::USB_CHOOSER_DATA:
++      return UsbChooserContextFactory::GetForProfile(profile);
++    case ContentSettingsType::HID_CHOOSER_DATA:
++      return HidChooserContextFactory::GetForProfile(profile);
++    case ContentSettingsType::SERIAL_CHOOSER_DATA:
++      return SerialChooserContextFactory::GetForProfile(profile);
++    case ContentSettingsType::BLUETOOTH_CHOOSER_DATA:
++      return base::FeatureList::IsEnabled(
++                 features::kWebBluetoothNewPermissionsBackend)
++                 ? BluetoothChooserContextFactory::GetForProfile(profile)
++                 : nullptr;
++    default:
++      return nullptr;
++  }
++}
++
++base::DictValue DescribePermission(Profile* profile,
++                                   HostContentSettingsMap* map,
++                                   const GURL& url,
++                                   ContentSettingsType type,
++                                   const PermissionSettingsInfo& info,
++                                   const std::string& name) {
++  content_settings::SettingInfo rule;
++  PermissionSetting setting = map->GetPermissionSetting(url, url, type, &rule);
++  const bool site_specific =
++      !(rule.primary_pattern == ContentSettingsPattern::Wildcard() &&
++        rule.secondary_pattern == ContentSettingsPattern::Wildcard());
++  const PermissionSetting default_setting =
++      site_specific ? map->GetDefaultPermissionSetting(type, nullptr) : setting;
++  const PermissionSetting factory_default = info.GetInitialDefaultSetting();
++
++  const char* source = "other";
++  switch (rule.source) {
++    case SettingSource::kUser:
++      source = site_specific ? "user" : "default";
++      break;
++    case SettingSource::kPolicy:
++      source = "policy";
++      break;
++    case SettingSource::kExtension:
++      source = "extension";
++      break;
++    default:
++      break;
++  }
++
++  // A site the person dismissed or ignored too often is blocked for a while
++  // without a rule of its own (the auto-blocker's embargo).
++  bool embargoed = false;
++  if (rule.source == SettingSource::kUser &&
++      permissions::PermissionDecisionAutoBlocker::IsEnabledForContentSetting(
++          type)) {
++    auto* blocker = PermissionDecisionAutoBlockerFactory::GetForProfile(profile);
++    if (blocker && blocker->IsEmbargoed(url, type)) {
++      embargoed = true;
++      setting = info.delegate().ApplyPermissionEmbargo(setting);
++      source = "embargo";
++    }
++  }
++
++  // Granted in the profile, a setting is back to "ask" in its private
++  // windows until the site asks there: nothing the site holds.
++  const bool private_default =
++      profile->IsOffTheRecord() && info.delegate().IsUndecided(setting) &&
++      info.delegate().IsUndecided(factory_default);
++  const bool held =
++      embargoed || (site_specific && !private_default) ||
++      rule.source != SettingSource::kUser ||
++      (default_setting != factory_default &&
++       !info.delegate().IsUndecided(default_setting));
++
++  base::DictValue row;
++  row.Set("type", name);
++  row.Set("setting", SettingName(info, setting));
++  row.Set("default", SettingName(info, default_setting));
++  row.Set("source", source);
++  row.Set("held", held);
++  row.Set("changeable", rule.source == SettingSource::kUser);
++  row.Set("one_time", rule.metadata.session_model() ==
++                          content_settings::mojom::SessionModel::ONE_TIME);
++  return row;
++}
++
++std::string Describe(TabSession& session) {
++  content::WebContents* contents = session.web_contents();
++  base::DictValue document;
++  std::optional<url::Origin> site = SiteOf(contents);
++  if (!site) {
++    // A page without a site: the host shows no permissions for it.
++    document.Set("origin", "");
++    return base::WriteJson(document).value_or("{}");
++  }
++  Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
++  HostContentSettingsMap* map =
++      HostContentSettingsMapFactory::GetForProfile(profile);
++  const GURL url = site->GetURL();
++  document.Set("origin", site->Serialize());
++  document.Set("off_the_record", profile->IsOffTheRecord());
++
++  base::ListValue rows;
++  for (ContentSettingsType type : kTypes) {
++    const PermissionSettingsInfo* info = InfoFor(type);
++    const std::string* name = NameOf(type);
++    if (!IsLive(type) || !info || !name) {
++      continue;
++    }
++    rows.Append(DescribePermission(profile, map, url, type, *info, *name));
++  }
++  document.Set("permissions", std::move(rows));
++
++  base::ListValue devices;
++  for (const DeviceKind& kind : kDeviceKinds) {
++    permissions::ObjectPermissionContextBase* context =
++        DeviceContext(profile, kind.data_type);
++    if (!context) {
++      continue;
++    }
++    for (const auto& object : context->GetGrantedObjects(*site)) {
++      base::DictValue device;
++      device.Set("kind", kind.name);
++      device.Set("key", context->GetKeyForObject(object->value));
++      device.Set("name", base::UTF16ToUTF8(context->GetObjectDisplayNameForUI(
++                             object->value)));
++      device.Set("changeable", object->source == SettingSource::kUser);
++      devices.Append(std::move(device));
++    }
++  }
++  document.Set("devices", std::move(devices));
++
++  // What the page uses now: Chrome's tab indicators (capture) and the
++  // WebContents' device capabilities.
++  base::ListValue in_use;
++  MediaStreamCaptureIndicator* indicator =
++      MediaCaptureDevicesDispatcher::GetInstance()
++          ->GetMediaStreamCaptureIndicator()
++          .get();
++  if (indicator->IsCapturingVideo(contents)) {
++    in_use.Append("camera");
++  }
++  if (indicator->IsCapturingAudio(contents)) {
++    in_use.Append("microphone");
++  }
++  if (indicator->IsCapturingTab(contents) ||
++      indicator->IsCapturingWindow(contents) ||
++      indicator->IsCapturingDisplay(contents)) {
++    in_use.Append("screen");
++  }
++  using Capability = content::WebContentsCapabilityType;
++  if (contents->IsCapabilityActive(Capability::kGeolocation)) {
++    in_use.Append("location");
++  }
++  if (contents->IsCapabilityActive(Capability::kBluetoothConnected) ||
++      contents->IsCapabilityActive(Capability::kBluetoothScanning)) {
++    in_use.Append("bluetooth");
++  }
++  if (contents->IsCapabilityActive(Capability::kUSB)) {
++    in_use.Append("usb");
++  }
++  if (contents->IsCapabilityActive(Capability::kHID)) {
++    in_use.Append("hid");
++  }
++  if (contents->IsCapabilityActive(Capability::kSerial)) {
++    in_use.Append("serial");
++  }
++  document.Set("in_use", std::move(in_use));
++  return base::WriteJson(document).value_or("{}");
++}
++
++bool IsWatchedType(ContentSettingsTypeSet types) {
++  if (types.ContainsAllTypes()) {
++    return true;
++  }
++  const ContentSettingsType changed = types.GetType();
++  if (changed == ContentSettingsType::PERMISSION_AUTOBLOCKER_DATA) {
++    return true;
++  }
++  for (ContentSettingsType type : kTypes) {
++    if (type == changed) {
++      return true;
++    }
++  }
++  for (const DeviceKind& kind : kDeviceKinds) {
++    if (kind.data_type == changed) {
++      return true;
++    }
++  }
++  return false;
++}
++
++// Tells the host that a tab's answer changed: a setting of the profile that
++// applies to the tab's site, or a device capability the page started or
++// stopped using. Camera, microphone and screen capture have their own channel
++// (media_capture, ABI 1.46); the host asks again on those events too.
++class SiteWatch : public content::WebContentsUserData<SiteWatch>,
++                  public content::WebContentsObserver,
++                  public content_settings::Observer {
++ public:
++  ~SiteWatch() override = default;
++
++  void Notify() {
++    if (pending_ || !host) {
++      return;
++    }
++    pending_ = true;
++    ABIPost(base::BindOnce(&SiteWatch::Deliver, weak_.GetWeakPtr(), epoch));
++  }
++
++  // content::WebContentsObserver:
++  void OnCapabilityTypesChanged(content::WebContentsCapabilityType,
++                                bool) override {
++    Notify();
++  }
++
++  // content_settings::Observer:
++  void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
++                               const ContentSettingsPattern& secondary_pattern,
++                               ContentSettingsTypeSet types) override {
++    if (!IsWatchedType(types)) {
++      return;
++    }
++    std::optional<url::Origin> site = SiteOf(&GetWebContents());
++    if (!site) {
++      return;
++    }
++    // An invalid pattern stands for "several rules changed".
++    if (!primary_pattern.IsValid() || primary_pattern.Matches(site->GetURL())) {
++      Notify();
++    }
++  }
++
++ private:
++  friend class content::WebContentsUserData<SiteWatch>;
++  SiteWatch(content::WebContents* contents, uint64_t tab_id)
++      : content::WebContentsUserData<SiteWatch>(*contents),
++        content::WebContentsObserver(contents),
++        tab_id_(tab_id) {
++    settings_.Observe(HostContentSettingsMapFactory::GetForProfile(
++        Profile::FromBrowserContext(contents->GetBrowserContext())));
++  }
++
++  // Nothing after tab.closed: the watch is gone with the tab's contents.
++  static void Deliver(base::WeakPtr<SiteWatch> watch, uint64_t expected) {
++    if (!watch) {
++      return;
++    }
++    watch->pending_ = false;
++    if (host && expected == epoch) {
++      host(host_context, watch->tab_id_);
++    }
++  }
++
++  const uint64_t tab_id_;
++  bool pending_ = false;
++  base::ScopedObservation<HostContentSettingsMap, content_settings::Observer>
++      settings_{this};
++  base::WeakPtrFactory<SiteWatch> weak_{this};
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++WEB_CONTENTS_USER_DATA_KEY_IMPL(SiteWatch);
++
++// The tab's site, when `origin` still names it. The host shows a panel for
++// the site it asked about; a page that has gone elsewhere since must not have
++// its new site changed by a click meant for the old one.
++ReArcStatus CheckSite(TabSession& session,
++                      const char* origin,
++                      url::Origin* site) {
++  if (!origin) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  std::optional<url::Origin> current = SiteOf(session.web_contents());
++  if (!current) {
++    return REARC_UNSUPPORTED;
++  }
++  if (current->Serialize() != origin) {
++    return REARC_INVALID_STATE;
++  }
++  *site = *current;
++  return REARC_OK;
++}
++
++void DeliverDescription(ReArcSitePermissionsCallback completion,
++                        void* context,
++                        uint64_t tab_id,
++                        std::string json) {
++  completion(context, REARC_OK, tab_id, json.c_str());
++}
++
++}  // namespace
++
++void ABIAttachSitePermissions(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  TabSession* session = TabRegistry::Get().FindSession(tab_id);
++  if (!session || !session->web_contents() ||
++      SiteWatch::FromWebContents(session->web_contents())) {
++    return;
++  }
++  SiteWatch::CreateForWebContents(session->web_contents(), tab_id);
++}
++
++void ABIDetachSitePermissions(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  TabSession* session = TabRegistry::Get().FindSession(tab_id);
++  if (session && session->web_contents()) {
++    session->web_contents()->RemoveUserData(SiteWatch::UserDataKey());
++  }
++}
++
++}  // namespace rearc
++
++ReArcStatus ReArcTabGetSitePermissions(uint64_t tab_id,
++                                       ReArcSitePermissionsCallback completion,
++                                       void* context) {
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab_id, &session)) {
++    return status;
++  }
++  if (!completion) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  if (!session->web_contents()) {
++    return REARC_INVALID_STATE;
++  }
++  rearc::ABIPost(base::BindOnce(&rearc::DeliverDescription, completion, context,
++                                tab_id, rearc::Describe(*session)));
++  return REARC_OK;
++}
++
++ReArcStatus ReArcTabSetSitePermission(uint64_t tab_id,
++                                      const char* origin,
++                                      const char* type_name,
++                                      uint32_t setting) {
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab_id, &session)) {
++    return status;
++  }
++  if (!type_name || setting > 2) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  url::Origin site;
++  if (auto status = rearc::CheckSite(*session, origin, &site)) {
++    return status;
++  }
++  std::optional<ContentSettingsType> type = rearc::TypeNamed(type_name);
++  if (!type) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  const content_settings::PermissionSettingsInfo* info = rearc::InfoFor(*type);
++  Profile* profile = Profile::FromBrowserContext(
++      session->web_contents()->GetBrowserContext());
++  HostContentSettingsMap* map =
++      HostContentSettingsMapFactory::GetForProfile(profile);
++  const GURL url = site.GetURL();
++
++  // Policy and extensions decide before the person does (page info shows such
++  // a row without a control).
++  content_settings::SettingInfo rule;
++  map->GetPermissionSetting(url, url, *type, &rule);
++  if (rule.source != content_settings::SettingSource::kUser) {
++    return REARC_INVALID_STATE;
++  }
++  std::optional<PermissionSetting> next;
++  if (setting != 0) {
++    next = rearc::MakeSetting(*info, setting == 1);
++    if (!info->delegate().IsValid(*next)) {
++      return REARC_UNSUPPORTED;
++    }
++  }
++  if (!map->CanSetNarrowestContentSetting(url, url, *type)) {
++    return REARC_UNSUPPORTED;
++  }
++  // An embargo blocks without a rule: anything but "block" lifts it, as page
++  // info does.
++  if (!next || !info->delegate().IsBlocked(*next)) {
++    if (auto* blocker =
++            PermissionDecisionAutoBlockerFactory::GetForProfile(profile)) {
++      blocker->RemoveEmbargoAndResetCounts(url, *type);
++    }
++  }
++  map->SetNarrowestContentSetting(url, url, *type, next);
++  return REARC_OK;
++}
++
++ReArcStatus ReArcTabRevokeSiteDevice(uint64_t tab_id,
++                                     const char* origin,
++                                     const char* kind_name,
++                                     const char* key) {
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab_id, &session)) {
++    return status;
++  }
++  if (!kind_name || !key) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  url::Origin site;
++  if (auto status = rearc::CheckSite(*session, origin, &site)) {
++    return status;
++  }
++  const rearc::DeviceKind* kind = nullptr;
++  for (const rearc::DeviceKind& candidate : rearc::kDeviceKinds) {
++    if (std::string_view(candidate.name) == kind_name) {
++      kind = &candidate;
++    }
++  }
++  if (!kind) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  permissions::ObjectPermissionContextBase* context = rearc::DeviceContext(
++      Profile::FromBrowserContext(session->web_contents()->GetBrowserContext()),
++      kind->data_type);
++  if (!context) {
++    return REARC_UNSUPPORTED;
++  }
++  for (const auto& object : context->GetGrantedObjects(site)) {
++    if (context->GetKeyForObject(object->value) != key) {
++      continue;
++    }
++    if (object->source != content_settings::SettingSource::kUser) {
++      return REARC_INVALID_STATE;
++    }
++    context->RevokeObjectPermission(site, object->value);
++    // A grant kept in memory only (a device without a serial number) changes
++    // no setting, so the watch would not hear of it.
++    if (auto* watch =
++            rearc::SiteWatch::FromWebContents(session->web_contents())) {
++      watch->Notify();
++    }
++    return REARC_OK;
++  }
++  return REARC_NOT_FOUND;
++}
++
++void ReArcEngineSetSitePermissionsChangedCallback(
++    ReArcSitePermissionsChangedCallback callback,
++    void* context) {
++  CHECK(pthread_main_np());
++  ++rearc::epoch;
++  rearc::host = callback;
++  rearc::host_context = context;
++}

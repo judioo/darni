@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
-ABI **1.66** (major remains 1 for existing hosts), bridge **0.76.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, which no engine build contains yet; built engines are 1.65, bridge 0.75.0). Public header:
+ABI **1.68** (major remains 1 for existing hosts), bridge **0.78.0**, compiled Chromium **156.0.8078.109**
+(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -204,7 +204,8 @@ Advertised features: `native_view`, `navigation`, `navigation_extended`, `media_
 `client_certificates` (1.41), `key_equivalent_events` (1.42),
 `pip_embedded` (1.43), `perf_metrics` (1.44), `early_window` (1.45),
 `media_capture` and `search_engines` (1.46) and `extension_side_panels`
-(1.47). `pip_control`, `pip_native`
+(1.47); later ones are named in their sections (`site_permissions` 1.67,
+`webauthn_prompts` 1.68). `pip_control`, `pip_native`
 and `script_opener` remain unadvertised names. Unknown optional operations are unsupported.
 
 | Function | Semantics |
@@ -2774,3 +2775,128 @@ allowed with a site exception and at level 0, and the count) and cold launches w
 restored tab and a restored Little ReArc window on that page, which must not fetch the
 tracker: a new profile, the same again, an existing profile whose blocker has no state, and
 the launch after a list update's takeover, with the ready-blocker markers read after each.
+
+## Site permissions (1.67)
+
+Feature `site_permissions`, patch `tab/096`, built and not yet run. Spec:
+[PASSKEYS-AND-SITE-PERMISSIONS](../../docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md), part 2. What Chromium
+holds for the site of a tab's page, so the host's site panel shows the real state and not only
+what was answered in the host's own prompt (1.20). The state stays Chromium's: the profile's
+`HostContentSettingsMap`, the permission auto-blocker's embargo, and the USB, HID, serial and
+Bluetooth chooser contexts. The host keeps none of it.
+
+| Function | Semantics |
+|---|---|
+| `ReArcTabGetSitePermissions(tab, completion, context)` | Snapshot at call time, delivered deferred, exactly once, borrowed: `completion(context, status, tab_id, json)`. The site is the primary main frame's committed origin, http and https only; another page answers `{"origin":""}`. Null completion: `invalid_argument`. |
+| `ReArcTabSetSitePermission(tab, origin, type, setting)` | setting 0 reset (the site's rule goes, an embargo ends), 1 allow, 2 block. `origin` is the one the host showed; if the tab is on another site by now: `invalid_state`, nothing changes. Unknown type or setting: `invalid_argument`. A row under policy or an extension: `invalid_state`. A value the type does not take: `unsupported`. |
+| `ReArcTabRevokeSiteDevice(tab, origin, kind, key)` | Takes a chosen device from the site. kind `usb`, `hid`, `serial`, `bluetooth`; key from the snapshot. No such grant: `not_found`. A policy grant: `invalid_state`. |
+| `ReArcEngineSetSitePermissionsChangedCallback(callback, context)` | `callback(context, tab_id)`: the tab's answer changed. One queued call per tab, no state in it, never after tab.closed. Null disables. |
+
+**The JSON.** `origin`, `off_the_record`, then:
+
+- `permissions`: every setting a site can have, in Chromium's page info order. `type` is Chromium's
+  registry name (`notifications`, `geolocation`, `media-stream-camera`, `media-stream-mic`,
+  `clipboard`, `usb-guard`, `hid-guard`, `serial-guard`, `bluetooth-guard`, `bluetooth-scanning`,
+  `local-network`, `loopback-network`, `popups`, `sound`, `javascript`, `images`,
+  `automatic-downloads`, `midi-sysex`, `window-placement`, `file-system-write-guard`,
+  `local-fonts`, `idle-detection`, `webid-api`, `keyboard-lock`, `pointer-lock`, and the rest of
+  page info's list). `setting` and `default` are `allow`, `block` or `ask`. `source`: `default`
+  (no rule for the site), `user`, `policy`, `extension`, `embargo` (blocked for a while after
+  repeated dismissals) or `other`. `held`: page info would list it. `changeable`: the person may
+  change it. `one_time`: allowed for this visit only.
+- `devices`: `kind`, `key`, `name` (Chromium's display name), `changeable`.
+- `in_use`: `camera`, `microphone`, `screen` (Chrome's tab indicators), `location`, `bluetooth`,
+  `usb`, `hid`, `serial` (the WebContents' active capabilities).
+
+A host ignores keys and types it does not know. Left out of the list on purpose: Chrome's ad
+filter (`ads`), automatic Picture in Picture (the host has its own per-site rule) and web app
+installation. Storage access (a rule between two sites) is not in the snapshot.
+
+**When to ask again.** On the changed callback, on a main-frame commit (the site may be another),
+and on a `media_capture` event (1.46): camera, microphone and screen use change there, not on
+this channel's callback. The callback fires for a setting of the tab's profile that matches the
+tab's site (the listed types, the chooser data, the auto-blocker's data), for a device grant the
+host revoked, and when the page starts or stops using a device capability.
+
+**A change and the page.** Chromium applies a new rule to later requests. A page that already
+holds a stream or a device may keep it until it is reloaded, as with Chrome's page info, which
+shows "reload this page" then. The host offers Reload after a change.
+
+**Tests:** `engine/tests/check_abi168_imports.py` compares every ABI 1.66 struct layout, checks
+that the header adds exactly the six functions of 1.67 and 1.68 and no struct, and typechecks
+gated Swift adoption. It passes against the built tree. No host test and no self-test step exist yet.
+
+## WebAuthn steps (1.68)
+
+Feature `webauthn_prompts`, patch `tab/097`, built and run on screen (no phone or key yet). Spec:
+[PASSKEYS-AND-SITE-PERMISSIONS](../../docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md), part 1. Chromium shows a
+passkey or security key request in a Views dialog on the tab's `WebContentsModalDialogManager`.
+A bridge tab has none, so before this channel no dialog opened and the request waited until the
+site's timeout. The engine now gives each step of the request's dialog model to the host, and
+the host's answers call the model as the dialog's buttons do.
+
+| Function | Semantics |
+|---|---|
+| `ReArcEngineSetWebAuthnCallback(callback, context)` | `callback(context, request_id, tab_id, phase, json)`. phase 0: a step; the first one of a request opens the host's sheet, later ones replace what it shows. phase 1: the request is over; close, no reply. Replacing or clearing the callback cancels the requests it was shown. |
+| `ReArcWebAuthnRespond(request, action, index, text)` | 0 cancel (any step); 1 choose `mechanisms[index]`; 2 continue; 3 the PIN in `text` (1 to 63 bytes of UTF-8); 4 choose `accounts[index]`; 5 start over. An action the shown step does not take: `invalid_state`. Each step event takes one answer: any action but cancel while `busy`, or after the step's answer and before the next event, is `invalid_state` too (opening System Settings on `bluetooth_denied` may be repeated). Bad index, PIN or action: `invalid_argument`. A request that is over: `not_found`. |
+
+A request that needs no dialog sends nothing: a sign-in page's passkey autofill request runs on
+every load. Without a callback, and for a page that is no registry tab, a request that reaches a
+step with UI is cancelled, never left waiting. So is one whose asking frame is no http or https
+page: an extension page may claim any site it has host access to as the relying party, and the
+sheet names the relying party, not the asker (security review PK-03).
+
+**Steps** (`step` in the JSON; the names are the ABI's and do not follow Chromium's enum):
+
+| Step | What the host shows | Answers |
+|---|---|---|
+| `choose` | the ways to sign in (`mechanisms`: `kind`, `name`, `description`, `source`) | 1, 0 |
+| `confirm` | one way offered first (`priority`), the others behind "another way" | 2, 1, 0 |
+| `qr` | the QR code (`qr` is its text) for a phone or tablet; `security_key_too`: a USB key can be touched instead | 5, 0 |
+| `phone_connecting`, `phone_connected` | progress; then "continue on your phone" | 0 |
+| `phone_error` | the phone did not connect | 5, 0 |
+| `security_key` | insert the key and touch it | 5, 0 |
+| `pin`, `pin_setup`, `pin_change` | the key's PIN (`pin`: `min_length`, `attempts`, `error`) | 3, 5, 0 |
+| `touch_again` | touch the key again | 0 |
+| `fingerprint_enroll`, `verify_again` | a key with a fingerprint reader (`samples`, `samples_remaining`; `attempts`) | 2 (enroll: done), 5, 0 |
+| `account` | which account (`accounts`) | 4, 5, 0 |
+| `create_this_mac` | confirm a passkey kept on this Mac (`user`) | 2, 5, 0 |
+| `private_notice` | a passkey made in a private window stays on the device | 2, 0 |
+| `bluetooth_off` | Bluetooth is off (`bluetooth_on`, `can_power_on`) | 2, 5, 0 |
+| `bluetooth_denied` | macOS denies the app Bluetooth; Continue opens System Settings | 2, 5, 0 |
+| `system` | nothing: macOS shows its own prompt (Touch ID) | 0 |
+| `hidden` | nothing for now | 0 |
+| `error_*` | the error; `can_try_again` offers 5 (never after `error_timeout`) | 5, 0 |
+| `unsupported` | "not available in ReArc" (Google Password Manager, Windows) | 5, 0 |
+
+Common keys: `request` (`get` or `create`), `rp_id`, `origin`, `profile_id`,
+`content_generation`, `private`, `busy` (only Cancel answers), `can_choose_another`,
+`can_try_again` (an error step takes 5 only with it), `attestation` (`none`, `model`: a touch
+tells the site the key's make and model, `serial`: with enterprise attestation, which key it
+is) and `stored_on_key` (`no`, `maybe`, `yes`: a record of the visit is kept on the key).
+Chromium's dialog warns of the last two on `security_key` and `touch_again`; the host says them
+before the touch.
+
+**One answer per step.** The engine holds the host to what it told it (security review PK-06).
+Continue on `fingerprint_enroll` and on the manual `bluetooth_off` runs a one-time callback in
+Chromium that has no null check, so a second one would be a `CHECK` failure that ends the
+browser: each is taken once per step, whatever is published meanwhile. A host disables its
+buttons after an answer until the next event.
+
+**Secrets.** The `qr` text lets a phone join this one request, and a PIN unlocks a security key.
+The host shows the first and sends the second; neither goes to a log, a crash report or disk.
+The engine does not log them either.
+
+**Authenticators.** The engine's, unchanged: a phone or tablet over hybrid transport (the QR
+code, then Bluetooth advertising and Google's or Apple's tunnel service), USB security keys
+(HID), and "this Mac" (keys in the Secure Enclave, Touch ID or the login password). "This Mac"
+needs the app signed with the keychain access group `<team>.com.rearc.browser.webauthn`; the
+engine reads the team from the app's own signature, and a build without it offers no "this Mac".
+iCloud Keychain needs Apple's `com.apple.developer.web-browser.public-key-credential`
+entitlement and is not offered without it. Hybrid needs macOS's Bluetooth permission for the
+app (the `bluetooth_denied` step when it is refused).
+
+**Tests:** the import check above. Run on screen on webauthn.io (2026-11-18): the choice of
+ways, the QR code, the security key step, "this Mac" up to macOS's Touch ID prompt, cancel, a
+second request, a tab closed in the middle. Not run: a phone, a security key, and so the PIN,
+fingerprint and error steps, and the refusals above.

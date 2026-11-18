@@ -102,6 +102,8 @@ tab/092-popup-keeps-opener-document.patch       # P-TAB-001 bridge 0.73.0: popup
 tab/093-toolbar-colour-from-surface.patch        # P-TAB-001 bridge 0.74.0: toolbar colour from the view surface, not a clipped DevTools shot (scroll flicker)
 tab/094-task-manager-process-details.patch      # P-TAB-001 ABI 1.65, bridge 0.75.0: process details for the host's task manager (names, pages and frames, network bytes)
 tab/095-content-blocker-component.patch         # P-TAB-001 ABI 1.66, bridge 0.76.0: built-in content blocking, the "ReArc Blocker" component extension (declarativeNetRequest); not built yet
+tab/096-site-permissions.patch                  # P-TAB-001 ABI 1.67, bridge 0.77.0: what Chromium holds for a tab's site (settings, device grants, in use), allow/block/reset and revoke; built, not run
+tab/097-webauthn-host-steps.patch               # P-TAB-001 ABI 1.68, bridge 0.78.0: WebAuthn request steps for the host (phone by QR code, security key PIN, this Mac); applies after tab/096; built, not run
 #
 # Security backports: upstream fixes the pinned Chromium line does not have.
 # Drop each one when the pin moves to a build that contains the fix.

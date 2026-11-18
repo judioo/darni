@@ -8,7 +8,11 @@
 #   - Contents/embedded.provisionprofile (the development profile you downloaded),
 #   - the iCloud/CloudKit entitlements, merged into scripts/ReArc.entitlements,
 #   - Info.plist ReArcICloudContainer = the container, which the shell checks against
-#     its signed entitlements before it creates anything CloudKit.
+#     its signed entitlements before it creates anything CloudKit,
+#   - keychain-access-groups with <team>.<bundle id>.webauthn, only with
+#     REARC_WEBAUTHN_KEYCHAIN_GROUP=1 and when the profile allows that group: "this Mac"
+#     passkeys (below). Off by default: no published build gets the group until a release
+#     fails when a later one would lose it (security review PK-01, 2026-11-18).
 # iCloud entitlements are restricted: macOS kills an app at launch unless an embedded
 # profile allows them for this Mac, so the profile is checked first and the build stops
 # on any mismatch.
@@ -72,6 +76,19 @@ icloud_prepare() {
       die "the profile does not allow iCloud environment $environment (it allows: $(sed -E 's/^[[:space:]]+//' <<<"$allowed_environments" | grep -vE '^(Array \{|\})$' | tr '\n' ' ')); set REARC_ICLOUD_ENVIRONMENT"
     fi
   fi
+  # "This Mac" passkeys (engine patch tab/097, docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md):
+  # Chromium's profile authenticator keeps its keys in the keychain access group
+  # <team>.<bundle id>.webauthn and is offered only when the app is signed with that group
+  # (device/fido/mac/touch_id_context.mm). It needs no Apple browser entitlement, but the
+  # group is a restricted entitlement like iCloud's: only when the profile allows it.
+  # And only when asked for (PK-01): a passkey made with the group is lost to every later
+  # build signed without it, so the group ships once a release cannot drop it by accident.
+  local webauthn_group="$TEAM_ID.$bundle_id.webauthn" has_webauthn_group=0
+  if [[ ${REARC_WEBAUTHN_KEYCHAIN_GROUP:-0} == 1 ]] \
+      && $pb -c "Print :Entitlements:keychain-access-groups" "$decoded" 2>/dev/null \
+      | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | grep -qxF -e "$TEAM_ID.*" -e "$webauthn_group"; then
+    has_webauthn_group=1
+  fi
   rm -f "$decoded"
 
   cp "$base" "$out"
@@ -85,11 +102,23 @@ icloud_prepare() {
   if [[ $has_environment == 1 ]]; then
     $pb -c "Add :com.apple.developer.icloud-container-environment string $environment" "$out" >/dev/null
   fi
+  if [[ $has_webauthn_group == 1 ]]; then
+    # The app's own identifier first: it is the default access group without this key, and
+    # stays the default with it, so nothing the app keeps elsewhere moves.
+    $pb -c "Add :keychain-access-groups array" "$out" >/dev/null
+    $pb -c "Add :keychain-access-groups:0 string $TEAM_ID.$bundle_id" "$out" >/dev/null
+    $pb -c "Add :keychain-access-groups:1 string $webauthn_group" "$out" >/dev/null
+  fi
   plutil -lint "$out" >/dev/null
 
   cp "$profile" "$app/Contents/embedded.provisionprofile"
   plutil -replace ReArcICloudContainer -string "$container" "$app/Contents/Info.plist"
   echo "==> iCloud: container $container (${environment}), profile expires ${expires:-unknown}"
+  if [[ $has_webauthn_group == 1 ]]; then
+    echo "==> passkeys: keychain access group $webauthn_group (this Mac)"
+  else
+    echo "==> passkeys: no keychain access group for this Mac (REARC_WEBAUTHN_KEYCHAIN_GROUP is not 1, or the profile does not allow $webauthn_group)"
+  fi
 }
 
 # icloud_verify EXECUTABLE: the signed entitlements carry the container.

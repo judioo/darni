@@ -33,6 +33,8 @@ struct CardToolbarView: View {
         ZStack {
             HStack(spacing: 6) {
                 if let container { ContainerChip(label: container, ink: ink) }
+                // Site information at the start of the address: the connection, or what the page uses now.
+                if let engine, let site { SiteInfoButton(model: model, engine: engine, site: site, ink: quietInk) }
                 Button { model.focusLocation() } label: {
                     // Two texts (security AG-01): the host, already cut from the left to keep its
                     // registrable domain, never truncates; only the path gives way, at its tail.

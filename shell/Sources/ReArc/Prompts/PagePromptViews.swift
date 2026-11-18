@@ -58,6 +58,11 @@ private struct PagePromptOverlay: ViewModifier {
                     ClientCertificateSheet(prompts: prompts, request: certificate.request)
                         .id(certificate.id)
                         .transition(.opacity)
+                } else if let passkey = prompts.passkey, passkey.step.showsSheet {
+                    // One sheet for the whole request: its steps change inside it.
+                    PasskeySheet(prompts: prompts, step: passkey.step)
+                        .id(passkey.id)
+                        .transition(.opacity)
                 }
             }
             .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.permission?.id)
@@ -65,6 +70,7 @@ private struct PagePromptOverlay: ViewModifier {
             .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.autofillSave?.id)
             .animation(.easeOut(duration: 0.14), value: prompts.httpAuth?.id)
             .animation(.easeOut(duration: 0.14), value: prompts.clientCertificate?.id)
+            .animation(.easeOut(duration: 0.14), value: prompts.passkeySheetShown)
             .animation(.easeOut(duration: 0.14), value: prompts.dialog?.id)
     }
 }
