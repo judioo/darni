@@ -119,6 +119,10 @@ struct PageSheet<Content: View>: View {
                 .frame(width: width)
                 .foregroundStyle(chrome.title)
                 .tint(Color(chrome.commandBarFill))
+                // The system's own pieces inside (text fields, the spinner, its greys and its
+                // text background) follow the theme's appearance, not the Mac's, as in the
+                // sidebar: a dark space on a light Mac would else put light ink on a white field.
+                .environment(\.colorScheme, chrome.isDark ? .dark : .light)
                 .background(chrome.toast, in: shape)
                 .overlay(shape.strokeBorder(chrome.title.opacity(0.1)))
                 .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
