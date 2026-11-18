@@ -19,6 +19,14 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Security**
+- The engine has the fixes for two bugs Chrome rates Critical, CVE-2026-131060 (MP4 video
+  files) and CVE-2026-131031 (graphics), and for sixteen it rates High: in video files
+  (CVE-2026-121047), WebGL shaders (CVE-2026-130910, -130954, -130996, -121037), graphics
+  (CVE-2026-131002, -131007, -131076, -131083, -131103, -130940), JavaScript
+  (CVE-2026-125344, CVE-2026-131042), page elements (CVE-2026-131068), layout
+  (CVE-2026-130980) and extensions (CVE-2026-130909).
+
 ## ReArc 2026.1118.931 — 2026-11-18
 
 This release also brings everything in 2026.1117.849 and 2026.1117.864 below (Task Manager,
