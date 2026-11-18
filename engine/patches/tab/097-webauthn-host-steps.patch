@@ -34,15 +34,17 @@ platform authenticators), the relying party checks, timeouts.
 This Mac. The profile authenticator (keys in the Secure Enclave, Touch ID
 or the login password) needs no Apple browser entitlement, only the
 keychain access group <team>.<bundle id>.webauthn in the app's signature
-(device/fido/mac/touch_id_context.mm). Chromium builds the group's name
-from the branding's MAC_TEAM_ID, which is empty here, so the group was
-".com.rearc.browser.webauthn" and the authenticator never available.
+(device/fido/mac/touch_id_context.mm). No ReArc build was signed with it,
+so the authenticator was never offered; shell/scripts/icloud-signing.sh now
+adds the group when the provisioning profile allows it. Chromium builds
+the group's name from the branding's MAC_TEAM_ID. A release engine's
+branding has it (build-engine-release.sh); the overlay's own, which the dev
+engine uses, has none, and the group was ".com.rearc.browser.webauthn".
 ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile now
 asks rearc::WebAuthnKeychainAccessGroup, which reads the team from the
-running app's own signature (com.apple.developer.team-identifier) when the
-branding has none. The app must also be signed with that group
-(shell/scripts/icloud-signing.sh adds it when the provisioning profile
-allows it); an unsigned or ad hoc build is as before.
+running app's signature (com.apple.developer.team-identifier) when the
+branding has none, so a signed dev build behaves as a release does. An
+unsigned or ad hoc build is as before.
 
 iCloud Keychain needs com.apple.developer.web-browser.public-key-credential
 (device/fido/mac/icloud_keychain_sys.mm), which ReArc does not have, and
@@ -881,10 +883,10 @@ index 0000000..389182b
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.h b/chrome/browser/rearc_bridge/rearc_webauthn.h
 new file mode 100644
-index 0000000..11c1f2b
+index 0000000..7b2f979
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_webauthn.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -915,10 +917,12 @@ index 0000000..11c1f2b
 +// The keychain access group of the profile authenticator ("this Mac": keys
 +// in the Secure Enclave, unlocked with Touch ID or the login password):
 +// <team>.<bundle identifier>.webauthn. Chromium takes the team from the
-+// build's branding, which names none here, so it is read from the running
-+// app's own signature (com.apple.developer.team-identifier). An unsigned or
-+// ad hoc signed build has no team, and then no profile authenticator, as
-+// before.
++// build's branding. A release engine's branding names it
++// (shell/scripts/build-engine-release.sh); the overlay's own, which the dev
++// engine is built with, names none, and then the team is read from the
++// running app's signature (com.apple.developer.team-identifier). An unsigned
++// or ad hoc signed build has no team and no profile authenticator, as before.
++// The app must also be signed with the group, whatever the engine.
 +std::string WebAuthnKeychainAccessGroup();
 +
 +}  // namespace rearc
@@ -962,7 +966,7 @@ index 64cc583..d26f642 100644
  }
  void ChromeAuthenticatorRequestDelegate::ConfigureICloudKeychain(
 diff --git a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
-index 6fc50b6..a9958ac 100644
+index 6fc50b6..5d8c433 100644
 --- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 @@ -81,6 +81,7 @@
@@ -979,8 +983,8 @@ index 6fc50b6..a9958ac 100644
      Profile* profile) {
 -  constexpr char kKeychainAccessGroup[] =
 -      MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn";
-+  // ReArc tab/097: the build's branding names no team, so the group's team
-+  // is the one the running app is signed with.
++  // ReArc tab/097: a build whose branding names no team (the dev engine)
++  // takes the group's team from the running app's signature.
 +  const std::string keychain_access_group =
 +      rearc::WebAuthnKeychainAccessGroup();
  
