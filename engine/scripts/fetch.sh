@@ -70,7 +70,13 @@ GCLIENT
     git -C src remote add origin "$SRC_URL"
   fi
   [[ "$(git -C src remote get-url origin)" == "$SRC_URL" ]] || die 'unexpected src origin'
-  git -C src diff --quiet && git -C src diff --cached --quiet || die 'src has tracked changes; preserve/resolve them before syncing'
+  # The listed sub-project checkouts carry ReArc's patch commits, which src sees as changed
+  # gitlinks; gclient sync resets them and --apply-subprojects puts the patches back.
+  SUBPROJECT_EXCLUDES=()
+  while IFS= read -r spec; do [[ -n "$spec" ]] && SUBPROJECT_EXCLUDES+=("$spec"); done \
+    < <(subproject_excludes "$(subproject_entries "$ENGINE_DIR/patches/series-subprojects")")
+  git -C src diff --quiet -- . "${SUBPROJECT_EXCLUDES[@]}" && git -C src diff --cached --quiet -- . "${SUBPROJECT_EXCLUDES[@]}" \
+    || die 'src has tracked changes; preserve/resolve them before syncing'
   if git -C src rev-parse --verify HEAD >/dev/null 2>&1; then
     EXPECTED="$(git -C src rev-parse --verify "refs/tags/$PIN^{commit}")" || die 'existing checkout has no pinned tag; rebase manually'
     [[ "$(git -C src rev-parse HEAD)" == "$EXPECTED" ]] || die 'src HEAD differs from the pin (possibly an overlay); rebase manually'
@@ -92,30 +98,17 @@ fi
 BASE="$(cat .rearc-sync-complete)"
 [[ "$(git -C src rev-parse "refs/tags/$PIN^{commit}")" == "$BASE" ]] || die 'pin changed; sync/rebase manually'
 
-# Each patch is applied and committed inside its checkout; one that does not apply stops here.
+# Each patch is applied and committed inside its checkout, on the revision src pins; one that
+# does not apply stops here. A checkout whose history is not a leading part of its list (a
+# dropped or changed patch, a stray commit) is refused with the reset that fixes it.
 apply_subprojects() {
-  local entries checkout rel dir patch subject applied=0
+  local entries out
   entries="$(subproject_entries "$ENGINE_DIR/patches/series-subprojects")" || die 'invalid engine/patches/series-subprojects'
-  while IFS=$'\t' read -r checkout rel; do
-    [[ -n "$checkout" ]] || continue
-    dir="$CHROMIUM_ROOT/src/$checkout"
-    patch="$ENGINE_DIR/patches/subprojects/$rel"
-    [[ -e "$dir/.git" ]] || die "not a checkout: src/$checkout"
-    [[ -f "$patch" ]] || die "missing patch: $patch"
-    if subproject_applied "$dir" "$rel"; then
-      log "src/$checkout already has $rel"
-      continue
-    fi
-    git -C "$dir" diff --quiet && git -C "$dir" diff --cached --quiet || die "src/$checkout has uncommitted changes"
-    git -C "$dir" apply --index "$patch" || die "patch failed: $rel in src/$checkout; nothing was committed for it"
-    subject="$(subproject_subject "$rel")"
-    git -C "$dir" -c user.name='ReArc Overlay' -c user.email='rearc-overlay@localhost' commit -q -m "$subject"
-    applied=$((applied + 1))
-  done <<<"$entries"
-  log "Applied $applied sub-project patches"
-  cut -f1 <<<"$entries" | sort -u | while IFS= read -r checkout; do
-    [[ -n "$checkout" ]] && printf 'sub-project %s at %s\n' "$checkout" "$(git -C "$CHROMIUM_ROOT/src/$checkout" rev-parse --short=10 HEAD)"
-  done
+  if ! out="$(subproject_apply_all "$CHROMIUM_ROOT/src" "$ENGINE_DIR/patches/subprojects" "$entries")"; then
+    printf '%s\n' "$out" | sed '$d'
+    die "$(printf '%s\n' "$out" | tail -1)"
+  fi
+  printf '%s\n' "$out"
 }
 
 if [[ "$MODE" == --apply-subprojects ]]; then

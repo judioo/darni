@@ -77,15 +77,19 @@ SOURCE_VERSION="$(git show "$BASE:chrome/VERSION" | awk -F= '{v=v sep $2; sep=".
 # shellcheck source=../../engine/scripts/subprojects.sh
 source "$ENGINE_DIR/scripts/subprojects.sh"
 SUBPROJECTS="$(subproject_entries "$ENGINE_DIR/patches/series-subprojects")" || die 'invalid engine/patches/series-subprojects'
+# What compiles is exactly the overlay and the listed patches: no loose change in src or a
+# listed checkout, and each checkout is its pinned revision plus its listed patches, in order.
+SUBPROJECT_EXCLUDES=()
+while IFS= read -r spec; do [[ -n "$spec" ]] && SUBPROJECT_EXCLUDES+=("$spec"); done < <(subproject_excludes "$SUBPROJECTS")
+git diff --quiet -- . "${SUBPROJECT_EXCLUDES[@]}" && git diff --cached --quiet -- . "${SUBPROJECT_EXCLUDES[@]}" \
+  || die 'chromium/src has uncommitted changes; the release engine is built from commits only'
 SUBPROJECT_HEADS=''
-while IFS=$'\t' read -r checkout rel; do
+while IFS= read -r checkout; do
   [[ -n "$checkout" ]] || continue
-  subproject_applied "$CHROMIUM_SRC/$checkout" "$rel" \
-    || die "$checkout lacks $rel; run engine/scripts/fetch.sh --apply-subprojects"
-done <<<"$SUBPROJECTS"
-for checkout in $(cut -f1 <<<"$SUBPROJECTS" | sort -u); do
+  why="$(subproject_verify "$CHROMIUM_SRC" "$checkout" "$ENGINE_DIR/patches/subprojects" exact "$SUBPROJECTS")" \
+    || die "$why; run engine/scripts/fetch.sh --apply-subprojects (it says how to reset a checkout)"
   SUBPROJECT_HEADS+=" $checkout $(git -C "$CHROMIUM_SRC/$checkout" rev-parse --short=10 HEAD)"
-done
+done < <(subproject_checkouts "$SUBPROJECTS")
 
 GN_ARGS=(
   'target_os="mac"' "target_cpu=\"$TARGET_CPU\""
