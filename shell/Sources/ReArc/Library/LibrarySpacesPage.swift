@@ -33,6 +33,7 @@ struct LibrarySpacesPage: View {
     let window: SidebarWindowID?
     @State private var drag: CardDrag?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The card being dragged by its handle, within its profile.
     struct CardDrag: Equatable {
@@ -48,6 +49,13 @@ struct LibrarySpacesPage: View {
     }
 
     private static let margin: CGFloat = 24
+
+    /// A card going to its place, and the others making room: a spring, or a
+    /// short plain move under Reduce Motion, as the sidebar's own moves have it
+    /// (`SidebarMotion.spring(response:reduceMotion:)`).
+    private func settle(_ spring: Animation) -> Animation {
+        reduceMotion ? .easeOut(duration: 0.15) : spring
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -90,18 +98,18 @@ struct LibrarySpacesPage: View {
             },
             onDrop: {
                 guard let finished = drag else { return }
-                withAnimation(.spring(duration: 0.28, bounce: 0.12)) {
+                withAnimation(settle(.spring(duration: 0.28, bounce: 0.12))) {
                     drag = nil
                     if finished.destination != finished.source { model.moveSpace(finished.space, toIndex: finished.destination) }
                 }
             },
             onMove: { offset in
-                withAnimation(.spring(duration: 0.28, bounce: 0.12)) { model.moveSpace(row.id, by: offset) }
+                withAnimation(settle(.spring(duration: 0.28, bounce: 0.12))) { model.moveSpace(row.id, by: offset) }
             }
         )
         .offset(x: dragging ? drag?.translation ?? 0 : CGFloat(shift) * CGFloat(LibrarySpaceCards.stride))
         .zIndex(dragging ? 1 : 0)
-        .animation(dragging ? nil : .spring(duration: 0.25, bounce: 0.1), value: shift)
+        .animation(dragging ? nil : settle(.spring(duration: 0.25, bounce: 0.1)), value: shift)
     }
 
     private func newSpaceButton(profile: Profile.ID) -> some View {
