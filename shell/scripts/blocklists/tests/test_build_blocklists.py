@@ -1203,6 +1203,11 @@ class CommandLineTests(TemporaryDirectoryCase):
         made = run("keygen", "--key", key, "--public-key", public)
         self.assertEqual(made.returncode, 0, made.stderr)
         self.assertEqual(made.stdout.strip(), public.read_text().strip())
+        # A key list that exists is never replaced by one key (RELEASE.md, "Lists key").
+        again = run("keygen", "--key", key, "--public-key", public)
+        self.assertEqual(again.returncode, 1)
+        self.assertIn("exists", again.stderr)
+        self.assertEqual(made.stdout.strip(), public.read_text().strip())
         raw = self.raw_dir({"peter-lowe": "".join(f"||h{i}.example^\n" for i in range(1200))})
         out = self.tmp / "bundle"
         # --allow-count-change: these 1,200 hosts are compared with the repository's bundle.
