@@ -207,7 +207,7 @@ public struct BlocklistManifest: Equatable, Sendable {
 
 /// Why a bundle is not used.
 public enum BlocklistRejection: Error, Equatable, Sendable {
-    /// The app has no lists key yet (`BlocklistSigningKey.isPlaceholder`).
+    /// No lists key was given, or it is not an Ed25519 public key.
     case noKey
     case missingManifest
     case missingSignature

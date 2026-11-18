@@ -3354,7 +3354,7 @@ extension ChromiumSelfTest {
             return
         }
         log("NOTE content blocking: bundle \(bundle.version) (\(bundle.source)) is in use; the page checks "
-            + "(blocked, excepted, Off, the count) are not written yet and need the engine patch")
+            + "(blocked, excepted, Off, the count) are not written yet: they need an engine built with tab/095")
     }
 
     /// Window › Task Manager (docs/briefs/2026-11-17-chrome-features.md).
