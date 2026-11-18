@@ -50,12 +50,12 @@ private struct BundleMaker {
         return directory
     }
 
-    /// The mirror's `.tar.gz` of a bundle, made by the system's tar, and its `latest.json`.
+    /// The mirror's `.tar.gz` of a bundle, made by the system's tar as plain ustar (as the builder writes it), and its `latest.json`.
     func archive(_ version: String, in scratch: URL, _ options: Options = Options()) throws -> (archive: Data, latest: Data) {
         let folder = scratch.appendingPathComponent("pack-\(UUID().uuidString)", isDirectory: true)
         try make(version, in: folder, named: "blocklists-\(version)", options)
         let file = scratch.appendingPathComponent("\(UUID().uuidString).tar.gz")
-        try runTool("/usr/bin/tar", ["-czf", file.path, "-C", folder.path, "blocklists-\(version)"])
+        try runTool("/usr/bin/tar", ["--format", "ustar", "--no-mac-metadata", "--no-xattrs", "-czf", file.path, "-C", folder.path, "blocklists-\(version)"])
         let archive = try Data(contentsOf: file)
         return (archive, latest(version, archive: archive))
     }
@@ -333,6 +333,30 @@ final class BlocklistArchiveTests: XCTestCase {
         XCTAssertEqual(try failure([good, tarEntry("rules/link.json", type: "2", link: "/etc/passwd")]), .unsafeEntry("rules/link.json"))
         XCTAssertEqual(try failure([good, tarEntry("rules/hard.json", type: "1", link: "manifest.json")]), .unsafeEntry("rules/hard.json"))
         XCTAssertEqual(try failure([good, good]), .unsafeEntry("manifest.json"), "one file, once")
+    }
+
+    /// CB-01: pax and GNU headers were parsed before the signature was checked, and a pax
+    /// record shorter than its own length field, or with a length near Int.max, stopped the
+    /// process. The builder writes plain ustar, so every extension header now refuses the archive.
+    func testPaxAndGNUHeadersRefuseTheArchiveWithoutBeingRead() throws {
+        func failure(_ entries: [Data]) throws -> BlocklistArchive.Failure? {
+            do {
+                _ = try BlocklistArchive.entries(of: gzip(entries))
+                return nil
+            } catch {
+                return error as? BlocklistArchive.Failure
+            }
+        }
+        let file = tarEntry("manifest.json", content: Data("{}".utf8))
+        let shorterThanItsLength = tarEntry("PaxHeaders/x", type: "x", content: Data("1 path=evil\n".utf8))
+        let hugeLength = tarEntry("PaxHeaders/y", type: "x", content: Data("9223372036854775806 path=evil\n".utf8))
+        let global = tarEntry("PaxHeaders/g", type: "g", content: Data("20 comment=nothing\n".utf8))
+        let gnuLongName = tarEntry("././@LongLink", type: "L", content: Data("rules/long.json".utf8))
+        for header in [shorterThanItsLength, hugeLength, global, gnuLongName] {
+            guard case .unsafeEntry = try failure([header, file]) else {
+                return XCTFail("an extension header must refuse the archive")
+            }
+        }
     }
 
     func testSizesAreCapped() throws {

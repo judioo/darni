@@ -4,14 +4,16 @@ import Foundation
 /// Reads the mirror's `.tar.gz` bundle in process, so nothing in it decides
 /// where a file lands: only regular files and directories under relative
 /// paths of plain names are written, into a directory made for it. A link,
-/// a device or a path with `..` refuses the whole archive. Sizes are capped
-/// before anything is written.
+/// a device or a path with `..` refuses the whole archive, and so does a pax or
+/// GNU extension header: the builder writes plain ustar, so none is needed, and
+/// none is parsed before the signature is checked. Sizes are capped before
+/// anything is written.
 public enum BlocklistArchive {
     public struct Limits: Equatable, Sendable {
         /// The download itself.
-        public var archiveBytes = 64 << 20
+        public var archiveBytes = 16 << 20
         /// Everything in it, unpacked.
-        public var unpackedBytes = 256 << 20
+        public var unpackedBytes = 64 << 20
         public var files = 512
 
         public init() {}
@@ -94,13 +96,12 @@ public enum BlocklistArchive {
         }
     }
 
-    // MARK: tar (ustar, with pax and GNU long names)
+    // MARK: tar (plain ustar)
 
     private static func tarEntries(_ tar: Data, limits: Limits) throws -> [Entry] {
         let bytes = [UInt8](tar)
         var entries: [Entry] = []
         var offset = 0
-        var longName: String?
         var seen = Set<String>()
         while offset + 512 <= bytes.count {
             let header = Array(bytes[offset..<offset + 512])
@@ -116,20 +117,6 @@ public enum BlocklistArchive {
                 let prefix = text(header[345..<500])
                 if !prefix.isEmpty { name = prefix + "/" + name }
             }
-            switch header[156] {
-            case UInt8(ascii: "x"): // pax: the next entry's own fields
-                longName = paxPath(content) ?? longName
-                continue
-            case UInt8(ascii: "g"): // pax: fields for every entry; none of them matter here
-                continue
-            case UInt8(ascii: "L"): // GNU: the next entry's name
-                longName = text(content[...])
-                continue
-            default:
-                break
-            }
-            if let long = longName { name = long }
-            longName = nil
             while name.hasPrefix("./") { name.removeFirst(2) }
 
             switch header[156] {
@@ -142,7 +129,7 @@ public enum BlocklistArchive {
                 let directory = name.hasSuffix("/") ? String(name.dropLast()) : name
                 guard directory.isEmpty || directory == "." || isSafe(directory) else { throw Failure.unsafeEntry(name) }
             default:
-                // Links, devices and pipes have no place in a bundle.
+                // Links, devices, pipes and pax or GNU extension headers have no place in a bundle.
                 throw Failure.unsafeEntry(name)
             }
         }
@@ -169,20 +156,5 @@ public enum BlocklistArchive {
             guard value <= 1 << 40 else { return nil }
         }
         return value
-    }
-
-    /// The `path` of a pax header: records of `<length> <key>=<value>\n`.
-    private static func paxPath(_ content: ArraySlice<UInt8>) -> String? {
-        var rest = content
-        var path: String?
-        while let space = rest.firstIndex(of: 0x20),
-              let length = Int(String(decoding: rest[rest.startIndex..<space], as: UTF8.self)),
-              length > 0, rest.startIndex + length <= rest.endIndex {
-            let record = rest[(space + 1)..<(rest.startIndex + length)]
-            let line = String(decoding: record, as: UTF8.self).trimmingCharacters(in: .newlines)
-            if line.hasPrefix("path=") { path = String(line.dropFirst(5)) }
-            rest = rest[(rest.startIndex + length)...]
-        }
-        return path
     }
 }

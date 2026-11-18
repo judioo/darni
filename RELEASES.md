@@ -34,8 +34,8 @@ lines and this section starts empty again.
 - The filter lists (EasyPrivacy, Peter Lowe's list, EasyList, Fanboy's Annoyance list and the
   EasyList Cookie List) come with ReArc, so blocking works offline. ReArc looks for newer lists
   once a day at rearc.imara.ae and uses a download only if it carries ReArc's lists signature.
-  The request says nothing about you, and none is made while blocking is off in every profile.
-  What was blocked is counted on your Mac only.
+  The request carries no cookie or identifier, and none is made while blocking is off in every
+  profile. What was blocked is counted on your Mac only.
 - Your blocking settings sync with the profile when sync is on.
 
 **Fixes**

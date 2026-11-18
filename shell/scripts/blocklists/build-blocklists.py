@@ -1130,7 +1130,7 @@ def pack_bundle(bundle, out, base_url=MIRROR_URL, public_key=None):
     mtime = int(datetime.datetime.strptime(version, "%Y%m%d%H%M").replace(tzinfo=datetime.timezone.utc).timestamp())
     buffer = io.BytesIO()
     with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0, filename="") as zipped:
-        with tarfile.open(fileobj=zipped, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        with tarfile.open(fileobj=zipped, mode="w", format=tarfile.USTAR_FORMAT) as archive:
             def add(path, data=None):
                 info = tarfile.TarInfo(path)
                 info.mtime, info.uid, info.gid, info.uname, info.gname = mtime, 0, 0, "", ""
