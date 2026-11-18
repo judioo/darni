@@ -57,6 +57,10 @@ final class SplitPaneToolbarTests: XCTestCase {
         XCTAssertEqual(parts.rest, "/search?q=test")
         XCTAssertEqual(SplitPaneToolbarLayout.addressParts(URL(string: "https://chatgpt.com/"))?.rest, "")
         XCTAssertNil(SplitPaneToolbarLayout.addressParts(URL(string: "about:blank")))
+        let local = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(URL(string: "http://localhost:3000/extension-auth?a=1")))
+        XCTAssertEqual(local.host, "localhost:3000", "two local servers must not look the same")
+        XCTAssertEqual(local.rest, "/extension-auth?a=1")
+        XCTAssertEqual(SplitPaneToolbarLayout.addressParts(URL(string: "data:text/html,x"))?.host, "data:text/html,x")
         XCTAssertNil(SplitPaneToolbarLayout.addressParts(nil))
     }
 }

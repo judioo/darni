@@ -60,11 +60,14 @@ public struct SplitPaneToolbarLayout: Equatable {
     }
 
     /// A pane row's address: the host without `www.` (Arc draws it darker)
-    /// and the rest of the URL without its scheme. Nil for a blank page.
+    /// and the rest of the URL without its scheme. Nil for a blank page. A
+    /// port stays with the host (`localhost:3000`): without it two local
+    /// servers look the same. The card toolbar shows the two parts joined.
     public static func addressParts(_ url: URL?) -> (host: String, rest: String)? {
         guard let url, url.absoluteString != "about:blank" else { return nil }
         guard let host = url.host(), !host.isEmpty else { return (url.absoluteString, "") }
-        let bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        var bareHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        if let port = url.port { bareHost += ":\(port)" }
         var rest = url.path(percentEncoded: false)
         if rest == "/" { rest = "" }
         if let query = url.query(percentEncoded: false), !query.isEmpty { rest += "?" + query }
