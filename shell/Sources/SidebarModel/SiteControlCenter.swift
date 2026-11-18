@@ -186,9 +186,14 @@ extension SiteControlCenter {
     /// What a Settings row's menu can do.
     public enum SettingAction: Equatable, Sendable {
         case allow, block, reset, snoozeOneHour, openSiteSettings
+        /// "Block ads and trackers": a site exception on or off, and the way to the switch.
+        case turnOffBlockingForSite, turnOnBlockingForSite, openBlockingSettings
 
         public var title: String {
             switch self {
+            case .turnOffBlockingForSite: return "Turn Off Blocking for This Site"
+            case .turnOnBlockingForSite: return "Turn On Blocking for This Site"
+            case .openBlockingSettings: return "Blocking Settings…"
             case .allow: return "Allow"
             case .block: return "Block"
             case .reset: return "Reset"
@@ -203,6 +208,7 @@ extension SiteControlCenter {
         public enum Kind: Hashable, Sendable {
             case permission(String)
             case autoPictureInPicture
+            case contentBlocking
         }
 
         public var kind: Kind
@@ -215,13 +221,60 @@ extension SiteControlCenter {
         public var id: Kind { kind }
     }
 
+    public static let contentBlockingTitle = "Block ads and trackers"
+
+    /// "N blocked on this page" (spec §3). The count is this tab's, read
+    /// from the engine while the panel is open; it never leaves the Mac.
+    public static func blockedCountText(_ count: Int?) -> String {
+        switch count {
+        case nil: return "On for this site"
+        case 0?: return "Nothing blocked on this page"
+        case let count?: return "\(count) blocked on this page"
+        }
+    }
+
+    /// The panel's "Block ads and trackers" row (spec §3). A click turns
+    /// blocking off or back on for the page's site, and the tab then
+    /// reloads. While the profile's switch is off the row leads to
+    /// Settings: one site's panel never turns blocking on for a profile.
+    /// In a private window the row only reports, so a site visited there
+    /// is never written into the profile's exceptions.
+    public static func contentBlockingRow(
+        settings: ContentBlockingSettings,
+        pageURL: URL?,
+        blockedCount: Int?,
+        listsAvailable: Bool,
+        isPrivate: Bool
+    ) -> SettingRow {
+        var row = SettingRow(kind: .contentBlocking, title: contentBlockingTitle, state: blockedCountText(blockedCount),
+                             symbol: "shield.lefthalf.filled", isBlocked: false, actions: [.turnOffBlockingForSite])
+        if !settings.isEnabled {
+            row.state = "Off in Settings"
+            row.symbol = "shield.slash"
+            row.isBlocked = true
+            row.actions = [.openBlockingSettings]
+        } else if settings.exception(covering: pageURL) != nil {
+            row.state = "Off for this site"
+            row.symbol = "shield.slash"
+            row.isBlocked = true
+            row.actions = [.turnOnBlockingForSite]
+        } else if !listsAvailable {
+            row.state = "No lists yet"
+            row.actions = []
+        }
+        if isPrivate || ContentBlockingHost.exceptionHost(for: pageURL) == nil { row.actions.removeAll { $0 != .openBlockingSettings } }
+        return row
+    }
+
     /// Location, camera, microphone and notifications lead, as in Arc; other types follow by name.
     static let leadingPermissions = ["geolocation", "camera_stream", "mic_stream", "notifications"]
 
-    /// The site's answered permissions, then automatic Picture in Picture.
+    /// Blocking first (when the engine has it), then the site's answered
+    /// permissions, then automatic Picture in Picture.
     /// `permissionsInEngine`: Chromium keeps remembered answers, so a row
     /// opens its Site Settings; on WebKit the shell's store is the answer.
     public static func settingRows(
+        contentBlocking: SettingRow? = nil,
         permissions: [(type: PermissionType, entry: SitePermissionStore.Entry)],
         permissionsInEngine: Bool,
         autoPiP: AutoPiPHostPreference,
@@ -239,6 +292,7 @@ extension SiteControlCenter {
                               symbol: type.symbol, isBlocked: blocked, actions: actions)
         }
         rows.append(autoPiPRow(autoPiP, enabled: autoPiPEnabled, now: now))
+        if let contentBlocking { rows.insert(contentBlocking, at: 0) }
         return rows
     }
 

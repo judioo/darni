@@ -1,0 +1,5 @@
+# ReArc's lists keys: Ed25519 public keys, base64 of the raw 32 bytes, one a line.
+# The first is the key in use. A bundle is accepted when any one of these signed it.
+# The app carries the same keys in the same order: BlocklistSigningKey.compiledInTexts
+# (shell/Sources/SidebarModel/Blocklists.swift). To replace a key: engine/docs/RELEASE.md, "Lists key".
+JzoQqIp57WYVyAiycJEzp8MuiD08WZ5jnZDUa8CzJEQ=

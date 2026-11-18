@@ -607,6 +607,10 @@ final class ChromiumRuntime {
     var onAdoptedTab: ((ChromiumTabEvent) -> Bool)?
     /// Profile lifecycle transitions, for logs and the self-test.
     var onProfileEvent: ((String) -> Void)?
+    /// An engine profile finished opening, before any of its tabs exist, and
+    /// one was released (content blocking's per-profile state).
+    var onEngineProfileOpened: ((ChromiumProfileKey, UInt64) -> Void)?
+    var onEngineProfileClosed: ((UInt64) -> Void)?
     /// Download events (ABI 1.17), for the shell's tray.
     var onDownloadEvent: ((ChromiumDownloadEvent) -> Void)?
     /// A batch of download events (ABI 1.49), in order; without it each goes to `onDownloadEvent`.
@@ -1172,6 +1176,7 @@ final class ChromiumRuntime {
             // Before the waiters create tabs; OTR profiles too (Chromium would otherwise ask where to save).
             applyDownloadPolicy(profile: engineID)
             if !offTheRecord { applyLeakDetectionPreference(profile: engineID) }
+            onEngineProfileOpened?(key, engineID)
             waiters.forEach { $0(engineID) }
         } else {
             profileStates[key] = nil
@@ -1236,6 +1241,7 @@ final class ChromiumRuntime {
             profileStates[key] = nil
             profileOrder.removeAll { $0 == key }
             profileEvent("closed \(key) (engine profile \(engineID) released)")
+            onEngineProfileClosed?(engineID)
             if !waiters.isEmpty, !isStopping {
                 profileStates[key] = .opening(waiters)
                 lifecycleQueue.append(.open(key))

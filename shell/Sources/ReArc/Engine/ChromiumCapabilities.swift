@@ -71,6 +71,7 @@ struct ChromiumCapabilities: Equatable {
     static let extensionTabGroupsFeature = "extension_tab_groups"
     static let pageThemeColorFeature = "page_theme_color"
     static let taskManagerFeature = "task_manager"
+    static let contentBlockingFeature = "content_blocking"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -131,6 +132,7 @@ struct ChromiumCapabilities: Equatable {
         extensionTabGroupsFeature: 50,
         pageThemeColorFeature: 51,
         taskManagerFeature: 65,
+        contentBlockingFeature: 66,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -265,6 +267,11 @@ struct ChromiumCapabilities: Equatable {
     /// the process list (pages and frames apart, extension and service
     /// names, the spare renderer, network bytes). Requires `perfMetrics`.
     var taskManager: Bool
+    /// Built-in ad and tracker blocking: the blocklist directory, a
+    /// profile's level, exceptions and own rules, and a tab's blocked count
+    /// (ABI 1.66, CONTENT-BLOCKING.md §5). Without it every blocking surface
+    /// is hidden.
+    var contentBlocking: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -330,6 +337,7 @@ struct ChromiumCapabilities: Equatable {
         extensionTabGroups = extensionWindows && adopted(Self.extensionTabGroupsFeature)
         pageThemeColor = adopted(Self.pageThemeColorFeature)
         taskManager = perfMetrics && adopted(Self.taskManagerFeature)
+        contentBlocking = profiles && adopted(Self.contentBlockingFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -416,6 +424,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.downloadEventBatchesFeature, downloadEventBatches),
             (Self.extensionTabGroupsFeature, extensionTabGroups),
             (Self.taskManagerFeature, taskManager),
+            (Self.contentBlockingFeature, contentBlocking),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),

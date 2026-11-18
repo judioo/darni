@@ -58,6 +58,8 @@ extension SidebarStore {
         if let parentID = parentID.map(owningProfileID(of:)), let index = profiles.firstIndex(where: { $0.id == profile.id }) {
             profiles[index].containerOf = parentID
             profile = profiles[index]
+            // A container follows its parent's blocking; it has no settings of its own.
+            contentBlockingByProfile[profile.id] = nil
         }
         return profile
     }

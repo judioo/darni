@@ -229,7 +229,7 @@ struct AccountSettingsPane: View {
                         Text(error).font(.system(size: 11)).foregroundStyle(.red)
                     }
                     SettingsHairline()
-                    Text("Off unless you turn it on. ReArc syncs Spaces and their themes, Favorites, pinned tabs, folders, splits and Boosts through your iCloud account; only you can see them. Today tabs and easels stay on this Mac.")
+                    Text("Off unless you turn it on. ReArc syncs Spaces and their themes, Favorites, pinned tabs, folders, splits, Boosts and each profile's ad and tracker blocking settings through your iCloud account; only you can see them. Today tabs and easels stay on this Mac.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("Details", isExpanded: $showsSyncDetails) {

@@ -32,6 +32,21 @@ lines and this section starts empty again.
   ⌃1…9 and the space switcher use.
 - Task Manager: double-click a tab or subframe, or right-click it and choose Show Tab, to see
   that tab in its window and space.
+- ReArc can block ads and trackers itself, with no extension. A new install has it on, at the
+  level Ads and trackers. If you already use ReArc, nothing changes until you turn it on: the
+  sidebar offers it once, and the switch is in Settings › Profiles under Your Data and Settings,
+  for each profile. Choose Trackers only, Ads and trackers or Strict. Advanced has the filter
+  lists, your own rules and the sites you turned blocking off for. Private windows follow their
+  profile.
+- The site controls (the button beside the address) have a "Block ads and trackers" row. It
+  shows how many requests were blocked on the page. Click it to turn blocking off for that
+  site, or back on; the tab reloads.
+- The filter lists (EasyPrivacy, Peter Lowe's list, EasyList, Fanboy's Annoyance list and the
+  EasyList Cookie List) come with ReArc, so blocking works offline. ReArc looks for newer lists
+  once a day at rearc.imara.ae and uses a download only if it carries ReArc's lists signature.
+  The request carries no cookie or identifier, and none is made while blocking is off in every
+  profile. What was blocked is counted on your Mac only.
+- Your blocking settings sync with the profile when sync is on.
 
 **Fixes**
 - Swiping to a space (or switching to it any other way) no longer opens a tab by itself. The

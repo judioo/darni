@@ -77,6 +77,9 @@ public struct SidebarSnapshot: Equatable, Codable {
     public var autoArchiveThresholdByProfile: [Profile.ID: AutoArchiveThreshold] = [:]
     /// Tab groups and the spaces' rows for them; not in the tables above.
     public var tabGroups = TabGroupsSnapshot()
+    /// Ad and tracker blocking: each profile's settings and the one-time
+    /// rollout state (`ContentBlockingSnapshot`). Additive, under its own key.
+    public var contentBlocking = ContentBlockingSnapshot()
 
     public struct SpaceContainerBundle: Equatable, Codable {
         public var pinned: ItemContainerRecord
@@ -115,7 +118,8 @@ public struct SidebarSnapshot: Equatable, Codable {
         expandedFolderIDs: [UUID] = [],
         archivedTabs: [ArchivedTabRecord] = [],
         autoArchiveThresholdByProfile: [Profile.ID: AutoArchiveThreshold] = [:],
-        tabGroups: TabGroupsSnapshot = TabGroupsSnapshot()
+        tabGroups: TabGroupsSnapshot = TabGroupsSnapshot(),
+        contentBlocking: ContentBlockingSnapshot = ContentBlockingSnapshot()
     ) {
         self.schemaVersion = schemaVersion
         self.lastFlushedSequence = lastFlushedSequence
@@ -144,6 +148,7 @@ public struct SidebarSnapshot: Equatable, Codable {
         self.archivedTabs = archivedTabs
         self.autoArchiveThresholdByProfile = autoArchiveThresholdByProfile
         self.tabGroups = tabGroups
+        self.contentBlocking = contentBlocking
     }
 
     public init(from store: SidebarStore) {
@@ -166,6 +171,7 @@ public struct SidebarSnapshot: Equatable, Codable {
         case topAppsContainersByProfileID, foldersByID, expandedFolderIDs
         case archivedTabs, autoArchiveThresholdByProfile
         case tabGroups
+        case contentBlocking
         case favorites, contentBySpace
     }
 
@@ -420,6 +426,11 @@ public struct SidebarSnapshot: Equatable, Codable {
             tabGroups = saved
             TabGroupShadow.remove(from: &self)
         }
+        // Files from before blocking have no such key, and every profile is
+        // then Off. One this build cannot read is treated the same way.
+        if let saved = try? c.decodeIfPresent(ContentBlockingSnapshot.self, forKey: .contentBlocking) {
+            contentBlocking = saved
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -441,6 +452,7 @@ public struct SidebarSnapshot: Equatable, Codable {
         let tabsByID = tables?.tabsByID ?? tabsByID
         let foldersByID = tables?.foldersByID ?? foldersByID
         if !tabGroups.isEmpty { try c.encode(tabGroups, forKey: .tabGroups) }
+        if !contentBlocking.isEmpty { try c.encode(contentBlocking, forKey: .contentBlocking) }
         try c.encode(spaceContainers, forKey: .spaceContainers)
         try c.encode(tabsByID, forKey: .tabsByID)
         try c.encode(splitsByID, forKey: .splitsByID)

@@ -121,6 +121,11 @@ public final class SidebarStore {
     /// Closed and auto-archived tabs, newest last (Arc archive store).
     public internal(set) var archivedTabs: [ArchivedTabRecord] = []
     public internal(set) var autoArchiveThresholdByProfile: [Profile.ID: AutoArchiveThreshold] = [:]
+    /// Ad and tracker blocking per profile; a profile without an entry is Off
+    /// (`SidebarStore+ContentBlocking.swift`).
+    public internal(set) var contentBlockingByProfile: [Profile.ID: ContentBlockingSettings] = [:]
+    /// Whether this install was new or existing when blocking arrived, and its one-time offer.
+    public internal(set) var contentBlockingRollout = ContentBlockingRollout()
     /// Each browser window's focused space (Arc `focusedSpaceID` per window).
     /// The key window's entry always equals `activeSpaceID`; not persisted.
     public internal(set) var focusedSpaceByWindow: [SidebarWindowID: Space.ID] = [:]
@@ -214,6 +219,8 @@ public final class SidebarStore {
         let profile = Profile(name: name, avatar: avatar, themeColor: themeColor)
         profiles.append(profile)
         boostLibrariesByProfileID[profile.id] = BoostLibraryOps.empty(for: profile.id)
+        // A profile made once blocking has arrived starts with it on: it has no pages that could break.
+        if contentBlockingRollout.isDecided { contentBlockingByProfile[profile.id] = .newProfile }
         favoritesByProfile[profile.id] = []
         topAppsContainerIDByProfile[profile.id] = UUID()
         guard createInitialSpace else {
@@ -283,6 +290,7 @@ public final class SidebarStore {
             favoritesByProfile[id] = nil
             topAppsContainerIDByProfile[id] = nil
             autoArchiveThresholdByProfile[id] = nil
+            contentBlockingByProfile[id] = nil
             // Its tab groups' pages were in its storage.
             for group in tabGroupsByID.values where group.profileID == id {
                 tabGroupsByID[group.id] = nil
@@ -1605,7 +1613,8 @@ public final class SidebarStore {
             expandedFolderIDs: expandedFolderIDs.sorted { $0.uuidString < $1.uuidString },
             archivedTabs: archivedTabs,
             autoArchiveThresholdByProfile: autoArchiveThresholdByProfile,
-            tabGroups: tabGroupsSnapshot()
+            tabGroups: tabGroupsSnapshot(),
+            contentBlocking: ContentBlockingSnapshot(rollout: contentBlockingRollout, settingsByProfile: contentBlockingByProfile)
         )
     }
 
@@ -1712,6 +1721,8 @@ public final class SidebarStore {
         capturesByID = snapshot.capturesByID
         archivedTabs = TabArchivePolicy.pruned(snapshot.archivedTabs, now: now())
         autoArchiveThresholdByProfile = snapshot.autoArchiveThresholdByProfile
+        contentBlockingRollout = snapshot.contentBlocking.rollout
+        contentBlockingByProfile = snapshot.contentBlocking.settingsByProfile.filter { liveProfiles.contains($0.key) }
         for profile in profiles where boostLibrariesByProfileID[profile.id] == nil {
             boostLibrariesByProfileID[profile.id] = BoostLibraryOps.empty(for: profile.id)
         }

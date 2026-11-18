@@ -654,7 +654,7 @@ public final class SidebarSyncCoordinator {
     }
 
     /// The record names of `profiles` in `snapshot`: each profile, its
-    /// favorites, Boosts and tab groups, its spaces with their styles and pinned rows.
+    /// favorites, Boosts, tab groups and blocking settings, its spaces with their styles and pinned rows.
     static func records(of profiles: Set<Profile.ID>, in snapshot: SidebarSnapshot) -> Set<String> {
         guard !profiles.isEmpty else { return [] }
         let spaces = Set(snapshot.spaces.filter { profiles.contains($0.profileID) }.map { $0.id.uuidString.lowercased() })
@@ -665,7 +665,7 @@ public final class SidebarSyncCoordinator {
         return Set(SidebarSyncProjection.extract(snapshot).compactMap { name, body -> String? in
             guard let (kind, id) = SyncRecordKind.parse(recordName: name) else { return nil }
             switch kind {
-            case .profile: return profiles.contains(id) ? name : nil
+            case .profile, .contentBlocking: return profiles.contains(id) ? name : nil
             case .space: return owned(body.values["profileID"]) ? name : nil
             case .spaceStyle, .spaceArchive: return spaces.contains(id.uuidString.lowercased()) ? name : nil
             case .boost, .tabGroup: return owned(body.values["profileID"]) ? name : nil

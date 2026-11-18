@@ -1,0 +1,41 @@
+{
+ "stats": {
+  "lines": 133,
+  "comments": 17,
+  "network": 102,
+  "converted": 64,
+  "duplicate": 3,
+  "dropped": {
+   "badfilter": 2,
+   "cosmetic-exception": 1,
+   "csp": 2,
+   "domain-pattern": 1,
+   "genericblock": 1,
+   "header": 2,
+   "invalid": 2,
+   "object-subrequest": 1,
+   "popup": 2,
+   "redirect": 3,
+   "regex-unsupported": 3,
+   "removeparam": 3,
+   "response-rewrite": 1,
+   "too-broad": 8,
+   "unknown-option": 1,
+   "unsupported-option": 1,
+   "webrtc": 1
+  },
+  "cosmetic": {
+   "hide": 4,
+   "exception": 1,
+   "procedural": 5,
+   "scriptlet": 4
+  }
+ },
+ "header": {
+  "title": "Golden forms",
+  "version": "202611180000",
+  "last_modified": "18 Nov 2026 00:00 UTC",
+  "expires": "4 days",
+  "homepage": "https://example.org/"
+ }
+}

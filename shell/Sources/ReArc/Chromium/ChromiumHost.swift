@@ -60,10 +60,15 @@ enum ChromiumHost {
                 if let dir = ChromiumLaunchArguments.userDataDir(in: arguments) {
                     ChromiumLaunchArguments.prepareSelfTestUserDataDir(URL(fileURLWithPath: dir, isDirectory: true))
                 }
-                let extensions = SelfTestExtensionFixture.write()
+                // The cold launch for blocking is one restored tab and nothing else: no fixture
+                // extensions and no client certificates, as a person's launch has none.
+                let cold = SelfTestBlockingFixture.isColdLaunch(CommandLine.arguments)
+                let extensions = cold ? [] : SelfTestExtensionFixture.write()
                 // ABI 1.41's test-only certificate store needs the mock keychain; the real Keychain is never listed.
                 var mutualTLS: [String] = []
-                if keychain == .devMock {
+                if cold {
+                    test.mutualTLSNote = "the cold launch for blocking lists no client identities"
+                } else if keychain == .devMock {
                     let (fixture, note) = SelfTestMutualTLS.start()
                     mutualTLS = fixture?.switches ?? []
                     test.mutualTLSNote = note
@@ -372,6 +377,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             // Window › Task Manager lists the engine's processes; before ABI 1.44 it shows ReArc alone.
             model.taskManager.source = ChromiumTaskManagerSource(runtime: runtime, model: model)
         }
+        // Built-in ad and tracker blocking, when the engine has its calls (CONTENT-BLOCKING.md §5).
+        ChromiumContentBlockingEngine.attach(to: model, runtime: runtime)
         model.presentSettings = { [weak self] pane in MainActor.assumeIsolated { self?.presentSettings(pane) } }
         model.onShortcutOverridesChanged = { [weak self, weak model] in
             guard let self, let model, let menu = NSApp.mainMenu else { return }

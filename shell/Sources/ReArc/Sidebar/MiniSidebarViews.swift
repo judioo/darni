@@ -496,7 +496,8 @@ struct MiniSpaceHeaderView: View {
 
     private var badge: Color? {
         if SyncStatusPresentation(model.syncStatus).indicator == .red { return model.syncStatusColor }
-        if model.onboardingSetupState.showsCard || model.availableUpdate != nil || model.showsOnePasswordPrompt { return .accentColor }
+        if model.onboardingSetupState.showsCard || model.availableUpdate != nil || model.showsOnePasswordPrompt
+            || model.contentBlocking.showsOffer { return .accentColor }
         return nil
     }
 
@@ -552,6 +553,12 @@ struct MiniSpaceHeaderView: View {
         if model.showsOnePasswordPrompt {
             Button(OnePasswordConnect.menuTitle) { model.showSettings(.general) }
             Button(OnePasswordConnect.menuHide) { model.dismissOnePasswordPrompt() }
+        }
+        // The blocking offer's card, at mini width.
+        if model.contentBlocking.showsOffer {
+            Text(ContentBlockingRollout.offerTitle)
+            Button(ContentBlockingRollout.offerAccept) { model.acceptContentBlockingOffer() }
+            Button(ContentBlockingRollout.offerDecline) { model.declineContentBlockingOffer() }
         }
         if SyncStatusPresentation(model.syncStatus).indicator == .red {
             Text(model.syncStatusHelp)

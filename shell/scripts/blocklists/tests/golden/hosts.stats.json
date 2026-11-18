@@ -1,0 +1,19 @@
+{
+ "stats": {
+  "lines": 13,
+  "comments": 2,
+  "network": 11,
+  "converted": 4,
+  "duplicate": 1,
+  "dropped": {
+   "invalid": 6
+  },
+  "cosmetic": {
+   "hide": 0,
+   "exception": 0,
+   "procedural": 0,
+   "scriptlet": 0
+  }
+ },
+ "header": {}
+}

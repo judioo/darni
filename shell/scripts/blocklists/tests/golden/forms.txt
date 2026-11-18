@@ -1,0 +1,133 @@
+[Adblock Plus 2.0]
+! Title: Golden forms
+! Version: 202611180000
+! Last modified: 18 Nov 2026 00:00 UTC
+! Expires: 4 days
+! Homepage: https://example.org/
+! --- whole hosts: merged into one rule per set of options
+||ads.example^
+||tracker.example^
+||ADS.Example^
+||metrics.example^$third-party
+||pixel.example^$3p
+||widgets.example^$~third-party
+||first.example^$1p
+||beacon.example^$image,script
+||doubles.example^$script,image
+||cdn.example^$domain=site.example|other.example
+||münchen.example^
+! --- hosts that are not "a whole host": kept as URL filters
+||ads.example/banner/
+||ads.example
+||192.0.2.7^
+||example.*^
+! --- paths, anchors, wildcards and separators
+/banner/ad_
+/adframe.$subdocument
+&ad_slot=
+|https://ads.example/exact|
+|http://start.example/
+.swf|
+*/wildcard/*/middle^
+||wild.example/*/pixel.gif?
+/path/with/ünicode
+! --- request types
+/track.js$script
+/sheet.css$stylesheet
+/beat$ping,xmlhttprequest
+/sock$websocket
+/vid.$media,font,object,other
+/no-images$~image
+/no-frames-no-scripts$~subdocument,~script
+/everything$all
+/aliases$css,xhr,frame,beacon
+||landing.example^$document
+||both.example^$document,script
+||popmix.example^$popup,script
+! --- parties and sites
+/third.js$third-party,script
+/firstonly.$~third-party
+/onsite.js$domain=news.example
+/offsite.js$domain=~news.example
+/mixed.js$domain=shop.example|~checkout.shop.example
+$script,third-party,domain=strict.example
+*$image,domain=noimages.example
+/from.js$from=a.example|b.example
+/to.js$to=cdn1.example|~safe.cdn1.example
+*$script,to=bad.example,from=page.example
+/deny.js$domain=host.example,denyallow=ok1.example|ok2.example
+/post$method=post
+/notget$method=~get|~head
+/entity.js$domain=shop.example|shop.*
+! --- case, priority
+/CaseSensitive$match-case
+||loud.example^$important
+/loud/path$important,script
+! --- exceptions
+@@||ads.example/allowed/
+@@||good.example^
+@@||cdn.example/lib.js$script,domain=app.example
+@@/whitelisted.$image,third-party
+@@||page.example^$document
+@@||frames.example^$document,subdocument
+@@||quiet.example^$important
+@@||hide.example^$elemhide
+@@||hide2.example^$generichide,script
+@@||opt.example^$genericblock
+! --- regular expressions
+/banner\d+\.gif/
+/^https?:\/\/[a-z]{8}\.example\/[0-9]+\.js$/$script,third-party
+/ads\.js$/
+@@/allowed-[0-9]+\.png/$image
+/lookahead(?=bad)/
+/backref(a)\1/
+/ünicode-regex/
+! --- duplicates and badfilter
+/banner/ad_
+||ads.example^
+/removed.js$script
+/removed.js$script,badfilter
+! --- dropped: DNR cannot express these
+||csp.example^$csp=script-src 'self'
+||redirect.example/ad.js$redirect=noopjs
+||redirect.example/ad2.js$script,redirect-rule=noopjs
+||rewrite.example^$rewrite=abp-resource:blank-js,domain=x.example
+||param.example^$removeparam=utm_source
+$removeparam=/^utm_/
+||regexparam.example^$removeparam=/a$b/
+||header.example^$header=x-ad
+||perm.example^$permissions=browsing-topics=()
+||replace.example^$replace=/a/b/
+||popup.example^$popup
+||popup2.example^$popup,third-party
+||rtc.example^$webrtc
+||flash.example^$object-subrequest
+||mystery.example^$frobnicate
+||excluded-entity.example/x$domain=~shop.*
+$third-party
+*$script
+@@.$document
+@@/$image
+@@|http$document,script
+.$all
+/$subdocument
+://
+||space example^
+||bad.example^$elemhide
+||strict.example^$strict3p
+||inline.example^$inline-script
+! --- cosmetic filters: counted, written in phase 2
+##.ad-banner
+example.com##.sponsored
+example.com,~sub.example.com###ad
+example.com#@#.ad-banner
+example.com##div:has(> .ad)
+example.com#?#div:-abp-has(.ad)
+example.com##div:has-text(Sponsored)
+example.com##.ad:remove()
+example.com#$#abort-on-property-read ads
+example.com##+js(set-constant, ads, false)
+example.com#%#//scriptlet('abort-on-property-read', 'ads')
+example.com##^script:has-text(ads)
+example.com$$script[tag-content="ads"]
+example.com#@?#div:-abp-has(.ad)

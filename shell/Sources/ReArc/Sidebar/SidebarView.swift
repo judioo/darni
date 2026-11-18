@@ -127,10 +127,16 @@ struct SidebarView: View {
                 // Connect 1Password, a one-time step, in the same place and card.
                 ConnectOnePasswordSlot(model: model)
 
+                // The one-time blocking offer to an install from before blocking.
+                ContentBlockingOfferSlot(model: model)
+
                 BottomBarView(model: model, draggedItemID: $draggedItemID)
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.onboardingSetupState)
+        // The sidebar is up: an existing install is offered blocking, once
+        // (again when the engine attaches after the window did).
+        .task(id: model.contentBlocking.isAvailable) { model.presentContentBlockingOfferIfDue() }
         .environment(\.isMiniSidebar, mini)
         .frame(width: width)
         .frame(maxHeight: .infinity)

@@ -39,6 +39,8 @@ final class ChromiumSelfTest {
     private var window: NSWindow?
     private var shutdownStatus: ReArcStatus?
     private let started = Date()
+    /// The blocking fixture's page loads so far: each load has a number of its own (`SelfTestBlockingFixture`).
+    private var blockingRun = 0
 
     init(runtime: ChromiumRuntime) {
         self.runtime = runtime
@@ -53,7 +55,11 @@ final class ChromiumSelfTest {
         }
         Task { @MainActor in
             do {
-                try await self.run()
+                if SelfTestBlockingFixture.isColdLaunch(CommandLine.arguments) {
+                    try await self.contentBlockingColdLaunch()
+                } else {
+                    try await self.run()
+                }
             } catch {
                 self.failures.append(String(describing: error))
                 self.log("FAIL \(error)")
@@ -428,6 +434,10 @@ final class ChromiumSelfTest {
         if capabilities.javascriptDialogs {
             try await vetoedQuitChecks(engine: engine, base: base, window: window)
         }
+
+        // 19. Blocking at a cold launch (security CB-02): another process, a restored tab on
+        //     the blocking fixture. After everything that needs this window in front.
+        try await contentBlockingColdLaunchChecks()
     }
 
     // MARK: Script evaluation
@@ -1101,6 +1111,8 @@ final class ChromiumSelfTest {
             .appendingPathComponent("rearc-selftest-window-session-\(UUID().uuidString).json")
         let shell = ChromiumShell(runtime: runtime, autosavesFrames: false, sessionFile: sessionFile)
         shell.start(model: model)
+        // Before the first list check can start (it follows the bundles' verification, off this turn).
+        model.contentBlocking.fetcher = SelfTestNoMirror()
         guard let first = shell.browserWindows.first else { throw Failure(description: "ChromiumShell opened no browser window") }
         let engineA = try shellEngine(model, tabA)
         try await wait("shell tab A attached and loaded", timeout: 20) {
@@ -1291,6 +1303,7 @@ final class ChromiumSelfTest {
         try await codecChecks(model: model, store: store)
         try await prerenderChecks(model: model, store: store)
         try await taskManagerChecks(model: model, store: store, window: first)
+        try await contentBlockingChecks(model: model, store: store)
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -2176,6 +2189,16 @@ final class ChromiumSelfTest {
             fflush(stdout)
             _exit(1)
         }
+    }
+}
+
+/// The self-test asks the list mirror for nothing (security CB-08): a fresh
+/// profile counts as a new install, which has blocking on and would fetch
+/// `latest.json` from the live site. A list that changed under the page
+/// checks would also change what they see.
+private struct SelfTestNoMirror: BlocklistFetching {
+    func data(from url: URL, limit: Int) async throws -> Data {
+        throw URLError(.notConnectedToInternet)
     }
 }
 
@@ -3323,6 +3346,342 @@ extension ChromiumSelfTest {
                 log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
             }
         }
+    }
+
+    /// Built-in ad and tracker blocking (CONTENT-BLOCKING.md §8 "Self-test",
+    /// security CB-02). An engine without `content_blocking` (before ABI
+    /// 1.66, patch `tab/095-content-blocker-component`) logs the gap, and
+    /// the only check is that nothing of blocking shows.
+    ///
+    /// With it, the blocking fixture (`SelfTestBlockingFixture`) is loaded in
+    /// a tab of its own: a page that asks a tracker's host and an ad server's
+    /// host for a script each. Both hosts are in the built-in lists, both
+    /// resolve to the fixture server, and the server counts what it is asked
+    /// for. The steps, each through the model's own commands:
+    ///
+    /// - Ads and trackers: neither is fetched, the engine counts 2, and the
+    ///   site controls row says "2 blocked on this page".
+    /// - Trackers only: the ad loads, the tracker does not, the count is 1.
+    /// - A site exception (the row's own command): both load, nothing counted.
+    /// - The exception removed: neither is fetched again.
+    /// - Off: both load. On again: neither.
+    ///
+    /// A change of settings reaches the engine's rules a moment after the
+    /// call returns, so each step loads the page until it shows the wanted
+    /// state and fails when it never does.
+    @MainActor
+    private func contentBlockingChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        guard model.contentBlocking.isAvailable else {
+            log("ABI-GAP content_blocking not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 66): "
+                + "Block ads and trackers is hidden in Settings and the site controls, and no install is offered it")
+            try check(!model.contentBlocking.showsOffer, "the blocking offer is up without an engine that can block")
+            try check(model.contentBlocking.bundle == nil, "a blocklist bundle was loaded without an engine that can block")
+            return
+        }
+        try check(store.contentBlockingRollout.isDecided, "an engine with blocking attached and the install was not counted as new or existing")
+        try await wait("the blocklist bundles to be checked") { model.contentBlocking.didLoadLists }
+        guard let bundle = model.contentBlocking.bundle else {
+            throw Failure(description: "content blocking: the engine can block and no blocklist bundle verified "
+                + "(\(model.contentBlockingEvents.suffix(3).joined(separator: "; "))): nothing is blocked")
+        }
+        let unfit = SelfTestBlockingFixture.problems(in: bundle)
+        try check(unfit.isEmpty, "the blocking fixture does not fit the lists (\(unfit.joined(separator: "; "))): "
+            + "choose other hosts in SelfTestBlockingFixture")
+
+        try await withFixtureTab(model, store, title: "Blocking", path: "\(SelfTestBlockingFixture.pagePath)?run=0") { tab, engine in
+            let profileID = model.profileID(for: tab)
+            let saved = store.contentBlocking(for: profileID)
+            defer {
+                store.setContentBlocking(saved, for: profileID)
+                model.contentBlockingSettingsChanged()
+            }
+            func settings() -> ContentBlockingSettings { store.contentBlocking(for: profileID) }
+            func count() -> Int? { model.contentBlocking.blockedCount?(engine) }
+            func row() throws -> SiteControlCenter.SettingRow {
+                guard let site = SiteControlCenter.site(for: engine.currentURL),
+                      let row = model.contentBlockingRow(for: engine, site: site) else {
+                    throw Failure(description: "the site controls have no blocking row for \(engine.currentURL?.absoluteString ?? "nil")")
+                }
+                return row
+            }
+            /// The engine's count for the page reaches `expected` and stays there.
+            func expectCount(_ expected: Int, _ label: String) async throws {
+                try await wait("\(label): the engine's count of blocked requests to be \(expected) (now \(count().map(String.init) ?? "nil"))", timeout: 10) {
+                    count() == expected
+                }
+                try await Task.sleep(for: .milliseconds(400))
+                try check(count() == expected, "\(label): the count went on to \(count().map(String.init) ?? "nil"), not \(expected)")
+            }
+
+            // 1. Ads and trackers, with no exception and no own rule in the way.
+            model.setContentBlockingEnabled(true, for: profileID)
+            model.setContentBlockingStrength(.adsAndTrackers, for: profileID)
+            for host in settings().exceptions { model.removeContentBlockingException(host, for: profileID) }
+            model.setContentBlockingOwnRules("", for: profileID)
+            try check(settings().level == .adsAndTrackers && settings().exceptions.isEmpty, "blocking settings before the page checks: \(settings())")
+            let revision = model.contentBlocking.blockedCountRevision
+            // The first use of a bundle copies and indexes its 18,000 rules.
+            let firstLoads = try await waitForBlocking("at Ads and trackers", model, tab, engine, tracker: true, ad: true, timeout: 90)
+            try await expectCount(2, "at Ads and trackers")
+            try await wait("the engine's count callback to reach the shell", timeout: 5) { model.contentBlocking.blockedCountRevision != revision }
+            let onRow = try row()
+            try check(onRow.state == "2 blocked on this page" && !onRow.isBlocked, "the site controls row at Ads and trackers: \(onRow)")
+            log("PASS content blocking at Ads and trackers (bundle \(bundle.version), \(bundle.source)): the page's requests to "
+                + "\(SelfTestBlockingFixture.trackerHost) and \(SelfTestBlockingFixture.adHost) never reached the fixture server "
+                + "(load \(firstLoads)); the engine counts 2 and the site controls row says '\(onRow.state)'")
+
+            // 2. Trackers only: EasyList goes off, EasyPrivacy stays.
+            model.setContentBlockingStrength(.trackersOnly, for: profileID)
+            let trackerLoads = try await waitForBlocking("at Trackers only", model, tab, engine, tracker: true, ad: false)
+            try await expectCount(1, "at Trackers only")
+            let trackersRow = try row()
+            try check(trackersRow.state == "1 blocked on this page", "the site controls row at Trackers only: \(trackersRow)")
+            model.setContentBlockingStrength(.adsAndTrackers, for: profileID)
+            let backLoads = try await waitForBlocking("back at Ads and trackers", model, tab, engine, tracker: true, ad: true)
+            log("PASS content blocking levels: at Trackers only the ad loaded and the tracker did not (load \(trackerLoads)), count 1; "
+                + "back at Ads and trackers neither loaded (load \(backLoads))")
+
+            // 3. A site exception, by the site controls' own command, which reloads the tab.
+            guard let site = SiteControlCenter.site(for: engine.currentURL) else { throw Failure(description: "the blocking fixture's page has no site") }
+            let runBefore = blockingRun
+            model.setContentBlocking(false, forSiteOf: engine, site: site)
+            try check(settings().exception(covering: engine.currentURL) != nil, "Turn Off for This Site added no exception: \(settings().exceptions)")
+            // That reload is of the same page load number: the server sees its requests, if they come.
+            let ownReloadLoaded = await eventually(timeout: 5) { LoopbackFixtureServer.blockingFetches(run: runBefore).tracker > 0 }
+            let exceptionLoads = try await waitForBlocking("with a site exception", model, tab, engine, tracker: false, ad: false)
+            try await expectCount(0, "with a site exception")
+            let exceptedRow = try row()
+            try check(exceptedRow.state == "Off for this site" && exceptedRow.isBlocked, "the site controls row with an exception: \(exceptedRow)")
+            if ownReloadLoaded {
+                log("PASS content blocking site exception (\(settings().exceptions.joined(separator: ","))): the tab's own reload already loaded "
+                    + "both requests; nothing counted; the row says 'Off for this site'")
+            } else {
+                log("PASS content blocking site exception (\(settings().exceptions.joined(separator: ","))): both requests load (load "
+                    + "\(exceptionLoads) after the change); nothing counted; the row says 'Off for this site'")
+                log("NOTE content blocking: the reload that Turn Off for This Site makes itself was still blocked: it ran before the "
+                    + "engine had set the exception (dynamic rules are set after the call returns). The person sees the page blocked "
+                    + "until they reload again; the engine needs to report the change done before the shell reloads (security CB-06)")
+            }
+
+            // 4. The exception removed.
+            model.setContentBlocking(true, forSiteOf: engine, site: site)
+            try check(settings().exceptions.isEmpty, "Turn On for This Site left \(settings().exceptions)")
+            let againLoads = try await waitForBlocking("with the exception removed", model, tab, engine, tracker: true, ad: true)
+            try await expectCount(2, "with the exception removed")
+
+            // 5. Off for the profile, and on again.
+            model.setContentBlockingEnabled(false, for: profileID)
+            let offLoads = try await waitForBlocking("at Off", model, tab, engine, tracker: false, ad: false)
+            try await expectCount(0, "at Off")
+            let offRow = try row()
+            try check(offRow.state == "Off in Settings", "the site controls row at Off: \(offRow)")
+            model.setContentBlockingEnabled(true, for: profileID)
+            let onLoads = try await waitForBlocking("switched on again", model, tab, engine, tracker: true, ad: true, timeout: 60)
+            try await expectCount(2, "switched on again")
+            log("PASS content blocking exception removed and Off: without the exception neither request loaded (load \(againLoads)); at Off "
+                + "both loaded (load \(offLoads)), nothing counted, the row says 'Off in Settings'; on again neither loaded (load \(onLoads)), count 2")
+        }
+    }
+
+    /// One load of the blocking fixture in `tab`, as a page load with a
+    /// number of its own: what the page saw of its two requests, and what
+    /// the fixture server was asked for in that load. The two must agree: a
+    /// request the page saw fail and the server answered, or the other way
+    /// round, is a broken fixture and fails here.
+    @MainActor
+    private func loadBlockingFixture(_ model: BrowserViewModel, _ tab: Tab, _ engine: ChromiumEngine) async throws
+        -> (verdict: SelfTestBlockingFixture.Verdict, fetched: (tracker: Int, ad: Int)) {
+        blockingRun += 1
+        let run = blockingRun
+        loadShellTab(model, tab, engine, SelfTestBlockingFixture.pageURL(base: serverBase, run: run))
+        return try await blockingFixtureLoad(run, engine)
+    }
+
+    /// Waits for page load `run` of the blocking fixture to end and reads it.
+    @MainActor
+    private func blockingFixtureLoad(_ run: Int, _ engine: ChromiumEngine, timeout: TimeInterval = 20) async throws
+        -> (verdict: SelfTestBlockingFixture.Verdict, fetched: (tracker: Int, ad: Int)) {
+        try await wait("the blocking fixture's page load \(run) (title '\(engine.pageTitle ?? "nil")')", timeout: timeout) {
+            SelfTestBlockingFixture.Verdict(title: engine.pageTitle)?.run == run
+        }
+        guard let verdict = SelfTestBlockingFixture.Verdict(title: engine.pageTitle) else {
+            throw Failure(description: "the blocking fixture's title changed under the test: '\(engine.pageTitle ?? "nil")'")
+        }
+        let fetched = LoopbackFixtureServer.blockingFetches(run: run)
+        try check(verdict.trackerBlocked == (fetched.tracker == 0) && verdict.adBlocked == (fetched.ad == 0),
+                  "blocking fixture load \(run): the page saw \(verdict.text), and the server was asked for the tracker "
+                    + "\(fetched.tracker) time(s) and the ad \(fetched.ad) time(s)")
+        return (verdict, fetched)
+    }
+
+    /// Loads the blocking fixture until the page shows the wanted state, and
+    /// returns how many loads that took (1: the first load after the change
+    /// already had it). Fails with the last state after `timeout`.
+    @MainActor
+    private func waitForBlocking(_ what: String, _ model: BrowserViewModel, _ tab: Tab, _ engine: ChromiumEngine,
+                                 tracker: Bool, ad: Bool, timeout: TimeInterval = 30) async throws -> Int {
+        let wanted = SelfTestBlockingFixture.Verdict(run: 0, trackerBlocked: tracker, adBlocked: ad)
+        let deadline = Date().addingTimeInterval(timeout)
+        var loads = 0
+        while true {
+            let load = try await loadBlockingFixture(model, tab, engine)
+            loads += 1
+            if load.verdict.trackerBlocked == tracker && load.verdict.adBlocked == ad { return loads }
+            guard Date() < deadline else {
+                throw Failure(description: "content blocking \(what): after \(loads) load(s) in \(Int(timeout)) s the page still has "
+                    + "\(load.verdict.text), not \(wanted.text); last events: \(model.contentBlockingEvents.suffix(3).joined(separator: "; "))")
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    // MARK: Blocking at a cold launch (security CB-02)
+
+    /// Security CB-02: the engine keeps nothing of blocking between launches,
+    /// and a restored tab starts loading when its profile opens. If the
+    /// lists come on later than that, the tab's trackers are fetched at
+    /// every launch.
+    ///
+    /// This starts ReArc again, as a process of its own with a profile of
+    /// its own, whose one tab is restored on the blocking fixture
+    /// (`contentBlockingColdLaunch`). That launch passes when its fixture
+    /// server was never asked for the tracker or the ad. Twice on the same
+    /// profile where the build allows it: the first launch copies and indexes
+    /// the rules, the second is the everyday one.
+    @MainActor
+    private func contentBlockingColdLaunchChecks() async throws {
+        // Without the feature the gap is already logged (contentBlockingChecks).
+        guard runtime.capabilities.contentBlocking, ChromiumContentBlockingCalls.resolve() != nil else { return }
+        guard let executable = Bundle.main.executableURL else { throw Failure(description: "no executable to start the cold launch with") }
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: profile) }
+        // A bundle release.sh is verifying takes only a new, empty profile (RC-0.1.0-602 F-03).
+        let release = ShippedBuild.isRelease(infoDictionary: Bundle.main.infoDictionary)
+        var summaries: [String] = []
+        for launch in 1...(release ? 1 : 2) {
+            // Longer than the launch's own waits together (45 s for the page, 45 s for a later
+            // blocked load), so a failing launch ends by itself and says why.
+            let child = try await runColdLaunch(executable: executable, profile: profile, timeout: 110)
+            let lines = child.output.split(whereSeparator: \.isNewline).map(String.init)
+            let told = lines.filter { $0.contains("COLD-BLOCKING") }
+            for line in told { log("cold launch \(launch): \(line)") }
+            guard child.status == 0, let passed = told.last(where: { $0.contains("COLD-BLOCKING PASS") }) else {
+                let failed = lines.filter { $0.contains("FAIL") }.suffix(4).joined(separator: " | ")
+                throw Failure(description: "content blocking cold launch \(launch) (\(launch == 1 ? "new profile" : "the same profile again")) "
+                    + "ended with status \(child.status): \(failed.isEmpty ? String(child.output.suffix(600)) : failed)")
+            }
+            summaries.append(passed.components(separatedBy: "COLD-BLOCKING PASS").last?.trimmingCharacters(in: .whitespaces) ?? "")
+        }
+        log("PASS content blocking at a cold launch: a restored tab on the blocking fixture fetched neither the tracker nor the ad "
+            + "(\(summaries.enumerated().map { "launch \($0.offset + 1): \($0.element)" }.joined(separator: "; ")))"
+            + (release ? "; one launch, on a new profile: a release bundle under verification takes no used profile" : ""))
+    }
+
+    /// Runs this executable again as the cold launch for blocking and waits
+    /// for it to end. Its output goes to a file, so a full pipe cannot stall it.
+    @MainActor
+    private func runColdLaunch(executable: URL, profile: URL, timeout: TimeInterval) async throws -> (status: Int32, output: String) {
+        let logFile = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-\(UUID().uuidString).log")
+        guard FileManager.default.createFile(atPath: logFile.path, contents: nil) else {
+            throw Failure(description: "could not create the cold launch's log \(logFile.path)")
+        }
+        defer { try? FileManager.default.removeItem(at: logFile) }
+        let output = try FileHandle(forWritingTo: logFile)
+        defer { try? output.close() }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = SelfTestBlockingFixture.coldLaunchArguments(from: CommandLine.arguments, userDataDir: profile.path)
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning {
+            if Date() > deadline {
+                process.terminate()
+                let tail = String(decoding: (try? Data(contentsOf: logFile)) ?? Data(), as: UTF8.self).suffix(600)
+                throw Failure(description: "the cold launch for blocking was still running after \(Int(timeout)) s: \(tail)")
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        return (process.terminationStatus, String(decoding: (try? Data(contentsOf: logFile)) ?? Data(), as: UTF8.self))
+    }
+
+    /// The cold launch itself (`--rearc-selftest-cold-blocking`), in place
+    /// of every other step: the shell starts as it does for a person, with a
+    /// sidebar whose selected tab is the blocking fixture, in a new install's
+    /// state (blocking on at Ads and trackers). Nothing waits for the lists.
+    /// The fixture server then says whether that first load fetched the
+    /// tracker or the ad.
+    ///
+    /// Prints `COLD-BLOCKING PASS …` and exits 0 when it fetched neither.
+    /// When it fetched one, the page is loaded again until it is blocked, so
+    /// the failure says how long after the start the lists came on.
+    @MainActor
+    private func contentBlockingColdLaunch() async throws {
+        log("COLD-BLOCKING launch: engine ABI \(ReArcEngineABIVersion()), Chromium \(String(cString: ReArcEngineVersion())), "
+            + "user data \(runtime.userDataDir?.path ?? "-")")
+        try check(runtime.capabilities.contentBlocking && ChromiumContentBlockingCalls.resolve() != nil,
+                  "COLD-BLOCKING FAIL: this engine has no content_blocking")
+        let server = try LoopbackFixtureServer()
+        self.server = server
+        let port = try await server.start()
+        serverBase = "http://127.0.0.1:\(port)"
+        // Its own folder: the sidebar file's sibling `Blocklists` is then this launch's alone.
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-cold-shell-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let store = SidebarStore()
+        blockingRun = 1
+        let tab = store.addTab(kind: .today, title: "Blocking", url: SelfTestBlockingFixture.pageURL(base: serverBase, run: 1))
+        store.selectTab(tab.id)
+        // As ChromiumShell.makeModel does: the owner is named before the model loads the tab.
+        runtime.legacyDefaultOwner = store.profiles.first?.id
+        let model = BrowserViewModel(
+            store: store,
+            persistence: SidebarFilePersistence(fileURL: scratch.appendingPathComponent("sidebar.json")),
+            syncEngine: LocalSyncEngine(),
+            faviconStore: FaviconStore(directory: nil)
+        )
+        let shell = ChromiumShell(runtime: runtime, autosavesFrames: false, sessionFile: scratch.appendingPathComponent("window-session.json"))
+        let shellStarted = Date()
+        shell.start(model: model)
+        model.contentBlocking.fetcher = SelfTestNoMirror()
+        func sinceStart() -> Int { Int(Date().timeIntervalSince(shellStarted) * 1000) }
+        try check(model.contentBlocking.isAvailable, "COLD-BLOCKING FAIL: blocking did not attach to the model")
+        let engine = try shellEngine(model, tab)
+        self.engine = engine
+        let profileID = model.profileID(for: tab)
+        let level = store.contentBlocking(for: profileID).level
+        try check(level == .adsAndTrackers, "COLD-BLOCKING FAIL: the launch's profile is at \(level.title), not Ads and trackers "
+            + "(rollout \(String(describing: store.contentBlockingRollout.install))): the step needs blocking on")
+
+        // The restored tab's own load. Its first renderer starts cold.
+        try await wait("the restored tab's page (title '\(engine.pageTitle ?? "nil")')", timeout: 45) {
+            SelfTestBlockingFixture.Verdict(title: engine.pageTitle)?.run == 1
+        }
+        let loaded = sinceStart()
+        guard let verdict = SelfTestBlockingFixture.Verdict(title: engine.pageTitle) else {
+            throw Failure(description: "COLD-BLOCKING FAIL: the restored tab's title changed under the test")
+        }
+        let fetched = LoopbackFixtureServer.blockingFetches(run: 1)
+        let bundle = model.contentBlocking.bundle.map { "\($0.version) (\($0.source))" } ?? "none yet"
+        log("COLD-BLOCKING first load: \(verdict.text) \(loaded) ms after the shell started; the fixture server was asked for the tracker "
+            + "\(fetched.tracker) time(s) and the ad \(fetched.ad) time(s); bundle \(bundle)")
+
+        guard fetched.tracker == 0, fetched.ad == 0 else {
+            // Fetched before the lists were on. When do they come on?
+            let loads = try await waitForBlocking("after the cold launch", model, tab, engine, tracker: true, ad: true, timeout: 45)
+            throw Failure(description: "COLD-BLOCKING FAIL (security CB-02): the restored tab fetched the tracker \(fetched.tracker) time(s) "
+                + "and the ad \(fetched.ad) time(s) \(loaded) ms after the shell started, before the lists were on; a later load "
+                + "(the \(loads + 1). of the page) was blocked at \(sinceStart()) ms. The first navigations must wait for the blocker's lists")
+        }
+        try check(verdict.trackerBlocked && verdict.adBlocked, "COLD-BLOCKING FAIL: the server was asked for nothing and the page saw \(verdict.text)")
+        // Not fetched. That means blocked only if the page can fetch them at all: with blocking off it must.
+        model.setContentBlockingEnabled(false, for: profileID)
+        let offLoads = try await waitForBlocking("the cold launch's fixture with blocking off", model, tab, engine, tracker: false, ad: false)
+        log("COLD-BLOCKING PASS neither fetched on the restored tab's first load, \(loaded) ms after the shell started "
+            + "(with blocking off both load, \(offLoads) load(s) later)")
     }
 
     /// Window › Task Manager (docs/briefs/2026-11-17-chrome-features.md).
