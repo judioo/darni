@@ -20,6 +20,9 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **New**
+- Library › Spaces: drag a space's ✥ handle, at the foot of its card, to change the order of your
+  spaces, or use the card's ··· menu (Move Left, Move Right). The order is the one the sidebar,
+  ⌃1…9 and the space switcher use.
 - Task Manager: double-click a tab or subframe, or right-click it and choose Show Tab, to see
   that tab in its window and space.
 
@@ -31,6 +34,9 @@ lines and this section starts empty again.
 
 **Changes**
 - The sidebar no longer shows a scroll bar. It still scrolls.
+- Library › Spaces looks like Arc's: each space is a card with rounded corners, 24 pt apart on the
+  window's theme, with an edit button beside its name and its folders open or closed as in the
+  sidebar.
 - A site's permission request ("wants to use your camera…") and the offers to save a password,
   card or address now use your space's colours, like ReArc's other notices, instead of plain
   grey system controls.
