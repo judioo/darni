@@ -225,9 +225,14 @@ echo "==> bundle ready in $((SECONDS - START))s: $APP ($(du -sh "$APP" | cut -f1
 if [[ $QA == 1 && $VERIFY == 0 ]]; then
   PROBE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rearc-qa-probe.XXXXXX")"
   probe_status=0
-  REARC_DATA_DIR="$PROBE_DIR" timeout 60 "$APP/Contents/MacOS/ReArc" --version >"$DIST/qa-launch-probe.log" 2>&1 || probe_status=$?
+  # check-launch.sh's probe mode: no window, it quits by itself once the engine is ready.
+  # Output to a file, never a pipe (security AG-02).
+  REARC_RELEASE_VERIFICATION=1 timeout 60 "$APP/Contents/MacOS/ReArc" --rearc-launch-probe="$PROBE_DIR/result" \
+    --user-data-dir="$PROBE_DIR/profile" >"$DIST/qa-launch-probe.log" 2>&1 || probe_status=$?
+  probe_result="$(cat "$PROBE_DIR/result" 2>/dev/null || true)"
   rm -rf "$PROBE_DIR"
-  [[ $probe_status == 0 ]] || die "the --qa bundle does not start (status $probe_status, log $DIST/qa-launch-probe.log); check REARC_ICLOUD_ENVIRONMENT against the profile"
+  [[ $probe_status == 0 && $probe_result == *"ready=1"* ]] \
+    || die "the --qa bundle does not start (status $probe_status, result '${probe_result}', log $DIST/qa-launch-probe.log); check REARC_ICLOUD_ENVIRONMENT against the profile"
   echo "==> --qa bundle starts (launch probe passed)"
 fi
 
