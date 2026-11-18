@@ -29,6 +29,20 @@ struct LibrarySpacesColumnsTests {
         #expect((0..<4).map { LibrarySpaceCards.shift(of: $0, dragging: 3, to: 1) } == [0, 1, 1, 0])
     }
 
+    /// The card's Move Left and Move Right, and the Spaces menu's: one place, and nothing at an end.
+    @Test func movingASpaceByOnePlaceStopsAtTheEnds() {
+        let store = SidebarStore(spaces: [Space(name: "A", sortRank: "a"), Space(name: "B", sortRank: "b"), Space(name: "C", sortRank: "c")])
+        let names = { LibrarySpaces.groups(in: store)[0].rows.map(\.space.name) }
+        let b = LibrarySpaces.groups(in: store)[0].rows[1].space.id
+        #expect(store.moveSpace(b, by: 1))
+        #expect(names() == ["A", "C", "B"])
+        #expect(!store.moveSpace(b, by: 1), "already last")
+        #expect(store.moveSpace(b, by: -1) && store.moveSpace(b, by: -1))
+        #expect(names() == ["B", "A", "C"])
+        #expect(!store.moveSpace(b, by: -1), "already first")
+        #expect(names() == ["B", "A", "C"])
+    }
+
     @Test func movingASpaceToTheHandlesDestinationReordersItsProfile() {
         let store = SidebarStore(spaces: [Space(name: "A", sortRank: "a"), Space(name: "B", sortRank: "b"), Space(name: "C", sortRank: "c")])
         let a = LibrarySpaces.groups(in: store)[0].rows[0].space.id

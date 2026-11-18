@@ -697,11 +697,14 @@ extension BrowserViewModel {
         store.moveSpace(id, toIndex: index)
     }
 
+    /// One place left or right within its profile (a Library card's menu and handle).
+    func moveSpace(_ id: Space.ID, by offset: Int) {
+        store.moveSpace(id, by: offset)
+    }
+
     /// Move Space Left / Right in the Spaces menu.
     func moveActiveSpace(by offset: Int) {
-        let peers = store.spacesInActiveProfile
-        guard let index = peers.firstIndex(where: { $0.id == store.activeSpaceID }) else { return }
-        store.moveSpace(store.activeSpaceID, toIndex: index + offset)
+        moveSpace(store.activeSpaceID, by: offset)
     }
 
     /// Deletes a space and its tabs, then drops their engines. A container's

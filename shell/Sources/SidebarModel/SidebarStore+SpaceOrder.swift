@@ -33,6 +33,16 @@ extension SidebarStore {
         return true
     }
 
+    /// One place left (-1) or right (+1) among its profile's spaces: the
+    /// Spaces menu's Move Space Left and Right, and a Library card's menu and
+    /// handle for VoiceOver. False at either end.
+    @discardableResult
+    public func moveSpace(_ id: Space.ID, by offset: Int) -> Bool {
+        guard let moving = space(withID: id),
+              let index = spaces(listedIn: moving.profileID).firstIndex(where: { $0.id == id }) else { return false }
+        return moveSpace(id, toIndex: index + offset)
+    }
+
     static func rank(between before: String?, and after: String?) -> String {
         let before = before.flatMap { $0.isEmpty ? nil : $0 }
         let after = after.flatMap { $0.isEmpty ? nil : $0 }

@@ -96,7 +96,7 @@ struct LibrarySpacesPage: View {
                 }
             },
             onMove: { offset in
-                withAnimation(.spring(duration: 0.28, bounce: 0.12)) { model.moveSpace(row.id, toIndex: index + offset) }
+                withAnimation(.spring(duration: 0.28, bounce: 0.12)) { model.moveSpace(row.id, by: offset) }
             }
         )
         .offset(x: dragging ? drag?.translation ?? 0 : CGFloat(shift) * CGFloat(LibrarySpaceCards.stride))
