@@ -43,6 +43,40 @@ struct SidebarGlyphView: View {
     }
 }
 
+/// The icon pickers' grid of SF Symbols, as Arc's picker lays its icons out:
+/// eight to a row, seven rows in view, the rest scroll. The space editor, the
+/// space creation popover and the profile's icon chooser all show this one.
+struct SymbolGridPicker: View {
+    let symbols: [String]
+    let isSelected: (String) -> Bool
+    let pick: (String) -> Void
+
+    static let columns = 8
+    static let visibleRows = 7
+    static let cell: CGFloat = 30
+    static let spacing: CGFloat = 6
+    /// Seven rows and the six gaps between them: 246 pt.
+    static var height: CGFloat { CGFloat(visibleRows) * cell + CGFloat(visibleRows - 1) * spacing }
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.cell), spacing: Self.spacing), count: Self.columns), spacing: Self.spacing) {
+                ForEach(symbols, id: \.self) { symbol in
+                    Button { pick(symbol) } label: {
+                        Image(systemName: symbol)
+                            .frame(width: Self.cell, height: Self.cell)
+                            .background(isSelected(symbol) ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05),
+                                        in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .help(symbol)
+                }
+            }
+        }
+        .frame(height: Self.height)
+    }
+}
+
 /// A space's icon: an SF Symbol, or an emoji/letter drawn as text.
 struct SpaceIconView: View {
     let iconName: String

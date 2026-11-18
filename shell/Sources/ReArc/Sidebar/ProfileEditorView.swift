@@ -187,7 +187,8 @@ struct ProfileEditorView: View {
     }
 }
 
-/// Shared by profile and item editors so emoji and SF Symbols use the same controls.
+/// The profile editor's icon controls: the pickers' shared grid (`SymbolGridPicker`), then an
+/// emoji or an SF Symbol by name. An item's icon has a picker of its own (`ItemIconEditorView`).
 struct IconChooser: View {
     @Binding var selection: ProfileAvatarDescriptor.Kind
     @State private var emoji = ""
@@ -196,21 +197,10 @@ struct IconChooser: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Icon").font(.headline)
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8), spacing: 6) {
-                    ForEach(["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" }, id: \.self) { name in
-                        Button { selection = .sfSymbol(name: name) } label: {
-                            Image(systemName: name)
-                                .frame(width: 30, height: 30)
-                                .background(selection == .sfSymbol(name: name) ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
-                        .help(name)
-                    }
-                }
+            SymbolGridPicker(symbols: ["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" },
+                             isSelected: { selection == .sfSymbol(name: $0) }) { name in
+                selection = .sfSymbol(name: name)
             }
-            // Arc's picker shows seven rows of eight; the rest scroll.
-            .frame(height: 246)
             HStack {
                 TextField("Emoji", text: $emoji).textFieldStyle(.roundedBorder)
                 Button("Use Emoji") {

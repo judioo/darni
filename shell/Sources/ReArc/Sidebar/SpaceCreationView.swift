@@ -219,27 +219,10 @@ struct SpaceCreationPage: View {
 
     private var iconPicker: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8), spacing: 6) {
-                    ForEach(Space.iconChoices, id: \.self) { symbol in
-                        Button {
-                            draft.wrappedValue.iconName = symbol
-                            choosingIcon = false
-                        } label: {
-                            Image(systemName: symbol)
-                                .frame(width: 30, height: 30)
-                                .background(
-                                    draft.wrappedValue.iconName == symbol ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.05),
-                                    in: RoundedRectangle(cornerRadius: 6)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .help(symbol)
-                    }
-                }
+            SymbolGridPicker(symbols: Space.iconChoices, isSelected: { draft.wrappedValue.iconName == $0 }) { symbol in
+                draft.wrappedValue.iconName = symbol
+                choosingIcon = false
             }
-            // Arc's picker shows seven rows of eight; the rest scroll.
-            .frame(height: 246)
             HStack {
                 TextField("Or type an emoji", text: $emoji)
                     .textFieldStyle(.roundedBorder)
