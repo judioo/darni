@@ -1,5 +1,5 @@
 From: ReArc Authors
-Subject: [PATCH] P-TAB-001 the sites behind a tab's blocked count (ABI 1.69)
+Subject: [PATCH] P-TAB-001 the sites behind a tab's blocked count, and the site of a host (ABI 1.69)
 
 Engine side of "Blocked on this page" (docs/FEATURE-SPECS/CONTENT-BLOCKING.md,
 section 3). The owner: "How do we see the blocked trackers?" The site
@@ -71,6 +71,19 @@ web.app, edu.au or or.jp the site of every page under them. With "page" both
 names come from one reply, and the host reads the reply again before it
 writes.
 
+The site of any host. The same guess decides three more things in the shell
+that have no tab to ask about: the key of a blocking exception (security
+CB-12, shipped in 1027; since 1051 the page's exact host), the scope of a
+boost (BO-01) and the labels a long host keeps in an address line (AG-05).
+ReArcEngineCopySiteOfHost(host, &json) gives them the tracker's answer for
+a host name: {"host","registrable"}, by Chromium's public suffix list. It
+takes a plain DNS name or IPv4 address (ASCII letters, digits, '.', '-',
+'_', at most 253 bytes) and nothing else, builds http://<host>/ from it,
+refuses an address that came out with a port, a path or credentials, and
+names the site with ActionTracker::GetSiteOfUrl. A table lookup: no network,
+no profile, nothing kept. Feature host_sites. The shell does not call it
+yet; the uses are proposed in the spec (section 9).
+
 Checked without a build (the release of 2026-11-19 was building from
 out/ReArc-codecs-arm64): action_tracker.cc and rearc_content_blocker.cc
 type-check with the tree's clang and plugins from a scratch view of the
@@ -88,35 +101,38 @@ action_tracker.h}.
 Applies after tab/097 (the same lines of the export order and the ABI
 header).
 
-Bridge 0.79.0, ABI 1.69, feature content_blocking_hosts. No struct changes.
+Bridge 0.79.0, ABI 1.69, features content_blocking_hosts and host_sites. No
+struct changes.
 
 Last rebased: 2026-11-19 onto Chromium 156.0.8078.109 (overlay 17641fac0a).
 
 Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
 
 diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
-index 01496dd..20d7439 100644
+index 01496dd..d4487c4 100644
 --- a/chrome/app/framework.exports
 +++ b/chrome/app/framework.exports
-@@ -189,3 +189,4 @@ _ReArcEngineSetLinkOpenCallback
+@@ -189,3 +189,5 @@ _ReArcEngineSetLinkOpenCallback
  _ReArcLinkOpenRespond
  _ReArcProfileGetPasswordLeakDetection
  _ReArcProfileSetPasswordLeakDetection
 +_ReArcTabCopyBlockedHosts
++_ReArcEngineCopySiteOfHost
 diff --git a/chrome/app/framework.order b/chrome/app/framework.order
-index b2276ef..b4d73e8 100644
+index b2276ef..7c36e18 100644
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -63,6 +63,7 @@ _ReArcTabRevokeSiteDevice
+@@ -63,6 +63,8 @@ _ReArcTabRevokeSiteDevice
  _ReArcEngineSetSitePermissionsChangedCallback
  _ReArcEngineSetWebAuthnCallback
  _ReArcWebAuthnRespond
 +_ReArcTabCopyBlockedHosts
++_ReArcEngineCopySiteOfHost
  _ReArcEngineSetEarlyWindowCallback
  _ReArcEngineSetMediaCaptureCallback
  _ReArcTabGetMediaCapture
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-index 7922dd3..be7e0e5 100644
+index 7922dd3..586dce4 100644
 --- a/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 @@ -35,6 +35,8 @@
@@ -128,7 +144,7 @@ index 7922dd3..be7e0e5 100644
  #include <iterator>
  #include <map>
  #include <optional>
-@@ -53,12 +55,14 @@
+@@ -53,14 +55,17 @@
  #include "base/functional/callback.h"
  #include "base/functional/callback_helpers.h"
  #include "base/json/json_reader.h"
@@ -142,8 +158,11 @@ index 7922dd3..be7e0e5 100644
 +#include "base/numerics/safe_conversions.h"
  #include "base/one_shot_event.h"
  #include "base/strings/string_number_conversions.h"
++#include "base/strings/strcat.h"
  #include "base/strings/string_util.h"
-@@ -70,6 +74,7 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/task/task_traits.h"
+@@ -70,6 +75,7 @@
  #include "base/values.h"
  #include "chrome/browser/browser_process.h"
  #include "chrome/browser/extensions/component_loader.h"
@@ -151,7 +170,7 @@ index 7922dd3..be7e0e5 100644
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/browser/profiles/profile_manager.h"
  #include "chrome/browser/rearc_bridge/browserless_tab_helpers.h"
-@@ -83,6 +88,7 @@
+@@ -83,6 +89,7 @@
  #include "content/public/browser/navigation_throttle.h"
  #include "content/public/browser/navigation_throttle_registry.h"
  #include "content/public/browser/web_contents.h"
@@ -159,7 +178,15 @@ index 7922dd3..be7e0e5 100644
  #include "extensions/browser/api/declarative_net_request/composite_matcher.h"
  #include "extensions/browser/api/declarative_net_request/prefs_helper.h"
  #include "extensions/browser/api/declarative_net_request/rules_monitor_service.h"
-@@ -1168,6 +1174,115 @@ std::optional<base::ListValue> ReadList(const char* json) {
+@@ -96,6 +103,7 @@
+ #include "extensions/common/extension.h"
+ #include "extensions/common/extension_id.h"
+ #include "url/gurl.h"
++#include "url/url_constants.h"
+ 
+ namespace rearc {
+ namespace {
+@@ -1168,6 +1176,157 @@ std::optional<base::ListValue> ReadList(const char* json) {
    return base::JSONReader::ReadList(text, base::JSON_PARSE_RFC);
  }
  
@@ -272,10 +299,52 @@ index 7922dd3..be7e0e5 100644
 +  return base::WriteJson(reply).value_or(R"({"hosts":[],"more":0})");
 +}
 +
++// ReArcEngineCopySiteOfHost (host_sites, ABI 1.69, tab/098): the site of a
++// host as the blocked list names one, for a host application that has no
++// public suffix list (security CB-12, AG-05, BO-01: its guess took "web.app"
++// for the site of every page under it). It lives here because the naming is
++// the tracker's (ActionTracker::GetSiteOfUrl): one function, one answer.
++// nullopt for text that is not a plain host name or IPv4 address.
++std::optional<std::string> SiteOfHostJson(std::string_view host) {
++  constexpr size_t kMaxHostBytes = 253;
++  if (host.empty() || host.size() > kMaxHostBytes ||
++      !std::ranges::all_of(host, [](char c) {
++        return base::IsAsciiAlphaNumeric(c) || c == '.' || c == '-' || c == '_';
++      })) {
++    return std::nullopt;
++  }
++  const GURL url(base::StrCat(
++      {url::kHttpScheme, url::kStandardSchemeSeparator, host, "/"}));
++  std::string site;
++  bool is_one_site = false;
++  // The characters above leave no room for a port, a path or credentials; the
++  // comparison holds that the address is nothing but the host that was asked.
++  if (!url.is_valid() || url.has_port() || url.has_username() ||
++      url.has_password() || url.path() != "/" || url.has_query() ||
++      url.has_ref() ||
++      !dnr::ActionTracker::GetSiteOfUrl(url, &site, &is_one_site)) {
++    return std::nullopt;
++  }
++  return base::WriteJson(base::DictValue()
++                             .Set("host", std::move(site))
++                             .Set("registrable", is_one_site));
++}
++
++// A reply for the host to free with ReArcBufferFree.
++ReArcStatus CopyReply(const std::string& text, char** out) {
++  char* copy = static_cast<char*>(malloc(text.size() + 1));
++  if (!copy) {
++    return REARC_INTERNAL;
++  }
++  std::memcpy(copy, text.c_str(), text.size() + 1);
++  *out = copy;
++  return REARC_OK;
++}
++
  }  // namespace
  
  bool OnContentBlockerActionCount(content::BrowserContext* context,
-@@ -1374,3 +1489,19 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
+@@ -1374,3 +1533,25 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
    rearc::g_count_callback = callback;
    rearc::g_count_context = callback ? context : nullptr;
  }
@@ -286,17 +355,23 @@ index 7922dd3..be7e0e5 100644
 +    return REARC_INVALID_ARGUMENT;
 +  }
 +  *json = nullptr;
-+  const std::string text = rearc::BlockedHostsJson(tab_id);
-+  char* copy = static_cast<char*>(malloc(text.size() + 1));
-+  if (!copy) {
-+    return REARC_INTERNAL;
++  return rearc::CopyReply(rearc::BlockedHostsJson(tab_id), json);
++}
++
++ReArcStatus ReArcEngineCopySiteOfHost(const char* utf8_host, char** json) {
++  CHECK(pthread_main_np());
++  if (!json) {
++    return REARC_INVALID_ARGUMENT;
 +  }
-+  std::memcpy(copy, text.c_str(), text.size() + 1);
-+  *json = copy;
-+  return REARC_OK;
++  *json = nullptr;
++  if (!utf8_host) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  std::optional<std::string> reply = rearc::SiteOfHostJson(utf8_host);
++  return reply ? rearc::CopyReply(*reply, json) : REARC_INVALID_ARGUMENT;
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index 39fd014..e41d48c 100644
+index 39fd014..8408dbf 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -308,7 +383,7 @@ index 39fd014..e41d48c 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1923,6 +1923,36 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
+@@ -1923,6 +1923,55 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
                                                       uint32_t index,
                                                       const char* text);
  
@@ -342,18 +417,38 @@ index 39fd014..e41d48c 100644
 +REARC_ENGINE_EXPORT ReArcStatus ReArcTabCopyBlockedHosts(uint64_t tab_id,
 +                                                         char** json);
 +
++// Host sites (host_sites, ABI 1.69): the site of a host, by Chromium's public
++// suffix list, for a host that keeps something per site (a blocking
++// exception, a boost's scope, the part of a long host an address line must
++// keep) and has no suffix list of its own. *json is +1 malloc, NUL-terminated
++// UTF-8; free with ReArcBufferFree.
++//   {"host":"example.co.uk","registrable":true}
++// The answer for utf8_host is the one ReArcTabCopyBlockedHosts gives for a
++// blocked request to it: host is the registrable domain, private registries
++// included, or the name itself when it has none; registrable is false for a
++// single-label name and for a public suffix ("web.app", "edu.au"), which
++// must never become the key of a rule or a scope. An IPv4 address is itself,
++// with true. utf8_host: a DNS name or IPv4 address of at most 253 bytes, ASCII
++// letters, digits, '.', '-' and '_' (an international name in its xn-- form);
++// a trailing dot is dropped. Anything else, a scheme, a port, a path or an
++// IPv6 literal among it: invalid_argument, and *json null. Synchronous, a
++// table lookup: it asks nothing of the network or of any profile.
++REARC_ENGINE_EXPORT ReArcStatus ReArcEngineCopySiteOfHost(const char* utf8_host,
++                                                          char** json);
++
  #ifdef __cplusplus
  }  // extern "C"
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
-index a064af8..618c448 100644
+index a064af8..70b173e 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
-@@ -991,6 +991,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+@@ -991,6 +991,8 @@ bool ReArcEngineHasFeature(const char* feature) {
           std::string(feature) == "perf_metrics" ||
           std::string(feature) == "task_manager" ||
           std::string(feature) == "content_blocking" ||
 +         std::string(feature) == "content_blocking_hosts" ||
++         std::string(feature) == "host_sites" ||
           std::string(feature) == "site_permissions" ||
           std::string(feature) == "webauthn_prompts" ||
           std::string(feature) == "early_window" ||

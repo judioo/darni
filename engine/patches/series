@@ -104,7 +104,7 @@ tab/094-task-manager-process-details.patch      # P-TAB-001 ABI 1.65, bridge 0.7
 tab/095-content-blocker-component.patch         # P-TAB-001 ABI 1.66, bridge 0.76.0: built-in content blocking, the "ReArc Blocker" component extension (declarativeNetRequest); built, in the release engine of 2026-11-18
 tab/096-site-permissions.patch                  # P-TAB-001 ABI 1.67, bridge 0.77.0: what Chromium holds for a tab's site (settings, device grants, in use), allow/block/reset and revoke; built, not run
 tab/097-webauthn-host-steps.patch               # P-TAB-001 ABI 1.68, bridge 0.78.0: WebAuthn request steps for the host (phone by QR code, security key PIN, this Mac); applies after tab/096; built, not run
-tab/098-blocked-hosts.patch                     # P-TAB-001 ABI 1.69, bridge 0.79.0: the sites behind a tab's blocked count, kept beside it in ActionTracker (ReArcTabCopyBlockedHosts); applies after tab/097; type-checked, not built
+tab/098-blocked-hosts.patch                     # P-TAB-001 ABI 1.69, bridge 0.79.0: the sites behind a tab's blocked count, kept beside it in ActionTracker (ReArcTabCopyBlockedHosts), and the site of a host by the public suffix list (ReArcEngineCopySiteOfHost); applies after tab/097; type-checked, not built
 #
 # Security backports: upstream fixes the pinned Chromium line does not have.
 # Drop each one when the pin moves to a build that contains the fix.

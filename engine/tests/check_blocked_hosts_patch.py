@@ -127,7 +127,10 @@ class BlockedHostsPatchTests(unittest.TestCase):
         name = function_body(self.tracker, "std::optional<BlockedSiteName> BlockedSiteNameOf(")
         self.assertEqual(set(re.findall(r"\burl\.(\w+)\(", name)), {"is_valid", "has_host", "host", "HostIsIPAddress"})
         for part in ("spec", "path", "query", "ref", "GetContent", "PathForRequest", "possibly_invalid_spec"):
-            self.assertNotIn(f"url.{part}(", self.tracker + self.bridge, part)
+            self.assertNotIn(f"url.{part}(", self.tracker, part)
+        # A request's address is the tracker's alone: the bridge never sees one.
+        for request in ("request_info", "WebRequestInfo", "RequestAction"):
+            self.assertNotIn(request, self.bridge, request)
         self.assertEqual(len(re.findall(r"request_info\.(\w+)", self.tracker)), 2)
         self.assertEqual(set(re.findall(r"request_info\.(\w+)", self.tracker)), {"url"})
 
@@ -143,6 +146,25 @@ class BlockedHostsPatchTests(unittest.TestCase):
         site = function_body(self.tracker, "bool ActionTracker::GetSiteOfUrl(")
         self.assertIn("std::optional<BlockedSiteName> name = BlockedSiteNameOf(url);", site)
         self.assertEqual(self.tracker.count("BlockedSiteNameOf("), 3, "its definition, a blocked request's site and the page's")
+
+    def test_the_site_of_a_host_takes_a_plain_host_and_gives_the_trackers_answer(self):
+        # ReArcEngineCopySiteOfHost: the text is the host's own (a typed exception, a boost file's
+        # scope), so nothing but a host name may become an address, and the name it gets is the
+        # one a blocked request to that host would get.
+        site = function_body(self.bridge, "std::optional<std::string> SiteOfHostJson(")
+        self.assertIn("constexpr size_t kMaxHostBytes = 253;", site)
+        self.assertIn("if (host.empty() || host.size() > kMaxHostBytes ||", site)
+        self.assertIn("return base::IsAsciiAlphaNumeric(c) || c == '.' || c == '-' || c == '_';", site)
+        self.assertIn('const GURL url(base::StrCat(\n      {url::kHttpScheme, url::kStandardSchemeSeparator, host, "/"}));', site)
+        for refused in ("url.has_port()", "url.has_username()", "url.has_password()", 'url.path() != "/"', "url.has_query()", "url.has_ref()"):
+            self.assertIn(refused, site, refused)
+        self.assertIn("!dnr::ActionTracker::GetSiteOfUrl(url, &site, &is_one_site)) {\n    return std::nullopt;", site)
+        call = function_body(self.bridge, "ReArcStatus ReArcEngineCopySiteOfHost(")
+        self.assertIn("CHECK(pthread_main_np());", call)
+        self.assertIn("return reply ? rearc::CopyReply(*reply, json) : REARC_INVALID_ARGUMENT;", call)
+        # It asks no profile, tab or service: a lookup in the suffix list and nothing else.
+        for state in ("Profile", "TabRegistry", "RulesMonitorService", "States()", "WebContents"):
+            self.assertNotIn(state, site + call, state)
 
     def test_nothing_added_takes_a_site_out_of_memory(self):
         for leak in LEAKS:
@@ -160,12 +182,14 @@ class BlockedHostsPatchTests(unittest.TestCase):
         self.assertEqual(self.bridge.count(empty_reply), 1)
         code = re.sub(r"^#include [^\n]*$", "", self.bridge, flags=re.M).replace(empty_reply, "")
         self.assertEqual(set(string_literals(code)) & FORBIDDEN_LITERALS, set())
-        self.assertEqual(set(string_literals(code)), {"page", "host", "count", "registrable", "lists", "hosts", "more"})
+        # "/" ends the address ReArcEngineCopySiteOfHost makes of a host name.
+        self.assertEqual(set(string_literals(code)), {"page", "host", "count", "registrable", "lists", "hosts", "more", "/"})
 
     def test_the_call_is_exported_and_advertised(self):
         for path in ("chrome/app/framework.exports", "chrome/app/framework.order"):
-            self.assertEqual(changed(file_diff(self.patch, path), "+"), ["_ReArcTabCopyBlockedHosts"])
+            self.assertEqual(changed(file_diff(self.patch, path), "+"), ["_ReArcTabCopyBlockedHosts", "_ReArcEngineCopySiteOfHost"])
         self.assertIn('std::string(feature) == "content_blocking_hosts" ||', self.patch)
+        self.assertIn('std::string(feature) == "host_sites" ||', self.patch)
         self.assertIn("REARC_ABI_MINOR_VERSION = 69", self.patch)
         self.assertIn('return "0.79.0";', self.patch)
         call = function_body(self.bridge, "ReArcStatus ReArcTabCopyBlockedHosts(")

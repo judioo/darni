@@ -2955,7 +2955,8 @@ hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.
 
 ## Blocked hosts (ABI 1.69, bridge 0.79.0)
 
-Patch `tab/098-blocked-hosts`, feature `content_blocking_hosts`. Spec:
+Patch `tab/098-blocked-hosts`, features `content_blocking_hosts` (this section) and
+`host_sites` (the next). Spec:
 `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 3, "Blocked on this page". Security
 pre-review: `security/PRE-blocked-list.md` (BL-01 to BL-09). **Not built:** the patch is
 type-checked; no engine has it yet. Hosts gate on the feature and look the symbol up. No struct
@@ -3059,3 +3060,35 @@ the fixture's own address, and an Allow asked for another site writes nothing; 1
 100 and 5 more; a private tab's list, and nothing for its tab once it is closed; none of the 105
 names in a file of the engine's or the shell's data folders; and, in the cold launch's list
 update, the list after blocking has moved to the second blocker. **None of it has run.**
+
+## Host sites (ABI 1.69, bridge 0.79.0)
+
+Patch `tab/098-blocked-hosts`, feature `host_sites`. **Not built**, and the shell does not call
+it yet: its uses are proposed in `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9. No struct
+changes.
+
+A host application keeps things per site: a blocking exception, a boost's scope, the labels of
+a long host that an address line must not cut. Without a public suffix list it guesses the
+site from the last two or three labels, and the guess is `web.app`, `edu.au` or `or.jp` for
+every page under them (security CB-12, AG-05, BO-01). This call is Chromium's answer.
+
+| Function | Contract |
+|---|---|
+| `ReArcEngineCopySiteOfHost(utf8_host, &json)` | `*json`: `{"host":"example.co.uk","registrable":true}`, malloc'd and NUL-terminated; the host frees it with `ReArcBufferFree`. Synchronous, main thread, usable once the engine is ready. A lookup in the compiled-in suffix list: no network, no profile, nothing kept or logged. Null `json` or `utf8_host`, or text that is not a plain host: `invalid_argument`, `*json` null. |
+
+- **The answer** is the one `ReArcTabCopyBlockedHosts` gives for a blocked request to that
+  host, and for the page (`page`): `host` is the registrable domain with private registries
+  included (`someone.github.io`, `someone.web.app`), or the name itself when it has none;
+  `registrable` is false for a single-label name and for a public suffix. An IPv4 address is
+  itself, with true, in dotted form. A name with a top-level label the list does not know
+  (`name.test`, `wiki.corp`) is a site: the last label counts as its suffix.
+- **The argument** is a DNS name or an IPv4 address: ASCII letters, digits, `.`, `-` and `_`, at
+  most 253 bytes; an international name in its `xn--` form; upper case is lowered and a
+  trailing dot dropped. A scheme, a port, a path, a space, `*` or an IPv6 literal is
+  `invalid_argument`: the host application takes the host out of an address itself.
+- **`registrable` false is a refusal for the caller.** Such a name must never become the key
+  of a rule, an exception or a scope: it covers every site under it.
+
+**Tests:** the import check and the patch check of the section above cover it: the function is
+exported, the characters it takes, the refusals, and that the name comes from the tracker's
+function. Not built and not run.
