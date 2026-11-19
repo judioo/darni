@@ -34,6 +34,9 @@ lines and this section starts empty again.
   many more requests were blocked.
 
 **Fixes**
+- With two windows open on the same space, ⌘T and ⌘L open the command bar only in the window
+  you are using. Until now it opened in both, and what you typed showed in both. Clicking into
+  another window closes it.
 - "Turn Off Blocking for This Site" means the whole site again. Since 2026.1119.1051 it covered
   only the exact address you were on, so blocking came back when a site moved you from `www.`
   to `m.` or `app.`. ReArc now works out the site the way Chromium does.

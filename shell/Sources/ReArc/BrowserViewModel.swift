@@ -429,6 +429,18 @@ final class BrowserViewModel {
             if isCommandBarPresented { cancelTabSwitcher() }
         }
     }
+    /// The browser window the command bar opened in. Every browser window
+    /// shares this model, so without it each window showing the space drew
+    /// the bar and mirrored its typing (owner's recording, 2026-11-19).
+    /// nil when no browser window was key: the key one shows it then.
+    var commandBarWindowID: SidebarWindowID?
+
+    /// Whether `window` draws the command bar: only the window it opened in.
+    func showsCommandBar(in window: SidebarWindowID?) -> Bool {
+        guard isCommandBarPresented else { return false }
+        guard let opened = commandBarWindowID else { return isKeyBrowserWindow(window) }
+        return opened == window
+    }
     var commandBarText = "" {
         didSet {
             // Deleting turns inline completion off until the next character (omnibox rule).
@@ -1915,6 +1927,7 @@ final class BrowserViewModel {
         commandBarNewTabGroupID = nil
         commandBarTabGroupHighlight = nil
         isCommandBarPresented = false
+        commandBarWindowID = nil
         commandBarMenuSnapshot = nil
         cancelCommandBarLive()
         resetCommandBarSiteSearch()
@@ -2075,6 +2088,7 @@ final class BrowserViewModel {
         commandBarText = text
         commandBarHighlightedIndex = 0
         commandBarError = nil
+        commandBarWindowID = store.keyWindowID
         isCommandBarPresented = true
         commandBarServices.commandBarWillOpen(profileID: activeSearchProfileID)
         // ⌘L's URL asks at once: its first frame already waits for the bar.
