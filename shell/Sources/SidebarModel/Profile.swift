@@ -99,3 +99,11 @@ public enum ProfileMutationError: Equatable, Sendable {
 
 /// Item overrides use the same glyph encoding as profile avatars.
 public typealias SidebarItemIcon = ProfileAvatarDescriptor.Kind
+
+public extension ProfileAvatarDescriptor.Kind {
+    /// An emoji, not a symbol: the icon pickers open on the tab that holds the current icon.
+    var isEmoji: Bool {
+        if case .emoji = self { return true }
+        return false
+    }
+}

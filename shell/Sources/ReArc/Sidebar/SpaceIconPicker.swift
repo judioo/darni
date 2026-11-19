@@ -20,7 +20,7 @@ struct SpaceIconPicker: View {
             IconGridPicker(symbols: Space.iconChoices, startsOnEmoji: Self.isEmoji(iconName),
                            isSelected: isSelected) { choice in
                 switch choice {
-                case .symbol(let name): set(name)
+                case .sfSymbol(let name): set(name)
                 case .emoji(let text): set(text)
                 }
             }
@@ -53,9 +53,9 @@ struct SpaceIconPicker: View {
         }
     }
 
-    private func isSelected(_ choice: IconPick) -> Bool {
+    private func isSelected(_ choice: SidebarItemIcon) -> Bool {
         switch choice {
-        case .symbol(let name): Space.symbolToDraw(for: iconName) == name
+        case .sfSymbol(let name): Space.symbolToDraw(for: iconName) == name
         case .emoji(let text): iconName == text
         }
     }

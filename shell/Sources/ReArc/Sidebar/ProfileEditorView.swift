@@ -196,21 +196,9 @@ struct IconChooser: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Icon").font(.headline)
             IconGridPicker(symbols: ["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" },
-                           startsOnEmoji: Self.isEmoji(selection),
-                           isSelected: { Self.kind(for: $0) == selection }) { selection = Self.kind(for: $0) }
+                           startsOnEmoji: selection.isEmoji,
+                           isSelected: { $0 == selection }) { selection = $0 }
         }
-    }
-
-    static func kind(for choice: IconPick) -> ProfileAvatarDescriptor.Kind {
-        switch choice {
-        case .symbol(let name): .sfSymbol(name: name)
-        case .emoji(let text): .emoji(text)
-        }
-    }
-
-    private static func isEmoji(_ kind: ProfileAvatarDescriptor.Kind) -> Bool {
-        if case .emoji = kind { return true }
-        return false
     }
 }
 

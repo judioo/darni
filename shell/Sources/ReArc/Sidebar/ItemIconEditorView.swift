@@ -11,8 +11,8 @@ struct ItemIconEditorView: View {
     var body: some View {
         let current = model.store.customIcon(for: itemID)
         VStack(spacing: 10) {
-            IconGridPicker(symbols: Space.iconChoices, startsOnEmoji: current.map(Self.isEmoji) ?? true,
-                           isSelected: { Self.icon(for: $0) == current }) { apply(Self.icon(for: $0)) }
+            IconGridPicker(symbols: Space.iconChoices, startsOnEmoji: current?.isEmoji ?? true,
+                           isSelected: { $0 == current }) { apply($0) }
             HStack {
                 Button { apply(nil) } label: { Image(systemName: "trash") }
                     .help("Remove Icon").accessibilityLabel("Remove Icon")
@@ -23,18 +23,6 @@ struct ItemIconEditorView: View {
         .padding(12)
         .frame(width: 306)
         .onExitCommand { model.itemIconEditorID = nil }
-    }
-
-    static func icon(for choice: IconPick) -> SidebarItemIcon {
-        switch choice {
-        case .symbol(let name): .sfSymbol(name: name)
-        case .emoji(let text): .emoji(text)
-        }
-    }
-
-    private static func isEmoji(_ icon: SidebarItemIcon) -> Bool {
-        if case .emoji = icon { return true }
-        return false
     }
 
     private func apply(_ icon: SidebarItemIcon?) {
