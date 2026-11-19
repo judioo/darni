@@ -142,6 +142,58 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
         XCTAssertNil(SelfTestBlockingFixture.scriptRequest("/a"))
     }
 
+    // MARK: The blocked list's page
+
+    /// The lists in the repository block the pixel's path at Trackers only
+    /// and the tag's at Ads and trackers, each by its path alone, so the
+    /// self-test's list has one site with both tags.
+    func testTheListPagesPathsAreInTheBuiltInLists() throws {
+        XCTAssertEqual(SelfTestBlockingFixture.listProblems(in: try builtInBundle()), [])
+        let moved = try bundle([("privacy", 2, #"[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"/1pixel.php"}}]"#),
+                                ("ads", 2, #"[{"id":1,"priority":1,"action":{"type":"block"},"condition":{"urlFilter":"/88/tag.min.js","domainType":"firstParty"}}]"#)])
+        XCTAssertEqual(SelfTestBlockingFixture.listProblems(in: moved).count, 2, "a path that moved level, and a rule with another condition")
+    }
+
+    func testTheListPageAsksNamesThatAreNotOneSiteAndNamesItsLoad() {
+        typealias Verdict = SelfTestBlockingFixture.ListVerdict
+        let html = SelfTestBlockingFixture.listPageHTML
+        XCTAssertTrue(html.contains("'http://' + host + ':' + location.port + path + '?run=' + run"))
+        XCTAssertTrue(html.contains("pixel('localhost', 0);") && html.contains("pixel('localhost', 1);") && html.contains("tag('localhost');"))
+        XCTAssertTrue(html.contains("pixel('co.uk', 0);"))
+        XCTAssertTrue(html.contains("address(host, '/1pixel.php', n)") && html.contains("address(host, '/88/tag.min.js', 0)"))
+        // Neither name is one site: the list shows both, and neither gets Allow.
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite(SelfTestBlockingFixture.listHost))
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite(SelfTestBlockingFixture.listSuffixHost))
+        XCTAssertEqual(SelfTestBlockingFixture.listPageURL(base: "http://127.0.0.1:5123", run: 7).absoluteString, "http://127.0.0.1:5123/blocking/list?run=7")
+        XCTAssertEqual(SelfTestBlockingFixture.listPageURL(base: "http://127.0.0.1:5123", run: 8, mode: .quiet).absoluteString,
+                       "http://127.0.0.1:5123/blocking/list?run=8&quiet=1")
+        XCTAssertEqual(SelfTestBlockingFixture.listPageURL(base: "http://127.0.0.1:5123", run: 9, mode: .cap).absoluteString,
+                       "http://127.0.0.1:5123/blocking/list?run=9&cap=1")
+        XCTAssertEqual(Verdict(title: "blocked-list:run=3:failed=4"), Verdict(run: 3, failed: 4))
+        XCTAssertEqual(Verdict(title: "blocked-list:run=4:failed=0"), Verdict(run: 4))
+        XCTAssertEqual(Verdict(title: "blocked-list:run=5:quiet"), Verdict(run: 5, quiet: true))
+        for title in [nil, "", "blocked-list-pending", "blocked-list:run=3:failed=-1", "blocked-list:run=3:failed=", "blocked-list:run=x:quiet",
+                      "blocked-list:run=3:pixels=1", "blocking:run=3:tracker=blocked,ad=blocked"] {
+            XCTAssertNil(Verdict(title: title), title ?? "nil")
+        }
+        XCTAssertEqual(SelfTestBlockingFixture.listRequestIsTag("/1pixel.php?run=4&n=1"), false)
+        XCTAssertEqual(SelfTestBlockingFixture.listRequestIsTag("/88/tag.min.js?run=9&n=0"), true)
+        XCTAssertNil(SelfTestBlockingFixture.listRequestIsTag("/blocking/list?run=4"), "the page itself is not one of its requests")
+        XCTAssertNil(SelfTestBlockingFixture.scriptRequest("/1pixel.php?run=4"), "and the first fixture's counts are its own")
+    }
+
+    /// More sites than a list holds, each a site of its own to the engine,
+    /// under a name that is whole in no file: the page joins it from two
+    /// pieces, and the self-test looks for it on disk afterwards.
+    func testTheCapPageAsksMoreSitesThanAListHoldsUnderANameItNeverSpellsOut() {
+        XCTAssertGreaterThan(SelfTestBlockingFixture.listCapSites, ContentBlockingBlockedList.maxEntries)
+        let html = SelfTestBlockingFixture.listPageHTML
+        XCTAssertTrue(html.contains("n < \(SelfTestBlockingFixture.listCapSites); n++) pixel('rearc-blocked-' + 'cap-' + n + '.test', n);"))
+        XCTAssertEqual("rearc-blocked-" + "cap-", SelfTestBlockingFixture.listCapMarker)
+        XCTAssertFalse(html.contains(SelfTestBlockingFixture.listCapMarker))
+        XCTAssertTrue(ContentBlockingSiteAllow.isOneSite(SelfTestBlockingFixture.listCapMarker + "0.test"))
+    }
+
     // MARK: The cold launch
 
     func testTheColdLaunchIsTheSelfTestWithItsFlagAndAProfileOfItsOwn() {

@@ -159,6 +159,148 @@ enum SelfTestBlockingFixture {
         return others.isEmpty || (others.count == 1 && others["domainType"] as? String == "thirdParty")
     }
 
+    // MARK: The blocked list's page
+
+    /// A second page for "Blocked on this page" (spec §3, patch `tab/098`,
+    /// security BL-09), for what the first page's two hosts cannot show.
+    /// From 127.0.0.1 it asks for addresses the lists block by their path
+    /// alone, on any host: EasyPrivacy's `/1pixel.php` and EasyList's
+    /// `/88/tag.min.js`.
+    ///
+    /// - As it is: `localhost` for the pixel twice and the tag once, and a
+    ///   public suffix for the pixel once. Two names that are not one site:
+    ///   both are listed, `localhost` once with 3 and both tags, and neither
+    ///   may have Allow.
+    /// - `cap=1`: the pixel on `listCapSites` made-up sites, more than one
+    ///   page's list holds.
+    /// - `quiet=1`: nothing, so a navigation to it must leave the list empty.
+    ///
+    /// A blocked request never leaves the engine, and the self-test's
+    /// resolver fails every name but its own, so no made-up name is asked of
+    /// anyone.
+    static let listPagePath = "/blocking/list"
+    static let listHost = "localhost"
+    /// A public suffix: a name sites hang under, never a site.
+    static let listSuffixHost = "co.uk"
+    /// EasyPrivacy (level 1): a tracker's pixel.
+    static let listPixelPath = "/1pixel.php"
+    /// EasyList (level 2): an ad network's script.
+    static let listTagPath = "/88/tag.min.js"
+    /// What the page as it is asks for: the pixel twice and the tag on `listHost`, the pixel on `listSuffixHost`.
+    static let listRequests = 4
+    static let listHostRequests = 3
+    /// More sites than one page's list holds (`ContentBlockingBlockedList.maxEntries`).
+    static let listCapSites = ContentBlockingBlockedList.maxEntries + 5
+    /// Every made-up site's name starts with this. The page builds it from
+    /// two pieces, so the whole of it is in no file the page is kept in, and
+    /// the self-test can look for it on disk afterwards (security BL-09).
+    static let listCapMarker = "rearc-blocked-cap-"
+
+    enum ListMode: String {
+        case sites, cap, quiet
+    }
+
+    static func listPageURL(base: String, run: Int, mode: ListMode = .sites) -> URL {
+        URL(string: "\(base)\(listPagePath)?run=\(run)\(mode == .sites ? "" : "&\(mode.rawValue)=1")")!
+    }
+
+    /// Its title becomes `blocked-list:run=<n>:failed=<requests that did not load>`
+    /// once every request ended, or `blocked-list:run=<n>:quiet` at once.
+    static let listPageHTML = """
+    <!doctype html><html><head><title>blocked-list-pending</title></head>
+    <body style="font:24px -apple-system"><h1>ReArc selftest blocked list page</h1><script>
+    var query = new URLSearchParams(location.search), run = query.get('run') || '0';
+    var left = 0, failed = 0;
+    function settle() {
+      if (--left === 0) document.title = 'blocked-list:run=' + run + ':failed=' + failed;
+    }
+    function address(host, path, n) { return 'http://' + host + ':' + location.port + path + '?run=' + run + '&n=' + n; }
+    function pixel(host, n) {
+      left++;
+      var image = new Image();
+      image.onload = settle;
+      image.onerror = function () { failed++; settle(); };
+      image.src = address(host, '\(listPixelPath)', n);
+    }
+    function tag(host) {
+      left++;
+      var script = document.createElement('script');
+      script.onload = settle;
+      script.onerror = function () { failed++; settle(); };
+      script.src = address(host, '\(listTagPath)', 0);
+      document.head.appendChild(script);
+    }
+    if (query.get('quiet')) {
+      document.title = 'blocked-list:run=' + run + ':quiet';
+    } else if (query.get('cap')) {
+      for (var n = 0; n < \(listCapSites); n++) pixel('rearc-blocked-' + 'cap-' + n + '.test', n);
+    } else {
+      pixel('\(listHost)', 0);
+      pixel('\(listHost)', 1);
+      tag('\(listHost)');
+      pixel('\(listSuffixHost)', 0);
+    }
+    </script></body></html>
+    """
+
+    /// What the list page saw in one load: how many of its requests did not
+    /// load; `quiet` when it asked for nothing.
+    struct ListVerdict: Equatable {
+        var run: Int
+        var quiet = false
+        var failed = 0
+
+        init(run: Int, quiet: Bool = false, failed: Int = 0) {
+            self.run = run
+            self.quiet = quiet
+            self.failed = failed
+        }
+
+        /// From the page's title; nil while the page is still waiting.
+        init?(title: String?) {
+            guard let parts = title?.split(separator: ":"), parts.count == 3, parts[0] == "blocked-list",
+                  parts[1].hasPrefix("run="), let run = Int(parts[1].dropFirst(4)) else { return nil }
+            self.run = run
+            if parts[2] == "quiet" {
+                quiet = true
+                return
+            }
+            guard parts[2].hasPrefix("failed="), let failed = Int(parts[2].dropFirst(7)), failed >= 0 else { return nil }
+            self.failed = failed
+        }
+    }
+
+    /// A request for the pixel or the tag, which the fixture server answers
+    /// when the engine lets one through; nil for another path.
+    static func listRequestIsTag(_ pathAndQuery: String) -> Bool? {
+        let route = pathAndQuery.split(separator: "?", maxSplits: 1).first.map(String.init)
+        guard route == listPixelPath || route == listTagPath else { return nil }
+        return route == listTagPath
+    }
+
+    /// Why the list page does not fit `bundle`; empty when it does: the
+    /// pixel's path must be blocked by a list of Trackers only and the tag's
+    /// by a list of Ads and trackers, each by a rule with no other condition.
+    static func listProblems(in bundle: VerifiedBlocklist) -> [String] {
+        func level(ofPath path: String) -> Int? {
+            bundle.manifest.lists.filter { list in
+                list.level > 0 && rules(of: list, in: bundle).contains { rule in
+                    let condition = rule["condition"] as? [String: Any] ?? [:]
+                    return (rule["action"] as? [String: Any])?["type"] as? String == "block"
+                        && condition.count == 1 && condition["urlFilter"] as? String == path
+                }
+            }.map(\.level).min()
+        }
+        var problems: [String] = []
+        if level(ofPath: listPixelPath) != 1 {
+            problems.append("\(listPixelPath) is blocked from level \(level(ofPath: listPixelPath).map(String.init) ?? "none") in bundle \(bundle.version), not from 1")
+        }
+        if level(ofPath: listTagPath) != 2 {
+            problems.append("\(listTagPath) is blocked from level \(level(ofPath: listTagPath).map(String.init) ?? "none") in bundle \(bundle.version), not from 2")
+        }
+        return problems
+    }
+
     // MARK: The cold launch
 
     /// `--rearc-selftest` with this flag is the self-test's cold launch for

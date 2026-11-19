@@ -268,6 +268,139 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertFalse(ChromiumCapabilities.none.contentBlocking)
     }
 
+    // MARK: Blocked on this page
+
+    /// The engine's reply for the tests: two sites, one of them on two lists.
+    private static let blockedReply = #"""
+    {"hosts":[{"host":"google-analytics.com","count":1,"registrable":true,"lists":["easyprivacy"]},
+              {"host":"doubleclick.net","count":3,"registrable":true,"lists":["easylist","peter-lowe"]},
+              {"host":"localhost","count":1,"registrable":false,"lists":["easylist"]}],"more":0}
+    """#
+
+    func testTheRowOpensTheEnginesListOfWhatWasBlocked() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        model.contentBlocking.blockedCount = { _ in 4 }
+
+        // An engine that only counts: the row is as before, and there is no list.
+        XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.hasBlockedList, false)
+        XCTAssertNil(model.blockedList(for: engine))
+
+        var reply: String? = Self.blockedReply
+        var reads = 0
+        model.contentBlocking.blockedHosts = { _ in
+            reads += 1
+            return reply
+        }
+        XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.hasBlockedList, true)
+        XCTAssertEqual(reads, 0, "the row asks for the count only; the list is read when it is shown")
+        XCTAssertEqual(model.blockedList(for: engine)?.entries, [
+            .init(host: "doubleclick.net", count: 3, kinds: [.ad, .tracker]),
+            .init(host: "google-analytics.com", count: 1, kinds: [.tracker]),
+            .init(host: "localhost", count: 1, kinds: [.ad], canBeAllowed: false),
+        ])
+        XCTAssertEqual(reads, 1)
+
+        // The count callback says when the list changed: an open list is read again.
+        let changed = expectation(description: "the list is read again")
+        withObservationTracking { _ = model.blockedList(for: engine) } onChange: { changed.fulfill() }
+        reply = #"{"hosts":[],"more":0}"#
+        model.contentBlocking.blockedCountChanged()
+        await fulfillment(of: [changed], timeout: 2)
+        XCTAssertEqual(model.blockedList(for: engine), ContentBlockingBlockedList())
+        reply = "not the list"
+        XCTAssertEqual(model.blockedList(for: engine), ContentBlockingBlockedList(), "a reply that cannot be read shows nothing")
+        reply = nil
+        XCTAssertEqual(model.blockedList(for: engine), ContentBlockingBlockedList())
+    }
+
+    /// Privacy (spec §3): the shell reads the list for the view and keeps no
+    /// copy, so nothing of it is in the sidebar file or in a sync record.
+    func testNothingOfTheBlockedListIsWrittenAnywhere() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        model.contentBlocking.blockedCount = { _ in 4 }
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply }
+        XCTAssertEqual(model.blockedList(for: engine)?.entries.count, 3)
+        model.contentBlocking.blockedCountChanged()
+        model.persistence.flush()
+
+        let saved = try String(decoding: Data(contentsOf: sidebarFile), as: UTF8.self)
+        let records = String(describing: SidebarSyncProjection.extract(model.store.makeSnapshot()))
+        for host in ["doubleclick.net", "google-analytics.com"] {
+            XCTAssertFalse(saved.contains(host), "\(host) in the sidebar file")
+            XCTAssertFalse(records.contains(host), "\(host) in a sync record")
+            XCTAssertFalse(model.contentBlockingEvents.contains { $0.contains(host) }, "\(host) in the blocking log")
+        }
+    }
+
+    func testAllowWritesOneOwnRuleTellsTheEngineAndRemoveTakesItBack() async throws {
+        let model = launch()
+        let recorder = RecordingEngine()
+        try await attach(model, engine: recorder)
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        model.contentBlockingProfileOpened(engineProfile: 4, profile: model.profileID(for: tab))
+        model.setContentBlockingOwnRules("||mine.test^", for: model.profileID(for: tab))
+        _ = recorder.take()
+
+        XCTAssertTrue(model.canAllowBlockedHosts(for: engine, site: site))
+        model.setBlockedHost("doubleclick.net", allowed: true, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "||mine.test^\n@@||doubleclick.net^$domain=news.test\n")
+        XCTAssertEqual(recorder.take(), ["rules 4"], "the engine has the rule before the tab reloads")
+        XCTAssertEqual(model.allowedBlockedHosts(for: engine, site: site), ["doubleclick.net"])
+
+        // A name that is not one site changes nothing, tells the engine nothing, and the person is told.
+        for name in ["evil.test^$important", "localhost", "co.uk"] {
+            model.toast = nil
+            model.setBlockedHost(name, allowed: true, forSiteOf: engine, site: site)
+            XCTAssertEqual(model.store.contentBlocking().ownRules, "||mine.test^\n@@||doubleclick.net^$domain=news.test\n", name)
+            XCTAssertEqual(recorder.take(), [], name)
+            XCTAssertEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.notOneSite.message, name)
+        }
+
+        model.setBlockedHost("doubleclick.net", allowed: false, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "||mine.test^\n")
+        XCTAssertEqual(recorder.take(), ["rules 4"])
+        XCTAssertEqual(model.allowedBlockedHosts(for: engine, site: site), [])
+    }
+
+    func testAPrivateWindowsListHasNoAllow() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://secret.test/")!
+        let engine = model.engineHost.privateEngine(session: UUID(), parentProfileID: model.store.activeProfileID, shellID: UUID())
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        model.contentBlocking.blockedCount = { _ in 4 }
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply }
+        XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.hasBlockedList, true, "a private window may look")
+        XCTAssertEqual(model.blockedList(for: engine)?.entries.count, 3)
+        XCTAssertFalse(model.canAllowBlockedHosts(for: engine, site: site))
+        model.setBlockedHost("doubleclick.net", allowed: true, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "", "nothing a private window showed is written to the profile")
+    }
+
+    /// ABI 1.69, feature `content_blocking_hosts`: without both the row shows the count alone.
+    func testTheEngineFeatureGatesTheBlockedList() {
+        let all: (String) -> Bool = { _ in true }
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 68, hasFeature: all).contentBlockingHosts)
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: all).contentBlockingHosts)
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: { $0 != "content_blocking_hosts" }).contentBlockingHosts)
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: { $0 != "content_blocking" }).contentBlockingHosts,
+                       "no list without blocking")
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 68, hasFeature: all).contentBlocking, "an engine that only counts still blocks")
+        XCTAssertFalse(ChromiumCapabilities.none.contentBlockingHosts)
+    }
+
     func testAPrivateWindowNeverWritesItsSiteIntoTheProfile() async throws {
         let model = launch()
         try await attach(model, engine: RecordingEngine())

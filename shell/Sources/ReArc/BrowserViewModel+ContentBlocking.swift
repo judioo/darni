@@ -76,6 +76,10 @@ final class ContentBlockingController {
     @ObservationIgnored var fetcher: BlocklistFetching = URLSessionBlocklistFetcher()
     /// The engine's count of requests blocked in a tab's page; nil without one.
     @ObservationIgnored var blockedCount: ((any WebEngine) -> Int?)?
+    /// The engine's list of the sites those requests were for, as its JSON
+    /// (`ContentBlockingBlockedList.decode`); nil on an engine that only
+    /// counts. Read while the site controls show the list, never kept.
+    @ObservationIgnored var blockedHosts: ((any WebEngine) -> String?)?
     @ObservationIgnored fileprivate var checkTimer: Timer?
 
     /// The built-in bundle's place in the app: `Contents/Resources/Blocklists`.
@@ -239,8 +243,56 @@ extension BrowserViewModel {
             pageURL: url,
             blockedCount: counts ? contentBlocking.blockedCount?(engine) : nil,
             listsAvailable: contentBlocking.bundle != nil,
-            isPrivate: engine.pagePrompts.privateSession != nil
+            isPrivate: engine.pagePrompts.privateSession != nil,
+            blockedListAvailable: contentBlocking.blockedHosts != nil
         )
+    }
+
+    // MARK: Blocked on this page
+
+    /// What was blocked in `engine`'s page, for the list under the panel's
+    /// row (spec §3 "Blocked on this page"); nil when this engine cannot
+    /// say. The engine holds it, in memory, until the page's next
+    /// navigation; this reads it for a view that is on screen, and neither
+    /// keeps nor logs it.
+    func blockedList(for engine: any WebEngine) -> ContentBlockingBlockedList? {
+        guard contentBlocking.isAvailable, let read = contentBlocking.blockedHosts else { return nil }
+        // The list changes when the count does: the count callback bumps the revision this reads.
+        _ = contentBlocking.blockedCountRevision
+        guard let json = read(engine) else { return ContentBlockingBlockedList() }
+        return ContentBlockingBlockedList.decode(json, lists: contentBlockingListRows) ?? ContentBlockingBlockedList()
+    }
+
+    /// A blocked line can be allowed: a page of one site, in a window that
+    /// is not private (nothing a private window showed is written to the
+    /// profile). A line whose name is not one site still has no Allow
+    /// (`ContentBlockingBlockedList.Entry.canBeAllowed`).
+    func canAllowBlockedHosts(for engine: any WebEngine, site: SiteControlCenter.Site) -> Bool {
+        contentBlocking.isAvailable && engine.pagePrompts.privateSession == nil && engine.pagePrompts.profileID != nil
+            && ContentBlockingSettings.canAllowHosts(onSiteOf: engine.currentURL ?? URL(string: site.origin))
+    }
+
+    /// The hosts the person allowed on the site of `engine`'s page.
+    func allowedBlockedHosts(for engine: any WebEngine, site: SiteControlCenter.Site) -> [String] {
+        guard contentBlocking.isAvailable, let profileID = engine.pagePrompts.profileID else { return [] }
+        return store.contentBlocking(for: profileID).allowedHosts(onSiteOf: engine.currentURL ?? URL(string: site.origin))
+    }
+
+    /// "Allow <host> on This Site", or that taken back: one line of the
+    /// profile's own rules, and the tab reloads. Never from a private window.
+    func setBlockedHost(_ host: String, allowed: Bool, forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
+        guard canAllowBlockedHosts(for: engine, site: site), let profileID = engine.pagePrompts.profileID else { return }
+        let url = engine.currentURL ?? URL(string: site.origin)
+        var changed = false
+        var refusal: ContentBlockingSiteAllow.Refusal?
+        changeContentBlocking(for: profileID) { settings in
+            let before = settings.ownRules
+            if allowed { refusal = settings.allowHost(host, onSiteOf: url) } else { settings.removeAllowedHost(host, onSiteOf: url) }
+            changed = settings.ownRules != before
+        }
+        if changed { engine.reload() }
+        // Nothing was written: the person is told why (security BL-04).
+        if let refusal { showToast(refusal.message, systemImage: "shield.slash") }
     }
 
     /// Blocking off or back on for the site of `engine`'s page, in its

@@ -230,10 +230,22 @@ extension SiteControlCenter {
         public var isBlocked: Bool
         /// One action is a click; more are a menu; none is a label.
         public var actions: [SettingAction]
+        /// The row has a list behind it, opened by a disclosure at its right
+        /// edge: what was blocked on this page.
+        public var hasBlockedList = false
         public var id: Kind { kind }
     }
 
     public static let contentBlockingTitle = "Block ads and trackers"
+    /// The disclosure on the blocking row, closed and open.
+    public static let showBlockedListTitle = "Show What Was Blocked"
+    public static let hideBlockedListTitle = "Hide What Was Blocked"
+    /// The title over the hosts the person allowed on this site.
+    public static let allowedOnSiteTitle = "Allowed on this site"
+
+    /// A blocked line's button, and the same for an allowed one.
+    public static func allowHostTitle(_ host: String) -> String { "Allow \(host) on This Site" }
+    public static func removeAllowedHostTitle(_ host: String) -> String { "Block \(host) on This Site Again" }
 
     /// "N blocked on this page" (spec §3). The count is this tab's, read
     /// from the engine while the panel is open; it never leaves the Mac.
@@ -251,15 +263,19 @@ extension SiteControlCenter {
     /// Settings: one site's panel never turns blocking on for a profile.
     /// In a private window the row only reports, so a site visited there
     /// is never written into the profile's exceptions.
+    /// `blockedListAvailable`: the engine can say which sites the count is
+    /// of; the row then opens that list while something is blocked.
     public static func contentBlockingRow(
         settings: ContentBlockingSettings,
         pageURL: URL?,
         blockedCount: Int?,
         listsAvailable: Bool,
-        isPrivate: Bool
+        isPrivate: Bool,
+        blockedListAvailable: Bool = false
     ) -> SettingRow {
         var row = SettingRow(kind: .contentBlocking, title: contentBlockingTitle, state: blockedCountText(blockedCount),
                              symbol: "shield.lefthalf.filled", isBlocked: false, actions: [.turnOffBlockingForSite])
+        row.hasBlockedList = blockedListAvailable && (blockedCount ?? 0) > 0
         if !settings.isEnabled {
             row.state = "Off in Settings"
             row.symbol = "shield.slash"
@@ -275,6 +291,8 @@ extension SiteControlCenter {
             row.actions = []
         }
         if isPrivate || ContentBlockingHost.exceptionHost(for: pageURL) == nil { row.actions.removeAll { $0 != .openBlockingSettings } }
+        // Off, excepted or without lists: nothing is counted, so nothing is listed.
+        if row.isBlocked || !listsAvailable { row.hasBlockedList = false }
         return row
     }
 

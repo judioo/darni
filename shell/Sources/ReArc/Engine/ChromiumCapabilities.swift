@@ -72,6 +72,7 @@ struct ChromiumCapabilities: Equatable {
     static let pageThemeColorFeature = "page_theme_color"
     static let taskManagerFeature = "task_manager"
     static let contentBlockingFeature = "content_blocking"
+    static let contentBlockingHostsFeature = "content_blocking_hosts"
     static let sitePermissionsFeature = "site_permissions"
     static let webAuthnPromptsFeature = "webauthn_prompts"
 
@@ -137,6 +138,7 @@ struct ChromiumCapabilities: Equatable {
         contentBlockingFeature: 66,
         sitePermissionsFeature: 67,
         webAuthnPromptsFeature: 68,
+        contentBlockingHostsFeature: 69,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -276,6 +278,10 @@ struct ChromiumCapabilities: Equatable {
     /// (ABI 1.66, CONTENT-BLOCKING.md §5). Without it every blocking surface
     /// is hidden.
     var contentBlocking: Bool
+    /// `ReArcTabCopyBlockedHosts`: the sites behind a tab's blocked count,
+    /// for the list under the site controls row (ABI 1.69). Without it the
+    /// row shows the count alone.
+    var contentBlockingHosts: Bool
     /// What Chromium holds for a tab's site: every setting with its state,
     /// the devices chosen for it and what the page uses now, with allow,
     /// block, reset and revoke (ABI 1.67). Without it the site panel shows
@@ -350,6 +356,7 @@ struct ChromiumCapabilities: Equatable {
         pageThemeColor = adopted(Self.pageThemeColorFeature)
         taskManager = perfMetrics && adopted(Self.taskManagerFeature)
         contentBlocking = profiles && adopted(Self.contentBlockingFeature)
+        contentBlockingHosts = contentBlocking && adopted(Self.contentBlockingHostsFeature)
         sitePermissions = adopted(Self.sitePermissionsFeature)
         passkeyPrompts = adopted(Self.webAuthnPromptsFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
@@ -439,6 +446,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.extensionTabGroupsFeature, extensionTabGroups),
             (Self.taskManagerFeature, taskManager),
             (Self.contentBlockingFeature, contentBlocking),
+            (Self.contentBlockingHostsFeature, contentBlockingHosts),
             (Self.sitePermissionsFeature, sitePermissions),
             (Self.webAuthnPromptsFeature, passkeyPrompts),
             (Self.pageThemeColorFeature, pageThemeColor),
