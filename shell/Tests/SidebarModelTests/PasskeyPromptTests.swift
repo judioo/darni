@@ -145,7 +145,7 @@ final class PasskeyPromptTests: XCTestCase {
         XCTAssertTrue(busy.isCreate)
         XCTAssertEqual(busy.requestLine, "Create a passkey for example.com")
         XCTAssertEqual(busy.accountLine, "ada@example.com", "the page's text has a line of its own")
-        XCTAssertFalse(busy.message.contains("ada"), "and is no part of ReArc's sentence")
+        XCTAssertFalse(busy.message.contains("ada"), "and is no part of Darni's sentence")
         XCTAssertTrue(busy.message.contains("does not sync"))
     }
 

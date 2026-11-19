@@ -261,7 +261,7 @@ public struct SyncSettingsPresentation: Equatable, Sendable {
 /// holds a sidebar, and in its iCloud box; kept out of the views so tests
 /// can read them.
 public enum SyncCloudText {
-    public static let sheetTitle = "iCloud already has a ReArc sidebar"
+    public static let sheetTitle = "iCloud already has a Darni sidebar"
 
     /// "It has 14 spaces, 210 pinned tabs and 12 favorites, last updated 3 days ago."
     public static func holds(_ summary: CloudSidebarSummary, now: Date = Date()) -> String {
@@ -298,7 +298,7 @@ public enum SyncCloudText {
         switch detection {
         case nil: return "Checking iCloud…"
         case .found(let found)?: return "iCloud has " + found.summary.counts + (found.summary.updatedText(now: now).map { ", " + $0 } ?? "") + "."
-        case .empty?: return "iCloud has no ReArc sidebar."
+        case .empty?: return "iCloud has no Darni sidebar."
         case .signedOut(let message)?, .unreachable(let message)?, .unavailable(let message)?: return message
         }
     }

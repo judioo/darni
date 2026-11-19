@@ -348,7 +348,7 @@ public struct ContentBlockingRollout: Equatable, Codable, Sendable {
         }
     }
 
-    public static let offerTitle = "ReArc can now block ads and trackers"
+    public static let offerTitle = "Darni can now block ads and trackers"
     public static let offerMessage = "Blocking is off for your profiles. Turn it on here, or later in Settings › Profiles."
     public static let offerAccept = "Turn On"
     public static let offerDecline = "Not Now"

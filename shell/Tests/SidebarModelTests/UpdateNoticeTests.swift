@@ -45,7 +45,7 @@ final class UpdateNoticeTests: XCTestCase {
         XCTAssertEqual(UpdateNoticeText.status(notice.phase), "Preparing the update…")
         notice.send(.readyToInstall)
         XCTAssertEqual(notice.phase, .installing, "the person already asked: ready goes straight to installing")
-        XCTAssertEqual(UpdateNoticeText.status(notice.phase), "Restarting ReArc…")
+        XCTAssertEqual(UpdateNoticeText.status(notice.phase), "Restarting Darni…")
         XCTAssertTrue(notice.holdsCardOpen, "progress keeps the card open")
     }
 
@@ -86,7 +86,7 @@ final class UpdateNoticeTests: XCTestCase {
         XCTAssertEqual(notice.phase, .failed(.offline))
         XCTAssertFalse(notice.installRequested)
         XCTAssertFalse(notice.isBusy, "Try Again is enabled")
-        XCTAssertEqual(UpdateNoticeText.status(notice.phase), "ReArc can't reach the update server. Check your connection.")
+        XCTAssertEqual(UpdateNoticeText.status(notice.phase), "Darni can't reach the update server. Check your connection.")
         notice.send(.installRequested)
         XCTAssertEqual(notice.phase, .downloading(UpdateProgress()))
     }
@@ -94,7 +94,7 @@ final class UpdateNoticeTests: XCTestCase {
     func testRefusedQuitRetriesTheInstall() {
         var notice = notice(.found(v700, downloaded: true), .installRequested, .failed(.quitRefused))
         XCTAssertTrue(notice.installRequested)
-        XCTAssertEqual(UpdateNoticeText.status(notice.phase), "A page asked ReArc to stay open.")
+        XCTAssertEqual(UpdateNoticeText.status(notice.phase), "A page asked Darni to stay open.")
         notice.send(.installRequested)
         XCTAssertEqual(notice.phase, .installing)
     }
@@ -205,13 +205,13 @@ final class UpdateNoticeTests: XCTestCase {
     }
 
     func testTitlesAndDetails() {
-        XCTAssertEqual(UpdateNoticeText.title(.normal), "New ReArc Version Available")
+        XCTAssertEqual(UpdateNoticeText.title(.normal), "New Darni Version Available")
         XCTAssertEqual(UpdateNoticeText.title(.critical), "Critical Update Available")
         XCTAssertEqual(UpdateNoticeText.title(.required), "Required Update")
         XCTAssertNil(UpdateNoticeText.detail(.normal))
         XCTAssertEqual(UpdateNoticeText.detail(.critical), "This update fixes a security problem.")
-        XCTAssertEqual(UpdateNoticeText.detail(.required), "This version of ReArc is no longer supported. Restart to update.")
-        XCTAssertEqual(AvailableUpdate.title, "Restart and Update ReArc")
+        XCTAssertEqual(UpdateNoticeText.detail(.required), "This version of Darni is no longer supported. Restart to update.")
+        XCTAssertEqual(AvailableUpdate.title, "Restart and Update Darni")
     }
 
     func testEnforcementIsDisplayOnlyForNow() {

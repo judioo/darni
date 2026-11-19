@@ -290,7 +290,7 @@ final class ContentBlockingShellTests: XCTestCase {
         model.checkBlocklists()
         model.checkBlocklistsIfDue()
         try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(mirror.requests, 0, "Off in every profile: ReArc asks the mirror for nothing")
+        XCTAssertEqual(mirror.requests, 0, "Off in every profile: Darni asks the mirror for nothing")
 
         model.setContentBlockingEnabled(true, for: model.store.profiles[0].id)
         for _ in 0..<400 where model.contentBlocking.lastCheck == nil { try await Task.sleep(nanoseconds: 5_000_000) }

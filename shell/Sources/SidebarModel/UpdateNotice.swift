@@ -105,7 +105,7 @@ public struct AvailableUpdate: Equatable, Sendable {
     }
 
     /// The mini space header's menu item, which installs it.
-    public static let title = "Restart and Update ReArc"
+    public static let title = "Restart and Update Darni"
 
     /// Another update than `other`: a higher build, or (with either build
     /// unreadable) a different version.
@@ -450,7 +450,7 @@ public enum UpdateNoticePresentation {
 public enum UpdateNoticeText {
     public static func title(_ urgency: UpdateUrgency) -> String {
         switch urgency {
-        case .normal: "New ReArc Version Available"
+        case .normal: "New Darni Version Available"
         case .critical: "Critical Update Available"
         case .required: "Required Update"
         }
@@ -460,7 +460,7 @@ public enum UpdateNoticeText {
         switch urgency {
         case .normal: nil
         case .critical: "This update fixes a security problem."
-        case .required: "This version of ReArc is no longer supported. Restart to update."
+        case .required: "This version of Darni is no longer supported. Restart to update."
         }
     }
 
@@ -476,7 +476,7 @@ public enum UpdateNoticeText {
             guard let fraction = progress.fraction else { return "Downloading…" }
             return "Downloading… \(Int((fraction * 100).rounded(.down)))%"
         case .extracting: return "Preparing the update…"
-        case .installing: return "Restarting ReArc…"
+        case .installing: return "Restarting Darni…"
         case let .failed(failure): return self.failure(failure)
         case .idle, .available, .ready: return nil
         }
@@ -484,10 +484,10 @@ public enum UpdateNoticeText {
 
     public static func failure(_ failure: UpdateNoticeFailure) -> String {
         switch failure {
-        case .offline: "ReArc can't reach the update server. Check your connection."
+        case .offline: "Darni can't reach the update server. Check your connection."
         case .signature: "The update couldn't be verified, so it wasn't installed."
         case .noSpace: "There isn't enough disk space for the update."
-        case .quitRefused: "A page asked ReArc to stay open."
+        case .quitRefused: "A page asked Darni to stay open."
         case .other: "The update couldn't be installed."
         }
     }

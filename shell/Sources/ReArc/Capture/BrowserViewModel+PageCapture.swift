@@ -207,7 +207,7 @@ enum CaptureImaging {
         context.draw(image, in: frame)
         context.restoreGState()
         if let mark = layout.watermark {
-            let text = NSAttributedString(string: "ReArc", attributes: [
+            let text = NSAttributedString(string: "Darni", attributes: [
                 .font: NSFont.systemFont(ofSize: mark.fontSize, weight: .semibold),
                 .foregroundColor: palette.prefersLightForeground ? NSColor.white.withAlphaComponent(0.75) : NSColor.black.withAlphaComponent(0.55),
             ])

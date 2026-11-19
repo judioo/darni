@@ -101,8 +101,8 @@ final class CommandBarIndexTests: XCTestCase {
                                isEnabled: index % 11 != 0, hasAction: index % 13 != 0)
         }
         menus += [
-            MenuCommand(id: "q", title: "Quit ReArc", path: "ReArc › Quit ReArc", keyEquivalent: "⌘Q", requiresExactQuery: true),
-            MenuCommand(id: "q2", title: "Quit ReArc", path: "ReArc › Quit ReArc", keyEquivalent: "⌘Q"),
+            MenuCommand(id: "q", title: "Quit Darni", path: "Darni › Quit Darni", keyEquivalent: "⌘Q", requiresExactQuery: true),
+            MenuCommand(id: "q2", title: "Quit Darni", path: "Darni › Quit Darni", keyEquivalent: "⌘Q"),
             MenuCommand(id: "d1", title: "Duplicate", path: "Edit › Duplicate", keyEquivalent: "⌘D"),
             MenuCommand(id: "d2", title: "Duplicate", path: "Edit › Duplicate", keyEquivalent: "⌘D"),
             MenuCommand(id: "nt", title: "New Tab", path: "File › New Tab", keyEquivalent: "⌘T"),
@@ -116,8 +116,8 @@ final class CommandBarIndexTests: XCTestCase {
         "", " ", "d", "de", "des", "design", "design n", "design notes", "notes release", "g", "git", "github",
         "github.com", "https://github.com", "www.", "site4", "page 12", "tabs.test", "café", "cafe\u{301}", "über",
         "c++", "日本", "🚀", "x.com", "news", "ycombinator", "tie", "untitled", "1", "42", "item 3", "duplicate",
-        "quit rearc", "quit", "new tab", "nt", "sw", "a b", "  Design  Notes ", "DESIGN", ">", "> ", ">tab", ">new",
-        ">quit rearc", ">item 1", ">über", "e", "zzz",
+        "quit darni", "quit", "new tab", "nt", "sw", "a b", "  Design  Notes ", "DESIGN", ">", "> ", ">tab", ">new",
+        ">quit darni", ">item 1", ">über", "e", "zzz",
     ]
 
     private func catalog(_ store: SidebarStore) -> [AppCommand] {

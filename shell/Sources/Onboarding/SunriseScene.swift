@@ -115,7 +115,7 @@ public struct SunriseSceneView: View {
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("ReArc. \(line)")
+        .accessibilityLabel("Darni. \(line)")
     }
 }
 

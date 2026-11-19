@@ -87,7 +87,7 @@ public enum BlocklistUpdateOutcome: Equatable, Sendable {
         switch self {
         case .upToDate: return "The lists are up to date."
         case .updated: return "The lists were updated."
-        case .unreachable: return "ReArc couldn’t reach the lists. It will try again later."
+        case .unreachable: return "Darni couldn’t reach the lists. It will try again later."
         case .rejected: return "The new lists could not be verified and were not used."
         }
     }

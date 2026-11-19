@@ -522,7 +522,7 @@ public enum ProfileCloudText {
         if syncOn { return base + " Sync Sidebar is on, so it is also deleted from iCloud and other Macs that sync." }
         switch presence {
         case .looking: return base + " iCloud is still being checked, so only this Mac changes."
-        case .unknown: return base + " ReArc couldn't check iCloud, so only this Mac changes."
+        case .unknown: return base + " Darni couldn't check iCloud, so only this Mac changes."
         case .inICloud, .onlyHere: return base
         }
     }
@@ -541,7 +541,7 @@ public enum ProfileCloudText {
         syncOn ? "Put in iCloud" : "Put in iCloud…"
     }
 
-    public static let putInICloudNote = "Put in iCloud turns Sync Sidebar on. ReArc looks at iCloud first and asks before changing anything there."
+    public static let putInICloudNote = "Put in iCloud turns Sync Sidebar on. Darni looks at iCloud first and asks before changing anything there."
 
     /// The Profiles pane's Sync Sidebar row, under the switch.
     public static func syncSwitchNote(on: Bool) -> String {

@@ -256,7 +256,7 @@ private struct PeekMoreMenu: View {
         Button("Open as Tab") { model.performPeekAction(.expandToTab) }
         Button("Open in Split View") { model.performPeekAction(.openInSplitView) }
             .disabled(model.peekSplitAnchor == nil)
-        Button("Open in Little ReArc") { model.peekOpenInLittleArc() }
+        Button("Open in Little Darni") { model.peekOpenInLittleArc() }
         Divider()
         Button("Copy Link") { model.peekCopyLink() }
         Divider()

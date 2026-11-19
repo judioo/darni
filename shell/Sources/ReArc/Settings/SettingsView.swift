@@ -140,13 +140,13 @@ struct DefaultBrowserRow: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .symbolEffect(.bounce, value: ticks)
-                    Text("ReArc is your default browser")
+                    Text("Darni is your default browser")
                         .foregroundStyle(.secondary)
                 }
                 .transition(.opacity)
                 .accessibilityElement(children: .combine)
             } else {
-                Button("Set ReArc as Default…") { model.setAsDefaultBrowser() }
+                Button("Set Darni as Default…") { model.setAsDefaultBrowser() }
             }
         }
         .onAppear { check() }
@@ -563,18 +563,18 @@ struct LinksSettingsPane: View {
             LittleArcHero(model: model)
                 .padding(.horizontal, -SettingsMetrics.margin)
                 .padding(.bottom, 22)
-            SettingsIntro(text: "Little ReArc is a smaller, simpler ReArc window. It’s perfect for quick lookups and reading the links your friends send you.")
+            SettingsIntro(text: "Little Darni is a smaller, simpler Darni window. It’s perfect for quick lookups and reading the links your friends send you.")
                 .padding(.bottom, 14)
             SettingsGroup {
-                SettingsSwitchRow(label: "Open Little ReArc when I press \(LittleArcHotkeyPreference.display) in any app",
+                SettingsSwitchRow(label: "Open Little Darni when I press \(LittleArcHotkeyPreference.display) in any app",
                                   isOn: $model.isLittleArcHotkeyEnabled)
-                SettingsSwitchRow(label: "Open Little ReArc when clicking on links with ⌥⌘ held", isOn: $model.littleArcOnModifiedClick)
-                SettingsSwitchRow(label: "Links from other apps open in Little ReArc", detail: model.externalLinkDestination == .littleArc
+                SettingsSwitchRow(label: "Open Little Darni when clicking on links with ⌥⌘ held", isOn: $model.littleArcOnModifiedClick)
+                SettingsSwitchRow(label: "Links from other apps open in Little Darni", detail: model.externalLinkDestination == .littleArc
                                       ? nil : "Off: they open as a new tab in the current space.",
                                   isOn: Binding(get: { model.externalLinkDestination == .littleArc },
                                                 set: { model.externalLinkDestination = $0 ? .littleArc : .activeSpace }))
-                SettingsLabeledRow(label: "Archive Little ReArcs after:") {
-                    SettingsPopUp(label: "Archive Little ReArcs after", selection: $model.littleArcArchiveAfter,
+                SettingsLabeledRow(label: "Archive Little Darnis after:") {
+                    SettingsPopUp(label: "Archive Little Darnis after", selection: $model.littleArcArchiveAfter,
                                   options: AutoArchiveThreshold.options)
                 }
             }
@@ -588,8 +588,8 @@ struct LinksSettingsPane: View {
                                   isOn: $model.automaticPeekEnabled)
             }
             SettingsGroup {
-                SettingsLabeledRow(label: "Choose where links open inside ReArc.",
-                                   info: "Air Traffic Control sends links from other apps to a space or a Little ReArc of a profile, by site or by the app they come from.") {
+                SettingsLabeledRow(label: "Choose where links open inside Darni.",
+                                   info: "Air Traffic Control sends links from other apps to a space or a Little Darni of a profile, by site or by the app they come from.") {
                     Button("Air Traffic Control…") { model.showAirTrafficControl() }
                 }
             }
@@ -640,7 +640,7 @@ private struct LittleArcHero: View {
         .frame(width: SettingsMetrics.windowSize.width, height: 135)
         .clipShape(ScallopedBottom())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("A Little ReArc window")
+        .accessibilityLabel("A Little Darni window")
     }
 }
 
@@ -945,7 +945,7 @@ struct IconSettingsPane: View {
                     }
                 }
             }
-            Text("The Dock shows the icon while ReArc is running. Finder and Launchpad keep the standard icon.")
+            Text("The Dock shows the icon while Darni is running. Finder and Launchpad keep the standard icon.")
                 .font(.system(size: 11))
                 .foregroundStyle(SettingsColors.tertiary)
                 .padding(.horizontal, SettingsMetrics.rowInset)
@@ -1028,7 +1028,7 @@ struct AdvancedSettingsPane: View {
                 SettingsSwitchRow(label: "Haptic feedback when reordering tabs", icon: icon("hand.tap.fill", .blue), isOn: $reorderHaptics)
             }
             SettingsGroup {
-                SettingsSwitchRow(label: "When opening ReArc, restore windows from previous session",
+                SettingsSwitchRow(label: "When opening Darni, restore windows from previous session",
                                   icon: icon("macwindow", .green), isOn: $model.restoresWindows)
                 if let leakCheck = capabilities.passwordLeakCheck {
                     SettingsSwitchRow(label: "Warn if passwords are exposed in a data breach",
@@ -1084,11 +1084,11 @@ struct SafeBrowsingRow: Equatable {
         switch status {
         case .unavailable:
             value = "Unavailable"
-            info = "This build of ReArc has no Safe Browsing key, so it can’t check sites or downloads against Google’s lists of phishing and malware. The protection level in Privacy and security has no effect."
+            info = "This build of Darni has no Safe Browsing key, so it can’t check sites or downloads against Google’s lists of phishing and malware. The protection level in Privacy and security has no effect."
             isWarning = true
         case .waitingForLists:
             value = "Starting"
-            info = "ReArc is downloading Google’s lists of phishing and malware sites. Until they arrive, sites and downloads are not checked." + level
+            info = "Darni is downloading Google’s lists of phishing and malware sites. Until they arrive, sites and downloads are not checked." + level
             isWarning = false
         case .active(let date):
             value = "On"
@@ -1097,7 +1097,7 @@ struct SafeBrowsingRow: Equatable {
             isWarning = false
         case .notUpdating:
             value = "Not working"
-            info = "ReArc could not download Google’s lists of phishing and malware sites, so sites and downloads are not being checked. Check your network or firewall."
+            info = "Darni could not download Google’s lists of phishing and malware sites, so sites and downloads are not being checked. Check your network or firewall."
             isWarning = true
         case .stale(let date):
             value = "Out of date"

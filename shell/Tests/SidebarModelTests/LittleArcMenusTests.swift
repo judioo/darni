@@ -10,13 +10,18 @@ final class LittleArcMenusTests: XCTestCase {
 
     func testDockListsLittleArcsByTitleThenNewWindows() {
         let news = window("Hacker News", "https://news.ycombinator.com/")
-        let blank = window("Little ReArc", "about:blank")
+        let blank = window("Little Darni", "about:blank")
         let untitled = window("  ", "https://example.com/page")
-        let entries = LittleArcDockMenu.entries(for: [news, blank, untitled], canOpenBrowserWindow: true)
+        // Saved by a build from before the rename, and restored by this one.
+        let saved = window("Little ReArc", "about:blank")
+        let savedOnAPage = window("Little ReArc", "https://example.org/")
+        let entries = LittleArcDockMenu.entries(for: [news, blank, untitled, saved, savedOnAPage], canOpenBrowserWindow: true)
         XCTAssertEqual(entries, [
             .littleArc(id: news.id, title: "Hacker News"),
-            .littleArc(id: blank.id, title: "Little ReArc"),
+            .littleArc(id: blank.id, title: "Little Darni"),
             .littleArc(id: untitled.id, title: "example.com"),
+            .littleArc(id: saved.id, title: "Little Darni"),
+            .littleArc(id: savedOnAPage.id, title: "example.org"),
             .separator,
             .newLittleArc,
             .newWindow,

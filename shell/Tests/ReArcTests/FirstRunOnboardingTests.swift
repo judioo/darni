@@ -82,7 +82,7 @@ final class FirstRunOnboardingTests: XCTestCase {
         FirstRunOnboarding(kind: .firstRun, model: model) { [] }.onboardingDeferred()
         XCTAssertTrue(model.onboardingSetupState.showsCard)
         XCTAssertTrue(model.onboardingSetupState.showsMenuItem)
-        XCTAssertEqual(ShellMenus.finishSetup(model).first?.first?.shownTitle, "Finish Setting Up ReArc…")
+        XCTAssertEqual(ShellMenus.finishSetup(model).first?.first?.shownTitle, "Finish Setting Up Darni…")
         quit(model)
         let relaunched = launch()
         XCTAssertFalse(relaunched.isFirstRun)
@@ -99,7 +99,7 @@ final class FirstRunOnboardingTests: XCTestCase {
         XCTAssertFalse(model.onboardingSetupState.showsCard)
         XCTAssertTrue(model.onboardingSetupState.showsMenuItem)
         let menuItem = ShellMenus.finishSetup(model).first?.first
-        XCTAssertEqual(menuItem?.shownTitle, "Finish Setting Up ReArc…")
+        XCTAssertEqual(menuItem?.shownTitle, "Finish Setting Up Darni…")
         model.persistence.stop()
 
         let second = launch()
@@ -251,10 +251,10 @@ final class FirstRunOnboardingTests: XCTestCase {
     func testTheWelcomePageGreetsYouSafely() {
         let html = WelcomePage.html(name: "<Kai>", colour: MarkPalette.sun, spaces: 1,
                                     imported: ImportStats(spaces: 2, bookmarks: 1_204))
-        XCTAssertTrue(html.contains("Welcome to ReArc, <span class=\"you\">&lt;Kai&gt;</span>."))
+        XCTAssertTrue(html.contains("Welcome to Darni, <span class=\"you\">&lt;Kai&gt;</span>."))
         XCTAssertTrue(html.contains("Your profile and 1 space is ready."))
         XCTAssertTrue(html.contains("1,204 bookmarks came with you."))
-        XCTAssertTrue(html.contains("REFOCUSED · RESTORED · REARC"))
+        XCTAssertTrue(html.contains("REFOCUSED · RESTORED · DARNI"), "the motto, from Brand.motto")
         XCTAssertFalse(WelcomePage.html(name: "", colour: MarkPalette.sun, spaces: 3, imported: nil).contains("came with you"))
     }
 

@@ -98,7 +98,7 @@ struct ProfileContainerConversionGroup: View {
     @Bindable var model: BrowserViewModel
     let profile: Profile
 
-    static let earlierNote = "This looks like a container an earlier ReArc made: one space, named as the profile. Make it a container to show the space with its profile's spaces; its sign-ins stay."
+    static let earlierNote = "This looks like a container an earlier version made: one space, named as the profile. Make it a container to show the space with its profile's spaces; its sign-ins stay."
 
     var body: some View {
         let parents = model.store.containerParentChoices(for: profile.id)

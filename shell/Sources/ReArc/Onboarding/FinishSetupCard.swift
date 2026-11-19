@@ -39,7 +39,7 @@ struct FinishSetupCard: View {
             .accessibilityLabel("Finish setup. Bring over your tabs from Arc, Chrome or Brave.")
             .accessibilityIdentifier("finishSetupButton")
 
-            SidebarCardDismissButton(help: "Hide — Finish Setting Up ReArc stays in the ReArc menu",
+            SidebarCardDismissButton(help: "Hide. Finish Setting Up Darni stays in the Darni menu",
                                      label: "Dismiss setup reminder", identifier: "dismissSetupReminder") {
                 model.dismissOnboardingCard()
             }

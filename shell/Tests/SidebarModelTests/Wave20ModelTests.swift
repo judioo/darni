@@ -153,7 +153,7 @@ final class Wave20ModelTests: XCTestCase {
         XCTAssertEqual(list.records.map(\.id), ["live", "done-0", "done-1"])
         list.markStaleTransfersInterrupted()
         XCTAssertEqual(list.record(withID: "live")?.state, .interrupted)
-        XCTAssertEqual(list.record(withID: "live")?.statusText, "Failed — Interrupted when ReArc quit")
+        XCTAssertEqual(list.record(withID: "live")?.statusText, "Failed — Interrupted when Darni quit")
         XCTAssertEqual(list.clearFinished().count, 3)
         XCTAssertTrue(list.records.isEmpty)
     }

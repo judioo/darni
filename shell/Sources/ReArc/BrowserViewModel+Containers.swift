@@ -23,7 +23,7 @@ extension BrowserViewModel {
         let space = store.spaces(in: id).first
         let parent = store.parentProfile(ofContainer: id)?.name ?? "its profile"
         let data = profileKeepsDataOnDelete?(id) == true
-            ? "The container's browsing data stays on this Mac: it is in the first profile's folder, which ReArc never removes."
+            ? "The container's browsing data stays on this Mac: it is in the first profile's folder, which Darni never removes."
             : "The container's cookies, sign-ins and site data are deleted."
         guard let space else {
             return ("Remove This Container?", "\(data) This cannot be undone.", "Remove Container")

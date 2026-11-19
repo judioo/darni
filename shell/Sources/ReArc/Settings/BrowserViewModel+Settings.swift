@@ -89,7 +89,7 @@ enum AppIconChoice: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .standard: return "ReArc"
+        case .standard: return "Darni"
         case .firstLight: return "First Light"
         case .daybreak: return "Daybreak"
         case .goldenHour: return "Golden Hour"

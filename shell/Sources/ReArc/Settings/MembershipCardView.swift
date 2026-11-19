@@ -46,7 +46,7 @@ struct MembershipCardView: View {
     private var accessibilityText: String {
         var parts = ["Membership card", name, card.title.capitalized]
         if let arc = card.arcMemberSince { parts.append("Arc since \(MembershipCardDates.format(arc))") }
-        parts.append("ReArc since \(MembershipCardDates.format(card.rearcMemberSince))")
+        parts.append("Darni since \(MembershipCardDates.format(card.rearcMemberSince))")
         parts += allStamps.map(\.accessibilityLabel)
         return parts.joined(separator: ", ")
     }
@@ -165,7 +165,7 @@ struct MembershipCardView: View {
             HStack(spacing: 0) {
                 ZStack {
                     Text("ARC").opacity(card.hasArcHistory ? 1 - frame.label : 0)
-                    Text("REARC").opacity(card.hasArcHistory ? frame.label : 1)
+                    Text(Brand.name.uppercased()).opacity(card.hasArcHistory ? frame.label : 1)
                 }
                 .padding(.horizontal, 5)
                 Rectangle().fill(ink).frame(width: 1)
@@ -213,7 +213,7 @@ private struct CardSunCell: View {
     }
 }
 
-/// "ReArc" with the mark, and the motto in small capitals under it.
+/// The wordmark with the mark, and the motto in small capitals under it.
 private struct CardWordmark: View {
     let ink: Color
 
@@ -221,11 +221,11 @@ private struct CardWordmark: View {
         VStack(alignment: .trailing, spacing: 1) {
             HStack(spacing: 2) {
                 ReArcMarkView().frame(width: 18, height: 18)
-                (Text("Re").foregroundStyle(ink) + Text("Arc").foregroundStyle(ReArcMark.blueColor))
+                (Text(Brand.wordmarkLead).foregroundStyle(ink) + Text(Brand.wordmarkTail).foregroundStyle(ReArcMark.blueColor))
                     .font(.system(size: 14, weight: .bold))
                     .tracking(-0.3)
             }
-            Text("REFOCUSED · RESTORED · REARC")
+            Text(Brand.motto.capitals)
                 .font(.system(size: 4.2, weight: .semibold))
                 .tracking(0.1)
                 .fixedSize()

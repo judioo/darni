@@ -289,7 +289,7 @@ enum ReArcTarget {
 
     static func bundlePath(_ options: Options) -> String {
         if let bundle = options.bundle { return (bundle as NSString).expandingTildeInPath }
-        return shellDirectory.appendingPathComponent("dist/release/ReArc.app").path
+        return shellDirectory.appendingPathComponent("dist/release/Darni.app").path
     }
 
     static func prepare(_ options: Options, out: URL, matching arcWindow: WindowInfo?) async throws -> Target {

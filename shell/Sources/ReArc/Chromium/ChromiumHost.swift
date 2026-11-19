@@ -535,7 +535,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     private func prepareLittleArcWindow() {
         guard model != nil, !terminating, preparedLittleArcWindow == nil else { return }
         preparedLittleArcWindow = makeWindow(
-            size: LittleArcWindowView.defaultSize(within: NSScreen.main?.visibleFrame.size), title: "Little ReArc",
+            size: LittleArcWindowView.defaultSize(within: NSScreen.main?.visibleFrame.size), title: "Little Darni",
             content: NSHostingView(rootView: AnyView(Color.clear))
         )
         preparedLittleArcWindow?.isExcludedFromWindowsMenu = true
@@ -591,7 +591,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         // SwiftUI update measured the whole tree for its minimum size, the
         // Library's rows included (~40 ms per update at 39,413 downloads).
         hosting.sizingOptions = []
-        let window = makeWindow(size: NSSize(width: 1280, height: 820), title: "ReArc", content: hosting)
+        let window = makeWindow(size: NSSize(width: 1280, height: 820), title: "Darni", content: hosting)
         window.contentMinSize = BrowserView.minimumSize
         if let saved {
             // Placed before the first order-in: the early window goes up where it was, with no jump.
@@ -687,7 +687,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                 window.isExcludedFromWindowsMenu = false
             } else {
                 window = makeWindow(
-                    size: LittleArcWindowView.defaultSize(within: NSScreen.main?.visibleFrame.size), title: "Little ReArc",
+                    size: LittleArcWindowView.defaultSize(within: NSScreen.main?.visibleFrame.size), title: "Little Darni",
                     content: NSHostingView(rootView: LittleArcWindowView(model: model, windowID: id))
                 )
             }
@@ -1197,12 +1197,12 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     /// The engine installs an empty placeholder menu; the shell owns menu construction.
     @MainActor
     private func makeMainMenu(model: BrowserViewModel) -> NSMenu {
-        let main = NSMenu(title: "ReArc")
+        let main = NSMenu(title: "Darni")
         let target = menuTarget
 
-        let app = NSMenu(title: "ReArc")
+        let app = NSMenu(title: "Darni")
         // Arc's order: About, then Settings.
-        app.addItem(target.item("About ReArc", "") { [weak self] in self?.presentAbout() })
+        app.addItem(target.item("About Darni", "") { [weak self] in self?.presentAbout() })
         if let updates = AppUpdater.shared.makeMenuItem() { app.addItem(updates) }
         app.addItem(.separator())
         // ReArc's own window; Chromium's settings pages open from its buttons.
@@ -1214,31 +1214,31 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             app.addItem(target.item("About Chromium Engine", "") { model.openBrowserPage(.version) })
             app.addItem(.separator())
         }
-        app.addItem(target.item("Set ReArc as Default Browser…", "") { model.setAsDefaultBrowser() })
+        app.addItem(target.item("Set Darni as Default Browser…", "") { model.setAsDefaultBrowser() })
         target.add(ShellMenus.finishSetup(model), to: app)
         // Picture in Picture, password leak checks, external links and the
         // Little Arc hotkey moved to Settings (wave 35).
         app.addItem(target.item("Air Traffic Control…", "") { [weak self] in self?.presentAirTrafficControl() })
         app.addItem(.separator())
-        app.addItem(withTitle: "Hide ReArc", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        app.addItem(withTitle: "Hide Darni", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = app.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         app.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         app.addItem(.separator())
         // NSApp.terminate is routed to terminate_requested -> ReArcEngineShutdown.
         // Only ⌘Q asks (Warn before quitting); the Dock's Quit and logout do not.
-        app.addItem(target.item("Quit ReArc", "q") { [weak self] in
+        app.addItem(target.item("Quit Darni", "q") { [weak self] in
             let open = self?.browserWindows.filter(\.isVisible).count ?? 0
             if MainActor.assumeIsolated({ model.confirmQuit(browserWindows: open) }) { NSApp.terminate(nil) }
         })
-        main.addSubmenu(app, title: "ReArc")
+        main.addSubmenu(app, title: "Darni")
 
         let file = NSMenu(title: "File")
         file.addItem(target.item("New Tab", "t") { model.newTab() })
         file.addItem(target.item("New Window", "n") { [weak self] in self?.openBrowserWindow() })
         // Arc's Blank Window (⌃⌘N): a ReArc window always shows a space, so it is a new window.
         file.addItem(target.item("New Blank Window", "n", [.command, .control]) { [weak self] in self?.openBrowserWindow() })
-        file.addItem(target.item("New Little ReArc Window", "n", [.command, .option]) { model.openBlankLittleArc() })
+        file.addItem(target.item("New Little Darni Window", "n", [.command, .option]) { model.openBlankLittleArc() })
         if runtime.capabilities.profileOffTheRecord {
             file.addItem(target.item("New Private Window", "n", [.command, .shift]) {
                 model.openPrivateWindow()

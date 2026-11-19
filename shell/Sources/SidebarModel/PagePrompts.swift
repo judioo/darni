@@ -610,7 +610,7 @@ public enum PageContextMenuItem: Equatable, Sendable {
         case .openLinkInNewTab: return "Open Link in New Tab"
         case .openLinkInNewWindow: return "Open Link in New Window"
         case .openLinkInNewSplit: return "Open Link in Split View"
-        case .openLinkInLittleArc: return "Open Link in Little ReArc"
+        case .openLinkInLittleArc: return "Open Link in Little Darni"
         case .openLinkInPrivateWindow: return "Open Link in Private Window"
         case .saveLinkAs: return "Save Link As…"
         case .copyLink: return "Copy Link Address"

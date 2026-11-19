@@ -359,7 +359,7 @@ public struct PasskeyStep: Equatable, Sendable {
         case .phoneConnected: return "Continue on your device"
         case .phoneError: return "Could not connect to your device"
         case .bluetoothOff: return "Turn on Bluetooth"
-        case .bluetoothDenied: return "ReArc needs Bluetooth access"
+        case .bluetoothDenied: return "Darni needs Bluetooth access"
         case .privateNotice: return "This passkey stays after you close the private window"
         case .pin(.enter): return "Enter the PIN of your security key"
         case .pin(.setUp): return "Create a PIN for your security key"
@@ -370,7 +370,7 @@ public struct PasskeyStep: Equatable, Sendable {
         case .account: return "Choose an account"
         case .createThisMac: return "Save a passkey on this Mac?"
         case .system, .hidden: return ""
-        case .unsupported: return "This way to sign in is not available in ReArc"
+        case .unsupported: return "This way to sign in is not available in Darni"
         case .failure(let failure):
             switch failure {
             case .noTransports: return "No way to use a passkey here"
@@ -401,7 +401,7 @@ public struct PasskeyStep: Equatable, Sendable {
         case .bluetoothOff:
             return "A phone or tablet proves it is near this Mac over Bluetooth. Nothing is paired and no data is sent over it."
         case .bluetoothDenied:
-            return "Allow ReArc under System Settings › Privacy & Security › Bluetooth, then try again. macOS may ask you to reopen ReArc."
+            return "Allow Darni under System Settings › Privacy & Security › Bluetooth, then try again. macOS may ask you to reopen Darni."
         case .privateNotice:
             return "A passkey you create in a private window is kept on the device you choose and can sign you in later."
         case .pin(let mode):
@@ -417,7 +417,7 @@ public struct PasskeyStep: Equatable, Sendable {
             return attempts.map { "\($0) attempt\($0 == 1 ? "" : "s") left." } ?? ""
         case .createThisMac:
             // The account's name is the page's text: it has a line of its own (`accountLine`).
-            let kept = "The passkey will be kept by ReArc on this Mac, protected by Touch ID or your Mac password. "
+            let kept = "The passkey will be kept by Darni on this Mac, protected by Touch ID or your Mac password. "
                 + "It does not sync to your other devices."
             return isPrivate ? kept + " It stays after you close this private window." : kept
         case .unsupported: return canChooseAnother ? "Choose another way to sign in." : ""

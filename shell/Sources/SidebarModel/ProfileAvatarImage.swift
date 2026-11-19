@@ -43,9 +43,9 @@ public enum ProfileAvatarImageError: Error, Equatable, Sendable {
 
     public var message: String {
         switch self {
-        case .unreadable: return "ReArc couldn't read that file."
+        case .unreadable: return "Darni couldn't read that file."
         case .tooLarge: return "That file is over 20 MB. Choose a smaller image."
-        case .notAnImage: return "That isn't an image ReArc can use. Choose a JPEG, PNG, HEIC, GIF, TIFF or WebP file."
+        case .notAnImage: return "That isn't an image Darni can use. Choose a JPEG, PNG, HEIC, GIF, TIFF or WebP file."
         case .animated: return "That image is animated. Choose a still image."
         case .badDimensions: return "That image's size can't be used. Choose one up to 20,000 pixels on each side."
         }

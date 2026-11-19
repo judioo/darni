@@ -170,7 +170,7 @@ enum MembershipCardExport {
 
     static func fileName(for name: String) -> String {
         let safe = name.components(separatedBy: CharacterSet(charactersIn: "/:\\")).joined(separator: "-")
-        return "\(safe.isEmpty ? "ReArc" : safe)_ReArc.png"
+        return "\(safe.isEmpty ? "Darni" : safe)_Darni.png"
     }
 
     /// A copy in a private temporary folder, for the share picker.
@@ -182,7 +182,7 @@ enum MembershipCardExport {
         return (try? data.write(to: url, options: .atomic)) == nil ? nil : url
     }
 
-    /// Download: a Save panel in Downloads, "<Name>_ReArc.png", as Arc's.
+    /// Download: a Save panel in Downloads, "<Name>_Darni.png", as Arc's.
     static func download(card: MembershipCard, name: String, theme: SpaceColor, from window: NSWindow?) {
         guard let data = pngData(card: card, name: name, theme: theme) else { return NSSound.beep() }
         let panel = NSSavePanel()
@@ -199,7 +199,7 @@ enum MembershipCardExport {
     /// Share: the macOS share picker with the picture and a line of text.
     static func share(card: MembershipCard, name: String, theme: SpaceColor, from view: NSView) {
         guard let url = temporaryFile(card: card, name: name, theme: theme) else { return NSSound.beep() }
-        NSSharingServicePicker(items: ["I moved to ReArc.", url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+        NSSharingServicePicker(items: ["I moved to Darni.", url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
     }
 }
 
@@ -207,7 +207,7 @@ enum MembershipCardExport {
 /// (SETTINGS.md §13); until then the picker carries the site's address.
 enum ShareReArc {
     static let link = URL(string: "https://rearc.imara.ae")!
-    static let message = "Try ReArc, a calm browser for the Mac:"
+    static let message = "Try Darni, a calm browser for the Mac:"
 
     @MainActor static func show(from view: NSView) {
         NSSharingServicePicker(items: [message, link]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)

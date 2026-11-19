@@ -62,7 +62,7 @@ extension BrowserViewModel {
         downloads.useOriginalName(id, fileSystem: fileSystem, queue: queue) { [weak self] outcome in
             switch outcome {
             case .renamed: break
-            case .skipped(.missing): self?.showToast("The file is no longer where ReArc put it", systemImage: "exclamationmark.triangle")
+            case .skipped(.missing): self?.showToast("The file is no longer where Darni put it", systemImage: "exclamationmark.triangle")
             case .skipped: self?.showToast("Could not rename the file back", systemImage: "exclamationmark.triangle")
             }
             completion?(outcome)

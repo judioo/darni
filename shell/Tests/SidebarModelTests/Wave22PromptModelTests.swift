@@ -243,7 +243,7 @@ final class Wave22PromptModelTests: XCTestCase {
         ])
         XCTAssertTrue(plan.sections.dropLast().joined().allSatisfy(\.isEnabled))
         XCTAssertEqual(plan.items.map(\.title), [
-            "Open Link in New Tab", "Open Link in New Window", "Open Link in Split View", "Open Link in Little ReArc",
+            "Open Link in New Tab", "Open Link in New Window", "Open Link in Split View", "Open Link in Little Darni",
             "Open Link in Private Window", "Save Link As…", "Copy Link Address", "Open Image in New Tab", "Save Image As…",
             "Copy Image", "Copy Image Address", "Search Google for Image", "Inspect",
         ])

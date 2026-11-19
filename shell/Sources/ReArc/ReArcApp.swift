@@ -7,7 +7,7 @@ struct ReArcApp: App {
     @NSApplicationDelegateAdaptor(WebKitAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup("ReArc") {
+        WindowGroup("Darni") {
             BrowserView(model: model)
                 .onAppear {
                     // The Settings scene opens through AppKit's action (macOS 14).
@@ -20,11 +20,11 @@ struct ReArcApp: App {
         }
         .windowStyle(.hiddenTitleBar)
 
-        WindowGroup("Little ReArc", id: "littleArc", for: LittleArcWindow.ID.self) { $windowID in
+        WindowGroup("Little Darni", id: "littleArc", for: LittleArcWindow.ID.self) { $windowID in
             if let windowID {
                 LittleArcWindowView(model: model, windowID: windowID)
             } else {
-                Text("No Little ReArc window")
+                Text("No Little Darni window")
             }
         }
         .windowStyle(.hiddenTitleBar)
@@ -42,16 +42,16 @@ struct ReArcApp: App {
         .commands {
             // The rest of the old ReArc menu's switches are in Settings (wave 35).
             CommandGroup(replacing: .appInfo) {
-                Button("About ReArc") { AboutWindowController.shared.present() }
+                Button("About Darni") { AboutWindowController.shared.present() }
             }
             CommandGroup(after: .appInfo) {
                 ShellMenuButtons(groups: ShellMenus.finishSetup(model), overrides: model.shortcutOverrides)
-                Button("Set ReArc as Default Browser…") { model.setAsDefaultBrowser() }
+                Button("Set Darni as Default Browser…") { model.setAsDefaultBrowser() }
                 Button("Air Traffic Control…") { model.showAirTrafficControl() }
             }
             // Warn before quitting: only ⌘Q asks.
             CommandGroup(replacing: .appTermination) {
-                Button("Quit ReArc") {
+                Button("Quit Darni") {
                     let open = NSApp.windows.filter { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }.count
                     if model.confirmQuit(browserWindows: open) { NSApp.terminate(nil) }
                 }
@@ -63,7 +63,7 @@ struct ReArcApp: App {
                     .keyboardShortcut("t")
                 Button("New Private Window") { model.openPrivateWindow() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
-                Button("New Little ReArc Window") { model.openBlankLittleArc() }
+                Button("New Little Darni Window") { model.openBlankLittleArc() }
                     .keyboardShortcut("n", modifiers: [.command, .option])
                 Button("Open Command Bar") { model.focusLocation() }
                     .keyboardShortcut("l")

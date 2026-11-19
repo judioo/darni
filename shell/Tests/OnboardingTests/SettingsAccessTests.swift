@@ -65,7 +65,7 @@ final class SettingsAccessTests: XCTestCase {
         let player = player(host, opened: { opened.append($0) }, elsewhere: true)
         player.resumeAtBrowsers(name: "Kai", colourIndex: 1)
         XCTAssertEqual(player.act2?.permissionButton, "Allow access\u{2026}")
-        XCTAssertEqual(player.act2?.permissionLines?.steps, "Under ReArc in Files & Folders, switch on Chrome, then come back.")
+        XCTAssertEqual(player.act2?.permissionLines?.steps, "Under Darni in Files & Folders, switch on Chrome, then come back.")
 
         player.allowAccess()
         XCTAssertEqual(opened, [.appData])
@@ -91,7 +91,7 @@ final class SettingsAccessTests: XCTestCase {
         player.resumeAtBrowsers(name: "Kai", colourIndex: 0)
         XCTAssertEqual(player.act2?.permissionLines?.explanation, "macOS keeps Chrome and Safari private.")
         XCTAssertEqual(player.act2?.permissionLines?.steps,
-                       "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
+                       "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
         XCTAssertEqual(player.act2?.offersRelaunch, false, "no relaunch before Settings was visited")
         player.allowAccess()
         XCTAssertEqual(opened, [.fullDiskAccess], "one pane covers Chrome and Safari")
@@ -99,8 +99,8 @@ final class SettingsAccessTests: XCTestCase {
         let act2 = try XCTUnwrap(player.act2)
         XCTAssertEqual(restored, 1)
         XCTAssertTrue(act2.offersRelaunch)
-        XCTAssertEqual(act2.permissionButton, "Relaunch ReArc")
-        XCTAssertEqual(act2.permissionLines?.steps, "Switched on? macOS applies it when ReArc starts again.")
+        XCTAssertEqual(act2.permissionButton, "Relaunch Darni")
+        XCTAssertEqual(act2.permissionLines?.steps, "Switched on? macOS applies it when Darni starts again.")
         XCTAssertNil(act2.choice, "no clean start while a browser waits")
         player.relaunchForAccess()
         XCTAssertEqual(host.relaunched, 1)
@@ -157,9 +157,9 @@ final class SettingsAccessTests: XCTestCase {
     func testQuitAndReopenIsRecommendedOnlyForASingleInstall() {
         var log = Act2Log(start: 0, sources: [], pending: [safariLocked])
         XCTAssertEqual(log.permissionLines?.steps,
-                       "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
+                       "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
         log.quitAndReopenIsSafe = true
-        XCTAssertEqual(log.permissionLines?.steps, "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose it.")
+        XCTAssertEqual(log.permissionLines?.steps, "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose it.")
     }
 
     func testActTwoWaitsForAScanStartedAtTheColourPick() throws {

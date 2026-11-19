@@ -10,7 +10,7 @@ enum MainMenuCommandIndex {
                         isEnabled: item.isEnabled, hasAction: item.action != nil,
                         requiresExactQuery: item.action == #selector(NSApplication.hide(_:))
                             || item.action == #selector(NSApplication.terminate(_:))
-                            || (path.hasPrefix("ReArc › ") && item.title == "Quit ReArc"))
+                            || (path.hasPrefix("Darni › ") && item.title == "Quit Darni"))
         }
     }
 

@@ -63,10 +63,10 @@ public enum OnePasswordConnect {
     /// installed, whatever the prompt's state.
     public static func showsSettingsRow(appInstalled: Bool) -> Bool { appInstalled }
 
-    public static let title = "Connect 1Password to ReArc"
+    public static let title = "Connect 1Password to Darni"
     /// The step itself, in the same words wherever it shows.
-    public static let steps = "Settings › Browser › Add Browser, then choose ReArc. Restart ReArc afterwards."
-    public static let message = "1Password unlocks in ReArc once you add ReArc as a browser in 1Password: " + steps
+    public static let steps = "Settings › Browser › Add Browser, then choose Darni. Restart Darni afterwards."
+    public static let message = "1Password unlocks in Darni once you add Darni as a browser in 1Password: " + steps
     public static let open = "Open 1Password"
     public static let done = "Done"
     /// The Settings row's label.
@@ -74,12 +74,12 @@ public enum OnePasswordConnect {
     /// The Settings row while a helper is attached. The steps stay under
     /// it: an attached helper is not 1Password's word that it trusts ReArc.
     public static let connected = "Connected"
-    public static let connectedMessage = "If 1Password stays locked in ReArc, add ReArc as a browser in 1Password: " + steps
+    public static let connectedMessage = "If 1Password stays locked in Darni, add Darni as a browser in 1Password: " + steps
 
     /// The words under the Settings row's label: the steps, in every state.
     public static func settingsMessage(connected: Bool) -> String { connected ? connectedMessage : message }
     /// The mini sidebar's space menu, which has no room for the card.
-    public static let menuTitle = "Connect 1Password to ReArc…"
+    public static let menuTitle = "Connect 1Password to Darni…"
     public static let menuHide = "Hide Connect 1Password"
 }
 

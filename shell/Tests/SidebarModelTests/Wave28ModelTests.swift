@@ -330,7 +330,7 @@ final class Wave28ModelTests: XCTestCase {
         XCTAssertEqual(imported.scriptBoost?.userScriptEnabled, false, "the user allows the script, not the file")
         XCTAssertFalse(BoostInterchange.defaultEnabledOnImport(imported))
         XCTAssertEqual(BoostInterchange.suggestedFileName(for: package), "Shared- a-b.rearcboost")
-        XCTAssertEqual(BoostInterchange.describe(.unsupportedVersion), "This boost was made by a newer ReArc.")
+        XCTAssertEqual(BoostInterchange.describe(.unsupportedVersion), "This boost was made by a newer Darni.")
         guard case .failure(.decodeFailed) = BoostInterchange.importJSON(Data("nope".utf8)) else { return XCTFail() }
     }
 

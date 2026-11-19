@@ -543,7 +543,7 @@ struct MiniSpaceHeaderView: View {
     private var menu: some View {
         Text(space.name)
         if model.onboardingSetupState.showsCard {
-            Button("Finish Setting Up ReArc…") { model.showBrowserImport() }
+            Button("Finish Setting Up Darni…") { model.showBrowserImport() }
             Button("Hide Finish Setup") { model.dismissOnboardingCard() }
         }
         if model.availableUpdate != nil {

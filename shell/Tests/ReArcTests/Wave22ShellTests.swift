@@ -372,7 +372,7 @@ final class Wave22ShellTests: XCTestCase {
         )
         let menu = presenter.makeMenu(plan)
         XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.map(\.title),
-                       ["Open Link in New Tab", "Open Link in New Window", "Open Link in Split View", "Open Link in Little ReArc",
+                       ["Open Link in New Tab", "Open Link in New Window", "Open Link in Split View", "Open Link in Little Darni",
                         "Open Link in Private Window", "Copy Link Address", "Inspect"])
         XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 2)
         XCTAssertFalse(menu.items.last?.isEnabled ?? true, "Inspect is disabled")
@@ -394,7 +394,7 @@ final class Wave22ShellTests: XCTestCase {
             NSMenuItem(title: item.title, action: nil, keyEquivalent: "")
         }
         XCTAssertEqual(menu.items.map(\.title), [
-            "Open Link in New Tab", "Open Link in Split View", "Open Link in Little ReArc", "Open Link in Private Window",
+            "Open Link in New Tab", "Open Link in Split View", "Open Link in Little Darni", "Open Link in Private Window",
             "Download Linked File", "Copy Link", "Search for “red pandas”",
         ])
     }

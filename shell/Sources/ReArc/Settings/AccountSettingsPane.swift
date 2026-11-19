@@ -108,7 +108,7 @@ struct AccountSettingsPane: View {
     @ViewBuilder
     private func cardMenu(_ card: MembershipCard) -> some View {
         if card.hasArcHistory {
-            Button("Replay Arc to ReArc") { model.membershipCard.playTransition(reduceMotion: reduceMotion) }
+            Button("Replay Arc to Darni") { model.membershipCard.playTransition(reduceMotion: reduceMotion) }
         }
         Button("Randomize") { model.randomizeMembershipCard() }
         if canImportArc {
@@ -153,7 +153,7 @@ struct AccountSettingsPane: View {
                     }
                     if model.membershipCard.card?.hasArcHistory == true {
                         Divider()
-                        Button("Replay Arc to ReArc") { model.membershipCard.playTransition(reduceMotion: reduceMotion) }
+                        Button("Replay Arc to Darni") { model.membershipCard.playTransition(reduceMotion: reduceMotion) }
                     }
                     if canImportArc {
                         Divider()
@@ -193,7 +193,7 @@ struct AccountSettingsPane: View {
                         Text(reason).font(.system(size: 11)).foregroundStyle(SettingsColors.tertiary)
                     }
                     SettingsHairline()
-                    Text("Sidebar changes stay on this Mac. Signing ReArc with an iCloud container is described in docs/ICLOUD-SETUP.md.")
+                    Text("Sidebar changes stay on this Mac. Signing Darni with an iCloud container is described in docs/ICLOUD-SETUP.md.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -229,7 +229,7 @@ struct AccountSettingsPane: View {
                         Text(error).font(.system(size: 11)).foregroundStyle(.red)
                     }
                     SettingsHairline()
-                    Text("Off unless you turn it on. ReArc syncs Spaces and their themes, Favorites, pinned tabs, folders, splits, Boosts and each profile's ad and tracker blocking settings through your iCloud account; only you can see them. Today tabs and easels stay on this Mac.")
+                    Text("Off unless you turn it on. Darni syncs Spaces and their themes, Favorites, pinned tabs, folders, splits, Boosts and each profile's ad and tracker blocking settings through your iCloud account; only you can see them. Today tabs and easels stay on this Mac.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     DisclosureGroup("Details", isExpanded: $showsSyncDetails) {
@@ -298,17 +298,17 @@ struct AccountSettingsPane: View {
         AccountBox {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Share ReArc with a Friend").font(.system(size: 13))
+                    Text("Share Darni with a Friend").font(.system(size: 13))
                     Spacer()
                     Button {
                         if let shareReArcAnchor { ShareReArc.show(from: shareReArcAnchor) }
                     } label: {
-                        Label("Share ReArc", systemImage: "gift")
+                        Label("Share Darni", systemImage: "gift")
                     }
                     .background(AnchorReader { shareReArcAnchor = $0 })
                 }
                 SettingsHairline()
-                Text("Send a friend a link to ReArc. Personal invite links are coming later.")
+                Text("Send a friend a link to Darni. Personal invite links are coming later.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -340,7 +340,7 @@ enum CloudAction: Identifiable {
         switch self {
         case .use: return "Use the iCloud sidebar on this Mac?"
         case .replace: return "Replace iCloud's sidebar with this Mac's?"
-        case .delete: return "Delete ReArc's sidebar from iCloud?"
+        case .delete: return "Delete Darni's sidebar from iCloud?"
         }
     }
 

@@ -394,7 +394,7 @@ struct BrowserView: View {
         if let ref = model.selectedEaselRef(in: windowID) {
             return model.easelTitle(for: ref)
         }
-        return model.selectedTab(in: windowID)?.displayTitle ?? "ReArc"
+        return model.selectedTab(in: windowID)?.displayTitle ?? "Darni"
     }
 
     /// Removes ⌘W from File > Close Window so the Tabs menu's Close Tab

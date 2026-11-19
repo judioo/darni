@@ -109,8 +109,8 @@ final class MembershipCardTests: XCTestCase {
         let rearc = date(2026, 11, 8)
         let stamps = MembershipCardStamps.stamps(arcSince: nil, rearcSince: rearc, now: rearc, calendar: utc)
         XCTAssertEqual(stamps.map(\.kind), [.rearcDayOne])
-        XCTAssertEqual(stamps.first?.ring, "REARC · DAY ONE")
-        XCTAssertEqual(stamps.first?.accessibilityLabel, "Day one with ReArc")
+        XCTAssertEqual(stamps.first?.ring, "DARNI · DAY ONE")
+        XCTAssertEqual(stamps.first?.accessibilityLabel, "Day one with Darni")
         XCTAssertTrue(MembershipCardStamps.arcStamps(arcSince: date(2026, 1, 1), until: rearc, calendar: utc).isEmpty, "under a year")
     }
 
@@ -257,7 +257,7 @@ final class MembershipCardTests: XCTestCase {
         XCTAssertEqual(card.arcPalette, 6, "the Arc-era card's colours")
         XCTAssertEqual(card.palette, 0, "after the transition, the theme's")
         XCTAssertEqual(card.arcName, "Akilu")
-        XCTAssertEqual(card.rearcMemberSince, fresh.rearcMemberSince, "ReArc's date is set once")
+        XCTAssertEqual(card.rearcMemberSince, fresh.rearcMemberSince, "Darni's date is set once")
         XCTAssertTrue(card.hasArcHistory)
         XCTAssertFalse(card.transitionShown)
         // A card file without a member-since date has no story to tell.

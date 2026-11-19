@@ -423,7 +423,7 @@ struct CommandBarResultRow: View, Equatable {
     /// Links, ⇧↩ on a search opens its top result instead of Little ReArc.
     static func modifierHelp(for kind: CommandBarSearch.ResultKind, instantLinks: Bool) -> String {
         guard kind != .command else { return "" }
-        let shift = instantLinks && (kind == .search || kind == .suggestion) ? "⇧↩ Top Result" : "⇧↩ Little ReArc"
+        let shift = instantLinks && (kind == .search || kind == .suggestion) ? "⇧↩ Top Result" : "⇧↩ Little Darni"
         return "↩ Open · ⌘↩ New Tab · ⌥↩ Split View · \(shift)"
     }
 

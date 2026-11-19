@@ -186,7 +186,7 @@ public final class SidebarSyncCoordinator {
     /// carries on, and its result counts whenever it comes. No limit on a
     /// look that is still reading.
     public var stallTimeout: TimeInterval = 30
-    public nonisolated static let stalledMessage = "iCloud hasn't sent anything for a while. ReArc is still waiting; check your connection."
+    public nonisolated static let stalledMessage = "iCloud hasn't sent anything for a while. Darni is still waiting; check your connection."
 
     /// Looks at iCloud without changing anything there or here. `progress`
     /// hears how far it got (never after this returns).
@@ -242,7 +242,7 @@ public final class SidebarSyncCoordinator {
 
     private static func unreachableMessage(_ error: SyncTransportError) -> String {
         switch error {
-        case .networkUnavailable: return "ReArc can't reach iCloud. Check your connection and try again."
+        case .networkUnavailable: return "Darni can't reach iCloud. Check your connection and try again."
         case .permissionFailure: return error.userMessage
         default: return "iCloud is unavailable right now. Try again in a moment."
         }
@@ -318,7 +318,7 @@ public final class SidebarSyncCoordinator {
 
     // MARK: - One profile in iCloud
 
-    nonisolated static let profileBackupFailedMessage = "ReArc couldn't save a copy of what would be deleted, so nothing was deleted."
+    nonisolated static let profileBackupFailedMessage = "Darni couldn't save a copy of what would be deleted, so nothing was deleted."
 
     /// Deletes one profile from iCloud (`CloudProfileDeletion`): the person
     /// confirmed `confirmed`, and the caller has just looked again (`found`).
@@ -431,7 +431,7 @@ public final class SidebarSyncCoordinator {
 
     /// `changed`: iCloud's copy was no longer the one read; otherwise iCloud failed.
     private nonisolated static func cutShort(_ written: Int, of total: Int, changed: Bool) -> String {
-        let why = changed ? "iCloud changed while ReArc was deleting" : "ReArc lost touch with iCloud while deleting"
+        let why = changed ? "iCloud changed while Darni was deleting" : "Darni lost touch with iCloud while deleting"
         guard written > 0 else { return why + ", so nothing was deleted. Look at iCloud again and try again." }
         return why + ": \(written.formatted()) of \(total.formatted()) changes were made. Look at iCloud again to see what is left."
     }

@@ -3,10 +3,10 @@ import ImageIO
 import SidebarModel
 import SwiftUI
 
-/// ReArc › About ReArc: Arc's small About window (close only, no title),
-/// with the ReArc sting where Arc shows its icon. The sting plays once each
-/// time the window opens and rests on its last frame, the sunrise mark and
-/// the wordmark; with Reduce Motion it shows only that frame. Under the
+/// Darni › About Darni: Arc's small About window (close only, no title),
+/// with the sunrise sting where Arc shows its icon. The sting plays once each
+/// time the window opens and rests on its last frame, the sunrise mark, with
+/// the wordmark under it; with Reduce Motion it shows only that. Under the
 /// version, the latest version in the update feed (`AboutUpdateLine`).
 final class AboutWindowController: NSWindowController {
     static let width: CGFloat = 360
@@ -28,7 +28,7 @@ final class AboutWindowController: NSWindowController {
         )
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
-        window.title = "About ReArc"
+        window.title = "About Darni"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
@@ -113,7 +113,7 @@ struct AboutView: View {
 
     private var attribution: AttributedString {
         var text = (try? AttributedString(markdown:
-            "ReArc is made possible by the [Chromium](https://www.chromium.org) open source project, "
+            "Darni is made possible by the [Chromium](https://www.chromium.org) open source project, "
             + "Chromium's [open source software](chrome://credits), as well as other [open source software](https://github.com/judioo/rearc).")) ?? AttributedString()
         for run in text.runs where run.link != nil {
             text[run.range].underlineStyle = .single
@@ -145,7 +145,7 @@ struct AboutUpdateView: View {
                 if let action = line?.action {
                     Button(action.title) { perform(action) }
                         .controlSize(.small)
-                        .accessibilityHint(action == .checkAgain ? "Checks for updates again" : "Quits ReArc, installs the update and opens it again")
+                        .accessibilityHint(action == .checkAgain ? "Checks for updates again" : "Quits Darni, installs the update and opens it again")
                 }
             }
             .frame(height: Self.rowHeight)
@@ -175,8 +175,39 @@ private struct AboutStingRepresentable: NSViewRepresentable {
 
 /// Resources/AboutSting.gif, played once by NSImageView and then swapped for
 /// its last frame, since NSImageView loops whatever the GIF says.
+///
+/// The GIF is the sky and the mark only: its last 31 frames, which faded in the
+/// old "ReArc" wordmark, were cut off when the app was renamed (the 82 frames
+/// kept are byte for byte the original's). The wordmark is drawn here instead,
+/// as text, where the GIF had it, and fades in as the GIF's did.
 final class AboutStingView: NSImageView {
     static let aspect: CGFloat = 406.0 / 720.0
+    /// The wordmark's centre, down from the top, as a share of the height (270 of the GIF's 406 px).
+    static let wordmarkCenter: CGFloat = 270.0 / 406.0
+    /// The GIF's wordmark took 16 frames of 40 ms to arrive.
+    static let wordmarkFade: TimeInterval = 0.64
+
+    /// "Dar" in the ink colour and "ni" in the arc colour, 13 pt bold, letter spacing -0.02 em
+    /// (brand board, About window). The sting's sky is light in both appearances, so these are
+    /// the colours for a light background. Inter is the brand typeface; it is not bundled, so
+    /// this is the system font at the same weight unless the Mac has Inter.
+    static let wordmark: NSAttributedString = {
+        let size: CGFloat = 13
+        let font = NSFont(name: "Inter-Bold", size: size) ?? .systemFont(ofSize: size, weight: .bold)
+        func color(_ hex: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+        }
+        let text = NSMutableAttributedString(string: Brand.wordmarkLead, attributes: [
+            .font: font, .foregroundColor: color(Brand.inkOnLight), .kern: -0.02 * size,
+        ])
+        text.append(NSAttributedString(string: Brand.wordmarkTail, attributes: [
+            .font: font, .foregroundColor: color(Brand.arcOnLight), .kern: -0.02 * size,
+        ]))
+        return text
+    }()
+
+    private let wordmarkLabel = NSTextField(labelWithAttributedString: AboutStingView.wordmark)
 
     private static let url = Bundle.main.url(forResource: "AboutSting", withExtension: "gif")
     private var restTask: DispatchWorkItem?
@@ -206,8 +237,19 @@ final class AboutStingView: NSImageView {
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         animates = true
-        setAccessibilityLabel("ReArc")
+        setAccessibilityLabel(Brand.name)
+        wordmarkLabel.setAccessibilityElement(false)
+        addSubview(wordmarkLabel)
         rest()
+    }
+
+    override func layout() {
+        super.layout()
+        // Centred where the GIF drew its wordmark; NSImageView's y runs up.
+        let size = wordmarkLabel.fittingSize
+        wordmarkLabel.frame = NSRect(x: ((bounds.width - size.width) / 2).rounded(),
+                                     y: (bounds.height * (1 - Self.wordmarkCenter) - size.height / 2).rounded(),
+                                     width: size.width, height: size.height)
     }
 
     @available(*, unavailable)
@@ -216,21 +258,35 @@ final class AboutStingView: NSImageView {
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
 
     func play() {
-        guard let frames = Self.frames else {
-            image = NSApp.applicationIconImage
-            return
-        }
+        guard let frames = Self.frames else { return rest() }
         restTask?.cancel()
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return rest() }
         // A fresh image restarts the animation from the first frame.
         image = nil
         image = frames.animated
-        let task = DispatchWorkItem { [weak self] in self?.rest() }
+        wordmarkLabel.alphaValue = 0
+        let task = DispatchWorkItem { [weak self] in self?.rest(fadingIn: true) }
         restTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + frames.duration, execute: task)
     }
 
-    private func rest() {
-        image = Self.frames?.last ?? NSApp.applicationIconImage
+    /// The last frame with the wordmark. Without the GIF it is the app icon, which carries
+    /// the mark alone, so the wordmark stays hidden rather than sit across it.
+    private func rest(fadingIn: Bool = false) {
+        guard let last = Self.frames?.last else {
+            image = NSApp.applicationIconImage
+            wordmarkLabel.isHidden = true
+            return
+        }
+        image = last
+        wordmarkLabel.isHidden = false
+        guard fadingIn else {
+            wordmarkLabel.alphaValue = 1
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.wordmarkFade
+            wordmarkLabel.animator().alphaValue = 1
+        }
     }
 }

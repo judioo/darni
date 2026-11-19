@@ -174,7 +174,7 @@ final class WebKitDownloadCenter: NSObject, DownloadBackend {
         var url = URL(fileURLWithPath: path)
         var values = URLResourceValues()
         var properties: [String: Any] = [
-            kLSQuarantineAgentNameKey as String: "ReArc",
+            kLSQuarantineAgentNameKey as String: "Darni",
             kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
         ]
         if let origin = URL(string: origin) { properties[kLSQuarantineDataURLKey as String] = origin }

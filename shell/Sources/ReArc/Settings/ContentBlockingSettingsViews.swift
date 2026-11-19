@@ -10,7 +10,7 @@ struct ContentBlockingSettingsGroup: View {
     let profile: Profile
     @State private var showsAdvanced = false
 
-    static let info = "ReArc stops ads and trackers from loading in this profile, using public filter lists it keeps up to date. "
+    static let info = "Darni stops ads and trackers from loading in this profile, using public filter lists it keeps up to date. "
         + "What is blocked is counted on this Mac only. If a site stops working, turn blocking off for it in the site controls, "
         + "the button beside the address. Private windows follow the profile."
     static let levelInfo = "Trackers only: EasyPrivacy and Peter Lowe’s list. Ads and trackers adds EasyList. "
@@ -128,7 +128,7 @@ struct ContentBlockingAdvancedView: View {
 
     private var exceptions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            title("Sites with blocking off", note: "ReArc blocks nothing on these sites. Add one here, or from a site’s controls beside the address.")
+            title("Sites with blocking off", note: "Darni blocks nothing on these sites. Add one here, or from a site’s controls beside the address.")
             if settings.exceptions.isEmpty {
                 Text("No sites yet.").foregroundStyle(.tertiary)
             } else {

@@ -11,7 +11,7 @@ struct MaxSettingsPane: View {
     @State private var addingAssistant = false
 
     static let intro = "Small scripted helpers. No AI: they follow fixed rules on this Mac and send nothing."
-    static let assistantsIntro = "An assistant here is only a shortcut to that company’s own site: ReArc opens the site with what you typed. ReArc itself runs no AI."
+    static let assistantsIntro = "An assistant here is only a shortcut to that company’s own site: Darni opens the site with what you typed. Darni itself runs no AI."
     static let footer = "These run on this Mac. Nothing is sent."
     static let assistantsFooter = "An assistant opens its own site with what you typed."
 
@@ -159,7 +159,7 @@ private struct AddAssistantSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add an Assistant").font(.headline)
-            Text("A shortcut to a site that takes your text in its address. ReArc opens that address; it runs no AI itself.")
+            Text("A shortcut to a site that takes your text in its address. Darni opens that address; it runs no AI itself.")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Form {

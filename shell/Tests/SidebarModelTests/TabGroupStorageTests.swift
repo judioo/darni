@@ -185,7 +185,7 @@ final class TabGroupPersistenceTests: XCTestCase {
         object["tabGroups"] = groups
         let decoded = try JSONDecoder().decode(SidebarSnapshot.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertEqual(decoded.tabGroups.groups.map(\.id), [f.group], "the row that does not read is left out; the others load")
-        XCTAssertEqual(decoded.tabGroups.groups.first?.color, .grey, "a colour a newer ReArc added reads as grey")
+        XCTAssertEqual(decoded.tabGroups.groups.first?.color, .grey, "a colour a newer Darni added reads as grey")
         XCTAssertEqual(decoded.tabGroups.groups.first?.tabs.count, 2)
     }
 

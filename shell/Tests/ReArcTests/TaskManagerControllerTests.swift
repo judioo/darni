@@ -207,7 +207,7 @@ final class TaskManagerControllerTests: XCTestCase {
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
         XCTAssertFalse(controller.canEndSelection)
         controller.selection = [100]
-        XCTAssertFalse(controller.canEndSelection, "ReArc itself")
+        XCTAssertFalse(controller.canEndSelection, "Darni itself")
         controller.selection = [200]
         XCTAssertTrue(controller.canEndSelection)
         controller.selection = [100, 310]
@@ -269,7 +269,7 @@ final class TaskManagerControllerTests: XCTestCase {
     }
 
     func testOnlyAChildOfReArcIsEverSignalled() {
-        XCTAssertFalse(TaskManagerProcessControl.terminate(getpid()), "never ReArc itself")
+        XCTAssertFalse(TaskManagerProcessControl.terminate(getpid()), "never Darni itself")
         XCTAssertFalse(TaskManagerProcessControl.terminate(0))
         XCTAssertFalse(TaskManagerProcessControl.terminate(-1), "kill(-1) would signal every process of the user")
         XCTAssertFalse(TaskManagerProcessControl.terminate(1), "launchd is not a child of the test")

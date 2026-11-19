@@ -71,22 +71,22 @@ public struct Act2Log: Equatable, Sendable {
         let explanation = "macOS keeps \(names) private."
         if offersRelaunch {
             return (explanation, permission == .fullDiskAccess
-                ? "Switched on? macOS applies it when ReArc starts again."
-                : "Switched on and still locked? ReArc may need to start again.")
+                ? "Switched on? macOS applies it when Darni starts again."
+                : "Switched on and still locked? Darni may need to start again.")
         }
         if settingsElsewhere { return (explanation, "System Settings opened on your other display.") }
         switch permission {
         case .fullDiskAccess:
             return (explanation, quitAndReopenIsSafe
-                ? "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose it."
-                : "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
-        case .appData: return (explanation, "Under ReArc in Files & Folders, switch on \(names), then come back.")
+                ? "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose it."
+                : "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
+        case .appData: return (explanation, "Under Darni in Files & Folders, switch on \(names), then come back.")
         }
     }
 
     /// The one button: "Allow access…", or "Relaunch ReArc" once a new
     /// launch is what macOS is waiting for.
-    public var permissionButton: String { offersRelaunch ? "Relaunch ReArc" : "Allow access\u{2026}" }
+    public var permissionButton: String { offersRelaunch ? "Relaunch Darni" : "Allow access\u{2026}" }
 
     /// The pane the one "Allow access…" button opens: Full Disk Access when
     /// Safari is among them (it covers the others too), else Files & Folders.
