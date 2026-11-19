@@ -430,7 +430,7 @@ final class ContentBlockingShellTests: XCTestCase {
         let url = URL(string: "https://someone.web.app/")!
         let tab = model.store.addTab(kind: .today, title: "App", url: url)
         let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
-        XCTAssertEqual(ContentBlockingHost.exceptionHost(for: url), "web.app", "what the shell alone would have written for")
+        XCTAssertEqual(BoostScopeMatcher.registrableDomain("someone.web.app"), "web.app", "the shell's guess at this page's site")
         model.contentBlocking.blockedHosts = { _ in Self.blockedReply(page: "someone.web.app") }
         let list = try XCTUnwrap(model.blockedList(for: engine))
         XCTAssertEqual(list.allowSite, "someone.web.app")

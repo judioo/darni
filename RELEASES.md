@@ -33,7 +33,7 @@ lines and this section starts empty again.
   private window shows the list without Allow. Very busy pages show the first 100 sites and how
   many more requests were blocked.
 
-## ReArc 2026.1119.1049 — 2026-11-19
+## ReArc 2026.1119.1053 — 2026-11-19
 
 **New**
 - A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
@@ -61,6 +61,14 @@ lines and this section starts empty again.
   switch away, as before. ReArc's log now says when a request is refused.
 
 **Security**
+- A long site address shortened in the address bar, Little ReArc, Peek and the permission and
+  sign-in prompts always keeps the site's own name. Until now a long name on a shared address
+  such as web.app, github.io or vercel.app could show as "…web.app".
+- Turn Off Blocking for This Site turns blocking off for that site only, the address you are on
+  without "www.", and its subdomains. Until now it could cover far more: on a site such as
+  someone.web.app it turned blocking off for every site under web.app, and the same for other
+  shared addresses. If you turned blocking off on such a site, turn it back on there and off
+  again; Settings › Profiles lists the sites blocking is off for.
 - A passkey or security key request that you left open in a tab or window you no longer see is
   cancelled when a page in front of you starts one. Until now it stayed open, and a touch of
   your security key meant for the page in front could have answered the older request.

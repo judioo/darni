@@ -217,8 +217,9 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
         return exceptions.first { ContentBlockingHost.covers($0, host: host) }
     }
 
-    /// Turns blocking off or back on for `url`'s site. Off adds the site's
-    /// registrable host; on removes every exception that covers the page.
+    /// Turns blocking off or back on for `url`'s site. Off adds the page's
+    /// host (`ContentBlockingHost.exceptionHost`); on removes every exception
+    /// that covers the page.
     /// False when the page has no site (about:, file:, the engine's own pages).
     @discardableResult
     public mutating func setException(_ excepted: Bool, forPage url: URL?) -> Bool {
@@ -285,19 +286,17 @@ public enum ContentBlockingHost {
         return isHost(host) ? host : nil
     }
 
-    /// The host an exception for `url`'s site is kept under (spec §2: the
-    /// registrable host, or the exact one): the registrable domain, so the
-    /// site's own subdomains are covered, except for an address, a
-    /// single-label name and a shared-hosting domain (`name.github.io`),
-    /// where the exact host is the site.
+    /// The host an exception for `url`'s site is kept under: the page's own
+    /// host (without `www.`), which is always one site, and its subdomains
+    /// are covered. Not the registrable domain: the shell has no public
+    /// suffix list, and its guess (`BoostScopeMatcher.registrableDomain`)
+    /// made `someone.web.app` an exception for all of `web.app` (security
+    /// CB-12). The site from the engine's suffix list replaces this later.
+    /// An exception stored under a suffix by 1027 stays until the site is
+    /// turned back on: on removes every exception that covers the page.
     public static func exceptionHost(for url: URL?) -> String? {
         guard let host = pageHost(url) else { return nil }
-        if !host.contains(".") || host.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) {
-            return host
-        }
-        let registrable = BoostScopeMatcher.registrableDomain(host)
-        if BoostPublicSuffixList.isSharedHostingRegistrableDomain(registrable) { return host }
-        return normalized(registrable) ?? host
+        return normalized(host) ?? host
     }
 
     /// An exception covers its own host and every subdomain of it, as the
