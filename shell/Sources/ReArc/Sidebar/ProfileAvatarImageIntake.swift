@@ -45,6 +45,22 @@ enum ProfileAvatarImageIntake {
         }
     }
 
+    /// Choose Image…: one image file from an open panel; nil when it was cancelled.
+    @MainActor static func chooseFile(message: String) -> Source? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        // An alias is read as the alias file, never followed to what it names.
+        panel.resolvesAliases = false
+        panel.message = message
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return .file(url)
+    }
+
+    /// What Paste Image says when the pasteboard holds no image.
+    static let nothingToPaste = "There's no image to paste. Copy an image or an image file first."
+
     /// A copied file first (Finder), then image data (a screenshot, a browser's Copy Image).
     static func source(from pasteboard: NSPasteboard) -> Source? {
         let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]

@@ -155,20 +155,13 @@ struct ProfileEditorView: View {
     }
 
     private func chooseImage() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        // An alias is read as the alias file, never followed to what it names.
-        panel.resolvesAliases = false
-        panel.message = "Choose an image for this profile's avatar."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        adopt(.file(url))
+        guard let source = ProfileAvatarImageIntake.chooseFile(message: "Choose an image for this profile's avatar.") else { return }
+        adopt(source)
     }
 
     private func pasteImage() {
         guard let source = ProfileAvatarImageIntake.source(from: .general) else {
-            imageProblem = "There's no image to paste. Copy an image or an image file first."
+            imageProblem = ProfileAvatarImageIntake.nothingToPaste
             return
         }
         adopt(source)
