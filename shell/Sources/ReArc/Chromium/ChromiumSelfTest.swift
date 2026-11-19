@@ -3866,6 +3866,8 @@ extension ChromiumSelfTest {
             // `site.host` is the display host, with the fixture server's port; a site name has none.
             let pageHost = engine.currentURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.host }?.lowercased()
             try check(pageSite == pageHost, "the engine names the page's site '\(pageSite)', and the page is on \(pageHost ?? "nil") (\(site.host))")
+            // A page that loaded is no error page (bridge 0.80.0 says which; 0.79.0 does not say and reads as none).
+            try check(!shown.pageIsError, "the engine calls the fixture's loaded page an error page")
             log("PASS blocked list: \(describe(list())) for a page that asked a tracker's host and an ad server's host; "
                 + "the engine counts 2 and the row offers the list")
 

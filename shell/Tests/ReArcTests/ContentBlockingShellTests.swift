@@ -539,6 +539,34 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertNil(model.blockedList(for: engine, drawnFor: site))
     }
 
+    /// A page whose own request was blocked is an error page. Blocking can
+    /// be turned off for its site from there, which is the way in. Allow
+    /// writes nothing from it.
+    func testOnAnErrorPageTheSwitchWorksAndAllowDoesNot() async throws {
+        let model = launch()
+        let recorder = RecordingEngine()
+        try await attach(model, engine: recorder)
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        model.contentBlockingProfileOpened(engineProfile: 4, profile: model.profileID(for: tab))
+        model.contentBlocking.blockedHosts = { _ in
+            #"{"page":{"host":"news.test","registrable":true,"error":true},"hosts":[{"host":"news.test","count":1,"registrable":true,"lists":["easylist"]}],"more":0}"#
+        }
+        _ = recorder.take()
+
+        let list = try XCTUnwrap(model.blockedList(for: engine, drawnFor: site), "the list is still the page's")
+        XCTAssertFalse(model.canAllowBlockedHosts(for: engine, on: list))
+        model.setBlockedHost("news.test", allowed: true, on: "news.test", of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "")
+        XCTAssertEqual(recorder.take(), [])
+
+        model.setContentBlocking(false, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().exceptions, ["news.test"])
+        XCTAssertEqual(recorder.take(), ["exceptions 4 news.test"])
+    }
+
     func testASuffixExceptionIsNarrowedToThePagesSiteAndATypedSuffixIsRefusedWithAReason() async throws {
         SiteNames.shared = SiteNames { host in
             host == "web.app" ? #"{"host":"web.app","registrable":false,"suffix":true}"#

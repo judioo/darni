@@ -1,0 +1,148 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 the blocked list's page is the primary main frame's, and says when it is an error page
+
+tab/098 named the tab's own site in ReArcTabCopyBlockedHosts' reply ("page")
+from WebContents::GetLastCommittedURL(), and said in its header and in
+C-ABI.md "the primary main frame's committed address". tab/096 has a helper
+for a tab's site, SiteOf, which reads the primary main frame's committed
+origin. The consistency review of the range asked for one of the two, or
+words that match the code (REVIEW-efda98e4-1777874b.md, 10; it bears on
+security BL-10 and BL-11).
+
+What Chromium does, read at the pin:
+
+- WebContentsImpl::GetLastCommittedURL() is the last committed navigation
+  entry's virtual URL: the address bar's text. It is not a frame's URL, and
+  for an entry with a virtual URL the two differ.
+- RenderFrameHost::GetLastCommittedURL() is the frame's. On an error page it
+  "continues to return the failed destination target URL", and Chromium's
+  header says of both functions that they "should not be used directly for
+  security, authorization, or permission checks without verifying
+  !IsErrorDocument()".
+- RenderFrameHost::GetLastCommittedOrigin(), which tab/096 reads, is opaque
+  on an error page, so tab/096 answers "no site" there.
+
+So this reply now reads the primary main frame, as tab/096 does, and its
+committed URL, not the entry's. It does not take the origin, as tab/096
+does: a page whose own request the blocker stopped is an error page, and
+that is the one page where "Turn Off Blocking for This Site" is the way in.
+With the origin it would have no site and the switch would refuse. The
+reply says instead when the frame is an error document ("error": true), and
+the host writes no rule between two sites from such a page (Allow), because
+no document of that site is loaded. The switch for the site alone stays.
+
+No new call and no change to the header but the comment: a host tells a
+reply of this bridge from one of 0.79.0 by the key. Nothing else of the
+reply changes.
+
+Type-checked with the tree's clang from a scratch view, then built on
+2026-11-20 in out/ReArc-codecs-arm64 (overlay 6274321b22): the framework
+carries bridge 0.80.0 and still exports both calls of tab/098; the series
+replays 117 of 117 to the pin's tree and to the head's.
+engine/tests/check_blocked_hosts_patch.py holds the frame, the flag, and
+that the navigation entry is no longer read. Not run: no page has been
+loaded on this engine, and no self-test step makes an error page.
+
+Touches: chrome/browser/rearc_bridge/{rearc_content_blocker.cc,
+rearc_engine_abi.h, rearc_engine_entry_mac.mm}.
+Applies after tab/098 (the same lines of the bridge file and the header).
+
+Bridge 0.80.0, ABI 1.69 unchanged, no new feature string. No struct changes.
+
+Last rebased: 2026-11-20 onto Chromium 156.0.8078.109 (overlay 9f2767b4c1).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
+index 4a39321..49dc9fd 100644
+--- a/chrome/browser/rearc_bridge/rearc_content_blocker.cc
++++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
+@@ -88,6 +88,7 @@
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/navigation_throttle.h"
+ #include "content/public/browser/navigation_throttle_registry.h"
++#include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/web_contents.h"
+ #include "extensions/browser/api/declarative_net_request/action_tracker.h"
+ #include "extensions/browser/api/declarative_net_request/composite_matcher.h"
+@@ -1204,7 +1205,8 @@ std::optional<std::string> BlockedListId(const extensions::Extension& blocker,
+ // up, as the counts are. The sites are never logged.
+ // "page" is the tab's own site, from the same function and so the same
+ // public suffix list as the blocked sites: the site of the primary main
+-// frame's committed address, http and https only. The host writes "allow this
++// frame's committed address, http and https only, with "error" for an error
++// document (tab/099). The host writes "allow this
+ // host on this site" from the two names of one reply, and reads the reply
+ // again before it writes: an address that is only pending is not in it
+ // (security BL-10, BL-11).
+@@ -1272,14 +1274,29 @@ std::string BlockedHostsJson(uint64_t tab_id) {
+   }
+   base::DictValue reply;
+   if (contents) {
+-    const GURL& page = contents->GetLastCommittedURL();
++    // The page is the primary main frame's document, the frame tab/096 reads
++    // a site's permissions from (SiteOf, its committed origin). tab/098 read
++    // the navigation entry's virtual URL here (WebContents::
++    // GetLastCommittedURL), which is the address bar's text and not a
++    // frame's: for a page with a virtual URL the two differ. This reads the
++    // frame's committed URL. It cannot use the origin as tab/096 does: on an
++    // error page the origin is opaque and there would be no site, and a page
++    // whose own request the blocker stopped is an error page, the one place
++    // where turning blocking off for that site is the way in. On an error
++    // document the committed URL is the address that failed (Chromium:
++    // "should not be used directly for security, authorization, or permission
++    // checks without verifying !IsErrorDocument()"), so the reply says so
++    // ("error") and the host writes no rule between two sites from it.
++    content::RenderFrameHost* frame = contents->GetPrimaryMainFrame();
++    const GURL& page = frame->GetLastCommittedURL();
+     std::string page_site;
+     bool page_is_one_site = false;
+     if (page.SchemeIsHTTPOrHTTPS() &&
+         dnr::ActionTracker::GetSiteOfUrl(page, &page_site, &page_is_one_site)) {
+       reply.Set("page", base::DictValue()
+                             .Set("host", std::move(page_site))
+-                            .Set("registrable", page_is_one_site));
++                            .Set("registrable", page_is_one_site)
++                            .Set("error", frame->IsErrorDocument()));
+     }
+   }
+   reply.Set("hosts", std::move(hosts));
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 2df52cb..152031d 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -1926,14 +1926,19 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
+ // Blocked hosts (content_blocking_hosts, ABI 1.69): what ReArcTabGetBlockedCount
+ // counts, by site, for a "Blocked on this page" list. *json is +1 malloc,
+ // NUL-terminated UTF-8; free with ReArcBufferFree.
+-//   {"page":{"host":"example.com","registrable":true},
++//   {"page":{"host":"example.com","registrable":true,"error":false},
+ //    "hosts":[{"host":"doubleclick.net","count":3,"registrable":true,
+ //              "lists":["easylist"]}],"more":0}
+ // page: the tab's own site, named as a blocked one is, from the primary main
+ // frame's committed address; absent when that is not http or https. A host
+ // that writes a rule "allow this host on this site" takes both names from one
+ // reply, and reads the reply again before it writes: if page has changed, the
+-// tab has moved on and nothing is written.
++// tab has moved on and nothing is written. error (bridge 0.80.0): the frame
++// shows an error page, and host is the site of the address that failed, not
++// of a document of that site. A host writes no such rule from it; a setting
++// for that site alone (blocking off for it) is still the person's to make. A
++// reply without the key is from bridge 0.79.0, which took the address from
++// the navigation entry and did not say.
+ // host: the registrable domain of a blocked request's host (private
+ // registries count: "someone.github.io"), lower-case ASCII (punycode); the
+ // host itself when it has no registrable domain. registrable: the name is
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index 52f630e..d26be2a 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.79.0";
++  return "0.80.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(

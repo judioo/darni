@@ -138,6 +138,8 @@ class BlockedHostsPatchTests(unittest.TestCase):
         # Security BL-10, BL-11: the host writes "allow this host on this site" from two names of
         # one reply. The page's must be the committed address (never a pending one), from the
         # same function, and so the same public suffix list, as a blocked site's.
+        # tab/098 read the navigation entry's URL here; tab/099 moves the read to the primary main
+        # frame (PageFramePatchTests below). The line is 098's as that patch still has it.
         reply = function_body(self.bridge, "std::string BlockedHostsJson(")
         self.assertIn("const GURL& page = contents->GetLastCommittedURL();", reply)
         for pending in ("GetVisibleURL", "GetURL()", "GetPendingEntry", "GetVirtualURL"):
@@ -206,6 +208,57 @@ class BlockedHostsPatchTests(unittest.TestCase):
         call = function_body(self.bridge, "ReArcStatus ReArcTabCopyBlockedHosts(")
         self.assertIn("CHECK(pthread_main_np());", call)
         self.assertIn("if (!json) {\n    return REARC_INVALID_ARGUMENT;", call)
+
+
+PAGE_PATCH = PATCHES / "099-blocked-hosts-page-frame.patch"
+
+
+class PageFramePatchTests(unittest.TestCase):
+    """tab/099: where the reply's "page" is read from (consistency review 10; security BL-10, BL-11).
+
+    Chromium says of a tab's and a frame's committed URL that on an error page they are the
+    address that failed, and that neither is for a permission decision without a check for an
+    error document. The reply reads the primary main frame, as tab/096's SiteOf does, and says
+    when the frame is an error document, so the host writes no rule between two sites from it.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.patch = PAGE_PATCH.read_text()
+        diff = file_diff(cls.patch, BRIDGE)
+        cls.added = "\n".join(changed(diff, "+"))
+        cls.removed = "\n".join(changed(diff, "-"))
+
+    def test_the_patch_touches_the_bridge_only_and_adds_no_call(self):
+        self.assertEqual(set(re.findall(r"^diff --git a/(\S+) b/", self.patch, re.M)), {
+            BRIDGE, "chrome/browser/rearc_bridge/rearc_engine_abi.h", "chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm"})
+        header = "\n".join(changed(file_diff(self.patch, "chrome/browser/rearc_bridge/rearc_engine_abi.h"), "+"))
+        self.assertNotIn("REARC_ENGINE_EXPORT", header)
+        self.assertNotIn("REARC_ABI_MINOR_VERSION", header)
+        self.assertTrue(all(line.startswith("//") for line in header.split("\n") if line), "the header gains comment lines only")
+        self.assertIn('return "0.80.0";', self.patch)
+
+    def test_the_page_is_the_primary_main_frames_committed_url(self):
+        self.assertIn("const GURL& page = contents->GetLastCommittedURL();", self.removed, "the navigation entry's URL is no longer read")
+        self.assertIn("content::RenderFrameHost* frame = contents->GetPrimaryMainFrame();\n    const GURL& page = frame->GetLastCommittedURL();",
+                      self.added)
+        # Never a pending or visible address, and never the entry's.
+        code = re.sub(r"//[^\n]*", "", self.added)
+        for other in ("GetVisibleURL", "GetPendingEntry", "GetVirtualURL", "GetController", "contents->GetLastCommittedURL"):
+            self.assertNotIn(other, code, other)
+
+    def test_an_error_document_is_said_to_be_one(self):
+        self.assertIn('.Set("error", frame->IsErrorDocument()));', self.added)
+        self.assertEqual(self.added.count("IsErrorDocument()"), 2, "the call, and Chromium's own warning quoted beside it")
+        # The page's name still goes through the function a blocked site's does.
+        self.assertNotIn("GetSiteOfUrl", self.removed)
+        self.assertNotIn("SchemeIsHTTPOrHTTPS", self.removed)
+
+    def test_nothing_added_takes_a_site_out_of_memory(self):
+        for leak in LEAKS:
+            self.assertNotIn(leak, self.added, leak)
+        self.assertEqual(set(string_literals(re.sub(r"^#include [^\n]*$", "", self.added, flags=re.M))), {"registrable", "error"},
+                         "the one new key, on the line of the key before it")
 
 
 if __name__ == "__main__":

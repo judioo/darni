@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
-ABI **1.69** (major remains 1 for existing hosts), bridge **0.79.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, and not yet run). Public header:
+ABI **1.69** (major remains 1 for existing hosts), bridge **0.80.0**, compiled Chromium **156.0.8078.109**
+(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2971,13 +2971,16 @@ page. This call says for which sites.
 | `ReArcTabCopyBlockedHosts(tab, &json)` | `*json`: a malloc'd, NUL-terminated UTF-8 string the host frees with `ReArcBufferFree`. Synchronous, main thread. An unknown tab: `{"hosts":[],"more":0}`, `ok`. Blocking off or nothing blocked: no hosts, and `page` as below. Null `json`: `invalid_argument`. Out of memory: `internal`, `*json` null. |
 
 ```json
-{"page":{"host":"example.com","registrable":true},
+{"page":{"host":"example.com","registrable":true,"error":false},
  "hosts":[{"host":"doubleclick.net","count":3,"registrable":true,"lists":["easylist"]}],"more":0}
 ```
 
 - `page`: the tab's own site, named exactly as a blocked one is (`host`, `registrable`), from
-  the primary main frame's **committed** address; absent when that is not http or https. It is
+  the primary main frame's **committed** URL; absent when that is not http or https. It is
   never an address that is only pending. See "A rule from two names" below.
+- `page.error` (bridge 0.80.0, patch `tab/099`): the frame shows an error page. `page.host` is
+  then the site of the address that failed, not of a document of that site. See "Where `page`
+  is read from" below. A reply without the key is from bridge 0.79.0.
 
 - `host`: the registrable domain of a blocked request's host, private registries included
   (`someone.github.io` stays itself), lower-case ASCII (an international name in its `xn--`
@@ -3032,10 +3035,32 @@ site" writes a rule from a blocked site's name and the page's. Both must come fr
 - The page's site is `page.host`, never a name the host cuts from an address itself. Without
   the public suffix list a host takes `web.app`, `edu.au` or `or.jp` for the site of every page
   under them, and the rule would apply to all of them.
-- A rule is written only when both names have `registrable` true.
+- A rule is written only when both names have `registrable` true, and never from a page with
+  `error` true.
 - Before it writes, the host calls again and compares `page.host` with the one its list was
   drawn with. If they differ the tab has moved on, and nothing is written. The tab's address
   as the host knows it may run ahead of the commit; `page` does not.
+
+**Where `page` is read from** (bridge 0.80.0, `tab/099`; consistency review 10). Three things
+in Chromium could be called a tab's committed address, and they differ:
+
+| Read | Is | On an error page |
+|---|---|---|
+| `WebContents::GetLastCommittedURL()` | the last committed navigation entry's virtual URL, the address bar's text | the address that failed |
+| `RenderFrameHost::GetLastCommittedURL()` of the primary main frame | the frame's own URL | the address that failed |
+| `RenderFrameHost::GetLastCommittedOrigin()` of the primary main frame | the document's origin | opaque: no site |
+
+- Site permissions (1.67, `tab/096`, `SiteOf`) read the third: a permission is for a document's
+  origin, and an error page has none.
+- Bridge 0.79.0 (`tab/098`) read the first, while its text said "the primary main frame's".
+- Bridge 0.80.0 reads the second: the same frame as site permissions, and its URL. It does not
+  take the origin, because a page whose own request the blocker stopped is an error page, and
+  that is the page where the person needs to turn blocking off for the site.
+- Chromium's header says of both URLs that they are not for a permission decision without a
+  check for an error document. `page.error` is that check, handed to the host: a host writes
+  no rule between two sites from an error page ("allow this host on this site"), since no
+  document of that site asked for anything. A setting for the site alone is the person's to
+  make there.
 
 **When to ask.** While the list is shown: once, and again on `ReArcBlockedCountCallback` (1.66)
 for the tab. The list changes exactly when the count does. The reply is read from the tracker

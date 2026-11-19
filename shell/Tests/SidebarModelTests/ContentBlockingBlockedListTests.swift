@@ -292,6 +292,28 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         XCTAssertEqual(List(pageSite: nil, pageSiteIsOneSite: true).allowSite, nil)
     }
 
+    /// An error page (bridge 0.80.0, `tab/099`): the engine names the site
+    /// of the address that failed and says it is an error page. No rule
+    /// between two sites is written from it. The site itself is still named,
+    /// so blocking can be turned off for it there.
+    func testAnErrorPageHasItsSiteAndNoAllow() throws {
+        let failed = try XCTUnwrap(List.decode(#"""
+        {"page":{"host":"news.test","registrable":true,"error":true},
+         "hosts":[{"host":"news.test","count":1,"registrable":true,"lists":["easylist"]}],"more":0}
+        """#, lists: lists))
+        XCTAssertEqual(failed.pageSite, "news.test")
+        XCTAssertTrue(failed.pageSiteIsOneSite)
+        XCTAssertTrue(failed.pageIsError)
+        XCTAssertNil(failed.allowSite, "no rule is written from an error page")
+        XCTAssertEqual(failed.entries.map(\.host), ["news.test"], "what blocked the page's own request is still listed")
+        let loaded = try XCTUnwrap(List.decode(#"{"page":{"host":"news.test","registrable":true,"error":false},"hosts":[]}"#, lists: lists))
+        XCTAssertFalse(loaded.pageIsError)
+        XCTAssertEqual(loaded.allowSite, "news.test")
+        // Bridge 0.79.0 does not say: as before.
+        XCTAssertEqual(List.decode(#"{"page":{"host":"news.test","registrable":true},"hosts":[]}"#, lists: lists)?.allowSite, "news.test")
+        XCTAssertFalse(List(pageSite: nil, pageIsError: true).pageIsError, "no page, no error page")
+    }
+
     // MARK: Allow on this site
 
     func testAllowIsOneOwnRuleForTheSiteAndConvertsToAnAllowRule() throws {

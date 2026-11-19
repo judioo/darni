@@ -65,16 +65,25 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
     public var pageSite: String?
     /// `pageSite` is one site, by the engine and by `ContentBlockingSiteAllow.isOneSite`.
     public var pageSiteIsOneSite: Bool
+    /// The tab shows an error page, and `pageSite` is the site of the
+    /// address that failed, not of a document of that site (bridge 0.80.0,
+    /// patch `tab/099`). Chromium's rule for such an address is that it is
+    /// not for a permission decision. A setting for the site alone is still
+    /// the person's to make there (blocking off for it, which is the way in
+    /// when the page itself was blocked). A rule between two sites is not:
+    /// no document of that site asked for anything.
+    public var pageIsError: Bool
 
-    public init(entries: [Entry] = [], uncounted: Int = 0, pageSite: String? = nil, pageSiteIsOneSite: Bool = false) {
+    public init(entries: [Entry] = [], uncounted: Int = 0, pageSite: String? = nil, pageSiteIsOneSite: Bool = false, pageIsError: Bool = false) {
         self.entries = entries
         self.uncounted = uncounted
         self.pageSite = pageSite
         self.pageSiteIsOneSite = pageSite != nil && pageSiteIsOneSite
+        self.pageIsError = pageSite != nil && pageIsError
     }
 
-    /// The site Allow may write a rule for; nil when the page has none.
-    public var allowSite: String? { pageSiteIsOneSite ? pageSite : nil }
+    /// The site Allow may write a rule for; nil when the page has none, or is an error page.
+    public var allowSite: String? { pageSiteIsOneSite && !pageIsError ? pageSite : nil }
 
     public var isEmpty: Bool { entries.isEmpty && uncounted == 0 }
 
@@ -121,6 +130,8 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
         struct Page: Decodable {
             var host: String
             var registrable: Bool?
+            /// Absent from bridge 0.79.0, which did not say.
+            var error: Bool?
         }
 
         var page: Page?
@@ -163,7 +174,8 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
         for cut in entries.dropFirst(maxEntries) { uncounted = min(uncounted + cut.count, maxCount) }
         let page = reply.page.flatMap { ContentBlockingHost.isHost($0.host) ? $0 : nil }
         return ContentBlockingBlockedList(entries: Array(entries.prefix(maxEntries)), uncounted: uncounted, pageSite: page?.host,
-                                          pageSiteIsOneSite: page?.registrable == true && ContentBlockingSiteAllow.isOneSite(page?.host ?? "", names: names))
+                                          pageSiteIsOneSite: page?.registrable == true && ContentBlockingSiteAllow.isOneSite(page?.host ?? "", names: names),
+                                          pageIsError: page?.error == true)
     }
 
     /// The tag for a rule of list `id`: a list of the Trackers only level

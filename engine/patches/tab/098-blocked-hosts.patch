@@ -88,8 +88,8 @@ HostIsRegistryIdentifier for a name that is not one site: "com", "co.uk" and
 refuse, and "localhost" is not. That function stops the process on a name
 that is not canonical, so the name is canonicalized and compared first. A
 table lookup: no network, no profile, nothing kept. Feature host_sites. The
-shell does not call it yet; the design for its four users is the spec's
-section 9.
+shell calls it through SiteNames (848872e1) for its four users, which the
+spec's section 9 describes.
 
 Written without a build (a release was building from the tree) and
 type-checked with the tree's clang from a scratch view. Built on 2026-11-19
@@ -98,9 +98,10 @@ calls and carries both feature strings and bridge 0.79.0; the series replays
 116 of 116 to the pin's tree and to the head's; engine/tests/
 check_abi169_imports.py passes against the tree. One new warning, the
 malloc'd reply's memcpy (-Wunsafe-buffer-usage-in-libc-call), as the
-bridge's other two. Not run: the shell's self-test step
-contentBlockingBlockedListChecks is the run (BL-09), and nothing calls
-ReArcEngineCopySiteOfHost yet.
+bridge's other two. Run on Darni 2026.1119.1080, the first build with it:
+the shell's self-test steps for the blocked list (BL-09) and for the site
+call (hostSitesChecks, 19 names) pass. tab/099 changes where "page" is read
+from.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/rearc_bridge/{rearc_content_blocker.cc, rearc_engine_abi.h,
