@@ -498,15 +498,23 @@ public final class SidebarStore {
         notifyMutation(.upsertSpace(id: id))
     }
 
-    /// An SF Symbol name, a short text glyph (emoji), or a picture (`SpaceIconImage`);
-    /// a picture name that does not check out is ignored.
+    /// An SF Symbol name or a short text glyph (emoji). It replaces a picture.
     public func setSpaceIcon(_ id: Space.ID, iconName: String) {
         let trimmed = iconName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isImage = SpaceIconImage.isImageName(trimmed)
-        guard !trimmed.isEmpty, !isImage || SpaceIconImage.data(from: trimmed) != nil,
-              let index = spaces.firstIndex(where: { $0.id == id }),
-              spaces[index].iconName != trimmed else { return }
-        spaces[index].iconName = isImage || Space.isSymbolName(trimmed) ? trimmed : String(trimmed.prefix(2))
+        guard !trimmed.isEmpty, let index = spaces.firstIndex(where: { $0.id == id }) else { return }
+        let glyph = Space.isSymbolName(trimmed) ? trimmed : String(trimmed.prefix(2))
+        guard spaces[index].iconName != glyph || spaces[index].iconPicture != nil else { return }
+        spaces[index].iconName = glyph
+        spaces[index].iconPicture = nil
+        notifyMutation(.upsertSpace(id: id))
+    }
+
+    /// A picture as the space's icon (`SpaceIconImage`), or nil to show its glyph again.
+    /// Only a picture `SpaceIconImage.image(from:)` can draw is kept (security SI-03).
+    public func setSpacePicture(_ id: Space.ID, picture: Data?) {
+        guard let index = spaces.firstIndex(where: { $0.id == id }), spaces[index].iconPicture != picture else { return }
+        if let picture, SpaceIconImage.image(from: picture) == nil { return }
+        spaces[index].iconPicture = picture
         notifyMutation(.upsertSpace(id: id))
     }
 

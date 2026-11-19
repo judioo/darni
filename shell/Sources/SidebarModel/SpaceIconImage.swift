@@ -3,64 +3,76 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-/// A picture as a space's icon. It is favicon-sized, so it is kept inside the
-/// space's icon name as a `data:` URL and goes wherever the name goes: sidebar.json,
-/// the synced space record, a new space's draft. Nothing else in the model changes.
+/// A picture as a space's icon (`Space.iconPicture`): favicon-sized PNG or JPEG bytes.
+/// The space's `iconName` keeps its symbol or emoji, which older builds show instead.
+/// The picture syncs in its own record (`SyncRecordKind.spaceIcon`), which builds from
+/// before pictures drop: they never write the space back without it (security SI-01).
 ///
-/// The name is untrusted (a hand-edited file, another Mac): it is used only when its
-/// prefix, length and bytes check out, and only ImageIO reads the bytes, as PNG or JPEG.
+/// The bytes are untrusted when they come from sidebar.json or another Mac: they are
+/// used only when their size, their first bytes and ImageIO's reading all agree on a
+/// PNG or JPEG of at most `maxSide` pixels a side, and are drawn from a fresh sRGB
+/// bitmap, never from the file's own colour profile.
 public enum SpaceIconImage {
     /// The longer side, in pixels. A space icon is drawn at most 16 pt, so this is
     /// sharp at 2× with room to spare.
     public static let maxSide = 64
     /// What a 64 × 64 PNG of noise needs, with headroom; anything bigger was not made here.
-    static let maxBytes = 48 * 1024
-    static let pngPrefix = "data:image/png;base64,"
-    static let jpegPrefix = "data:image/jpeg;base64,"
+    public static let maxBytes = 48 * 1024
+
+    static let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+    static let jpegSignature: [UInt8] = [0xFF, 0xD8, 0xFF]
 
     /// The picture's bytes made fit for a space icon (`ProfileAvatarImage.normalizing`,
-    /// kept whole and at most `maxSide`), as an icon name.
-    public static func iconName(normalizing source: Data) throws -> String {
+    /// kept whole and at most `maxSide`).
+    public static func picture(normalizing source: Data) throws -> Data {
         let image = try ProfileAvatarImage.normalizing(source, maxSide: maxSide, shape: .whole)
-        guard let name = iconName(for: image) else { throw ProfileAvatarImageError.notAnImage }
-        return name
+        guard validated(image.data) != nil else { throw ProfileAvatarImageError.notAnImage }
+        return image.data
     }
 
-    static func iconName(for image: ProfileAvatarImage) -> String? {
-        guard image.data.count <= maxBytes else { return nil }
-        return (image.format == .png ? pngPrefix : jpegPrefix) + image.data.base64EncodedString()
-    }
-
-    /// Whether `iconName` names a picture (well formed or not): such a name is never
-    /// cut short, read as a symbol or drawn as text.
-    public static func isImageName(_ iconName: String) -> Bool {
-        iconName.hasPrefix("data:image/")
-    }
-
-    /// The picture's bytes, or nil when `iconName` is not a picture this build would make.
-    public static func data(from iconName: String) -> Data? {
-        let base64: Substring
-        if iconName.hasPrefix(pngPrefix) {
-            base64 = iconName.dropFirst(pngPrefix.count)
-        } else if iconName.hasPrefix(jpegPrefix) {
-            base64 = iconName.dropFirst(jpegPrefix.count)
-        } else {
-            return nil
-        }
-        guard base64.count <= (maxBytes / 3 + 1) * 4, let data = Data(base64Encoded: String(base64)), !data.isEmpty else { return nil }
+    /// `data` when it is small enough and starts as a PNG or a JPEG; nil otherwise.
+    public static func validated(_ data: Data) -> Data? {
+        guard !data.isEmpty, data.count <= maxBytes, declaredType(of: data) != nil else { return nil }
         return data
     }
 
-    /// The picture, decoded; nil for anything but a PNG or JPEG of at most `maxSide`.
-    public static func image(from iconName: String) -> CGImage? {
-        guard let data = data(from: iconName),
-              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-              let type = CGImageSourceGetType(source) as String?,
-              [UTType.png.identifier, UTType.jpeg.identifier].contains(type),
+    /// The type the first bytes declare (security SI-03): ImageIO's own reading must agree.
+    static func declaredType(of data: Data) -> UTType? {
+        if data.starts(with: pngSignature) { return .png }
+        if data.starts(with: jpegSignature) { return .jpeg }
+        return nil
+    }
+
+    /// The picture as a plain sRGB bitmap; nil for anything but a PNG or JPEG of at most
+    /// `maxSide` a side whose first bytes and ImageIO agree on its type.
+    public static func image(from data: Data) -> CGImage? {
+        guard validated(data) != nil, let declared = declaredType(of: data),
+              let source = CGImageSourceCreateWithData(data as CFData, [
+                  kCGImageSourceShouldCache: false,
+                  kCGImageSourceTypeIdentifierHint: declared.identifier as CFString,
+              ] as CFDictionary),
+              CGImageSourceGetType(source) as String? == declared.identifier,
+              CGImageSourceGetCount(source) == 1,
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int,
-              (1...maxSide).contains(width), (1...maxSide).contains(height) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+              (1...maxSide).contains(width), (1...maxSide).contains(height),
+              let decoded = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary),
+              decoded.width == width, decoded.height == height,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(decoded, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    /// The bytes as a sync value, and back (`SyncRecordKind.spaceIcon`).
+    static func syncValue(_ data: Data) -> SyncValue { .string(data.base64EncodedString()) }
+
+    static func picture(fromSync value: SyncValue?) -> Data? {
+        guard let text = value?.stringValue, text.count <= (maxBytes / 3 + 1) * 4,
+              let data = Data(base64Encoded: text) else { return nil }
+        return validated(data)
     }
 }

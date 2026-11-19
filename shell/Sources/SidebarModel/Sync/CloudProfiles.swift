@@ -237,7 +237,7 @@ public struct CloudProfileDeletion: Equatable, Sendable {
             switch kind {
             case .profile where id == profileID, .contentBlocking where id == profileID,
                  .space where doomed.contains(id), .spaceStyle where doomed.contains(id),
-                 .spaceArchive where doomed.contains(id):
+                 .spaceArchive where doomed.contains(id), .spaceIcon where doomed.contains(id):
                 changes[name] = .delete
             case .boost where Index.uuid(values["profileID"]) == profileID,
                  .tabGroup where Index.uuid(values["profileID"]) == profileID:
@@ -294,7 +294,7 @@ public struct CloudProfileDeletion: Equatable, Sendable {
     /// without their space. Every stamp comes from `clock`, which must have
     /// seen the records' stamps, so the change wins over each of them.
     public func writes(clock: inout HybridLogicalClock, now: Date) -> [SyncWireRecord] {
-        let order: [SyncRecordKind] = [.item, .boost, .tabGroup, .contentBlocking, .spaceStyle, .spaceArchive, .space, .profile]
+        let order: [SyncRecordKind] = [.item, .boost, .tabGroup, .contentBlocking, .spaceStyle, .spaceArchive, .spaceIcon, .space, .profile]
         func rank(_ name: String) -> Int {
             SyncRecordKind.parse(recordName: name).flatMap { order.firstIndex(of: $0.kind) } ?? order.count
         }

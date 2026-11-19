@@ -103,7 +103,7 @@ public enum SidebarSyncProjection {
         let spaceRanks = SyncRanks.normalized(snapshot.spaces.map(\.sortRank))
         for (space, rank) in zip(snapshot.spaces, spaceRanks) {
             // Archived state has its own record, which older builds never see or overwrite.
-            var values = objectFields(space, dropping: ["id", "archivedAt"])
+            var values = objectFields(space, dropping: ["id", "archivedAt", "iconPicture"])
             values["sortRank"] = .string(rank)
             // A Set and a UUID-keyed map encode in hash order, which changes every
             // launch: sorted, an unchanged space no longer uploads again (T-10).
@@ -122,6 +122,12 @@ public enum SidebarSyncProjection {
                 var style = objectFields(space.theme.style, dropping: [])
                 style["space"] = .string(space.id.uuidString.lowercased())
                 records[SyncRecordKind.spaceStyle.recordName(for: space.id)] = SyncRecordBody(kind: .spaceStyle, values: style)
+            }
+            if let picture = space.iconPicture {
+                records[SyncRecordKind.spaceIcon.recordName(for: space.id)] = SyncRecordBody(kind: .spaceIcon, values: [
+                    "space": .string(space.id.uuidString.lowercased()),
+                    "picture": SpaceIconImage.syncValue(picture),
+                ])
             }
             if let archivedAt = space.archivedAt {
                 records[SyncRecordKind.spaceArchive.recordName(for: space.id)] = SyncRecordBody(kind: .spaceArchive, values: [
@@ -306,6 +312,7 @@ public enum SidebarSyncProjection {
         var boosts: [UUID: [String: SyncValue]] = [:]
         var styles: [UUID: SpaceThemeStyle] = [:]
         var archives: [UUID: Date] = [:]
+        var pictures: [UUID: Data] = [:]
         var groups: [UUID: TabGroup] = [:]
         var blocking: [UUID: [String: SyncValue]] = [:]
         for (name, payload) in records where payload.isAlive {
@@ -316,6 +323,7 @@ public enum SidebarSyncProjection {
             case .boost: boosts[id] = payload.values
             case .spaceStyle: styles[id] = spaceStyle(payload.values)
             case .spaceArchive: archives[id] = archiveDate(payload.values)
+            case .spaceIcon: pictures[id] = SpaceIconImage.picture(fromSync: payload.values["picture"])
             case .tabGroup: groups[id] = tabGroup(id: id, values: payload.values)
             case .contentBlocking: blocking[id] = payload.values
             case .item:
@@ -361,6 +369,7 @@ public enum SidebarSyncProjection {
                 }
                 space.theme.style = styles[id] ?? SpaceThemeStyle()
                 space.archivedAt = archives[id]
+                space.iconPicture = pictures[id]
                 spaces.append(space)
             }
         }
@@ -675,6 +684,8 @@ public enum SidebarSyncProjection {
             return spaceStyle(values) != nil
         case .spaceArchive:
             return archiveDate(values) != nil
+        case .spaceIcon:
+            return SpaceIconImage.picture(fromSync: values["picture"]) != nil
         case .tabGroup:
             return tabGroup(id: id, values: values) != nil
         case .contentBlocking:

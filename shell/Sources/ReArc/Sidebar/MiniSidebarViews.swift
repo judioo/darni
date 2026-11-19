@@ -506,7 +506,7 @@ struct MiniSpaceHeaderView: View {
         Menu {
             menu
         } label: {
-            SpaceIconView(iconName: space.iconName, size: 15)
+            SpaceIconView(space: space, size: 15)
                 .foregroundStyle(chrome.accent)
                 .frame(width: 18, height: 18)
                 // A container's space: the ring around the icon, under the profile's avatar.
@@ -821,13 +821,13 @@ private struct MiniSpaceSwitcher: View {
                     .fill(Color(current.theme))
                     .overlay { Circle().strokeBorder(ink.opacity(0.18), lineWidth: 0.5) }
                     .frame(width: SpaceCircles.diameter, height: SpaceCircles.diameter)
-                SpaceIconView(iconName: current.hasIcon ? current.iconName : SpaceCircles.initial(for: current.name), size: 10)
+                SpaceIconView(iconName: current.hasIcon ? current.iconName : SpaceCircles.initial(for: current.name), picture: current.iconPicture, size: 10)
                     .foregroundStyle(ink)
                 Circle().stroke(chrome.accent, lineWidth: SpaceCircles.ringWidth)
                     .frame(width: SpaceCircles.ringDiameter, height: SpaceCircles.ringDiameter)
             }
         } else {
-            SpaceIconView(iconName: current.iconName, size: 13)
+            SpaceIconView(space: current, size: 13)
                 .foregroundStyle(chrome.accent)
         }
     }
