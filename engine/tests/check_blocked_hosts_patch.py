@@ -159,6 +159,9 @@ class BlockedHostsPatchTests(unittest.TestCase):
         for refused in ("url.has_port()", "url.has_username()", "url.has_password()", 'url.path() != "/"', "url.has_query()", "url.has_ref()"):
             self.assertIn(refused, site, refused)
         self.assertIn("!dnr::ActionTracker::GetSiteOfUrl(url, &site, &is_one_site)) {\n    return std::nullopt;", site)
+        # Security BL-12: "1.2" is the address 1.0.0.2 to the engine. An answer is only ever about
+        # the name that was asked, but for letter case and a trailing dot.
+        self.assertIn("if (without_trailing_dots(url.host()) !=\n          without_trailing_dots(base::ToLowerASCII(host)) ||", site)
         # Whether the name is itself a suffix: asked only of a name that is not one site (so never
         # of an address), and only once the name is known to be canonical. Chromium's function
         # checks that itself and stops the process if not, and the text here is a file's or a person's.

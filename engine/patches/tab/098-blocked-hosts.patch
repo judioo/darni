@@ -79,8 +79,10 @@ ReArcEngineCopySiteOfHost(host, &json) gives them the tracker's answer for
 a host name: {"host","registrable","suffix"}, by Chromium's public suffix
 list. It takes a plain DNS name or IPv4 address (ASCII letters, digits, '.',
 '-', '_', at most 253 bytes) and nothing else, builds http://<host>/ from
-it, refuses an address that came out with a port, a path or credentials, and
-names the site with ActionTracker::GetSiteOfUrl. "suffix" is
+it, refuses an address that came out with a port, a path or credentials, or
+with another host than the one asked ("1.2" is the address 1.0.0.2 to
+Chromium; security BL-12), and names the site with
+ActionTracker::GetSiteOfUrl. "suffix" is
 HostIsRegistryIdentifier for a name that is not one site: "com", "co.uk" and
 "web.app" are suffixes, which a boost's scope and a typed exception must
 refuse, and "localhost" is not. That function stops the process on a name
@@ -137,7 +139,7 @@ index b2276ef..7c36e18 100644
  _ReArcEngineSetMediaCaptureCallback
  _ReArcTabGetMediaCapture
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-index 7922dd3..64dea1f 100644
+index 7922dd3..4a39321 100644
 --- a/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 @@ -35,6 +35,8 @@
@@ -194,7 +196,7 @@ index 7922dd3..64dea1f 100644
  
  namespace rearc {
  namespace {
-@@ -1168,6 +1178,173 @@ std::optional<base::ListValue> ReadList(const char* json) {
+@@ -1168,6 +1178,188 @@ std::optional<base::ListValue> ReadList(const char* json) {
    return base::JSONReader::ReadList(text, base::JSON_PARSE_RFC);
  }
  
@@ -332,7 +334,22 @@ index 7922dd3..64dea1f 100644
 +  // comparison holds that the address is nothing but the host that was asked.
 +  if (!url.is_valid() || url.has_port() || url.has_username() ||
 +      url.has_password() || url.path() != "/" || url.has_query() ||
-+      url.has_ref() ||
++      url.has_ref()) {
++    return std::nullopt;
++  }
++  // The name the engine read must be the name that was asked, but for letter
++  // case and a trailing dot. Some plain-looking names are addresses to it
++  // ("1.2" is 1.0.0.2, "0x7f.1" is 127.0.0.1): an answer about another name
++  // than the caller's would be a key for something the caller never showed
++  // (security BL-12).
++  const auto without_trailing_dots = [](std::string_view name) {
++    while (name.ends_with('.')) {
++      name.remove_suffix(1);
++    }
++    return name;
++  };
++  if (without_trailing_dots(url.host()) !=
++          without_trailing_dots(base::ToLowerASCII(host)) ||
 +      !dnr::ActionTracker::GetSiteOfUrl(url, &site, &is_one_site)) {
 +    return std::nullopt;
 +  }
@@ -368,7 +385,7 @@ index 7922dd3..64dea1f 100644
  }  // namespace
  
  bool OnContentBlockerActionCount(content::BrowserContext* context,
-@@ -1374,3 +1551,25 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
+@@ -1374,3 +1566,25 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
    rearc::g_count_callback = callback;
    rearc::g_count_context = callback ? context : nullptr;
  }
@@ -395,7 +412,7 @@ index 7922dd3..64dea1f 100644
 +  return reply ? rearc::CopyReply(*reply, json) : REARC_INVALID_ARGUMENT;
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index 39fd014..b211922 100644
+index 39fd014..2df52cb 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -407,7 +424,7 @@ index 39fd014..b211922 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1923,6 +1923,58 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
+@@ -1923,6 +1923,60 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
                                                       uint32_t index,
                                                       const char* text);
  
@@ -458,7 +475,9 @@ index 39fd014..b211922 100644
 +// registrable true. utf8_host: a DNS name or IPv4 address of at most 253 bytes, ASCII
 +// letters, digits, '.', '-' and '_' (an international name in its xn-- form);
 +// a trailing dot is dropped. Anything else, a scheme, a port, a path or an
-+// IPv6 literal among it: invalid_argument, and *json null. Synchronous, a
++// IPv6 literal among it: invalid_argument, and *json null. So is a name the
++// engine reads as another one ("1.2", "0x7f.1": addresses in short forms):
++// host is always the asked name, lower case, or the end of it. Synchronous, a
 +// table lookup: it asks nothing of the network or of any profile.
 +REARC_ENGINE_EXPORT ReArcStatus ReArcEngineCopySiteOfHost(const char* utf8_host,
 +                                                          char** json);

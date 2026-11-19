@@ -3086,6 +3086,11 @@ every page under them (security CB-12, AG-05, BO-01). This call is Chromium's an
   most 253 bytes; an international name in its `xn--` form; upper case is lowered and a
   trailing dot dropped. A scheme, a port, a path, a space, `*` or an IPv6 literal is
   `invalid_argument`: the host application takes the host out of an address itself.
+- **The answer is about the name that was asked** (security BL-12). Chromium reads some
+  plain-looking names as addresses in a short form (`1.2` is `1.0.0.2`, `0x7f.1` is
+  `127.0.0.1`). Such a name is `invalid_argument`. `host` is therefore always the asked name in
+  lower case, or the end of it at a label boundary. A caller checks that all the same before it
+  uses an answer, in one place for all its uses.
 - **`suffix`** is true when the name is itself a public suffix, by the list's own test
   (`HostIsRegistryIdentifier`, private registries and wildcard rules included): `com`, `co.uk`,
   `web.app`, `edu.au`. Every site under such a name is another party's. It must never become
