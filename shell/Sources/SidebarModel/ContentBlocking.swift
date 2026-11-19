@@ -222,13 +222,23 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
         return exceptions.first { ContentBlockingHost.covers($0, host: host) }
     }
 
-    /// The exception covering `url`'s page that is a public suffix, if one
-    /// is: blocking is then off for every site under it. Builds 1027 to 1049
-    /// stored such an exception for a page on `someone.web.app` (security
-    /// CB-12). nil without the engine's suffix list.
-    public func suffixException(covering url: URL?, names: SiteNames? = .shared) -> String? {
+    /// The exception covering `url`'s page that reaches further than the
+    /// page's own site, if one does: blocking is then off for every site
+    /// under it. Builds 1027 to 1049 stored the shell's guess at a site,
+    /// which for a page on `someone.web.app` is `web.app`, a public suffix,
+    /// and for one on `tenant.cloudapp.azure.com` is `azure.com`, a real
+    /// domain that still holds every tenant (security CB-12). An exception
+    /// is wider when it is a public suffix, or when the page's site by the
+    /// engine's list is a name under it. nil without that list.
+    public func widerException(covering url: URL?, names: SiteNames? = .shared) -> String? {
         guard let host = ContentBlockingHost.pageHost(url) else { return nil }
-        return exceptions.first { ContentBlockingHost.covers($0, host: host) && ContentBlockingHost.isPublicSuffix($0, names: names) }
+        return exceptions.first { ContentBlockingHost.covers($0, host: host) && Self.isWider($0, thanSiteOf: host, names: names) }
+    }
+
+    private static func isWider(_ exception: String, thanSiteOf host: String, names: SiteNames?) -> Bool {
+        if ContentBlockingHost.isPublicSuffix(exception, names: names) { return true }
+        guard let site = names?.site(of: host), site.isOneSite else { return false }
+        return site.name.hasSuffix("." + exception)
     }
 
     /// Turns blocking off or back on for `url`'s site. Off adds the site's
@@ -246,14 +256,14 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
     }
 
     /// Blocking stays off for `url`'s site and comes back on for the other
-    /// sites under a suffix: every exception that covers the page and is a
-    /// public suffix goes, and the page's own site is added. False when
-    /// nothing changed.
+    /// sites an exception reached: every exception that covers the page and
+    /// is wider than its site goes (`widerException`), and the page's own
+    /// site is added. False when nothing changed.
     @discardableResult
-    public mutating func narrowSuffixException(toPage url: URL?, names: SiteNames? = .shared) -> Bool {
-        guard let host = ContentBlockingHost.pageHost(url), suffixException(covering: url, names: names) != nil,
+    public mutating func narrowException(toPage url: URL?, names: SiteNames? = .shared) -> Bool {
+        guard let host = ContentBlockingHost.pageHost(url), widerException(covering: url, names: names) != nil,
               let site = ContentBlockingHost.exceptionHost(for: url, names: names) else { return false }
-        exceptions.removeAll { ContentBlockingHost.covers($0, host: host) && ContentBlockingHost.isPublicSuffix($0, names: names) }
+        exceptions.removeAll { ContentBlockingHost.covers($0, host: host) && Self.isWider($0, thanSiteOf: host, names: names) }
         return exception(covering: url) != nil || addException(site, names: names)
     }
 
@@ -326,7 +336,7 @@ public enum ContentBlockingHost {
     /// (`BoostScopeMatcher.registrableDomain`): that made `someone.web.app`
     /// an exception for all of `web.app` (security CB-12, 1027 to 1049).
     /// Such a stored exception is marked in Settings and on the site's row
-    /// (`suffixException`), and goes when the site is turned back on or
+    /// (`widerException`), and goes when the site is turned back on or
     /// narrowed.
     public static func exceptionHost(for url: URL?, names: SiteNames? = .shared) -> String? {
         guard let host = pageHost(url) else { return nil }

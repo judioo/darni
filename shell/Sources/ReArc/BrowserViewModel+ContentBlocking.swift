@@ -340,14 +340,15 @@ extension BrowserViewModel {
         if changed { engine.reload() }
     }
 
-    /// An exception an older build stored under a public suffix covers the
-    /// page (blocking is off for every site under `web.app`): it goes, and
-    /// the page's own site takes its place (security CB-12). The tab reloads.
+    /// An exception that reaches past the page's site covers the page
+    /// (blocking is off for every site under `web.app`, as an older build
+    /// stored it): it goes, and the page's own site takes its place
+    /// (security CB-12). The tab reloads.
     func narrowContentBlockingException(forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
         guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
               let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
         var changed = false
-        changeContentBlocking(for: profileID) { changed = $0.narrowSuffixException(toPage: url) }
+        changeContentBlocking(for: profileID) { changed = $0.narrowException(toPage: url) }
         if changed { engine.reload() }
     }
 

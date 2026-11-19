@@ -242,8 +242,9 @@ extension SiteControlCenter {
 
     public static let contentBlockingTitle = "Block ads and trackers"
 
-    /// The row's state, and the line in Settings, for an exception that is a
-    /// public suffix: blocking is off for far more than one site.
+    /// The row's state for an exception that reaches past the page's site,
+    /// and the line in Settings for one that is a public suffix: blocking is
+    /// off for far more than one site.
     public static func suffixExceptionText(_ suffix: String) -> String { "Off for every site under \(suffix)" }
     /// Under the field in Settings when the typed name is a public suffix.
     public static func suffixExceptionRefusal(_ suffix: String) -> String {
@@ -294,11 +295,12 @@ extension SiteControlCenter {
             row.symbol = "shield.slash"
             row.isBlocked = true
             row.actions = [.openBlockingSettings]
-        } else if let suffix = settings.suffixException(covering: pageURL, names: names) {
-            // An exception an older build stored under a public suffix
-            // (security CB-12): the row says how far it reaches, and offers
-            // this site alone as well as blocking back on.
-            row.state = suffixExceptionText(suffix)
+        } else if let wider = settings.widerException(covering: pageURL, names: names) {
+            // An exception that reaches past this page's site, as an older
+            // build stored them (`web.app`, `azure.com`; security CB-12):
+            // the row says how far it reaches, and offers this site alone
+            // as well as blocking back on.
+            row.state = suffixExceptionText(wider)
             row.symbol = "shield.slash"
             row.isBlocked = true
             row.actions = [.turnOffBlockingForSiteOnly, .turnOnBlockingForSite]
