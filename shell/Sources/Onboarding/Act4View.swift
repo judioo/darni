@@ -2,24 +2,10 @@ import SidebarModel
 import SwiftUI
 
 extension SunrisePainter {
-    /// The motto, over the sky, before the window forms.
-    static func motto(_ ctx: inout GraphicsContext, _ size: CGSize, _ g: Act4Frame) {
-        let H = size.height, W = size.width
-        let ink = MarkPalette.ink.color
-        let y = H * 0.36
-        let words = Brand.motto.words
-        let fonts = [Font.system(size: H * 0.036, weight: .light), .system(size: H * 0.036, weight: .light),
-                     .system(size: H * 0.036, weight: .regular)]
-        let resolved = words.indices.map { ctx.resolve(Text(words[$0]).font(fonts[$0]).foregroundColor(ink)) }
-        let widths = resolved.map { $0.measure(in: size).width }
-        let gap = H * 0.022
-        var x = W / 2 - (widths.reduce(0, +) + gap * 2) / 2
-        for i in words.indices {
-            var c = ctx
-            c.opacity *= g.words[i] * (1 - g.mottoOut)
-            c.draw(resolved[i], at: CGPoint(x: x, y: y + CGFloat(1 - g.words[i]) * 10), anchor: .leading)
-            x += widths[i] + gap
-        }
+    /// The wordmark, alone over the sky, before the window forms.
+    static func act4Wordmark(_ ctx: inout GraphicsContext, _ size: CGSize, _ g: Act4Frame) {
+        line(&ctx, wordmark(height: size.height), at: CGPoint(x: size.width / 2, y: size.height * 0.36),
+             opacity: g.wordmark * (1 - g.wordmarkOut))
     }
 
     /// Everything from the moment the window starts to form.
@@ -91,10 +77,8 @@ extension SunrisePainter {
             c.fill(cardPath, with: .color(.white.opacity(0.94)))
             c.stroke(cardPath, with: .color(.black.opacity(0.05)), lineWidth: 1)
             let x = card.minX + card.width * 0.12
-            var y = card.minY + card.height * 0.22 + CGFloat(1 - g.page) * H * 0.01
-            c.draw(Text(Brand.motto.capitals).font(.system(size: H * 0.0135, weight: .semibold)).tracking(H * 0.003)
-                .foregroundColor(MarkPalette.sun.color), at: CGPoint(x: x, y: y), anchor: .leading)
-            y += H * 0.055
+            // The greeting opens the page; nothing sits above it.
+            var y = card.minY + card.height * 0.22 + H * 0.055 + CGFloat(1 - g.page) * H * 0.01
             let greeting = log.name.isEmpty ? Text("Welcome to Darni.")
                 : Text("Welcome to Darni, ") + Text(log.name).foregroundColor(log.colour.color) + Text(".")
             c.draw(greeting.font(.system(size: H * 0.046, weight: .light)).foregroundColor(ink), at: CGPoint(x: x, y: y), anchor: .leading)

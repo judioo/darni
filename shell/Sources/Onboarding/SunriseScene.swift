@@ -27,7 +27,7 @@ public struct SunriseSceneView: View {
     /// Act 3, after the blue sweep.
     public var act3: Act3Log?
     public var act3Controls: Act3Controls?
-    /// Act 4: the motto, then the window.
+    /// Act 4: the wordmark, then the window.
     public var act4: Act4Log?
     /// "Onboard later": the scene closing, nil otherwise.
     public var closing: SunriseClosingFrame?
@@ -91,7 +91,7 @@ public struct SunriseSceneView: View {
                                 if let a1 { SunrisePainter.act1(&acts, A, a1) }
                                 if let a3 { SunrisePainter.act3(&acts, A2, L3, a3) }
                             }
-                            if let a4 { SunrisePainter.motto(&acts, geo.size, a4) }
+                            if let a4 { SunrisePainter.act4Wordmark(&acts, geo.size, a4) }
                         }
                     }
                 }

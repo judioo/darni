@@ -45,7 +45,6 @@ enum WelcomePage {
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font: 17px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; display: flex; align-items: center; }
         main { margin: 0 12%; max-width: 980px; }
-        .motto { color: var(--sun); font-size: 12px; font-weight: 600; letter-spacing: .25em; margin: 0 0 18px; }
         h1 { font-weight: 300; font-size: clamp(32px, 4.4vw, 52px); line-height: 1.15; margin: 0 0 16px; letter-spacing: -.01em; }
         .you { color: var(--you); }
         .ready { font-size: 19px; color: var(--muted); margin: 0; }
@@ -55,7 +54,6 @@ enum WelcomePage {
         footer { position: fixed; bottom: 28px; left: 12%; color: var(--faint); font-size: 13px; }
         </style></head>
         <body><main>
-        <p class="motto">\(escape(Brand.motto.capitals))</p>
         <h1>\(greeting)</h1>
         <p class="ready">\(ready)</p>
         \(brought)

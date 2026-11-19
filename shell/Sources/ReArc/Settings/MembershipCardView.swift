@@ -213,23 +213,17 @@ private struct CardSunCell: View {
     }
 }
 
-/// The wordmark with the mark, and the motto in small capitals under it.
+/// The wordmark with the mark. Nothing under it: the motto that sat here in small capitals
+/// was dropped with the rename.
 private struct CardWordmark: View {
     let ink: Color
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            HStack(spacing: 2) {
-                ReArcMarkView().frame(width: 18, height: 18)
-                (Text(Brand.wordmarkLead).foregroundStyle(ink) + Text(Brand.wordmarkTail).foregroundStyle(ReArcMark.blueColor))
-                    .font(.system(size: 14, weight: .bold))
-                    .tracking(-0.3)
-            }
-            Text(Brand.motto.capitals)
-                .font(.system(size: 4.2, weight: .semibold))
-                .tracking(0.1)
-                .fixedSize()
-                .foregroundStyle(ink.opacity(0.7))
+        HStack(spacing: 2) {
+            ReArcMarkView().frame(width: 18, height: 18)
+            (Text(Brand.wordmarkLead).foregroundStyle(ink) + Text(Brand.wordmarkTail).foregroundStyle(ReArcMark.blueColor))
+                .font(.system(size: 14, weight: .bold))
+                .tracking(-0.3)
         }
     }
 }

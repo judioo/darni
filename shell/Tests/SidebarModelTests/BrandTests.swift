@@ -12,15 +12,6 @@ struct BrandTests {
         #expect((Brand.arcOnLight, Brand.arcOnDark) == (0x2740FF, 0x8EA0FF))
     }
 
-    /// The motto is an open decision; whatever it becomes, it is written once.
-    @Test func theMottoIsWrittenOnce() {
-        let motto = Brand.motto
-        #expect(motto.words == [motto.cleanStart, motto.restored, motto.name])
-        #expect(motto.name == "\(Brand.name).", "the last word is the name")
-        #expect(motto.capitals == "REFOCUSED · RESTORED · DARNI")
-        #expect(Motto(cleanStart: "Focus", restored: "Restore.", name: "Go.").capitals == "FOCUS · RESTORE · GO")
-    }
-
     @Test func theIdentifiersKeepTheOldName() {
         #expect(ShellDataLocation.defaultRoot.lastPathComponent == "ReArc", "Application Support/ReArc: where every install's data is")
         #expect(BlocklistMirror.latestURL.absoluteString == "https://rearc.imara.ae/blocklists/latest.json")

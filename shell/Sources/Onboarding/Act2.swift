@@ -5,8 +5,12 @@ import SidebarModel
 /// Act 2, "Where you've been": The Sun's Path, reused. You stand at the apex
 /// of a great arc; your other browsers' profiles sit along its navy side, the
 /// past. What you choose to bring flows along the trail into you as points of
-/// light. Then "ReStored." (or "ReFocused." for a clean start), and the blue
-/// sweeps ahead: where you're going, which is Act 3.
+/// light. Then the Darni wordmark, alone under the mark, and the blue sweeps
+/// ahead: where you're going, which is Act 3.
+///
+/// The wordmark stands where a word of the old motto did ("ReStored.", or
+/// "ReFocused." for a clean start). The owner dropped the motto with the
+/// rename (2026-11-19): no word and no line under the wordmark replaces it.
 ///
 /// Passwords are not a category: reading them needs a Keychain prompt per
 /// browser and an engine import that do not exist yet (PROFILE-IMPORT §2.3),
@@ -159,7 +163,7 @@ public struct Act2Log: Equatable, Sendable {
     public var bringing: Bool { choice?.bring == true && sources.indices.contains { isOn(source: $0, at: choice!.time) } }
 
     public var flowStart: Double? { bringing ? choice!.time + 0.6 : nil }
-    /// "ReStored." or "ReFocused."
+    /// The import is done, or the clean start chosen: the wordmark appears.
     public var done: Double? {
         guard let c = choice else { return nil }
         return bringing ? c.time + 0.6 + Act2Timeline.flow + 0.3 : c.time + 0.7
@@ -208,8 +212,8 @@ public struct Act2Frame: Equatable {
     public var totals: ImportStats
     public var shown: ImportStats
     public var arrivals: Double
-    public var restored: Double
-    public var refocused: Double
+    /// The wordmark, alone, once the import is done or the clean start chosen.
+    public var wordmark: Double
     public var sweep: Double
     public var next: Double
 }
@@ -289,8 +293,8 @@ public enum Act2Timeline {
             totals: totals,
             shown: shown,
             arrivals: min(1, arrivals),
-            restored: log.bringing ? ease(done, done + 0.9) * out(done + 2.6, done + 3.2) : 0,
-            refocused: fresh ? ease(done, done + 0.9) * out(done + 2.6, done + 3.2) : 0,
+            // After "Bringing it home." has gone (done + 0.3), so the two never share the line.
+            wordmark: ease(done + 0.3, done + 1.0) * out(done + 2.6, done + 3.2),
             sweep: Ease.inOut(Ease.progress(t, done + 1.4, done + 2.8)),
             next: ease(done + 3.2, done + 4.0))
     }

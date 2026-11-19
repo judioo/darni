@@ -27,18 +27,24 @@ final class Act4Tests: XCTestCase {
         XCTAssertNil(Act4Log.after(act1: nil, act2: act2, act3: nil, start: 20).totals)
     }
 
-    func testTheMottoThenTheWindow() {
+    /// No motto: the wordmark arrives alone, in one movement, rests, and leaves as the window forms.
+    func testTheWordmarkThenTheWindow() {
         let (_, _, _, log) = run()
         let s = log.start
-        let motto = Act4Timeline.frame(log, s + 2.6)
-        XCTAssertEqual(motto.words, [1, 1, 1])
-        XCTAssertEqual(motto.window, 0)
+        XCTAssertEqual(Act4Timeline.frame(log, s + 0.6).wordmark, 0, "the spaces clear first")
+        let arriving = stride(from: s + 0.7, through: s + 1.9, by: 0.1).map { Act4Timeline.frame(log, $0).wordmark }
+        XCTAssertEqual(arriving, arriving.sorted(), "one rise, with no steps for words")
+        XCTAssertGreaterThan(Act4Timeline.frame(log, s + 1.72).wordmark, 0.95, "it lands on the score's chord")
+        let resting = Act4Timeline.frame(log, s + 2.6)
+        XCTAssertEqual(resting.wordmark, 1)
+        XCTAssertEqual(resting.wordmarkOut, 0)
+        XCTAssertEqual(resting.window, 0)
         let end = Act4Timeline.frame(log, log.handOff)
         XCTAssertEqual(end.window, 1, accuracy: 1e-9)
         XCTAssertEqual(end.page, 1, accuracy: 1e-9)
         XCTAssertEqual(end.markFly, 1, accuracy: 1e-9)
         XCTAssertTrue(end.fly.allSatisfy { abs($0 - 1) < 1e-9 })
-        XCTAssertEqual(end.mottoOut, 1, accuracy: 1e-9)
+        XCTAssertEqual(end.wordmarkOut, 1, accuracy: 1e-9)
     }
 
     func testTheSwitcherFitsTheSidebar() {

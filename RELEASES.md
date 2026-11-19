@@ -38,6 +38,8 @@ lines and this section starts empty again.
   quit ReArc and move ReArc.app to the Trash before you open Darni. Both use the same data on
   your Mac, and two copies running at once can lose changes to your sidebar.
 - Little ReArc is now Little Darni. Menus, Settings and messages use the new name throughout.
+- The sunrise you see on first launch no longer lands on three words. It ends on the Darni name
+  under the mark. The welcome page and the membership card show the name the same way.
 - If 1Password stops filling in Darni, add it again in 1Password under Settings › Browser ›
   Add Browser, then restart Darni.
 - macOS may still say ReArc in a few places that do not change with the name. The keychain

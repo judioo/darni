@@ -37,16 +37,21 @@ final class Act2Tests: XCTestCase {
         XCTAssertFalse(particles.contains { $0.colour == brave })
     }
 
-    func testRestoredOrRefocused() {
+    /// The wordmark alone, whether you brought things over or started fresh.
+    func testTheWordmarkWhenTheImportIsDoneOrSkipped() {
         let bring = Act2Log.demo(start: 0)
-        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! + 1, A).restored, 1, accuracy: 1e-9)
-        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! + 1, A).refocused, 0)
+        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! - 0.1, A).wordmark, 0, "not before the import is done")
+        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! + 0.3, A).wordmark, 0, "not while \"Bringing it home.\" is still on the line")
+        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! + 0.3, A).bringingLine, 0, accuracy: 1e-9)
+        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! + 1, A).wordmark, 1, accuracy: 1e-9)
+        XCTAssertEqual(Act2Timeline.frame(bring, bring.done! + 3.2, A).wordmark, 0, accuracy: 1e-9, "gone as the next line arrives")
+        XCTAssertEqual(Act2Timeline.frame(Act2Log(start: 0, sources: ImportSource.demo), 30, A).wordmark, 0, "nothing before a choice")
 
         var fresh = Act2Log(start: 0, sources: ImportSource.demo)
         fresh.choice = (4, false)
         XCTAssertFalse(fresh.bringing)
         XCTAssertNil(fresh.flowStart)
-        XCTAssertEqual(Act2Timeline.frame(fresh, fresh.done! + 1, A).refocused, 1, accuracy: 1e-9)
+        XCTAssertEqual(Act2Timeline.frame(fresh, fresh.done! + 1, A).wordmark, 1, accuracy: 1e-9)
         XCTAssertTrue(Act2Timeline.particles(fresh, 6, A).isEmpty)
     }
 
@@ -55,7 +60,9 @@ final class Act2Tests: XCTestCase {
         log.toggles = ImportSource.demo.indices.map { (1.0, $0) }
         log.choice = (4, true)
         XCTAssertFalse(log.bringing)
-        XCTAssertEqual(Act2Timeline.frame(log, log.done! + 1, A).refocused, 1, accuracy: 1e-9)
+        XCTAssertNil(log.flowStart, "no light flows")
+        XCTAssertEqual(log.done!, 4.7, accuracy: 1e-9, "as soon as for Start fresh")
+        XCTAssertEqual(Act2Timeline.frame(log, log.done! + 1, A).wordmark, 1, accuracy: 1e-9)
     }
 
     func testPasswordsAreNeverBroughtButSaidToStayBehind() {

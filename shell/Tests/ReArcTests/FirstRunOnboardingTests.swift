@@ -254,7 +254,11 @@ final class FirstRunOnboardingTests: XCTestCase {
         XCTAssertTrue(html.contains("Welcome to Darni, <span class=\"you\">&lt;Kai&gt;</span>."))
         XCTAssertTrue(html.contains("Your profile and 1 space is ready."))
         XCTAssertTrue(html.contains("1,204 bookmarks came with you."))
-        XCTAssertTrue(html.contains("REFOCUSED · RESTORED · DARNI"), "the motto, from Brand.motto")
+        // The motto was dropped with the rename: the greeting opens the page, with no line of words above it.
+        for gone in ["REFOCUSED", "RESTORED", "ReFocused", "ReStored", "class=\"motto\"", ".motto"] {
+            XCTAssertFalse(html.contains(gone), gone)
+        }
+        XCTAssertTrue(html.contains("<body><main>\n<h1>Welcome to Darni, "), "the greeting comes first")
         XCTAssertFalse(WelcomePage.html(name: "", colour: MarkPalette.sun, spaces: 3, imported: nil).contains("came with you"))
     }
 
