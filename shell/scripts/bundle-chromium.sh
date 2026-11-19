@@ -77,7 +77,7 @@ while [[ $# -gt 0 ]]; do
     --selftest) SELFTEST=1 ;;
     --dev-mock-keychain) DEV_MOCK_KEYCHAIN=1 ;;
     --launch-check) LAUNCH_CHECK=1 ;;
-    -h|--help) sed -n '2,48p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,53p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 64 ;;
   esac
   shift
