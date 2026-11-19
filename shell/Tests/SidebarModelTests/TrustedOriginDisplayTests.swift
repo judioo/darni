@@ -61,4 +61,37 @@ final class TrustedOriginDisplayTests: XCTestCase {
         let deep = "login.accounts-google-com-sign-in-verify.web.app"
         XCTAssertEqual(PageOrigin.shortenedHost(deep), "…accounts-google-com-sign-in-verify.web.app")
     }
+
+    /// With the engine's public suffix list (§9 of CONTENT-BLOCKING.md) the
+    /// labels always kept are the site's own, exactly: also where the suffix
+    /// has three labels and the guess reads it as two, which the one extra
+    /// label of the interim rule does not reach.
+    func testWithTheEnginesSiteNamesALongHostKeepsExactlyItsSite() {
+        let bucket = "\(String(repeating: "b", count: 30)).s3.amazonaws.com"
+        let school = "\(String(repeating: "s", count: 30)).k12.ca.us"
+        let names = SiteNames { host in
+            for suffix in ["s3.amazonaws.com", "k12.ca.us", "web.app"] where host.hasSuffix("." + suffix) {
+                let label = host.dropLast(suffix.count + 1).split(separator: ".").last ?? ""
+                return #"{"host":"\#(label).\#(suffix)","registrable":true,"suffix":false}"#
+            }
+            if host.hasSuffix("evil.example") { return #"{"host":"evil.example","registrable":true,"suffix":false}"# }
+            if host == "web.app" { return #"{"host":"web.app","registrable":false,"suffix":true}"# }
+            return nil
+        }
+        // The interim rule loses the site's label here; the engine's answer keeps it.
+        XCTAssertEqual(PageOrigin.shortenedHost("login.\(bucket)", names: nil), "…s3.amazonaws.com")
+        XCTAssertEqual(PageOrigin.shortenedHost("login.\(bucket)", names: names), "…\(bucket)")
+        XCTAssertEqual(PageOrigin.shortenedHost("login.\(school)", names: nil), "…k12.ca.us")
+        XCTAssertEqual(PageOrigin.shortenedHost("login.\(school)", names: names), "…\(school)")
+        // Where the interim rule already kept the site, nothing changes but the one label it no longer needs.
+        let deep = "login.accounts-google-com-sign-in-verify.web.app"
+        XCTAssertEqual(PageOrigin.shortenedHost(deep, names: names), "…accounts-google-com-sign-in-verify.web.app")
+        let phish = PageOrigin.shortenedHost("accounts.google.com.verify-session.evil.example", names: names)
+        XCTAssertTrue(phish.hasPrefix("…") && phish.hasSuffix("evil.example") && !phish.contains("google") && phish.count <= 36, phish)
+        // A port and an http:// prefix are cut off before the name is asked, and put back.
+        XCTAssertEqual(PageOrigin.shortenedHost("http://login.\(bucket):8443", names: names), "http://…\(bucket):8443")
+        // A name with no answer keeps the interim rule; a short host is untouched either way.
+        XCTAssertEqual(PageOrigin.shortenedHost("b.a.\(String(repeating: "x", count: 60)).example", names: names), "…a.\(String(repeating: "x", count: 60)).example")
+        XCTAssertEqual(PageOrigin.shortenedHost("meet.google.com", names: names), "meet.google.com")
+    }
 }
