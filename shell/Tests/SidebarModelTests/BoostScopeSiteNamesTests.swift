@@ -137,4 +137,23 @@ final class BoostScopeSiteNamesTests: XCTestCase {
         // Without the engine's list the guess takes web.app for a site: no line, and the boost runs as before.
         XCTAssertNil(BoostLibraryListing.scopeNote([rule("web.app")], names: nil))
     }
+
+    /// The scope comes from a file or from sync. Text that is not a plain
+    /// host never goes into ReArc's own warning, and a long one is cut.
+    func testTheRowsNoteNamesOnlyAPlainHost() {
+        let other = "Not running: its scope is not a site a boost can be for. Make this boost again on the site it is for."
+        // Each is refused as a site rule (three labels are no registrable domain to the guess) and is not a plain host.
+        for text in ["www.evil.test\nReArc update required", "www.evil.test\u{202E}gpj.exe", "www.a b.test", "<b>x</b>.evil.test", "www.evil.test ",
+                     "www.ex\u{0430}mple.test", "www.*.test"] {
+            XCTAssertFalse(BoostScopeMatcher.validateRule(rule(text), names: names), text.debugDescription)
+            XCTAssertEqual(BoostLibraryListing.scopeNote([rule(text)], names: names), other, text.debugDescription)
+        }
+        // A suffix with a trailing dot is still a suffix to the engine, and still not a plain host here.
+        XCTAssertEqual(BoostLibraryListing.scopeNote([rule("web.app.")], names: names),
+                       "Not running: its scope is shared by many unrelated sites. Make this boost again on the one site it is for.")
+        let long = "www.\(String(repeating: "a", count: 60)).example.com"
+        let note = BoostLibraryListing.scopeNote([rule(long)], names: names)
+        XCTAssertEqual(note, "Not running: …example.com is not a site a boost can be for. Make this boost again on the site it is for.")
+        XCTAssertFalse(note?.contains(String(repeating: "a", count: 41)) ?? true)
+    }
 }

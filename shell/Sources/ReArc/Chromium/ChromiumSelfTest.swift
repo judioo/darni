@@ -4004,7 +4004,7 @@ extension ChromiumSelfTest {
 
     /// The four users of the engine's site names (CONTENT-BLOCKING.md §9;
     /// security CB-12, BO-01, AG-05), on a page under a private suffix: the
-    /// blocking fixture loaded from `rearc-selftest.azurewebsites.net`, which
+    /// blocking fixture loaded from `rearc_selftest.azurewebsites.net`, which
     /// the shell's old guess took for a page of all of `azurewebsites.net`.
     /// Needs the blocked list's call and `host_sites`; the gaps are logged by
     /// the steps before. What must hold:

@@ -31,8 +31,12 @@ enum SelfTestBlockingFixture {
     /// guess took all of `azurewebsites.net` for the site of this one
     /// (security CB-12). The self-test loads the page above from it, through
     /// the resolver rule and the fixture server.
+    ///
+    /// The label has an underscore, which Azure does not give out: nobody
+    /// can take this name. Should the resolver switches ever be lost, the
+    /// self-test would then find no page there, not a stranger's.
     static let siteSuffix = "azurewebsites.net"
-    static let siteHost = "rearc-selftest.\(siteSuffix)"
+    static let siteHost = "rearc_selftest.\(siteSuffix)"
 
     /// `--host-resolver-rules` entries that answer the fixture's names with
     /// the loopback address. They go before the rule that fails every other name.

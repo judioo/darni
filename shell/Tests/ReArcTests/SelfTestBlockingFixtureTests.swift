@@ -102,7 +102,11 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
                                  "MAP \(SelfTestBlockingFixture.siteHost) 127.0.0.1",
                                  "MAP * ~NOTFOUND", "EXCLUDE 127.0.0.1", "EXCLUDE localhost"])
         // The page's own site sits under a suffix the shell's guess does not know: the guess is the suffix.
-        XCTAssertEqual(SelfTestBlockingFixture.siteHost, "rearc-selftest.azurewebsites.net")
+        XCTAssertEqual(SelfTestBlockingFixture.siteHost, "rearc_selftest.azurewebsites.net")
+        // A label nobody can register there: should the resolver switches be lost, no stranger's page loads.
+        XCTAssertTrue(SelfTestBlockingFixture.siteHost.split(separator: ".")[0].contains("_"))
+        XCTAssertNotNil(URL(string: "http://\(SelfTestBlockingFixture.siteHost):8123/blocking?run=1")?.host())
+        XCTAssertNotNil(SiteControlCenter.site(for: URL(string: "http://\(SelfTestBlockingFixture.siteHost):8123/blocking?run=1")))
         XCTAssertEqual(BoostScopeMatcher.registrableDomain(SelfTestBlockingFixture.siteHost), SelfTestBlockingFixture.siteSuffix)
         // Whole names, no wildcard: a subdomain of any still fails to resolve.
         for host in [SelfTestBlockingFixture.trackerHost, SelfTestBlockingFixture.adHost, SelfTestBlockingFixture.siteHost] {
