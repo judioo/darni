@@ -76,13 +76,18 @@ that have no tab to ask about: the key of a blocking exception (security
 CB-12, shipped in 1027; since 1051 the page's exact host), the scope of a
 boost (BO-01) and the labels a long host keeps in an address line (AG-05).
 ReArcEngineCopySiteOfHost(host, &json) gives them the tracker's answer for
-a host name: {"host","registrable"}, by Chromium's public suffix list. It
-takes a plain DNS name or IPv4 address (ASCII letters, digits, '.', '-',
-'_', at most 253 bytes) and nothing else, builds http://<host>/ from it,
-refuses an address that came out with a port, a path or credentials, and
-names the site with ActionTracker::GetSiteOfUrl. A table lookup: no network,
-no profile, nothing kept. Feature host_sites. The shell does not call it
-yet; the uses are proposed in the spec (section 9).
+a host name: {"host","registrable","suffix"}, by Chromium's public suffix
+list. It takes a plain DNS name or IPv4 address (ASCII letters, digits, '.',
+'-', '_', at most 253 bytes) and nothing else, builds http://<host>/ from
+it, refuses an address that came out with a port, a path or credentials, and
+names the site with ActionTracker::GetSiteOfUrl. "suffix" is
+HostIsRegistryIdentifier for a name that is not one site: "com", "co.uk" and
+"web.app" are suffixes, which a boost's scope and a typed exception must
+refuse, and "localhost" is not. That function stops the process on a name
+that is not canonical, so the name is canonicalized and compared first. A
+table lookup: no network, no profile, nothing kept. Feature host_sites. The
+shell does not call it yet; the design for its four users is the spec's
+section 9.
 
 Checked without a build (the release of 2026-11-19 was building from
 out/ReArc-codecs-arm64): action_tracker.cc and rearc_content_blocker.cc
@@ -132,7 +137,7 @@ index b2276ef..7c36e18 100644
  _ReArcEngineSetMediaCaptureCallback
  _ReArcTabGetMediaCapture
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-index 7922dd3..586dce4 100644
+index 7922dd3..64dea1f 100644
 --- a/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 @@ -35,6 +35,8 @@
@@ -178,15 +183,18 @@ index 7922dd3..586dce4 100644
  #include "extensions/browser/api/declarative_net_request/composite_matcher.h"
  #include "extensions/browser/api/declarative_net_request/prefs_helper.h"
  #include "extensions/browser/api/declarative_net_request/rules_monitor_service.h"
-@@ -96,6 +103,7 @@
+@@ -95,7 +102,10 @@
+ #include "extensions/common/api/declarative_net_request/dnr_manifest_data.h"
  #include "extensions/common/extension.h"
  #include "extensions/common/extension_id.h"
++#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
++#include "net/base/url_util.h"
  #include "url/gurl.h"
 +#include "url/url_constants.h"
  
  namespace rearc {
  namespace {
-@@ -1168,6 +1176,157 @@ std::optional<base::ListValue> ReadList(const char* json) {
+@@ -1168,6 +1178,173 @@ std::optional<base::ListValue> ReadList(const char* json) {
    return base::JSONReader::ReadList(text, base::JSON_PARSE_RFC);
  }
  
@@ -304,6 +312,9 @@ index 7922dd3..586dce4 100644
 +// public suffix list (security CB-12, AG-05, BO-01: its guess took "web.app"
 +// for the site of every page under it). It lives here because the naming is
 +// the tracker's (ActionTracker::GetSiteOfUrl): one function, one answer.
++// "suffix" says more about a name that is not one site: it is itself a public
++// suffix ("com", "co.uk", "web.app"), so every site under it is someone
++// else's, and not a name without any ("localhost", an intranet's "wiki").
 +// nullopt for text that is not a plain host name or IPv4 address.
 +std::optional<std::string> SiteOfHostJson(std::string_view host) {
 +  constexpr size_t kMaxHostBytes = 253;
@@ -325,9 +336,22 @@ index 7922dd3..586dce4 100644
 +      !dnr::ActionTracker::GetSiteOfUrl(url, &site, &is_one_site)) {
 +    return std::nullopt;
 +  }
++  bool is_suffix = false;
++  if (!is_one_site) {
++    // `site` is the host itself then, and not an IP address. The list's own
++    // test for a suffix checks that its argument is a canonical name and
++    // stops the process when it is not, so that is settled here first.
++    url::CanonHostInfo info;
++    is_suffix =
++        net::CanonicalizeHost(site, &info) == site &&
++        info.family == url::CanonHostInfo::NEUTRAL &&
++        net::registry_controlled_domains::HostIsRegistryIdentifier(
++            site, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
++  }
 +  return base::WriteJson(base::DictValue()
 +                             .Set("host", std::move(site))
-+                             .Set("registrable", is_one_site));
++                             .Set("registrable", is_one_site)
++                             .Set("suffix", is_suffix));
 +}
 +
 +// A reply for the host to free with ReArcBufferFree.
@@ -344,7 +368,7 @@ index 7922dd3..586dce4 100644
  }  // namespace
  
  bool OnContentBlockerActionCount(content::BrowserContext* context,
-@@ -1374,3 +1533,25 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
+@@ -1374,3 +1551,25 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
    rearc::g_count_callback = callback;
    rearc::g_count_context = callback ? context : nullptr;
  }
@@ -371,7 +395,7 @@ index 7922dd3..586dce4 100644
 +  return reply ? rearc::CopyReply(*reply, json) : REARC_INVALID_ARGUMENT;
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index 39fd014..8408dbf 100644
+index 39fd014..b211922 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -383,7 +407,7 @@ index 39fd014..8408dbf 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1923,6 +1923,55 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
+@@ -1923,6 +1923,58 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
                                                       uint32_t index,
                                                       const char* text);
  
@@ -422,13 +446,16 @@ index 39fd014..8408dbf 100644
 +// exception, a boost's scope, the part of a long host an address line must
 +// keep) and has no suffix list of its own. *json is +1 malloc, NUL-terminated
 +// UTF-8; free with ReArcBufferFree.
-+//   {"host":"example.co.uk","registrable":true}
-+// The answer for utf8_host is the one ReArcTabCopyBlockedHosts gives for a
-+// blocked request to it: host is the registrable domain, private registries
++//   {"host":"example.co.uk","registrable":true,"suffix":false}
++// host and registrable are what ReArcTabCopyBlockedHosts gives for a blocked
++// request to utf8_host: host is the registrable domain, private registries
 +// included, or the name itself when it has none; registrable is false for a
-+// single-label name and for a public suffix ("web.app", "edu.au"), which
-+// must never become the key of a rule or a scope. An IPv4 address is itself,
-+// with true. utf8_host: a DNS name or IPv4 address of at most 253 bytes, ASCII
++// single-label name and for a public suffix. suffix: the name is itself a
++// public suffix ("com", "co.uk", "web.app", "edu.au"): every site under it is
++// another party's, so it must never become the key of a rule, an exception
++// or a scope. registrable false and suffix false: a name with no suffix at
++// all ("localhost", an intranet's "wiki"). An IPv4 address is itself, with
++// registrable true. utf8_host: a DNS name or IPv4 address of at most 253 bytes, ASCII
 +// letters, digits, '.', '-' and '_' (an international name in its xn-- form);
 +// a trailing dot is dropped. Anything else, a scheme, a port, a path or an
 +// IPv6 literal among it: invalid_argument, and *json null. Synchronous, a

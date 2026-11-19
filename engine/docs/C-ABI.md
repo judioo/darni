@@ -3064,8 +3064,8 @@ update, the list after blocking has moved to the second blocker. **None of it ha
 ## Host sites (ABI 1.69, bridge 0.79.0)
 
 Patch `tab/098-blocked-hosts`, feature `host_sites`. **Not built**, and the shell does not call
-it yet: its uses are proposed in `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9. No struct
-changes.
+it yet: the design for its four users is `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9.
+No struct changes.
 
 A host application keeps things per site: a blocking exception, a boost's scope, the labels of
 a long host that an address line must not cut. Without a public suffix list it guesses the
@@ -3074,7 +3074,7 @@ every page under them (security CB-12, AG-05, BO-01). This call is Chromium's an
 
 | Function | Contract |
 |---|---|
-| `ReArcEngineCopySiteOfHost(utf8_host, &json)` | `*json`: `{"host":"example.co.uk","registrable":true}`, malloc'd and NUL-terminated; the host frees it with `ReArcBufferFree`. Synchronous, main thread, usable once the engine is ready. A lookup in the compiled-in suffix list: no network, no profile, nothing kept or logged. Null `json` or `utf8_host`, or text that is not a plain host: `invalid_argument`, `*json` null. |
+| `ReArcEngineCopySiteOfHost(utf8_host, &json)` | `*json`: `{"host":"example.co.uk","registrable":true,"suffix":false}`, malloc'd and NUL-terminated; the host frees it with `ReArcBufferFree`. Synchronous, main thread, usable once the engine is ready. A lookup in the compiled-in suffix list: no network, no profile, nothing kept or logged. Null `json` or `utf8_host`, or text that is not a plain host: `invalid_argument`, `*json` null. |
 
 - **The answer** is the one `ReArcTabCopyBlockedHosts` gives for a blocked request to that
   host, and for the page (`page`): `host` is the registrable domain with private registries
@@ -3086,9 +3086,21 @@ every page under them (security CB-12, AG-05, BO-01). This call is Chromium's an
   most 253 bytes; an international name in its `xn--` form; upper case is lowered and a
   trailing dot dropped. A scheme, a port, a path, a space, `*` or an IPv6 literal is
   `invalid_argument`: the host application takes the host out of an address itself.
-- **`registrable` false is a refusal for the caller.** Such a name must never become the key
-  of a rule, an exception or a scope: it covers every site under it.
+- **`suffix`** is true when the name is itself a public suffix, by the list's own test
+  (`HostIsRegistryIdentifier`, private registries and wildcard rules included): `com`, `co.uk`,
+  `web.app`, `edu.au`. Every site under such a name is another party's. It must never become
+  the key of a rule, an exception or a scope.
+- The three answers a caller meets:
+
+  | Name | `host` | `registrable` | `suffix` | It is |
+  |---|---|---|---|---|
+  | `www.example.co.uk`, `example.co.uk` | `example.co.uk` | true | false | one site |
+  | `a.someone.web.app` | `someone.web.app` | true | false | one site |
+  | `203.0.113.7` | itself | true | false | one site |
+  | `web.app`, `co.uk`, `com` | itself | false | true | a suffix: refuse |
+  | `localhost`, `wiki` | itself | false | false | a name with no suffix: the caller's rule |
 
 **Tests:** the import check and the patch check of the section above cover it: the function is
-exported, the characters it takes, the refusals, and that the name comes from the tracker's
-function. Not built and not run.
+exported, the characters it takes, the refusals, that the name comes from the tracker's
+function, and that the suffix test is asked only of a canonical name that is not an address.
+Not built and not run.

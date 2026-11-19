@@ -159,6 +159,14 @@ class BlockedHostsPatchTests(unittest.TestCase):
         for refused in ("url.has_port()", "url.has_username()", "url.has_password()", 'url.path() != "/"', "url.has_query()", "url.has_ref()"):
             self.assertIn(refused, site, refused)
         self.assertIn("!dnr::ActionTracker::GetSiteOfUrl(url, &site, &is_one_site)) {\n    return std::nullopt;", site)
+        # Whether the name is itself a suffix: asked only of a name that is not one site (so never
+        # of an address), and only once the name is known to be canonical. Chromium's function
+        # checks that itself and stops the process if not, and the text here is a file's or a person's.
+        self.assertIn("if (!is_one_site) {", site)
+        self.assertIn("net::CanonicalizeHost(site, &info) == site &&\n        info.family == url::CanonHostInfo::NEUTRAL &&\n"
+                      "        net::registry_controlled_domains::HostIsRegistryIdentifier(\n"
+                      "            site, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);", site)
+        self.assertEqual(self.bridge.count("HostIsRegistryIdentifier("), 1)
         call = function_body(self.bridge, "ReArcStatus ReArcEngineCopySiteOfHost(")
         self.assertIn("CHECK(pthread_main_np());", call)
         self.assertIn("return reply ? rearc::CopyReply(*reply, json) : REARC_INVALID_ARGUMENT;", call)
@@ -183,7 +191,7 @@ class BlockedHostsPatchTests(unittest.TestCase):
         code = re.sub(r"^#include [^\n]*$", "", self.bridge, flags=re.M).replace(empty_reply, "")
         self.assertEqual(set(string_literals(code)) & FORBIDDEN_LITERALS, set())
         # "/" ends the address ReArcEngineCopySiteOfHost makes of a host name.
-        self.assertEqual(set(string_literals(code)), {"page", "host", "count", "registrable", "lists", "hosts", "more", "/"})
+        self.assertEqual(set(string_literals(code)), {"page", "host", "count", "registrable", "suffix", "lists", "hosts", "more", "/"})
 
     def test_the_call_is_exported_and_advertised(self):
         for path in ("chrome/app/framework.exports", "chrome/app/framework.order"):
