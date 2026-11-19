@@ -3,7 +3,7 @@ import SwiftUI
 import SidebarModel
 
 /// Edit Space sheet: name, theme (Arc's style editor: colours or a
-/// gradient, grain and appearance, SIDEBAR-SPEC §4.6), icon (SF Symbols or an emoji),
+/// gradient, grain and appearance, SIDEBAR-SPEC §4.6), icon (SF Symbols, an emoji or a picture),
 /// profile and boosts. Changes apply live, like Arc's editor, except a profile change,
 /// which asks first; Done closes the sheet.
 struct SpaceEditorView: View {
@@ -12,7 +12,6 @@ struct SpaceEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name = ""
-    @State private var emoji = ""
     /// A profile change waiting for confirmation (the sheet has its own alert).
     @State private var profileChange: SpaceProfileChange?
 
@@ -42,18 +41,8 @@ struct SpaceEditorView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Icon").font(.headline)
-                SymbolGridPicker(symbols: Space.iconChoices,
-                                 isSelected: { Space.symbolToDraw(for: space?.iconName ?? "") == $0 }) { symbol in
-                    store.setSpaceIcon(spaceID, iconName: symbol)
-                }
-                HStack {
-                    TextField("Or type an emoji", text: $emoji)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 140)
-                        .onSubmit(commitEmoji)
-                    Button("Use") { commitEmoji() }
-                        .disabled(emoji.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Button("Emoji & Symbols…") { NSApp.orderFrontCharacterPalette(nil) }
+                SpaceIconPicker(iconName: space?.iconName ?? "") { name in
+                    store.setSpaceIcon(spaceID, iconName: name)
                 }
             }
 
@@ -87,7 +76,6 @@ struct SpaceEditorView: View {
         }
         .onAppear {
             name = space?.name ?? ""
-            if let icon = space?.iconName, !Space.isSymbolName(icon) { emoji = icon }
         }
     }
 
@@ -125,12 +113,5 @@ struct SpaceEditorView: View {
 
     private func commitName() {
         model.store.renameSpace(spaceID, to: name)
-    }
-
-    /// Lowercase words would be read as an SF Symbol name; take them only if one exists.
-    private func commitEmoji() {
-        let glyph = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
-        if Space.isSymbolName(glyph), NSImage(systemSymbolName: glyph, accessibilityDescription: nil) == nil { return }
-        model.store.setSpaceIcon(spaceID, iconName: glyph)
     }
 }

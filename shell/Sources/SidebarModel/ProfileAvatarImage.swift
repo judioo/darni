@@ -63,8 +63,16 @@ public struct ProfileAvatarImage: Equatable, Sendable {
         var typeIdentifier: CFString { (self == .jpeg ? UTType.jpeg : UTType.png).identifier as CFString }
     }
 
+    /// What is kept of the picture: a centred square (an avatar), or all of
+    /// it, scaled to fit (a space icon, where a wide logo must not lose its ends).
+    public enum Shape: Sendable {
+        case centredSquare
+        case whole
+    }
+
     public let data: Data
     public let format: Format
+    /// The longer side in pixels.
     public let side: Int
     public let name: ProfileAvatarImageName
 
@@ -80,7 +88,8 @@ public struct ProfileAvatarImage: Equatable, Sendable {
     ].reduce(into: Set(["public.avif"])) { $0.insert($1.identifier) }
     static let animatableTypes: Set<String> = [UTType.gif.identifier, UTType.png.identifier, UTType.webP.identifier]
 
-    public static func normalizing(_ source: Data) throws -> ProfileAvatarImage {
+    /// `maxSide` caps the longer side of what is kept; a smaller picture keeps its size.
+    public static func normalizing(_ source: Data, maxSide: Int = maxSide, shape: Shape = .centredSquare) throws -> ProfileAvatarImage {
         guard source.count <= maxFileBytes else { throw ProfileAvatarImageError.tooLarge }
         let options = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let image = CGImageSourceCreateWithData(source as CFData, options),
@@ -102,8 +111,15 @@ public struct ProfileAvatarImage: Equatable, Sendable {
               width * height <= maxSourcePixels else { throw ProfileAvatarImageError.badDimensions }
 
         // Decode at the size the crop needs: its short side becomes the square.
+        // Kept whole, the long side is what is capped.
         let short = min(width, height), long = max(width, height)
-        let decodeSide = short <= maxSide ? long : min(long, Int((Double(long) * Double(maxSide) / Double(short)).rounded(.up)))
+        let decodeSide: Int
+        switch shape {
+        case .centredSquare:
+            decodeSide = short <= maxSide ? long : min(long, Int((Double(long) * Double(maxSide) / Double(short)).rounded(.up)))
+        case .whole:
+            decodeSide = min(long, maxSide)
+        }
         let decode = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -113,20 +129,33 @@ public struct ProfileAvatarImage: Equatable, Sendable {
         guard let decoded = CGImageSourceCreateThumbnailAtIndex(image, index, decode) else {
             throw ProfileAvatarImageError.notAnImage
         }
-        let square = min(decoded.width, decoded.height)
-        let crop = CGRect(x: (decoded.width - square) / 2, y: (decoded.height - square) / 2, width: square, height: square)
-        guard square > 0, let cropped = decoded.cropping(to: crop) else { throw ProfileAvatarImageError.notAnImage }
+        let cropped: CGImage
+        let outWidth: Int, outHeight: Int
+        switch shape {
+        case .centredSquare:
+            let square = min(decoded.width, decoded.height)
+            let crop = CGRect(x: (decoded.width - square) / 2, y: (decoded.height - square) / 2, width: square, height: square)
+            guard square > 0, let image = decoded.cropping(to: crop) else { throw ProfileAvatarImageError.notAnImage }
+            cropped = image
+            outWidth = min(square, maxSide)
+            outHeight = outWidth
+        case .whole:
+            // ImageIO's thumbnail already fits `maxSide`; this only guards a decoder that ignored it.
+            let scale = min(1, Double(maxSide) / Double(max(decoded.width, decoded.height)))
+            cropped = decoded
+            outWidth = max(1, Int((Double(decoded.width) * scale).rounded()))
+            outHeight = max(1, Int((Double(decoded.height) * scale).rounded()))
+        }
 
         // Redrawn into a plain sRGB bitmap: nothing of the file but its pixels survives.
-        let side = min(square, maxSide)
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+              let context = CGContext(data: nil, width: outWidth, height: outHeight, bitsPerComponent: 8, bytesPerRow: outWidth * 4,
                                       space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             throw ProfileAvatarImageError.notAnImage
         }
         context.interpolationQuality = .high
-        context.draw(cropped, in: CGRect(x: 0, y: 0, width: side, height: side))
-        let format: Format = Self.hasTransparency(context, side: side, alpha: cropped.alphaInfo) ? .png : .jpeg
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: outWidth, height: outHeight))
+        let format: Format = Self.hasTransparency(context, pixels: outWidth * outHeight, alpha: cropped.alphaInfo) ? .png : .jpeg
         guard let pixels = context.makeImage() else { throw ProfileAvatarImageError.notAnImage }
 
         let output = NSMutableData()
@@ -139,13 +168,13 @@ public struct ProfileAvatarImage: Equatable, Sendable {
         let data = output as Data
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard let name = ProfileAvatarImageName(rawValue: "\(hash).\(format.rawValue)") else { throw ProfileAvatarImageError.notAnImage }
-        return ProfileAvatarImage(data: data, format: format, side: side, name: name)
+        return ProfileAvatarImage(data: data, format: format, side: max(outWidth, outHeight), name: name)
     }
 
-    private static func hasTransparency(_ context: CGContext, side: Int, alpha: CGImageAlphaInfo) -> Bool {
+    private static func hasTransparency(_ context: CGContext, pixels: Int, alpha: CGImageAlphaInfo) -> Bool {
         guard ![.none, .noneSkipFirst, .noneSkipLast].contains(alpha), let base = context.data else { return false }
-        let bytes = base.bindMemory(to: UInt8.self, capacity: side * side * 4)
-        return stride(from: 3, to: side * side * 4, by: 4).contains { bytes[$0] < 255 }
+        let bytes = base.bindMemory(to: UInt8.self, capacity: pixels * 4)
+        return stride(from: 3, to: pixels * 4, by: 4).contains { bytes[$0] < 255 }
     }
 
     /// The bytes of a chosen or dropped file: a regular file only, never

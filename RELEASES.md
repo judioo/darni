@@ -19,7 +19,19 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**New**
+- A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
+  Choose Image… or Paste Image, or drop an image on the picker. A big picture is scaled down to
+  icon size (64 pixels on its longer side) and kept whole, not cropped. The picture travels with
+  the space, so iCloud sync takes it to your other Macs. A Mac still on an older ReArc shows a
+  line of letters in its place until it updates.
+
 **Fixes**
+- Emoji icons work again. The icon pickers for spaces, profiles, folders and tabs have an Emoji tab
+  with every emoji, searchable by name ("dog", "rocket", "work"). Typing or pasting an emoji
+  into the search field offers that one first, flags and skin tones included. Until now the
+  Emoji & Symbols button did nothing in Create a Space, and an emoji picked from the system's
+  palette closed the picker before it arrived.
 - In a space with its own container, Settings' first tab and the membership card name your profile, not
   the container; Change Name renames the profile; Settings › Profiles opens on the profile, where
   ad and tracker blocking is set (a container follows its profile).

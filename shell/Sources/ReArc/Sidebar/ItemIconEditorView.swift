@@ -7,71 +7,16 @@ import SidebarModel
 struct ItemIconEditorView: View {
     let model: BrowserViewModel
     let itemID: UUID
-    @State private var showsEmoji = true
-    @State private var query = ""
-
-    private static let emojis: [(String, String)] = [
-        ("😀", "smile happy face"), ("😎", "cool sunglasses face"), ("🥰", "love face"), ("🤔", "thinking face"),
-        ("🎉", "party celebration"), ("❤️", "heart love"), ("⭐️", "star"), ("🔥", "fire"),
-        ("🌈", "rainbow"), ("☀️", "sun weather"), ("🌙", "moon night"), ("🌍", "earth world travel"),
-        ("🌱", "plant seedling"), ("🌸", "flower blossom"), ("🌴", "palm tree"), ("🍀", "clover luck"),
-        ("🐶", "dog animal"), ("🐱", "cat animal"), ("🦊", "fox animal"), ("🐻", "bear animal"),
-        ("🍎", "apple food"), ("🍋", "lemon food"), ("☕️", "coffee drink"), ("🍕", "pizza food"),
-        ("🏠", "home house"), ("🏖️", "beach holiday"), ("✈️", "plane travel"), ("🚀", "rocket space"),
-        ("🎨", "art palette design"), ("🎵", "music note"), ("🎮", "game controller"), ("📷", "camera photo"),
-        ("📚", "books study"), ("💻", "computer work"), ("💡", "idea light"), ("🛠️", "tools build"),
-        ("✅", "check done"), ("📌", "pin"), ("💎", "diamond"), ("🎯", "target goal"),
-    ]
-    private let columns = Array(repeating: GridItem(.fixed(30), spacing: 6), count: 8)
-
-    static func emojiChoices(matching query: String) -> [String] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matches = emojis.filter { needle.isEmpty || $0.0.contains(needle) || $0.1.localizedCaseInsensitiveContains(needle) }.map(\.0)
-        if needle.count == 1, !matches.contains(needle),
-           needle.unicodeScalars.contains(where: { $0.properties.isEmoji && $0.value > 0x7F }) {
-            return [needle] + matches
-        }
-        return matches
-    }
-
-    static func symbolChoices(matching query: String) -> [String] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let matches = Space.iconChoices.filter { needle.isEmpty || $0.localizedCaseInsensitiveContains(needle) }
-        if !needle.isEmpty, !matches.contains(needle), NSImage(systemSymbolName: needle, accessibilityDescription: nil) != nil {
-            return [needle] + matches
-        }
-        return matches
-    }
 
     var body: some View {
+        let current = model.store.customIcon(for: itemID)
         VStack(spacing: 10) {
-            Picker("Icon type", selection: $showsEmoji) {
-                Text("Emoji").tag(true)
-                Text("Icon").tag(false)
-            }
-            .pickerStyle(.segmented)
-            TextField("Search…", text: $query).textFieldStyle(.roundedBorder)
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 6) {
-                    if showsEmoji {
-                        ForEach(Self.emojiChoices(matching: query), id: \.self) { emoji in
-                            choice(.emoji(emoji)) { Text(emoji).font(.system(size: 22)) }
-                        }
-                    } else {
-                        ForEach(Self.symbolChoices(matching: query), id: \.self) { name in
-                            choice(.sfSymbol(name: name)) { Image(systemName: name).font(.system(size: 17)) }
-                        }
-                    }
-                }
-            }
-            .frame(height: 180)
+            IconGridPicker(symbols: Space.iconChoices, startsOnEmoji: current.map(Self.isEmoji) ?? true,
+                           isSelected: { Self.icon(for: $0) == current }) { apply(Self.icon(for: $0)) }
             HStack {
                 Button { apply(nil) } label: { Image(systemName: "trash") }
                     .help("Remove Icon").accessibilityLabel("Remove Icon")
                 Spacer()
-                if showsEmoji {
-                    Button("Emoji & Symbols…") { NSApp.orderFrontCharacterPalette(nil) }
-                }
             }
             .buttonStyle(.borderless)
         }
@@ -80,13 +25,16 @@ struct ItemIconEditorView: View {
         .onExitCommand { model.itemIconEditorID = nil }
     }
 
-    private func choice<Label: View>(_ icon: SidebarItemIcon, @ViewBuilder label: () -> Label) -> some View {
-        Button { apply(icon) } label: {
-            label().frame(width: 30, height: 30)
-                .background(model.store.customIcon(for: itemID) == icon ? Color.accentColor.opacity(0.25) : .clear,
-                            in: RoundedRectangle(cornerRadius: 5))
+    static func icon(for choice: IconPick) -> SidebarItemIcon {
+        switch choice {
+        case .symbol(let name): .sfSymbol(name: name)
+        case .emoji(let text): .emoji(text)
         }
-        .buttonStyle(.plain)
+    }
+
+    private static func isEmoji(_ icon: SidebarItemIcon) -> Bool {
+        if case .emoji = icon { return true }
+        return false
     }
 
     private func apply(_ icon: SidebarItemIcon?) {
