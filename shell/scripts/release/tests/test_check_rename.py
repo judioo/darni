@@ -64,6 +64,8 @@ class CheckRenameTests(unittest.TestCase):
             "a new bundle id": (dict(info={"CFBundleIdentifier": "ae.imara.darni"}), "CFBundleIdentifier is 'ae.imara.darni'"),
             "a new executable": (dict(info={"CFBundleExecutable": "Darni"}), "CFBundleExecutable is 'Darni'"),
             "another feed": (dict(info={"SUFeedURL": "https://darni.example/appcast.xml"}), "SUFeedURL"),
+            "a launch environment of its own": (dict(info={"LSEnvironment": {"MallocNanoZone": "0", "REARC_DATA_DIR": "/tmp/x"}}),
+                                                "LSEnvironment sets REARC_DATA_DIR"),
             "another update key": (dict(info={"SUPublicEDKey": "AAAA"}), "SUPublicEDKey"),
             "another iCloud container": (dict(info={"ReArcICloudContainer": "iCloud.ae.imara.darni"}), "ReArcICloudContainer"),
             "another blocklists URL": (dict(executable=b"https://darni.example/blocklists/latest.json"), "blocklists/latest.json"),
@@ -87,11 +89,27 @@ class CheckRenameTests(unittest.TestCase):
         self.assertEqual(qa.returncode, 0, qa.stderr)
         self.assertIn("never distribute", qa.stderr)
 
-    def test_a_development_bundle_has_no_feed_or_container_to_check(self):
+    def test_without_qa_the_bundle_must_be_a_release_bundle(self):
+        """Security DN review: the feed and the key are checked on every bundle that is not a test."""
         info = {k: v for k, v in INFO.items() if k not in ("ReArcRelease", "SUFeedURL", "SUPublicEDKey", "ReArcICloudContainer")}
         app = self.app()
         (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+        result = self.run_gate(app)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("ReArcRelease is ''", result.stderr)
+        self.assertIn("SUFeedURL is 'missing'", result.stderr)
+        qa = self.run_gate(app, "--qa")
+        self.assertEqual(qa.returncode, 0, qa.stderr)
+        # A release marker without a feed is refused too.
+        (app / "Contents/Info.plist").write_bytes(plistlib.dumps({**info, "ReArcRelease": True, "SUPublicEDKey": KEY}))
+        self.assertIn("SUFeedURL is 'missing'", self.run_gate(app).stderr)
+
+    def test_the_engines_own_launch_environment_is_fine(self):
+        app = self.app(info={"LSEnvironment": {"MallocNanoZone": "0"}})
         self.assertEqual(self.run_gate(app).returncode, 0)
+        test_copy = self.app("copy/Darni.app", info={"LSEnvironment": {"REARC_DATA_DIR": "/tmp/x"}, "SUFeedURL": "http://127.0.0.1:8123/appcast.xml"})
+        self.assertEqual(self.run_gate(test_copy).returncode, 1)
+        self.assertEqual(self.run_gate(test_copy, "--qa").returncode, 0, "only as a test bundle")
 
 
 if __name__ == "__main__":

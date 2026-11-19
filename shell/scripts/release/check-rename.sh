@@ -17,8 +17,12 @@
 #                               with --engine-out, the header the engine build generated)
 #
 # Usage: scripts/release/check-rename.sh APP [--engine-out DIR] [--qa]
-#   --qa   a test bundle that is never distributed may carry another SUFeedURL
-#          (REARC_APPCAST_URL, for a local update feed); everything else is still checked.
+#   Without --qa the bundle must be a release bundle: ReArcRelease is true, SUFeedURL is the
+#   address above, and LSEnvironment sets no REARC_* variable (the mark of an update test
+#   copy, check-rename-update.sh, which opens a data directory of its own).
+#   --qa   a test bundle that is never distributed may lack the release marker and may carry
+#          another SUFeedURL (REARC_APPCAST_URL, for a local update feed); everything else is
+#          still checked.
 # Reads files only: no launch, no Keychain, no network.
 set -euo pipefail
 
@@ -63,16 +67,36 @@ expect CFBundleDisplayName "$NAME" "Finder, the Dock and macOS prompts"
 expect CFBundleIdentifier "$BUNDLE_ID" "a new id is a new app to macOS, and Sparkle could not find the update"
 expect CFBundleExecutable "$EXECUTABLE" "the scripts and crash reports name it"
 [[ -x "$APP/Contents/MacOS/$EXECUTABLE" ]] || fail "no executable at Contents/MacOS/$EXECUTABLE"
-if [[ "$(key "$PLIST" ReArcRelease)" == true ]]; then
-  feed="$(key "$PLIST" SUFeedURL)"
-  if [[ $feed != "$FEED_URL" ]]; then
-    if [[ $QA == 1 ]]; then
-      echo "check-rename: NOTE: --qa bundle with SUFeedURL '$feed' (not $FEED_URL); never distribute it" >&2
-    else
-      fail "SUFeedURL is '$feed', expected '$FEED_URL' (every installed build polls the URL built into it)"
-    fi
+release="$(key "$PLIST" ReArcRelease)"
+if [[ $release != true ]]; then
+  if [[ $QA == 1 ]]; then
+    echo "check-rename: NOTE: --qa bundle without ReArcRelease: no updater, so no feed or update key to check" >&2
+  else
+    fail "ReArcRelease is '$release', expected 'true': this is not a release bundle, and its feed and update key cannot be checked"
   fi
+fi
+feed="$(key "$PLIST" SUFeedURL)"
+if [[ $feed != "$FEED_URL" ]]; then
+  if [[ $QA == 1 ]]; then
+    [[ -z $feed ]] || echo "check-rename: NOTE: --qa bundle with SUFeedURL '$feed' (not $FEED_URL); never distribute it" >&2
+  else
+    fail "SUFeedURL is '${feed:-missing}', expected '$FEED_URL' (every installed build polls the URL built into it)"
+  fi
+fi
+if [[ $release == true ]]; then
   expect SUPublicEDKey "$(tr -d '[:space:]' <"$HERE/sparkle-public-key.txt")" "updates are accepted on this key's signature"
+fi
+# A REARC_* variable in LSEnvironment redirects every launch (REARC_DATA_DIR: another data
+# directory). Only an update test copy has one.
+launch_env="$(python3 -I -c 'import plistlib, sys
+env = plistlib.load(open(sys.argv[1], "rb")).get("LSEnvironment") or {}
+print(" ".join(sorted(k for k in env if k.upper().startswith("REARC_"))))' "$PLIST" 2>/dev/null || echo unreadable)"
+if [[ -n $launch_env ]]; then
+  if [[ $QA == 1 ]]; then
+    echo "check-rename: NOTE: --qa bundle with LSEnvironment $launch_env; never distribute it" >&2
+  else
+    fail "LSEnvironment sets $launch_env: a shipped bundle must not redirect its own launches"
+  fi
 fi
 container="$(key "$PLIST" ReArcICloudContainer)"
 [[ -z $container || $container == "$ICLOUD_CONTAINER" ]] \

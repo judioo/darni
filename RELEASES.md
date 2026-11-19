@@ -34,6 +34,9 @@ lines and this section starts empty again.
   Darni in the Applications folder, then open it again. Renaming is optional. Updates work
   either way.
 - A new download is called Darni. The disk image is named Darni and holds Darni.app.
+- Keep one copy. The simplest way is to let ReArc update itself. If you download Darni instead,
+  quit ReArc and move ReArc.app to the Trash before you open Darni. Both use the same data on
+  your Mac, and two copies running at once can lose changes to your sidebar.
 - Little ReArc is now Little Darni. Menus, Settings and messages use the new name throughout.
 - If 1Password stops filling in Darni, add it again in 1Password under Settings › Browser ›
   Add Browser, then restart Darni.
