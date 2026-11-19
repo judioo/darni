@@ -498,13 +498,15 @@ public final class SidebarStore {
         notifyMutation(.upsertSpace(id: id))
     }
 
-    /// An SF Symbol name or a short text glyph (emoji).
+    /// An SF Symbol name, a short text glyph (emoji), or a picture (`SpaceIconImage`);
+    /// a picture name that does not check out is ignored.
     public func setSpaceIcon(_ id: Space.ID, iconName: String) {
         let trimmed = iconName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
+        let isImage = SpaceIconImage.isImageName(trimmed)
+        guard !trimmed.isEmpty, !isImage || SpaceIconImage.data(from: trimmed) != nil,
               let index = spaces.firstIndex(where: { $0.id == id }),
               spaces[index].iconName != trimmed else { return }
-        spaces[index].iconName = Space.isSymbolName(trimmed) ? trimmed : String(trimmed.prefix(2))
+        spaces[index].iconName = isImage || Space.isSymbolName(trimmed) ? trimmed : String(trimmed.prefix(2))
         notifyMutation(.upsertSpace(id: id))
     }
 

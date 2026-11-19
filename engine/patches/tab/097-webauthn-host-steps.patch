@@ -115,14 +115,49 @@ After the review of 2026.1118.1027 (security/RC-2026.1118.1027.md, AH-02):
   an ordinary launch of 1027 on 2026-11-18: asked after the window was
   hidden, covered or minimised, the request was refused within 130 ms every
   time; asked two seconds before the hide, it was still open after 35 s.
+  Run on the QA bundle of this overlay (2026-11-19, an ordinary launch with
+  a throwaway data folder, a local page): get and create from a Little
+  ReArc window whose app was then hidden, from a browser window under
+  another app's window, and from a minimised window. All six ended with
+  NotAllowedError ("the page does not have focus") in 2 to 42 ms, each with
+  the host's log line; with the window back, the same get opened the sheet
+  ("first step qr (get), page visible"), and that request stayed open when
+  the app was hidden. The shell's self-test passes, with a background tab
+  and a Little ReArc window that is ordered out.
 
-Built into the release engine on 2026-11-19 (overlay f36e9e30e1,
+After the review's addendum 2 (2026-11-19):
+- A sheet that is open stays when its page goes out of sight, so a touch of
+  a security key meant for the tab in front could answer the older request.
+  When a request's first step with UI goes out (its page is visible then),
+  Prompt::Publish asks every other request that has a sheet: one whose page
+  is not visible is cancelled, in any tab and any profile. Nothing is stored
+  for it: the open requests are the Prompts() the bridge already keeps, and
+  each is asked for its page's visibility at that moment. The host gets
+  {"refused":"not_visible","at":"newer_request","visibility","request",
+  "step","by_tab"} with the request's own number, for its log, and then the
+  request's ordinary end, which closes its sheet. Until the cancel runs,
+  the request publishes no step and takes no answer. A request that never
+  had a sheet (a sign-in page's passkey autofill) is left alone.
+- A cancel does not end a request that began as passkey autofill: Chromium
+  puts it back to waiting (CancelAuthenticatorRequest, the kAutofill
+  presentation). The flag that holds back a request's steps while its cancel
+  is on its way (refused_, now cancel_pending_) is cleared when the cancel
+  runs. It used to stay set, so such a request would have published no step
+  again. Read in the source, not run.
+- A page can ask in a loop, and each refused call is one event. The host
+  limits what it writes for a tab: the first refusal in full, then a count
+  at the 10th, the 100th, the 1000th and so on, and the total when the tab
+  closes.
+
+Built into the release engine on 2026-11-19 (overlay 17641fac0a,
 out/ReArc-codecs-arm64): the framework exports both functions and
 engine/tests/check_abi168_imports.py passes. Run on screen with the host's
-sheet on webauthn.io: the choice of ways, the QR code, the security key
-step, "this Mac" up to macOS's Touch ID prompt, cancel, a second request
-and a tab closed in the middle. Not run: a real phone, a security key, and
-so the PIN, fingerprint and error steps.
+sheet on webauthn.io, on overlay f36e9e30e1: the choice of ways, the QR
+code, the security key step, "this Mac" up to macOS's Touch ID prompt,
+cancel, a second request and a tab closed in the middle. Not run: the
+cancel of a request nobody sees (addendum 2; the shell's self-test has the
+step, passkeyStaleSheetChecks, and it has not run on this overlay), a real
+phone, a security key, and so the PIN, fingerprint and error steps.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_abi_internal.h,
@@ -193,7 +228,7 @@ index 503b6c5..8b2aa0b 100644
  }  // namespace rearc
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index f638567..c124ee0 100644
+index f638567..39fd014 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -205,7 +240,7 @@ index f638567..c124ee0 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1813,6 +1813,109 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
+@@ -1813,6 +1813,116 @@ typedef void (*ReArcSitePermissionsChangedCallback)(void* context,
  REARC_ENGINE_EXPORT void ReArcEngineSetSitePermissionsChangedCallback(
      ReArcSitePermissionsChangedCallback callback, void* context);
  
@@ -237,7 +272,14 @@ index f638567..c124ee0 100644
 +// tab_id is 0 for a page that is no registry tab) or "first_step" (with
 +// "request" and "step"), "visibility": "hidden" or "occluded"}, for the
 +// host's log: it has no sheet to close for it. A sheet that is open stays
-+// when its page goes out of sight afterwards, as Chromium's dialog does.
++// when its page goes out of sight afterwards, as Chromium's dialog does,
++// until a request with UI starts in a visible page: every open request whose
++// page is not visible then is cancelled, in any tab and profile, so a touch
++// of a key meant for the new request cannot answer an older one. Such a
++// request sends {"refused": "not_visible", "at": "newer_request", "request",
++// "step", "visibility", "by_tab": the visible tab} with its own request_id,
++// for the log, and then its ordinary phase 1 event, which closes its sheet.
++// A page can ask in a loop: the host limits what it writes for one tab.
 +//
 +// json is a UTF-8 object; a host ignores keys it does not know and treats a
 +// step it does not know as "unsupported". 64-bit numbers are decimal strings.
@@ -354,10 +396,10 @@ index f8c5938..24a7044 100644
    ABIDetachFind(id);
 diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.cc b/chrome/browser/rearc_bridge/rearc_webauthn.cc
 new file mode 100644
-index 0000000..6790ff4
+index 0000000..13fb400
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_webauthn.cc
-@@ -0,0 +1,816 @@
+@@ -0,0 +1,867 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -675,15 +717,17 @@ index 0000000..6790ff4
 +  return nullptr;
 +}
 +
-+// A request refused because nobody sees its page: the host hears of it, to
-+// write it to its log. No address in it: the host's log is open to whoever
-+// started the app.
++// A request refused or cancelled because nobody sees its page: the host hears
++// of it, to write it to its log. No address in it: the host's log is open to
++// whoever started the app. `by_tab` is the visible tab whose request ended an
++// open one (0: none).
 +void NoteRefused(uint64_t request_id,
 +                 uint64_t tab_id,
 +                 const char* at,
 +                 const char* visibility,
 +                 const char* request,
-+                 const char* step) {
++                 const char* step,
++                 uint64_t by_tab = 0) {
 +  base::DictValue document;
 +  document.Set("refused", "not_visible");
 +  document.Set("at", at);
@@ -693,6 +737,9 @@ index 0000000..6790ff4
 +  }
 +  if (step) {
 +    document.Set("step", step);
++  }
++  if (by_tab) {
++    document.Set("by_tab", base::NumberToString(by_tab));
 +  }
 +  ABIPost(base::BindOnce(&Deliver, epoch, request_id, tab_id, 1u,
 +                         base::WriteJson(document).value_or("{}")));
@@ -760,8 +807,39 @@ index 0000000..6790ff4
 +    }
 +  }
 +
++  // The deferred cancel of a request nobody sees. Chromium does not end a
++  // request that began as a sign-in page's passkey autofill: it goes back to
++  // waiting, and its steps are published again from here on.
++  void CancelUnseen() {
++    cancel_pending_ = false;
++    Cancel();
++  }
++
++  // A request with UI started in the visible tab `by_tab`. A sheet that is
++  // open stays when its page goes out of sight, so this request may be one
++  // nobody sees any more, and a touch of a security key meant for the new
++  // request could answer it: such a request is cancelled, and the host is
++  // told why (security review of 2026.1118.1027, addendum 2). Asked of every
++  // open request then; nothing is kept between requests. Deferred, as the
++  // cancel ends the request and takes this object out of Prompts().
++  void CancelIfUnseen(uint64_t by_tab) {
++    if (!model_ || !shown() || cancel_pending_) {
++      return;
++    }
++    const content::Visibility visibility = PageVisibility();
++    if (visibility == content::Visibility::VISIBLE) {
++      return;
++    }
++    cancel_pending_ = true;
++    NoteRefused(id_, tab_id_, "newer_request", VisibilityName(visibility),
++                RequestName(), StepName(model_->step()), by_tab);
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(&Prompt::CancelUnseen, weak_.GetWeakPtr()));
++  }
++
 +  ReArcStatus Respond(uint32_t action, uint32_t index, const char* text) {
-+    if (!model_ || !shown()) {
++    // No answer for a sheet whose cancel is on its way.
++    if (!model_ || !shown() || cancel_pending_) {
 +      return REARC_INVALID_STATE;
 +    }
 +    Model* model = model_;
@@ -906,13 +984,16 @@ index 0000000..6790ff4
 +  }
 +
 +  void Publish() {
-+    // The cancel of a request nobody sees is on its way: nothing goes out.
-+    if (!model_ || refused_) {
++    if (!model_) {
 +      return;
 +    }
 +    const Step step = model_->step();
 +    if (step == Step::kClosed) {
 +      End();
++      return;
++    }
++    // The cancel of a request nobody sees is on its way: no step goes out.
++    if (cancel_pending_) {
 +      return;
 +    }
 +    const bool has_ui = !model_->should_dialog_be_closed();
@@ -931,21 +1012,32 @@ index 0000000..6790ff4
 +      if (host && tab_id_) {
 +        // Nobody sees the page: said once, whatever the model publishes
 +        // before the cancel runs.
-+        refused_ = true;
++        cancel_pending_ = true;
 +        NoteRefused(id_, tab_id_, "first_step", VisibilityName(visibility),
 +                    RequestName(), StepName(step));
 +      }
 +      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-+          FROM_HERE, base::BindOnce(&Prompt::Cancel, weak_.GetWeakPtr()));
++          FROM_HERE, base::BindOnce(&Prompt::CancelUnseen, weak_.GetWeakPtr()));
 +      return;
 +    }
 +    if (!tab_id_) {
 +      return;
 +    }
++    const bool first = !shown_;
 +    shown_ = true;
 +    // What goes out now is what the next answer is for.
 +    answered_ = false;
 +    ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 0u, Describe(step)));
++    if (first) {
++      // This request's sheet opens in a page somebody sees (an unseen first
++      // step was cancelled above): the open requests of pages nobody sees
++      // end, in every tab and profile.
++      for (auto& [id, prompt] : Prompts()) {
++        if (prompt != this) {
++          prompt->CancelIfUnseen(tab_id_);
++        }
++      }
++    }
 +  }
 +
 +  // Chromium's rule for creating a passkey (ChromeWebAuthenticationDelegate::
@@ -1078,9 +1170,10 @@ index 0000000..6790ff4
 +  bool answered_ = false;
 +  // This step's one-time callback has run; only a new step clears it.
 +  bool spent_ = false;
-+  // Its page was not visible at the first step with UI: cancelled, and the
-+  // host was told.
-+  bool refused_ = false;
++  // Its page was not visible at the first step with UI, or when a visible
++  // page's request started: the host was told, and until the cancel runs no
++  // step goes out and no answer is taken.
++  bool cancel_pending_ = false;
 +  base::WeakPtrFactory<Prompt> weak_{this};
 +};
 +

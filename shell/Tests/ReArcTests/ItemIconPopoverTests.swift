@@ -5,15 +5,17 @@ import SidebarModel
 @MainActor
 struct ItemIconPopoverTests {
     @Test func emojiSearchFindsNamesAndGraphemes() {
-        #expect(ItemIconEditorView.emojiChoices(matching: "  SMILE ") == ["😀"])
-        #expect(ItemIconEditorView.emojiChoices(matching: "❤️") == ["❤️"])
-        #expect(ItemIconEditorView.emojiChoices(matching: "absent").isEmpty)
-        #expect(ItemIconEditorView.emojiChoices(matching: "").count == 40)
+        #expect(IconGridPicker.emojiChoices(matching: "  SMILE ").first == "😀")
+        #expect(IconGridPicker.emojiChoices(matching: "❤️") == ["❤️"])
+        #expect(IconGridPicker.emojiChoices(matching: "zzqx").isEmpty)
+        #expect(IconGridPicker.emojiChoices(matching: "").count > 1000)
     }
 
     @Test func acceptsCustomEmojiAndSymbolsWithoutSplittingGraphemes() {
-        #expect(ItemIconEditorView.emojiChoices(matching: "👩🏽‍💻") == ["👩🏽‍💻"])
-        #expect(ItemIconEditorView.symbolChoices(matching: "arrow.uturn.backward.circle.fill").contains("arrow.uturn.backward.circle.fill"))
-        #expect(ItemIconEditorView.symbolChoices(matching: "not-a-symbol").isEmpty)
+        #expect(IconGridPicker.emojiChoices(matching: "👩🏽‍💻") == ["👩🏽‍💻"])
+        #expect(IconGridPicker.symbolChoices(matching: "arrow.uturn.backward.circle.fill").contains("arrow.uturn.backward.circle.fill"))
+        #expect(IconGridPicker.symbolChoices(matching: "not-a-symbol").isEmpty)
+        #expect(ItemIconEditorView.icon(for: .emoji("🐶")) == .emoji("🐶"))
+        #expect(SpaceIconPicker.isEmoji("🐶") && !SpaceIconPicker.isEmoji("star.fill") && !SpaceIconPicker.isEmoji("data:image/png;base64,AA=="))
     }
 }

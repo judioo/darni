@@ -14,7 +14,6 @@ struct SpaceCreationPage: View {
     let model: BrowserViewModel
     @Environment(\.themeChrome) private var chrome
     @FocusState private var nameFocused: Bool
-    @State private var emoji = ""
     @State private var choosingIcon = false
     @State private var pageWindow = WeakWindow()
 
@@ -218,20 +217,9 @@ struct SpaceCreationPage: View {
     }
 
     private var iconPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SymbolGridPicker(symbols: Space.iconChoices, isSelected: { draft.wrappedValue.iconName == $0 }) { symbol in
-                draft.wrappedValue.iconName = symbol
-                choosingIcon = false
-            }
-            HStack {
-                TextField("Or type an emoji", text: $emoji)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 120)
-                    .onSubmit(useEmoji)
-                Button("Use") { useEmoji() }
-                    .disabled(emoji.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            Button("Emoji & Symbols…") { NSApp.orderFrontCharacterPalette(nil) }
+        SpaceIconPicker(iconName: draft.wrappedValue.iconName) { name in
+            draft.wrappedValue.iconName = name
+            choosingIcon = false
         }
         .padding(12)
     }
@@ -239,15 +227,6 @@ struct SpaceCreationPage: View {
     private func create() {
         guard let session = model.spaceCreation else { return }
         model.createSpace(from: session.draft)
-    }
-
-    /// Lowercase words would be read as an SF Symbol name; take them only if one exists.
-    private func useEmoji() {
-        let glyph = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !glyph.isEmpty else { return }
-        if Space.isSymbolName(glyph), NSImage(systemSymbolName: glyph, accessibilityDescription: nil) == nil { return }
-        draft.wrappedValue.iconName = Space.isSymbolName(glyph) ? glyph : String(glyph.prefix(2))
-        choosingIcon = false
     }
 }
 

@@ -2,8 +2,8 @@ import AppKit
 import SidebarModel
 import UniformTypeIdentifiers
 
-/// A picture for a profile from Choose Image…, a drop or a paste: read,
-/// normalised (`ProfileAvatarImage`) and stored. Only the normalised copy
+/// A picture for a profile (or a space's icon) from Choose Image…, a drop or a
+/// paste: read, normalised (`ProfileAvatarImage`) and stored. Only the normalised copy
 /// is kept, and nothing but ImageIO sees the original bytes.
 enum ProfileAvatarImageIntake {
     enum Source: Sendable {
@@ -14,21 +14,33 @@ enum ProfileAvatarImageIntake {
     /// Pasteboard image flavours, in the order they are tried after a file URL.
     static let pasteboardTypes: [NSPasteboard.PasteboardType] = [.png, .tiff] + [UTType.jpeg, .heic].map { NSPasteboard.PasteboardType($0.identifier) }
 
-    static func adopt(_ source: Source, into images: ProfileAvatarImageStore) throws -> ProfileAvatarImageName {
-        let bytes: Data
+    static func bytes(of source: Source) throws -> Data {
         switch source {
-        case .file(let url): bytes = try ProfileAvatarImage.readCandidate(at: url)
-        case .data(let data): bytes = data
+        case .file(let url): return try ProfileAvatarImage.readCandidate(at: url)
+        case .data(let data): return data
         }
-        return try images.save(ProfileAvatarImage.normalizing(bytes))
+    }
+
+    static func adopt(_ source: Source, into images: ProfileAvatarImageStore) throws -> ProfileAvatarImageName {
+        try images.save(ProfileAvatarImage.normalizing(bytes(of: source)))
     }
 
     /// Decoding a large photo takes a moment: done off the main thread.
     static func adopt(_ source: Source, into images: ProfileAvatarImageStore,
                       completion: @escaping @MainActor (Result<ProfileAvatarImageName, ProfileAvatarImageError>) -> Void) {
+        offMain({ try adopt(source, into: images) }, completion: completion)
+    }
+
+    /// The same picture made a space icon (`SpaceIconImage`): kept whole, at most
+    /// 64 pixels on its longer side, inside the icon name. Nothing is stored on disk.
+    static func spaceIconName(from source: Source, completion: @escaping @MainActor (Result<String, ProfileAvatarImageError>) -> Void) {
+        offMain({ try SpaceIconImage.iconName(normalizing: bytes(of: source)) }, completion: completion)
+    }
+
+    private static func offMain<Value: Sendable>(_ work: @escaping @Sendable () throws -> Value,
+                                                 completion: @escaping @MainActor (Result<Value, ProfileAvatarImageError>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = Result { try adopt(source, into: images) }
-                .mapError { $0 as? ProfileAvatarImageError ?? .unreadable }
+            let result = Result { try work() }.mapError { $0 as? ProfileAvatarImageError ?? .unreadable }
             DispatchQueue.main.async { MainActor.assumeIsolated { completion(result) } }
         }
     }

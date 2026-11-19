@@ -19,14 +19,37 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**New**
+- A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
+  Choose Image… or Paste Image, or drop an image on the picker. A big picture is scaled down to
+  icon size (64 pixels on its longer side) and kept whole, not cropped. The picture travels with
+  the space, so iCloud sync takes it to your other Macs. A Mac still on an older ReArc shows a
+  line of letters in its place until it updates.
+
 **Fixes**
+- Emoji icons work again. The icon pickers for spaces, profiles, folders and tabs have an Emoji tab
+  with every emoji, searchable by name ("dog", "rocket", "work"). Typing or pasting an emoji
+  into the search field offers that one first, flags and skin tones included. Until now the
+  Emoji & Symbols button did nothing in Create a Space, and an emoji picked from the system's
+  palette closed the picker before it arrived.
+- In a space with its own container, Settings' first tab and the membership card name your profile, not
+  the container; Change Name renames the profile; Settings › Profiles opens on the profile, where
+  ad and tracker blocking is set (a container follows its profile).
 - A page you cannot see gets no passkey request at all. A sign-in request from a background
   tab, a hidden or minimised window, a hidden Little ReArc window or a window that another
   app's window covers is now refused as it starts, before ReArc looks for a security key, a
   phone or Bluetooth. Until now it was refused a moment later, when its sheet was about to
   open, and on a Mac that had never answered macOS's Bluetooth question such a page could
   bring that question up. A request you started while its page was in view stays open when you
-  switch away, as before. ReArc's log now has a line for each refused request.
+  switch away, as before. ReArc's log now says when a request is refused.
+
+**Security**
+- A passkey or security key request that you left open in a tab or window you no longer see is
+  cancelled when a page in front of you starts one. Until now it stayed open, and a touch of
+  your security key meant for the page in front could have answered the older request.
+- A page you cannot see can ask for a passkey over and over, and each try is refused. ReArc's log
+  now has one line for a tab's first refusal and counts the rest (a line at the 10th, the 100th,
+  the 1000th and so on, and the total when the tab closes), so such a page cannot fill the log.
 
 **Changes**
 - The passkey sheet and the dialogs a page opens (alerts and confirmations, HTTP sign-in, choosing a

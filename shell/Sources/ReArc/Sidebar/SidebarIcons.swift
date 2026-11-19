@@ -77,19 +77,51 @@ struct SymbolGridPicker: View {
     }
 }
 
-/// A space's icon: an SF Symbol, or an emoji/letter drawn as text.
+/// A space's icon: a picture (`SpaceIconImage`), an SF Symbol, or an emoji/letter
+/// drawn as text. A picture that does not decode shows a photo glyph, never its text.
 struct SpaceIconView: View {
     let iconName: String
     var size: CGFloat = 13
 
     var body: some View {
-        if let symbol = Space.symbolToDraw(for: iconName) {
+        if SpaceIconImage.isImageName(iconName) {
+            if let image = SpaceIconPictures.image(for: iconName) {
+                let side = size + 3
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: side, height: side)
+                    .clipShape(RoundedRectangle(cornerRadius: side * 0.2))
+            } else {
+                Image(systemName: "photo").font(.system(size: size))
+            }
+        } else if let symbol = Space.symbolToDraw(for: iconName) {
             Image(systemName: symbol)
                 .font(.system(size: size))
         } else {
             Text(iconName)
                 .font(.system(size: size + 1))
         }
+    }
+}
+
+/// Space pictures decoded once: every sidebar row, switcher dot and menu draws
+/// them, and the name is the cache key (it holds the bytes).
+enum SpaceIconPictures {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    static func image(for iconName: String) -> NSImage? {
+        let key = iconName as NSString
+        if let image = cache.object(forKey: key) { return image }
+        guard let picture = SpaceIconImage.image(from: iconName) else { return nil }
+        let image = NSImage(cgImage: picture, size: NSSize(width: picture.width, height: picture.height))
+        cache.setObject(image, forKey: key)
+        return image
     }
 }
 

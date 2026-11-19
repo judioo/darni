@@ -2861,14 +2861,34 @@ conditional request (a sign-in page's passkey autofill) shows no dialog and goes
 is open stays when its page goes out of sight afterwards, as Chromium's dialog does: a person may
 cover the window to look up a PIN, and the display may sleep while they hold the phone.
 
+**A request with UI in a visible page ends the open requests nobody sees** (review of
+2026.1118.1027, addendum 2). A sheet that stayed open behind another tab or window is still
+waiting for a security key, and a touch meant for the page in front could answer it. When a
+request's first step with UI goes out, the engine cancels every other request that has a sheet
+and whose page is not visible, in any tab and any profile. It keeps nothing for this: it asks
+each open request for its page's visibility at that moment. Until the cancel runs, such a
+request sends no step and takes no answer (`invalid_state`). A request that began as a sign-in
+page's passkey autofill is not ended by a cancel: Chromium puts it back to waiting, and its
+sheet closes with a `hidden` step.
+
 Each refusal is one phase 1 event, for the host's log: `{"refused":"not_visible","at":
 "focus_check","visibility":"hidden"|"occluded"}` with request 0 from Chromium's rule (tab 0 for a
 page that is no registry tab), or `"at":"first_step"` with the request's number, `"request"` and
-`"step"`. Every step carries `"visibility"` (`visible`, `occluded`, `hidden`), the tab's
-WebContents as the step goes out; a request's first step has `visible`. The shell writes one
-information line for each refusal and for each request's first step, with no address in it:
+`"step"`. A request cancelled for a visible page's request sends `"at":"newer_request"` with its
+own number, `"request"`, `"step"` (the one it was at) and `"by_tab"` (the visible tab, a decimal
+string), and then its ordinary end event, which closes its sheet; a host that does not know the
+place takes the first event as the end. Every step carries `"visibility"` (`visible`,
+`occluded`, `hidden`), the tab's WebContents as the step goes out; a request's first step has
+`visible`. The shell writes an information line for each request's first step, with no address
+in it. A page nobody sees can ask in a loop, so refusals are limited for each tab
+(`PasskeyRefusalLog`): the first in full, then a count at the 10th, the 100th, the 1000th and so
+on, and the total when the tab closes if any went unwritten. The count stays with the tab
+through its page changes. Cancelled requests are counted apart from refused ones, the same way:
 
     [ReArc/Chromium] passkey request of tab 3 refused: its page is not visible (occluded), at Chromium's focus check
+    [ReArc/Chromium] passkey requests of tab 3 refused, their page not visible: 10 so far
+    [ReArc/Chromium] passkey requests of tab 3 refused, their page not visible: 12 in all, the tab has closed
+    [ReArc/Chromium] passkey request 4 of tab 3 cancelled: its page is not visible (hidden) and tab 9, which is visible, asked (get, qr)
     [ReArc/Chromium] passkey request 2 of tab 3: first step qr (get), page visible
 
 **Steps** (`step` in the JSON; the names are the ABI's and do not follow Chromium's enum):
@@ -2926,4 +2946,9 @@ ways, the QR code, the security key step, "this Mac" up to macOS's Touch ID prom
 second request, a tab closed in the middle. Not run: a phone, a security key, and so the PIN,
 fingerprint and error steps, and the refusals above but those for a page nobody sees: the shell's
 self-test runs a background tab and a Little ReArc window that is ordered out
-(`passkeyHiddenTabChecks`, `passkeyHiddenLittleArcChecks`).
+(`passkeyHiddenTabChecks`, `passkeyHiddenLittleArcChecks`). Run in an ordinary launch of a QA
+bundle (2026-11-19, a throwaway data folder, a local page that asks on a timer): `get` and
+`create` from a Little ReArc window whose app was then hidden, from a browser window under
+another app's window and from a minimised window were each refused in 2 to 42 ms with the log
+line; with the window back the same `get` opened the sheet, and it stayed open when the app was
+hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.

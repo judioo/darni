@@ -1454,7 +1454,10 @@ final class ChromiumRuntime {
             }
             return
         }
-        if event.kind == .closed { noteShutdownProgress() }
+        if event.kind == .closed {
+            noteShutdownProgress()
+            ChromiumPasskeyChannel.tabClosed(event.tabID)
+        }
         if event.kind == .closed, devToolsFrontends.remove(event.tabID) != nil {
             onDevToolsFrontendClosed?(event.tabID)
         }

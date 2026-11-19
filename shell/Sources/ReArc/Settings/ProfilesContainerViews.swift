@@ -67,7 +67,7 @@ struct ContainerSettingsDetail: View {
                 EmptyView()
             }
             SettingsLabeledRow(label: "From \(parent?.name ?? "its profile")",
-                               detail: "Search engine, Archive tabs after and download location: change them on \(parent?.name ?? "the profile").") {
+                               detail: "Search engine, Archive tabs after, download location and ad and tracker blocking: change them on \(parent?.name ?? "the profile").") {
                 EmptyView()
             }
         }

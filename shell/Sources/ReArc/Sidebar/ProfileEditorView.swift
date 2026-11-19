@@ -187,42 +187,31 @@ struct ProfileEditorView: View {
     }
 }
 
-/// The profile editor's icon controls: the pickers' shared grid (`SymbolGridPicker`), then an
-/// emoji or an SF Symbol by name. An item's icon has a picker of its own (`ItemIconEditorView`).
+/// The profile editor's icon controls: the pickers' shared grid (`IconGridPicker`),
+/// person first among the icons. The picture has its own row above.
 struct IconChooser: View {
     @Binding var selection: ProfileAvatarDescriptor.Kind
-    @State private var emoji = ""
-    @State private var symbol = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Icon").font(.headline)
-            SymbolGridPicker(symbols: ["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" },
-                             isSelected: { selection == .sfSymbol(name: $0) }) { name in
-                selection = .sfSymbol(name: name)
-            }
-            HStack {
-                TextField("Emoji", text: $emoji).textFieldStyle(.roundedBorder)
-                Button("Use Emoji") {
-                    selection = .emoji(String(emoji.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1)))
-                }.disabled(emoji.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Emoji & Symbols…") { NSApp.orderFrontCharacterPalette(nil) }
-            }
-            HStack {
-                TextField("SF Symbol name", text: $symbol).textFieldStyle(.roundedBorder)
-                Button("Use Symbol") { selection = .sfSymbol(name: trimmedSymbol) }
-                    .disabled(NSImage(systemSymbolName: trimmedSymbol, accessibilityDescription: nil) == nil)
-            }
-        }
-        .onAppear {
-            switch selection {
-            case .emoji(let text): emoji = text
-            case .sfSymbol(let name): symbol = name
-            }
+            IconGridPicker(symbols: ["person.fill"] + Space.iconChoices.filter { $0 != "person.fill" },
+                           startsOnEmoji: Self.isEmoji(selection),
+                           isSelected: { Self.kind(for: $0) == selection }) { selection = Self.kind(for: $0) }
         }
     }
 
-    private var trimmedSymbol: String { symbol.trimmingCharacters(in: .whitespacesAndNewlines) }
+    static func kind(for choice: IconPick) -> ProfileAvatarDescriptor.Kind {
+        switch choice {
+        case .symbol(let name): .sfSymbol(name: name)
+        case .emoji(let text): .emoji(text)
+        }
+    }
+
+    private static func isEmoji(_ kind: ProfileAvatarDescriptor.Kind) -> Bool {
+        if case .emoji = kind { return true }
+        return false
+    }
 }
 
 struct SidebarPersonalizationSheets: ViewModifier {

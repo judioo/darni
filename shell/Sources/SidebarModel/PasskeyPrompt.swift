@@ -644,12 +644,18 @@ extension PasskeyStep {
 /// background tab, a hidden or minimised window, a window another app's
 /// window covers (ABI 1.68, the end event with "refused"; security review
 /// PK-10 and AH-02). It never had a sheet; the shell writes it to its log.
+/// One place is different: a request whose sheet was open, cancelled because
+/// its page went out of sight and a visible page then asked. The engine ends
+/// that request with its ordinary end event, which closes the sheet.
 public struct PasskeyRefusal: Equatable, Sendable {
     public enum Place: String, Equatable, Sendable {
         /// Chromium's own rule, when a request starts (and when a new passkey's result arrives).
         case focusCheck = "focus_check"
         /// The page went out of sight between the start and the request's first step with UI.
         case firstStep = "first_step"
+        /// The request was open and its page out of sight when a visible page's request started:
+        /// a touch of a security key meant for the new one could have answered it.
+        case newerRequest = "newer_request"
     }
 
     public var place: Place
@@ -657,14 +663,17 @@ public struct PasskeyRefusal: Equatable, Sendable {
     public var visibility: String
     /// "create" or "get"; nil at Chromium's check, which knows the page and not the request.
     public var request: String?
-    /// The step the engine did not send.
+    /// The step the engine did not send, or the one a cancelled request was at.
     public var step: String?
+    /// The visible tab whose request cancelled this one.
+    public var byTab: UInt64?
 
-    public init(place: Place, visibility: String, request: String? = nil, step: String? = nil) {
+    public init(place: Place, visibility: String, request: String? = nil, step: String? = nil, byTab: UInt64? = nil) {
         self.place = place
         self.visibility = visibility
         self.request = request
         self.step = step
+        self.byTab = byTab
     }
 
     /// Nil for an ordinary end of a request ("{}") and for a reason this shell does not know.
@@ -675,7 +684,8 @@ public struct PasskeyRefusal: Equatable, Sendable {
         self.init(place: place,
                   visibility: Self.visibilityName(object["visibility"] as? String ?? "") ?? "state not reported",
                   request: (object["request"] as? String).flatMap { ["create", "get"].contains($0) ? $0 : nil },
-                  step: (object["step"] as? String).flatMap(Self.stepName))
+                  step: (object["step"] as? String).flatMap(Self.stepName),
+                  byTab: (object["by_tab"] as? String).flatMap { UInt64($0) })
     }
 
     /// One line, information level. Tab and request numbers, the engine's own words for the rest: no address.
@@ -688,6 +698,10 @@ public struct PasskeyRefusal: Equatable, Sendable {
             let what = [request, step].compactMap { $0 }.joined(separator: ", ")
             return "passkey request \(id) of \(page) refused: its page is not visible (\(visibility)), at its first step"
                 + (what.isEmpty ? "" : " (\(what))")
+        case .newerRequest:
+            let what = [request, step].compactMap { $0 }.joined(separator: ", ")
+            return "passkey request \(id) of \(page) cancelled: its page is not visible (\(visibility)) and "
+                + (byTab.map { "tab \($0), which is visible," } ?? "a visible page") + " asked" + (what.isEmpty ? "" : " (\(what))")
         }
     }
 
@@ -700,3 +714,82 @@ public struct PasskeyRefusal: Equatable, Sendable {
         !name.isEmpty && name.count <= 40 && name.allSatisfy { ("a"..."z").contains($0) || $0 == "_" } ? name : nil
     }
 }
+
+/// Which refused passkey requests reach the log. A page nobody sees can ask
+/// in a loop, and each call is refused: one line for each would fill the log
+/// (security review of 2026.1118.1027, addendum 2). A tab's first refusal is
+/// written in full. Later ones are counted, with a line at the 10th, the
+/// 100th, the 1000th and so on, and a last line when the tab closes if any
+/// went unwritten: a million calls are seven lines. The count stays with the
+/// tab through its page changes, so a page that reloads itself gains no
+/// lines. Requests cancelled for a visible page's request are counted apart
+/// from the refused ones, the same way. Tab numbers only: no address.
+public struct PasskeyRefusalLog {
+    private struct Key: Hashable {
+        var tab: UInt64
+        var cancelled: Bool
+    }
+
+    private var counts: [Key: Int] = [:]
+
+    public init() {}
+
+    /// The line to write for this refusal; nil when it is only counted.
+    public mutating func note(_ refusal: PasskeyRefusal, request: UInt64, tab: UInt64) -> String? {
+        let key = Key(tab: tab, cancelled: refusal.place == .newerRequest)
+        let count = counts[key, default: 0] + 1
+        counts[key] = count
+        if count == 1 { return refusal.logLine(request: request, tab: tab) }
+        guard Self.hasOwnLine(count) else { return nil }
+        return "passkey requests of \(Self.page(tab)) \(Self.reason(cancelled: key.cancelled)): \(count) so far"
+    }
+
+    /// The tab closed: one line for each count that grew since its last line. The counts go with the tab.
+    public mutating func tabClosed(_ tab: UInt64) -> [String] {
+        [false, true].compactMap { cancelled in
+            guard let count = counts.removeValue(forKey: Key(tab: tab, cancelled: cancelled)), !Self.hasOwnLine(count) else { return nil }
+            return "passkey requests of \(Self.page(tab)) \(Self.reason(cancelled: cancelled)): \(count) in all, the tab has closed"
+        }
+    }
+
+    /// 1, 10, 100, 1000 and so on.
+    static func hasOwnLine(_ count: Int) -> Bool {
+        var rest = count
+        while rest >= 10, rest % 10 == 0 { rest /= 10 }
+        return rest == 1
+    }
+
+    private static func page(_ tab: UInt64) -> String {
+        tab == 0 ? "pages that are no tab" : "tab \(tab)"
+    }
+
+    private static func reason(cancelled: Bool) -> String {
+        cancelled ? "cancelled when a visible page asked, their page not visible" : "refused, their page not visible"
+    }
+}
+
+/// Which first-step lines reach the log, as `PasskeyRefusalLog` does for
+/// refusals: a visible page can start a request and abort it in a loop, one
+/// first step each time (security review of 2026.1118.1027, addendum 3). A
+/// tab's first request's line in full, then a count at the 10th, 100th, 1000th
+/// and so on, and the total when the tab closes if any went unwritten.
+public struct PasskeyFirstStepLog {
+    private var counts: [UInt64: Int] = [:]
+
+    public init() {}
+
+    /// The line to write for this request's first step; nil when it is only counted.
+    public mutating func note(_ line: String, tab: UInt64) -> String? {
+        let count = counts[tab, default: 0] + 1
+        counts[tab] = count
+        if count == 1 { return line }
+        guard PasskeyRefusalLog.hasOwnLine(count) else { return nil }
+        return "passkey requests of tab \(tab) reached their first step: \(count) so far"
+    }
+
+    public mutating func tabClosed(_ tab: UInt64) -> String? {
+        guard let count = counts.removeValue(forKey: tab), !PasskeyRefusalLog.hasOwnLine(count) else { return nil }
+        return "passkey requests of tab \(tab) reached their first step: \(count) in all, the tab has closed"
+    }
+}
+
