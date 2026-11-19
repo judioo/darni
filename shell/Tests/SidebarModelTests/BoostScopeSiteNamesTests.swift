@@ -156,4 +156,41 @@ final class BoostScopeSiteNamesTests: XCTestCase {
         XCTAssertEqual(note, "Not running: …example.com is not a site a boost can be for. Make this boost again on the site it is for.")
         XCTAssertFalse(note?.contains(String(repeating: "a", count: 41)) ?? true)
     }
+
+    // MARK: A rule stored with an international name (security BO-02)
+
+    /// What holds today, before anything about such rules is tightened.
+    ///
+    /// A page's address comes from the engine with its host in ASCII form
+    /// (`xn--…`). A rule stored in Unicode form therefore matches no page,
+    /// and one in ASCII form matches: requiring a plain ASCII host of a rule
+    /// that comes in would stop no boost that runs now.
+    func testARuleStoredInUnicodeFormMatchesNoPageToday() throws {
+        let page = try XCTUnwrap(URL(string: "https://www.xn--bcher-kva.example/a"))
+        let unicode = rule("b\u{FC}cher.example"), ascii = rule("xn--bcher-kva.example")
+        for names in [nil, self.names] as [SiteNames?] {
+            XCTAssertFalse(BoostScopeMatcher.matches(rule: unicode, url: page, names: names))
+            XCTAssertTrue(BoostScopeMatcher.matches(rule: ascii, url: page, names: names))
+        }
+        // The rule check takes both today, and a new boost on the page gets the ASCII form.
+        XCTAssertTrue(BoostScopeMatcher.validateRule(unicode, names: nil))
+        XCTAssertTrue(BoostScopeMatcher.validateRule(ascii, names: nil))
+        XCTAssertEqual(BoostScopeMatcher.defaultRule(forPage: page, names: nil)?.host, "xn--bcher-kva.example")
+        XCTAssertEqual(ContentBlockingHost.normalized("b\u{FC}cher.example"), "xn--bcher-kva.example", "what a rule that comes in would be stored as")
+    }
+
+    /// A site typed with an international name is a third form. Foundation
+    /// gives a URL made from such text a percent-encoded host, neither the
+    /// Unicode nor the ASCII form, and that is what the library stores as
+    /// the new boost's scope. It matches no page: a fault that is there
+    /// today, and the same normalising would mend it.
+    func testASiteTypedWithAnInternationalNameGetsAScopeThatMatchesNothingToday() throws {
+        let typed = try XCTUnwrap(BoostLibraryListing.siteURL(from: "b\u{FC}cher.example"))
+        XCTAssertEqual(typed.host()?.lowercased(), "b%c3%bccher.example")
+        let scope = try XCTUnwrap(BoostScopeMatcher.defaultRule(forPage: typed, names: nil))
+        XCTAssertEqual(scope.host, "b%c3%bccher.example")
+        let page = try XCTUnwrap(URL(string: "https://xn--bcher-kva.example/"))
+        XCTAssertFalse(BoostScopeMatcher.matches(rule: scope, url: page, names: nil))
+        XCTAssertFalse(ContentBlockingHost.isHost(scope.host), "not a plain host: a rule check that asked for one would refuse it")
+    }
 }
