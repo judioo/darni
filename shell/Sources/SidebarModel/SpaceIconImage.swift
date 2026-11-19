@@ -26,18 +26,21 @@ public enum SpaceIconImage {
     /// kept whole and at most `maxSide`).
     public static func picture(normalizing source: Data) throws -> Data {
         let image = try ProfileAvatarImage.normalizing(source, maxSide: maxSide, shape: .whole)
-        guard validated(image.data) != nil else { throw ProfileAvatarImageError.notAnImage }
+        guard drawable(image.data) != nil else { throw ProfileAvatarImageError.notAnImage }
         return image.data
     }
 
     /// `data` when it is small enough and starts as a PNG or a JPEG; nil otherwise.
-    public static func validated(_ data: Data) -> Data? {
+    /// The cheap first step of `image(from:)`, not a reason to keep bytes: what is
+    /// kept, from anywhere, is what `drawable` passes.
+    static func validated(_ data: Data) -> Data? {
         guard !data.isEmpty, data.count <= maxBytes, declaredType(of: data) != nil else { return nil }
         return data
     }
 
-    /// `data` when `image(from:)` can draw it: what is kept from sidebar.json and from
-    /// sync, so bytes that never draw are not stored (security review of 92cea6c4).
+    /// `data` when `image(from:)` can draw it: what is kept from the picker, from
+    /// sidebar.json and from sync, so bytes that never draw are not stored (security
+    /// review of 92cea6c4).
     public static func drawable(_ data: Data) -> Data? {
         image(from: data) == nil ? nil : data
     }
