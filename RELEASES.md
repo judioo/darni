@@ -22,9 +22,9 @@ lines and this section starts empty again.
 **New**
 - A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
   Choose Image… or Paste Image, or drop an image on the picker. A big picture is scaled down to
-  icon size (64 pixels on its longer side) and kept whole, not cropped. The picture travels with
-  the space, so iCloud sync takes it to your other Macs. A Mac still on an older ReArc shows a
-  line of letters in its place until it updates.
+  icon size (64 pixels on its longer side) and kept whole, not cropped. Remove Image goes back to
+  the space's icon. With Sync Sidebar on, the picture goes to your other Macs; a Mac still on an
+  older ReArc shows the space's icon or emoji instead until it updates.
 
 **Fixes**
 - Emoji icons work again. The icon pickers for spaces, profiles, folders and tabs have an Emoji tab

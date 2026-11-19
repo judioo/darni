@@ -389,7 +389,7 @@ private struct SpaceIconButton: View {
                 if isCircle {
                     circleIcon
                 } else if appearance == .icon {
-                    SpaceIconView(iconName: space.iconName, size: 11)
+                    SpaceIconView(space: space, size: 11)
                         .foregroundStyle(chrome.accent)
                         .transition(morph)
                 } else {
@@ -443,8 +443,8 @@ private struct SpaceIconButton: View {
                 Text(SpaceCircles.initial(for: space.name))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(circleInk)
-            } else if SpaceIconImage.isImageName(space.iconName) {
-                SpaceIconView(iconName: space.iconName, size: 9)
+            } else if space.iconPicture != nil {
+                SpaceIconView(space: space, size: 9)
             } else if let emoji = SpaceCircles.emoji(forSymbol: Space.symbolToDraw(for: space.iconName) ?? space.iconName) {
                 Text(emoji).font(.system(size: 10))
             } else if let symbol = Space.symbolToDraw(for: space.iconName) {
@@ -533,7 +533,7 @@ private struct SpaceListView: View {
                     isPresented = false
                 } label: {
                     HStack(spacing: 8) {
-                        SpaceIconView(iconName: space.iconName)
+                        SpaceIconView(space: space)
                             .frame(width: 18)
                             .containerMark(model.containerLabel(forSpace: space.id), ring: .roundedSquare(22), badge: nil, surface: .window)
                         Text(space.name)

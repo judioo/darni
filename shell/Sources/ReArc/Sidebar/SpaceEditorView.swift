@@ -20,7 +20,7 @@ struct SpaceEditorView: View {
         let space = store.space(withID: spaceID)
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                SpaceIconView(iconName: space?.iconName ?? "circle.fill", size: 16)
+                SpaceIconView(iconName: space?.iconName ?? "circle.fill", picture: space?.iconPicture, size: 16)
                     .frame(width: 34, height: 34)
                     .background(color(space?.theme ?? .default).opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
                 TextField("Space name", text: $name)
@@ -41,9 +41,9 @@ struct SpaceEditorView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Icon").font(.headline)
-                SpaceIconPicker(iconName: space?.iconName ?? "") { name in
-                    store.setSpaceIcon(spaceID, iconName: name)
-                }
+                SpaceIconPicker(iconName: space?.iconName ?? "", picture: space?.iconPicture,
+                                setIcon: { store.setSpaceIcon(spaceID, iconName: $0) },
+                                setPicture: { store.setSpacePicture(spaceID, picture: $0) })
             }
 
             HStack {

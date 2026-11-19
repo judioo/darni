@@ -16,6 +16,6 @@ struct ItemIconPopoverTests {
         #expect(IconGridPicker.symbolChoices(matching: "arrow.uturn.backward.circle.fill").contains("arrow.uturn.backward.circle.fill"))
         #expect(IconGridPicker.symbolChoices(matching: "not-a-symbol").isEmpty)
         #expect(ItemIconEditorView.icon(for: .emoji("🐶")) == .emoji("🐶"))
-        #expect(SpaceIconPicker.isEmoji("🐶") && !SpaceIconPicker.isEmoji("star.fill") && !SpaceIconPicker.isEmoji("data:image/png;base64,AA=="))
+        #expect(SpaceIconPicker.isEmoji("🐶") && !SpaceIconPicker.isEmoji("star.fill") && !SpaceIconPicker.isEmoji(""))
     }
 }

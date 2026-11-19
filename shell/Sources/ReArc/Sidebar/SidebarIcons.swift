@@ -77,25 +77,32 @@ struct SymbolGridPicker: View {
     }
 }
 
-/// A space's icon: a picture (`SpaceIconImage`), an SF Symbol, or an emoji/letter
-/// drawn as text. A picture that does not decode shows a photo glyph, never its text.
+/// A space's icon: its picture (`Space.iconPicture`), else an SF Symbol, else an
+/// emoji or letter drawn as text. A picture that does not decode shows the glyph.
 struct SpaceIconView: View {
     let iconName: String
+    var picture: Data? = nil
     var size: CGFloat = 13
 
+    init(iconName: String, picture: Data? = nil, size: CGFloat = 13) {
+        self.iconName = iconName
+        self.picture = picture
+        self.size = size
+    }
+
+    init(space: Space, size: CGFloat = 13) {
+        self.init(iconName: space.iconName, picture: space.iconPicture, size: size)
+    }
+
     var body: some View {
-        if SpaceIconImage.isImageName(iconName) {
-            if let image = SpaceIconPictures.image(for: iconName) {
-                let side = size + 3
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: side, height: side)
-                    .clipShape(RoundedRectangle(cornerRadius: side * 0.2))
-            } else {
-                Image(systemName: "photo").font(.system(size: size))
-            }
+        if let picture, let image = SpaceIconPictures.image(for: picture) {
+            let side = size + 3
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: side, height: side)
+                .clipShape(RoundedRectangle(cornerRadius: side * 0.2))
         } else if let symbol = Space.symbolToDraw(for: iconName) {
             Image(systemName: symbol)
                 .font(.system(size: size))
@@ -106,21 +113,26 @@ struct SpaceIconView: View {
     }
 }
 
-/// Space pictures decoded once: every sidebar row, switcher dot and menu draws
-/// them, and the name is the cache key (it holds the bytes).
+/// Space pictures decoded once, failures included (security SI-02): every sidebar
+/// row, switcher dot and menu draws them, and a picture that does not decode is not
+/// handed to ImageIO again at every draw.
 enum SpaceIconPictures {
-    private static let cache: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
+    private final class Entry {
+        let image: NSImage?
+        init(_ image: NSImage?) { self.image = image }
+    }
+
+    private static let cache: NSCache<NSData, Entry> = {
+        let cache = NSCache<NSData, Entry>()
         cache.countLimit = 64
         return cache
     }()
 
-    static func image(for iconName: String) -> NSImage? {
-        let key = iconName as NSString
-        if let image = cache.object(forKey: key) { return image }
-        guard let picture = SpaceIconImage.image(from: iconName) else { return nil }
-        let image = NSImage(cgImage: picture, size: NSSize(width: picture.width, height: picture.height))
-        cache.setObject(image, forKey: key)
+    static func image(for picture: Data) -> NSImage? {
+        let key = picture as NSData
+        if let entry = cache.object(forKey: key) { return entry.image }
+        let image = SpaceIconImage.image(from: picture).map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
+        cache.setObject(Entry(image), forKey: key)
         return image
     }
 }

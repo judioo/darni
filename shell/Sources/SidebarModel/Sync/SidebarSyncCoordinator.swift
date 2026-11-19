@@ -667,7 +667,7 @@ public final class SidebarSyncCoordinator {
             switch kind {
             case .profile, .contentBlocking: return profiles.contains(id) ? name : nil
             case .space: return owned(body.values["profileID"]) ? name : nil
-            case .spaceStyle, .spaceArchive: return spaces.contains(id.uuidString.lowercased()) ? name : nil
+            case .spaceStyle, .spaceArchive, .spaceIcon: return spaces.contains(id.uuidString.lowercased()) ? name : nil
             case .boost, .tabGroup: return owned(body.values["profileID"]) ? name : nil
             case .item:
                 if let space = body.values["space"]?.stringValue, spaces.contains(space.lowercased()) { return name }

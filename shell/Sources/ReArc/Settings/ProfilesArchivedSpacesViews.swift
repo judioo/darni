@@ -108,7 +108,7 @@ private struct ArchivedSpaceTile: View {
     var body: some View {
         let theme = space.theme
         let light = 0.299 * theme.red + 0.587 * theme.green + 0.114 * theme.blue > 0.6
-        SpaceIconView(iconName: space.iconName, size: 12)
+        SpaceIconView(space: space, size: 12)
             .foregroundStyle(light ? Color.black.opacity(0.7) : Color.white)
             .frame(width: 24, height: 24)
             .background(RoundedRectangle(cornerRadius: 24 * 0.24, style: .continuous).fill(Color(theme).gradient))

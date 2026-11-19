@@ -182,7 +182,7 @@ private struct LibrarySpaceCard: View {
         HStack(spacing: 8) {
             Button { model.openLibrarySpace(space.id) } label: {
                 HStack(spacing: 8) {
-                    SpaceIconView(iconName: space.iconName, size: 16)
+                    SpaceIconView(space: space, size: 16)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(space.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         Text(row.profileName).font(.system(size: 10)).opacity(0.6).lineLimit(1)

@@ -98,17 +98,17 @@ struct SpaceCreationPage: View {
         HStack(spacing: 8) {
             Button { choosingIcon = true } label: {
                 Group {
-                    if current.iconName.isEmpty {
+                    if current.iconName.isEmpty && current.iconPicture == nil {
                         Image(systemName: "plus").font(.system(size: 9, weight: .semibold))
                     } else {
-                        SpaceIconView(iconName: current.iconName, size: 11)
+                        SpaceIconView(iconName: current.iconName, picture: current.iconPicture, size: 11)
                     }
                 }
                 .foregroundStyle(chrome.secondaryText)
                 .frame(width: 18, height: 18)
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(chrome.secondaryText.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: current.iconName.isEmpty ? [2, 2] : []))
+                        .strokeBorder(chrome.secondaryText.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: current.iconName.isEmpty && current.iconPicture == nil ? [2, 2] : []))
                 )
                 .contentShape(Rectangle())
             }
@@ -217,10 +217,14 @@ struct SpaceCreationPage: View {
     }
 
     private var iconPicker: some View {
-        SpaceIconPicker(iconName: draft.wrappedValue.iconName) { name in
+        SpaceIconPicker(iconName: draft.wrappedValue.iconName, picture: draft.wrappedValue.iconPicture, setIcon: { name in
             draft.wrappedValue.iconName = name
+            draft.wrappedValue.iconPicture = nil
             choosingIcon = false
-        }
+        }, setPicture: { picture in
+            draft.wrappedValue.iconPicture = picture
+            choosingIcon = false
+        })
         .padding(12)
     }
 

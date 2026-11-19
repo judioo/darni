@@ -347,6 +347,9 @@ public struct Space: Identifiable, Hashable, Codable {
     public var theme: SpaceTheme
     /// SF Symbol name used as the space's glyph in the switcher.
     public var iconName: String
+    /// A picture drawn instead of `iconName` (`SpaceIconImage`: a PNG or JPEG of at
+    /// most 64 px). `iconName` stays the glyph older builds and a failed picture show.
+    public var iconPicture: Data? = nil
     /// Persisted `itemContainer` ids for pinned / unpinned section roots.
     public var pinnedContainerID: UUID
     public var unpinnedContainerID: UUID
@@ -391,7 +394,7 @@ public struct Space: Identifiable, Hashable, Codable {
 
     enum CodingKeys: String, CodingKey {
         case arcSourceID, arcImportedItemIDs, arcItemMapping, bookmarkSourceID
-        case id, name, theme, iconName
+        case id, name, theme, iconName, iconPicture
         case pinnedContainerID, unpinnedContainerID, unpinnedShared
         case profileID, sortRank, boostsEnabled, archivedAt
     }
@@ -406,6 +409,7 @@ public struct Space: Identifiable, Hashable, Codable {
         name = try c.decode(String.self, forKey: .name)
         theme = try c.decode(SpaceTheme.self, forKey: .theme)
         iconName = try c.decode(String.self, forKey: .iconName)
+        iconPicture = (try? c.decodeIfPresent(Data.self, forKey: .iconPicture)).flatMap { $0 }.flatMap(SpaceIconImage.validated)
         pinnedContainerID = try c.decodeIfPresent(UUID.self, forKey: .pinnedContainerID) ?? UUID()
         unpinnedContainerID = try c.decodeIfPresent(UUID.self, forKey: .unpinnedContainerID) ?? UUID()
         unpinnedShared = try c.decodeIfPresent(Bool.self, forKey: .unpinnedShared) ?? false
@@ -427,6 +431,7 @@ public struct Space: Identifiable, Hashable, Codable {
         try c.encode(name, forKey: .name)
         try c.encode(theme, forKey: .theme)
         try c.encode(iconName, forKey: .iconName)
+        try c.encodeIfPresent(iconPicture, forKey: .iconPicture)
         try c.encode(pinnedContainerID, forKey: .pinnedContainerID)
         try c.encode(unpinnedContainerID, forKey: .unpinnedContainerID)
         try c.encode(unpinnedShared, forKey: .unpinnedShared)

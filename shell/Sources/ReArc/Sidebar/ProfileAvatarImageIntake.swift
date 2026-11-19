@@ -32,9 +32,9 @@ enum ProfileAvatarImageIntake {
     }
 
     /// The same picture made a space icon (`SpaceIconImage`): kept whole, at most
-    /// 64 pixels on its longer side, inside the icon name. Nothing is stored on disk.
-    static func spaceIconName(from source: Source, completion: @escaping @MainActor (Result<String, ProfileAvatarImageError>) -> Void) {
-        offMain({ try SpaceIconImage.iconName(normalizing: bytes(of: source)) }, completion: completion)
+    /// 64 pixels on its longer side. It goes in the space (and its sync record), not on disk.
+    static func spacePicture(from source: Source, completion: @escaping @MainActor (Result<Data, ProfileAvatarImageError>) -> Void) {
+        offMain({ try SpaceIconImage.picture(normalizing: bytes(of: source)) }, completion: completion)
     }
 
     private static func offMain<Value: Sendable>(_ work: @escaping @Sendable () throws -> Value,

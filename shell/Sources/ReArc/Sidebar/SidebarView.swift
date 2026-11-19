@@ -328,7 +328,7 @@ struct SpaceHeaderView: View {
     var body: some View {
         // Arc: an 18 pt icon at x 17, the name in 13 pt semibold grey at x 45.
         HStack(spacing: 0) {
-            SpaceIconView(iconName: space.iconName, size: 15)
+            SpaceIconView(space: space, size: 15)
                 .foregroundStyle(chrome.accent)
                 .frame(width: 18, height: 18)
                 .containerMark(model.containerLabel(forSpace: space.id), ring: .roundedSquare(24), badge: nil)

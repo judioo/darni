@@ -6,6 +6,8 @@ public struct SpaceDraft: Equatable {
     public var name: String
     public var theme: SpaceTheme
     public var iconName: String
+    /// A picture drawn instead of the glyph (`Space.iconPicture`).
+    public var iconPicture: Data? = nil
     public var profileID: Profile.ID
     public var createsOwnContainer: Bool = false
 
@@ -69,6 +71,7 @@ extension SidebarStore {
             ? addSpace(name: draft.trimmedName, theme: draft.theme, profileID: profileID)
             : addSpace(name: draft.trimmedName, theme: draft.theme, iconName: draft.iconName, profileID: profileID)
         if !draft.iconName.isEmpty { setSpaceIcon(space.id, iconName: draft.iconName) }
+        if let picture = draft.iconPicture { setSpacePicture(space.id, picture: picture) }
         selectSpace(space.id)
         return self.space(withID: space.id)
     }

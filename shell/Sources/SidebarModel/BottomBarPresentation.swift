@@ -9,7 +9,7 @@ extension Space {
 
     /// Whether the space has an icon of its own to show in the bottom bar.
     public var hasIcon: Bool {
-        !iconName.isEmpty && iconName != Space.defaultIconName
+        iconPicture != nil || (!iconName.isEmpty && iconName != Space.defaultIconName)
     }
 }
 
