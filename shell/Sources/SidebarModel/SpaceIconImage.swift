@@ -36,6 +36,12 @@ public enum SpaceIconImage {
         return data
     }
 
+    /// `data` when `image(from:)` can draw it: what is kept from sidebar.json and from
+    /// sync, so bytes that never draw are not stored (security review of 92cea6c4).
+    public static func drawable(_ data: Data) -> Data? {
+        image(from: data) == nil ? nil : data
+    }
+
     /// The type the first bytes declare (security SI-03): ImageIO's own reading must agree.
     static func declaredType(of data: Data) -> UTType? {
         if data.starts(with: pngSignature) { return .png }
@@ -73,6 +79,6 @@ public enum SpaceIconImage {
     static func picture(fromSync value: SyncValue?) -> Data? {
         guard let text = value?.stringValue, text.count <= (maxBytes / 3 + 1) * 4,
               let data = Data(base64Encoded: text) else { return nil }
-        return validated(data)
+        return drawable(data)
     }
 }

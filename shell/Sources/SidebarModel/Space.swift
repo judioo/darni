@@ -409,7 +409,7 @@ public struct Space: Identifiable, Hashable, Codable {
         name = try c.decode(String.self, forKey: .name)
         theme = try c.decode(SpaceTheme.self, forKey: .theme)
         iconName = try c.decode(String.self, forKey: .iconName)
-        iconPicture = (try? c.decodeIfPresent(Data.self, forKey: .iconPicture)).flatMap { $0 }.flatMap(SpaceIconImage.validated)
+        iconPicture = (try? c.decodeIfPresent(Data.self, forKey: .iconPicture)).flatMap { $0 }.flatMap(SpaceIconImage.drawable)
         pinnedContainerID = try c.decodeIfPresent(UUID.self, forKey: .pinnedContainerID) ?? UUID()
         unpinnedContainerID = try c.decodeIfPresent(UUID.self, forKey: .unpinnedContainerID) ?? UUID()
         unpinnedShared = try c.decodeIfPresent(Bool.self, forKey: .unpinnedShared) ?? false
