@@ -1,23 +1,45 @@
-# ReArc releases
+# Darni releases
+
+Darni was called ReArc up to build 1053. The entries for those builds keep the name they
+shipped under.
 
 Every distributed build (a DMG or an update in the appcast) has an entry here, newest
 first. The entry lists everything that changed since the previous release, written for
-the people who use ReArc. `shell/scripts/release.sh --dmg` refuses to build until the
+the people who use Darni. `shell/scripts/release.sh --dmg` refuses to build until the
 committed `RELEASES.md` has a heading for the build it is about to make:
 
-    ## ReArc <YYYY.MMDD>.<build> — <YYYY-MM-DD>
+    ## Darni <YYYY.MMDD>.<build> — <YYYY-MM-DD>
 
-for example `## ReArc 2026.1114.741 — 2026-11-14`: the version is the release's date, the
+for example `## Darni 2026.1120.1060 — 2026-11-20`: the version is the release's date, the
 same date as after the dash, and its build. `<build>` is the commit count of the commit
 that adds the entry, so write it as the last commit before the release, with
-`echo $(( $(git rev-list --count HEAD) + 1 ))` as the number. Entries up to 677 keep their
-`## ReArc 0.1.0 (<build>) — <YYYY-MM-DD>` headings. Details: engine/docs/RELEASE.md,
+`echo $(( $(git rev-list --count HEAD) + 1 ))` as the number. Entries for builds 678 to
+1053 keep their `## ReArc <YYYY.MMDD>.<build> — <YYYY-MM-DD>` headings, and entries up to
+677 keep `## ReArc 0.1.0 (<build>) — <YYYY-MM-DD>`. The script that checks this is
+`shell/scripts/release/version.py check-notes`. Details: engine/docs/RELEASE.md,
 "Release notes" and "Versioning".
 
 ## Unreleased
 
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
+
+**ReArc is now Darni**
+- ReArc has a new name, Darni. It is the same browser. Your spaces, tabs, bookmarks, history,
+  saved passwords, sign-ins, passkeys, extensions and settings are where you left them, and
+  nothing needs setting up again. Updates arrive the same way as before.
+- If you update from ReArc, the app in your Applications folder is still called ReArc. The menu
+  bar, the windows and the About window say Darni. Finder shows the file's old name, and the
+  Dock may too, until you rename it. To rename it, quit Darni, change the name from ReArc to
+  Darni in the Applications folder, then open it again. Renaming is optional. Updates work
+  either way.
+- A new download is called Darni. The disk image is named Darni and holds Darni.app.
+- Little ReArc is now Little Darni. Menus, Settings and messages use the new name throughout.
+- If 1Password stops filling in Darni, add it again in 1Password under Settings › Browser ›
+  Add Browser, then restart Darni.
+- macOS may still say ReArc in a few places that do not change with the name. The keychain
+  item that protects your saved passwords is still called "ReArc Safe Storage", and your data
+  stays in the same folder on your Mac. That is on purpose. It is what keeps you signed in.
 
 ## ReArc 2026.1119.1053 — 2026-11-19
 
