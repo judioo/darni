@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
-ABI **1.68** (major remains 1 for existing hosts), bridge **0.78.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key). Public header:
+ABI **1.69** (major remains 1 for existing hosts), bridge **0.79.0**, compiled Chromium **156.0.8078.109**
+(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`, written and type-checked on 2026-11-19 and not yet built: no engine has it). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2952,3 +2952,92 @@ bundle (2026-11-19, a throwaway data folder, a local page that asks on a timer):
 another app's window and from a minimised window were each refused in 2 to 42 ms with the log
 line; with the window back the same `get` opened the sheet, and it stayed open when the app was
 hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.
+
+## Blocked hosts (ABI 1.69, bridge 0.79.0)
+
+Patch `tab/098-blocked-hosts`, feature `content_blocking_hosts`. Spec:
+`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 3, "Blocked on this page". Security
+pre-review: `security/PRE-blocked-list.md` (BL-01 to BL-09). **Not built:** the patch is
+type-checked; no engine has it yet. Hosts gate on the feature and look the symbol up. No struct
+changes and no new callback.
+
+`ReArcTabGetBlockedCount` (1.66) says how many requests the blocker has blocked in a tab's
+page. This call says for which sites.
+
+| Function | Contract |
+|---|---|
+| `ReArcTabCopyBlockedHosts(tab, &json)` | `*json`: a malloc'd, NUL-terminated UTF-8 string the host frees with `ReArcBufferFree`. Synchronous, main thread. An unknown tab, blocking off or nothing blocked: `{"hosts":[],"more":0}`, `ok`. Null `json`: `invalid_argument`. Out of memory: `internal`, `*json` null. |
+
+```json
+{"hosts":[{"host":"doubleclick.net","count":3,"registrable":true,"lists":["easylist"]}],"more":0}
+```
+
+- `host`: the registrable domain of a blocked request's host, private registries included
+  (`someone.github.io` stays itself), lower-case ASCII (an international name in its `xn--`
+  form). An IP address is itself (an IPv6 literal in brackets). A host with no registrable
+  domain is itself.
+- `registrable`: the name is one site: a registrable domain or an IP address. `false` for a
+  single-label name (`localhost`) and for a name that is itself a public suffix (`co.uk`,
+  `github.io`). A host must never turn a name with `false` into a rule: it would cover every
+  site under it.
+- `count`: the requests blocked for the site, at most 2^31 - 1.
+- `lists`: the ids of the bundle's lists whose rules blocked them, as in the bundle's
+  `manifest.json`; `_dynamic` for one of the person's own rules. At most 8 per site and blocker.
+- `more`: blocked requests whose site is not listed: the list was full, or the request's host
+  cannot be kept (longer than 253 bytes).
+- The order of `hosts` means nothing. A host ignores keys it does not know.
+
+**Where the sites are.** In declarativeNetRequest's `ActionTracker`, in the same `TrackedInfo`
+as the action count the blocked count comes from, recorded at the two lines that increment it
+(`ActionTracker::OnRuleMatched`). They therefore have the count's lifetime, by Chromium's own
+code and with no second bookkeeping:
+
+- A main frame navigation that commits to another document starts again, from what blocked
+  that navigation's own request (`ResetTrackedInfoForTab`). A same-document navigation changes
+  nothing.
+- A closed tab's go (`ClearTabData`), and an unloaded blocker's (`ClearExtensionData`): after a
+  list update a page's sites, like its count, are what the new blocker has blocked since.
+- A private window's tab is tracked by its profile's service, as its count is, and its sites
+  go with the tab.
+
+**What is kept, and what is not.**
+
+- A site and the IDs of the rulesets that blocked requests for it. Not the address, the path,
+  the query, the resource type, the initiator or the time.
+- Only for a request counted for a tab. A request without a tab (a service worker's) keeps
+  nothing: there is nothing under Chromium's unknown tab ID, which nothing resets.
+- Only for the two blocker IDs, which are compiled into `action_tracker.cc`. No call, preference
+  or switch adds an ID. For every other extension the tracker is as upstream.
+- At most 100 sites per blocker and tab. While a list update has two blockers a site's entries
+  are added up and the reply still has at most 100.
+- In memory, in the browser process. Not in preferences, not in a file, not in a log, not in a
+  histogram. `getMatchedRules`, `onRuleMatchedDebug` and every other extension API are as they
+  were, and the blocker's manifest is unchanged (one permission, no access to any site).
+
+**The names are the page's.** A page chooses the hosts it asks for, and with a list rule that
+matches a path on any host it can fill the list with names it made up. A host treats every
+`host` as untrusted text: checks it before it draws it or builds anything from it, and does not
+log it. The engine does not log it either.
+
+**When to ask.** While the list is shown: once, and again on `ReArcBlockedCountCallback` (1.66)
+for the tab. The list changes exactly when the count does. The reply is read from the tracker
+at the call; the count the callback carries is delivered at most every 250 ms and may be a
+moment behind it.
+
+**Tests:** `engine/tests/check_abi169_imports.py` compares every ABI 1.68 struct layout, checks
+that the header adds exactly this one function, no struct and no callback type, and typechecks
+gated Swift adoption; it passes against the patched header (`REARC_TEST_ABI_HEADER_DIR`) and
+fails against a tree without the patch. What these import checks share is now
+`engine/tests/abi_import_check.py`; the next minor's check calls it with its own numbers.
+`engine/tests/check_blocked_hosts_patch.py` reads the patch: the two IDs are those of
+`rearc::kContentBlockerExtensionIds` and are compared as literals; a site is recorded only at
+the two increments of the count; the patch removes no line of the tracker and does not touch
+the code that moves matched rules to the unknown tab ID; the limits; only the host of a
+request is read; no added line logs or writes; nothing of the manifest changes. Neither needs
+a build. No host test exists. The shell's self-test has the run
+(`contentBlockingBlockedListChecks`): two sites of two lists with their counts and tags; a
+same-document navigation keeps the list and a navigation to another document empties it; a
+single-label name and a public suffix are listed with `registrable` false; 105 sites give 100
+and 5 more; a private tab's list, and nothing for its tab once it is closed; none of the 105
+names in a file of the engine's or the shell's data folders; and, in the cold launch's list
+update, the list after blocking has moved to the second blocker. **None of it has run.**
