@@ -156,7 +156,7 @@ def main():
     apps = [os.path.abspath(a) for a in args.apps]
     for app in apps:
         if not os.access(os.path.join(app, "Contents", "MacOS", "ReArc"), os.X_OK):
-            sys.exit(f"check-upgrade-data: no ReArc.app at {app}")
+            sys.exit(f"check-upgrade-data: no app bundle (Contents/MacOS/ReArc) at {app}")
     if subprocess.run([BUNDLES, "new", apps[-1]]).returncode != 0:
         sys.exit("check-upgrade-data: the new build must be the bundle release.sh is verifying")
     # The path a process runs under (pids() matches on it): /var is a link to /private/var.

@@ -9,7 +9,9 @@
 #   PREVIOUS_APP makes a profile first (launched in the background on a throwaway data
 #   directory, left to settle, then quit). NEW_APP then opens a copy of that profile, and of
 #   each extra PROFILE_DIR (saved data directories of older builds), and must stay up for
-#   REARC_UPGRADE_SECONDS (default 45) without a new ReArc crash report.
+#   REARC_UPGRADE_SECONDS (default 45) without a new crash report of the app.
+#   Either app may be named ReArc.app (up to build 1053) or Darni.app (after): the executable
+#   inside is Contents/MacOS/ReArc in both, and so are the crash reports' names.
 #   Pass "-" as PREVIOUS_APP to test only the PROFILE_DIRs.
 # Nothing takes the keyboard focus (`open -g`). The user's own data is never opened.
 #
@@ -23,7 +25,7 @@ set -euo pipefail
 die() { echo "check-upgrade: $*" >&2; exit 1; }
 [[ $# -ge 2 ]] || die "usage: check-upgrade.sh NEW_APP PREVIOUS_APP|- [PROFILE_DIR ...]"
 NEW="$(cd "$1" && pwd)"; PREVIOUS="$2"; shift 2
-[[ -x "$NEW/Contents/MacOS/ReArc" ]] || die "no ReArc.app at $NEW"
+[[ -x "$NEW/Contents/MacOS/ReArc" ]] || die "no app bundle (Contents/MacOS/ReArc) at $NEW"
 SETTLE="${REARC_UPGRADE_SETTLE_SECONDS:-40}"
 STAY="${REARC_UPGRADE_SECONDS:-45}"
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
@@ -68,7 +70,7 @@ quit() {
 PROFILES=()
 if [[ $PREVIOUS != - ]]; then
   PREVIOUS="$(cd "$PREVIOUS" && pwd)"
-  [[ -x "$PREVIOUS/Contents/MacOS/ReArc" ]] || die "no ReArc.app at $PREVIOUS"
+  [[ -x "$PREVIOUS/Contents/MacOS/ReArc" ]] || die "no app bundle (Contents/MacOS/ReArc) at $PREVIOUS"
   PREVIOUS="$("$BUNDLES" previous "$PREVIOUS" "$WORK")" || die "no launchable copy of the previous release"
   made="$WORK/previous"
   seed "$made"

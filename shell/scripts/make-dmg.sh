@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Packages a release-signed ReArc.app (scripts/sign-release.sh) into a signed, compressed
-# DMG: the app, an Applications link, the ReArc volume icon and a branded Finder background
+# Packages a release-signed Darni.app (scripts/sign-release.sh) into a signed, compressed
+# DMG: the app, an Applications link, the volume icon (the mark) and a branded Finder background
 # (scripts/release/dmg-background.swift; layout written by Chromium's
 # chrome/installer/mac/generate_dsstore.py, so no Finder scripting is needed). The DMG is
 # signed with the same identity as the app. Notarize it afterwards with scripts/notarize.sh.
 # Docs: engine/docs/RELEASE.md.
 #
-# Usage: scripts/make-dmg.sh [path/to/ReArc.app] [--out FILE.dmg]
-#   default app dist/release/ReArc.app; default output next to it, ReArc-<version>.dmg
+# Usage: scripts/make-dmg.sh [path/to/Darni.app] [--out FILE.dmg]
+#   default app dist/release/Darni.app; default output next to it, Darni-<version>.dmg
+#   The volume is named Darni and the app inside is Darni.app, whatever the source is called.
 #   Identity: REARC_RELEASE_IDENTITY, else REARC_SIGN_IDENTITY (env or signing.local.env).
 set -euo pipefail
 
 SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$SHELL_DIR/.." && pwd)"
-APP="$SHELL_DIR/dist/release/ReArc.app"
+APP="$SHELL_DIR/dist/release/Darni.app"
 DMG=""
 die() { echo "make-dmg: $*" >&2; exit 1; }
 while [[ $# -gt 0 ]]; do
@@ -39,11 +40,14 @@ grep -q 'flags=.*runtime' <<<"$app_info" || die "$APP lacks the hardened runtime
 
 VERSION="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")"
 BUNDLE_ID="$(plutil -extract CFBundleIdentifier raw "$APP/Contents/Info.plist")"
-# ReArc-2026.1112.726.dmg: the version carries the build (release/version.py dmg-name).
+# Darni-2026.1120.1060.dmg: the version carries the build (release/version.py dmg-name).
 BUILD="$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")"
 NAME="$(python3 -I "$SHELL_DIR/scripts/release/version.py" dmg-name "$VERSION" "$BUILD")" || die "no DMG name for $VERSION ($BUILD)"
 DMG="${DMG:-$(dirname "$APP")/$NAME}"
-VOLUME="ReArc"
+VOLUME="Darni"
+# The app's file name in the DMG. Sparkle finds the app in an update by this name first and by
+# its bundle id second, so an installed ReArc.app (bundle id unchanged) still takes the update.
+APP_NAME="Darni.app"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/rearc-dmg.XXXXXX")"
 MOUNT="$WORK/mount"
 cleanup() {
@@ -55,7 +59,7 @@ trap cleanup EXIT
 # 1. Staging folder. ditto keeps the signatures, extended attributes excluded.
 STAGE="$WORK/stage"
 mkdir -p "$STAGE/.background"
-ditto --noextattr --noqtn "$APP" "$STAGE/ReArc.app"
+ditto --noextattr --noqtn "$APP" "$STAGE/$APP_NAME"
 ln -s /Applications "$STAGE/ "
 cp "$SHELL_DIR/Resources/ReArc.icns" "$STAGE/.VolumeIcon.icns"
 BACKGROUND=0
@@ -67,7 +71,7 @@ if swift "$SHELL_DIR/scripts/release/dmg-background.swift" "$WORK" >/dev/null 2>
   # bar and status bar settings, and with both on the 320 pt window clipped the app's label.
   # dmg-background.swift draws for this geometry.
   if [[ -f $DSSTORE ]] && python3 -I "$DSSTORE" "$STAGE/.DS_Store" --volume-name "$VOLUME" \
-      --app-name ReArc.app --background-image /.background/background.tiff \
+      --app-name "$APP_NAME" --background-image /.background/background.tiff \
       --window-height 380 --app-y 136 --link-y 136; then
     BACKGROUND=1
   fi

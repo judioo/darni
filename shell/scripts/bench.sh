@@ -5,7 +5,7 @@
 #                         [--iterations N] [--warmups N] [--launch N] [--only IDS]
 #                         [--fixture items300|items500|items1000] [--seed N] [--allow-locked]
 #                         [--chrome] [--downloads FILE] [--out DIR] [--no-guards]
-#   --bundle      app to measure (default shell/dist/release/ReArc.app; --build dev: dist/chromium)
+#   --bundle      app to measure (default shell/dist/release/Darni.app; --build dev: dist/chromium)
 #   --launch N    N cold launches through LaunchServices (`open -n -W`), 5 s apart
 #   --chrome      also load the same page set in Google Chrome (own temporary
 #                 --user-data-dir, --no-first-run; only that instance is quit)
@@ -66,7 +66,7 @@ while [[ $# -gt 0 ]]; do
 done
 [[ $BUILD == release || $BUILD == dev ]] || die "--build is release or dev"
 if [[ -z $APP ]]; then
-  [[ $BUILD == release ]] && APP="$SHELL_DIR/dist/release/ReArc.app" || APP="$SHELL_DIR/dist/chromium/ReArc.app"
+  [[ $BUILD == release ]] && APP="$SHELL_DIR/dist/release/Darni.app" || APP="$SHELL_DIR/dist/chromium/Darni.app"
 fi
 EXE="$APP/Contents/MacOS/ReArc"
 [[ -x $EXE ]] || die "no bundle at $APP"

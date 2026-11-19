@@ -28,7 +28,7 @@ STUB_APP = r"""#!/bin/bash
 for arg in "$@"; do [[ $arg == --rearc-launch-probe=* ]] && result="${arg#*=}"; done
 printf 'ready=1 engine=chromium source=infoPlist links=%s\n' "$STUB_LINK" > "$result"
 if [[ -n ${STUB_CRASH:-} ]]; then
-  printf '{"procPath" : "\\/Users\\/USER\\/x\\/ReArc.app\\/Contents\\/Frameworks\\/Chromium Helper"}' \
+  printf '{"procPath" : "\\/Users\\/USER\\/x\\/%s\\/Contents\\/Frameworks\\/Chromium Helper"}' "${STUB_CRASH_APP:-ReArc.app}" \
     > "$REARC_TEST_REPORTS/Chromium Helper (Renderer)-$RANDOM.ips"
 fi
 if [[ -n ${STUB_DUMP:-} ]]; then
@@ -104,6 +104,20 @@ class CheckLaunchTests(unittest.TestCase):
         result = self.run_check(STUB_DUMP="ReArc.app")
         self.assertEqual(result.returncode, 1)
         self.assertIn("new Chromium crash dump", result.stderr)
+
+    def test_a_darni_bundle_is_watched_like_a_rearc_one(self):
+        """The app is Darni.app from build 1054; its executable and its crash reports' names stay ReArc."""
+        darni = self.app.with_name("Darni.app")
+        self.app.rename(darni)
+        self.app = darni
+        self.assertEqual(self.run_check().returncode, 0, "the stub app runs under its new name")
+        crash = self.run_check(STUB_CRASH="1", STUB_CRASH_APP="Darni.app")
+        self.assertEqual(crash.returncode, 1, "a helper's report from a Darni.app counts")
+        self.assertIn("new crash report", crash.stderr)
+        self.baseline.unlink()
+        dump = self.run_check(STUB_DUMP="Darni.app")
+        self.assertEqual(dump.returncode, 1, "and so does its minidump")
+        self.assertIn("new Chromium crash dump", dump.stderr)
 
     def test_another_chromiums_minidump_is_ignored(self):
         self.assertEqual(self.run_check(STUB_DUMP="Chromium.app").returncode, 0)
