@@ -95,7 +95,7 @@ extension BrowserViewModel {
     /// The profile's name, also in a container's space: a container is part of its profile,
     /// so Settings' first tab and the card name the profile, not the container.
     var accountName: String {
-        store.profile(withID: store.owningProfileID(of: store.activeProfileID))?.name ?? store.activeProfile.name
+        store.activeOwningProfile.name
     }
 
     /// The name printed on the card.
@@ -121,7 +121,7 @@ extension BrowserViewModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // The profile the name belongs to, not a container's space's own record.
-        _ = store.renameProfile(store.owningProfileID(of: store.activeProfileID), to: trimmed)
+        _ = store.renameProfile(store.activeOwningProfileID, to: trimmed)
         membershipCard.update { $0.name = trimmed }
     }
 

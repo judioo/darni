@@ -283,7 +283,7 @@ struct ProfilesSettingsPane: View {
     private var selected: Profile? {
         // Opens on the profile, also from a container's space: its settings (blocking among
         // them) are the profile's; the container stays one click away under it.
-        model.store.profile(withID: selection ?? model.store.owningProfileID(of: model.store.activeProfileID)) ?? model.store.profiles.first
+        model.store.profile(withID: selection ?? model.store.activeOwningProfileID) ?? model.store.profiles.first
     }
 
     private var selectedCloud: CloudProfile? {
