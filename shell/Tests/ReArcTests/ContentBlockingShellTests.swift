@@ -621,6 +621,22 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertFalse(ChromiumCapabilities.none.contentBlockingHosts)
     }
 
+    /// The toast for boosts switched off at launch (security BO-01). A
+    /// boost's name comes from its file.
+    func testTheSwitchedOffBoostsToastNamesOneBoostCleanedAndCountsSeveral() {
+        XCTAssertNil(BrowserViewModel.switchedOffBoostsMessage([]))
+        XCTAssertEqual(BrowserViewModel.switchedOffBoostsMessage(["Dark mode"]),
+                       "Darni switched off the boost “Dark mode”. Its script was set to run on many unrelated sites.")
+        XCTAssertEqual(BrowserViewModel.switchedOffBoostsMessage(["A", "B", "C"]),
+                       "Darni switched off 3 boosts from files. Their scripts were set to run on many unrelated sites.")
+        let odd = BrowserViewModel.switchedOffBoostsMessage(["Up\u{202E}date\nrequired " + String(repeating: "x", count: 80)]) ?? ""
+        XCTAssertFalse(odd.contains("\n") || odd.contains("\u{202E}"))
+        XCTAssertLessThan(odd.count, 130)
+        for message in [odd, BrowserViewModel.switchedOffBoostsMessage(["A", "B"]) ?? ""] {
+            XCTAssertFalse(message.contains("\u{2014}") || message.contains(";") || message.contains("ReArc"), message)
+        }
+    }
+
     /// ABI 1.69, feature `host_sites`: the engine's public suffix list. It
     /// does not depend on blocking: boosts and address lines ask it too.
     func testTheEngineFeatureGatesTheSiteNames() {

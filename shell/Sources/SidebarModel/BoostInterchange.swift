@@ -70,6 +70,10 @@ public enum BoostInterchange {
             return .failure(.validationFailed([BoostSecurityError.scriptInStylePackage]))
         }
         var package = doc.toPackage()
+        // A file's rules are taken in as plain hosts in ASCII form, or not at all (security BO-02).
+        let rules = package.manifest.hostScope.map(BoostScopeMatcher.incomingRule)
+        guard !rules.contains(where: { $0 == nil }) else { return .failure(.validationFailed([.invalidHostRule])) }
+        package.manifest.hostScope = rules.compactMap { $0 }
         let errors = BoostSecurity.validatePackage(package)
         if !errors.isEmpty { return .failure(.validationFailed(errors)) }
 

@@ -85,16 +85,30 @@ public enum BoostLibraryListing {
             .sorted { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
     }
 
+    /// A rule's host as a line shows it. A rule that is already stored may
+    /// hold any text a boost file or another Mac chose (the rule check took
+    /// everything without a colon or a slash): a plain host is shown as it
+    /// is, cut from the left when long, and anything else loses its control
+    /// and direction characters, becomes one line and is cut to a fixed
+    /// length (security BO-02).
+    public static func displayHost(_ host: String) -> String {
+        ContentBlockingHost.isHost(host)
+            ? PageOrigin.shortenedHost(host, limit: displayHostLimit)
+            : TidyText.truncated(TidyText.singleLine(host), to: displayHostLimit)
+    }
+
+    static let displayHostLimit = 60
+
     /// "github.com and subdomains, https, /path".
     public static func describe(_ rule: BoostHostRule) -> String {
-        var text = rule.host + (rule.hostMatch == .registrable ? " and subdomains" : "")
+        var text = displayHost(rule.host) + (rule.hostMatch == .registrable ? " and subdomains" : "")
         text += ", " + rule.schemes.joined(separator: "/")
-        if !rule.pathPrefix.isEmpty { text += ", paths under " + rule.pathPrefix }
+        if !rule.pathPrefix.isEmpty { text += ", paths under " + TidyText.truncated(TidyText.singleLine(rule.pathPrefix), to: displayHostLimit) }
         return text
     }
 
     static func summary(_ hosts: [String]) -> String {
-        guard let first = hosts.first else { return "No sites" }
+        guard let first = hosts.first.map(displayHost) else { return "No sites" }
         return hosts.count == 1 ? first : "\(first) and \(hosts.count - 1) more"
     }
 
@@ -104,8 +118,11 @@ public enum BoostLibraryListing {
         var text = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !text.isEmpty, !text.contains(" ") else { return nil }
         if !text.contains("://") { text = "https://" + text }
-        guard let url = URL(string: text), let host = url.host(), host.contains("."),
-              BoostScopeMatcher.defaultRule(forPage: url) != nil else { return nil }
-        return URL(string: "https://\(host)/")
+        // The host in the form a page's host has: an international name as `xn--…`. A URL made
+        // from the typed text has a percent-encoded host, which no page's host equals, so a boost
+        // made for such a site matched nothing (security BO-02).
+        guard let host = URLComponents(string: text)?.encodedHost?.lowercased(), host.contains("."), ContentBlockingHost.isHost(host),
+              let url = URL(string: "https://\(host)/"), BoostScopeMatcher.defaultRule(forPage: url) != nil else { return nil }
+        return url
     }
 }

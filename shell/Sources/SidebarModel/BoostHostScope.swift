@@ -116,6 +116,23 @@ public enum BoostScopeMatcher {
         return BoostHostRule(host: registrable, hostMatch: .registrable, schemes: [(url.scheme ?? "https").lowercased()])
     }
 
+    /// A rule as it is taken in from outside the app (a boost file, a site
+    /// typed into the library): its host in the form a page's host has,
+    /// lower-case ASCII with an international name as `xn--…`, and nothing
+    /// but a plain host. nil when it is not one.
+    ///
+    /// The rule check below takes any text without a colon or a slash, and
+    /// keeps taking it for rules that are already stored, so no installed
+    /// boost is dropped. A rule in Unicode form matches no page as it is
+    /// (pages come with ASCII hosts), so turning it into ASCII where it
+    /// comes in loses nothing and makes it work (security BO-02).
+    public static func incomingRule(_ rule: BoostHostRule) -> BoostHostRule? {
+        guard let host = ContentBlockingHost.normalizedKeepingWWW(rule.host) else { return nil }
+        var taken = rule
+        taken.host = host
+        return taken
+    }
+
     /// Whether a rule may be a boost's scope. Every boost passes through
     /// here, one from a file too (`BoostSecurity.validatePackage`).
     public static func validateRule(_ rule: BoostHostRule, names: SiteNames? = .shared) -> Bool {

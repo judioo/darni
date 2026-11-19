@@ -1408,6 +1408,38 @@ public final class SidebarStore {
         updateBoostLibrary(library)
     }
 
+    /// Switches off every installed boost that came from a file, carries a
+    /// script and is scoped to a public suffix (`web.app`, `or.jp`), in
+    /// every profile, and returns their names.
+    ///
+    /// Such a boost is not the person's own code, and until the engine's
+    /// suffix list was asked its script ran on every site under that suffix
+    /// (security BO-01). It cannot run any more (`BoostScopeMatcher`
+    /// refuses the scope), and its row says so. This also takes it out of
+    /// the "on" state, so that it is off on a Mac whose build still runs it.
+    /// A boost the person made, one without a script and one scoped to a
+    /// real site are left as they are. Nothing happens without the engine's
+    /// answer. Switched on again by the person, it is switched off at the
+    /// next launch for as long as its scope stays a suffix.
+    @discardableResult
+    public func switchOffFileScriptBoostsScopedToASuffix(names: SiteNames? = .shared) -> [String] {
+        guard let names else { return [] }
+        var switchedOff: [String] = []
+        for profileID in boostLibrariesByProfileID.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+            guard var library = boostLibrariesByProfileID[profileID] else { continue }
+            var changed = false
+            for package in library.packages where package.provenance.imported && package.hasScript
+                && package.manifest.hostScope.contains(where: { names.site(of: $0.host)?.isSuffix == true }) {
+                guard library.installation(for: package.manifest.id)?.enabled == true,
+                      BoostLibraryOps.setInstallationEnabled(packageID: package.manifest.id, enabled: false, library: &library) else { continue }
+                switchedOff.append(package.manifest.name)
+                changed = true
+            }
+            if changed { updateBoostLibrary(library) }
+        }
+        return switchedOff
+    }
+
     public func setBoostInstallationEnabled(packageID: UUID, enabled: Bool) {
         var library = boostLibrary(for: activeProfileID)
         guard BoostLibraryOps.setInstallationEnabled(packageID: packageID, enabled: enabled, library: &library) else {
