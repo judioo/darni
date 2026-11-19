@@ -156,15 +156,15 @@ extension ExternalLinkRouting {
     public static func describe(_ route: Route, in store: SidebarStore) -> String {
         switch route {
         case .littleArc(_, let profileID):
-            return "Little ReArc (\(store.profile(withID: profileID)?.name ?? "profile"))"
+            return "Little Darni (\(store.profile(withID: profileID)?.name ?? "profile"))"
         case .focusLittleArc(let id):
-            return "The open Little ReArc “\(store.littleArcWindow(withID: id)?.title ?? "window")”"
+            return "The open Little Darni “\(store.littleArcWindow(withID: id)?.title ?? "window")”"
         case .newTab(_, let spaceID):
             return "New tab in \(store.space(withID: spaceID)?.name ?? "a space")"
         case .focusTab(let id):
             return "The open tab “\(store.tab(withID: id)?.displayTitle ?? "tab")”"
         case .rejected:
-            return "Not a web link: ReArc ignores it"
+            return "Not a web link: Darni ignores it"
         }
     }
 
@@ -179,7 +179,7 @@ extension ExternalLinkRouting {
         case .littleArc(let id):
             // A container's Little ReArc uses its session: named by its space.
             let name = store.isContainer(id) ? store.containerTitle(id) : store.profile(withID: id)?.name
-            return "Little ReArc (\(name ?? "deleted profile"))"
+            return "Little Darni (\(name ?? "deleted profile"))"
         }
     }
 }

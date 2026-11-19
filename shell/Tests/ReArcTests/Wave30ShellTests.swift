@@ -149,7 +149,7 @@ final class Wave30ShellTests: XCTestCase {
             "Copy URL as Quote": "copyCurrentURLAsQuote", "Zoom In": "zoomIn", "Zoom Out": "zoomOut", "Actual Size": "resetZoom",
             "Next Tab": "selectNextTab", "Previous Tab": "selectPreviousTab", "Cycle Tab Backward": "cycleTabBackward",
             "Cycle Tab Forward": "cycleTabForward", "Add Split View": "addSplitView", "Close this Split Pane": "removeSplitView",
-            "New Note": "newNote", "New Easel": "newEasel", "Open Little ReArc or Peek in Space": "openTabIn", "Tab Switcher (Forward)": "cycleNextTab",
+            "New Note": "newNote", "New Easel": "newEasel", "Open Little Darni or Peek in Space": "openTabIn", "Tab Switcher (Forward)": "cycleNextTab",
             "Tab Switcher (Backward)": "cyclePreviousTab", "Tab 1": "goToSidebarItem1", "Last Tab": "goToSidebarItem9",
             "Next Space": "focusNextSpace", "Previous Space": "focusPreviousSpace", "Space 1": "goToSpace1",
             "Pin/Unpin Tab": "pinTab", "Clear Unpinned Tabs": "clearExplore", "View Library": "viewLibrary",
@@ -232,6 +232,30 @@ final class Wave30ShellTests: XCTestCase {
         model.store.updateTab(tab.id, title: "Arc", url: URL(string: "https://arc.test/a")!)
         model.copyURL()
         XCTAssertEqual(model.toast?.message, "Copied Current URL")
+    }
+
+    func testTheCommandBarShowsOnlyInTheWindowItOpenedIn() {
+        // Owner's recording, 2026-11-19: two windows on one space both drew the bar for one ⌘T.
+        let model = makeModel()
+        let first = SidebarWindowID(), second = SidebarWindowID()
+        model.store.registerWindow(first)
+        model.store.registerWindow(second)
+        model.windowBecameKey(second)
+        model.windowBecameKey(first)
+
+        model.newTab()
+        XCTAssertTrue(model.showsCommandBar(in: first))
+        XCTAssertFalse(model.showsCommandBar(in: second), "the other window on the same space draws no bar")
+
+        model.windowBecameKey(first)
+        XCTAssertTrue(model.isCommandBarPresented, "its own window becoming key again keeps it")
+        model.windowBecameKey(second)
+        XCTAssertFalse(model.isCommandBarPresented, "another window taking the keys closes it")
+        XCTAssertFalse(model.showsCommandBar(in: first))
+
+        model.focusLocation()
+        XCTAssertTrue(model.showsCommandBar(in: second))
+        XCTAssertFalse(model.showsCommandBar(in: first))
     }
 
     func testCommandTThenEscapeLeavesNoTabAndCommandLToggles() {

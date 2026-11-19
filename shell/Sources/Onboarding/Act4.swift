@@ -1,13 +1,18 @@
 import CoreGraphics
 import Foundation
 
-/// Act 4, "Morning": the motto lands word by word — ReFocused. ReStored.
-/// ReArc. — then the scene becomes a browser window on your desktop. The
-/// desktop returns around it, the sky turns into your first space's theme,
-/// your spaces fly off the arc into the sidebar's switcher, your avatar
-/// joins them, and the mark shrinks into the favicon of the first tab: a
-/// welcome page that greets you by name. In ReArc proper, the real window
-/// sits underneath at the same frame and the overlay simply lets go.
+/// Act 4, "Morning": the Darni wordmark arrives in the sky, alone and in one
+/// movement, and rests there. Then the scene becomes a browser window on your
+/// desktop. The desktop returns around it, the sky turns into your first
+/// space's theme, your spaces fly off the arc into the sidebar's switcher,
+/// your avatar joins them, and the mark shrinks into the favicon of the first
+/// tab: a welcome page that greets you by name. In the app proper, the real
+/// window sits underneath at the same frame and the overlay simply lets go.
+///
+/// There is no motto. Until build 1053 three words landed here one by one
+/// ("ReFocused. ReStored. ReArc."), which only worked with a name that starts
+/// with "Re". The owner dropped it with the rename (2026-11-19): no line of
+/// words takes its place.
 public struct Act4Log: Equatable, Sendable {
     public struct Node: Equatable, Sendable {
         public var icon: String
@@ -49,9 +54,10 @@ public struct Act4Log: Equatable, Sendable {
 
 public struct Act4Frame: Equatable {
     public var clearAct3: Double
-    /// "ReFocused." "ReStored." "ReArc."
-    public var words: [Double]
-    public var mottoOut: Double
+    /// The wordmark over the sky: 0 not yet, 1 arrived.
+    public var wordmark: Double
+    /// It leaves as the window forms.
+    public var wordmarkOut: Double
     /// Things leave the scene for the window: 0 still in the sky, 1 in place.
     public var fly: [Double]
     public var avatarFly: Double
@@ -74,8 +80,9 @@ public enum Act4Timeline {
         let f = s + flight
         return Act4Frame(
             clearAct3: Ease.smooth(Ease.progress(t, s, s + 0.5)),
-            words: [ease(s + 0.6, s + 1.3), ease(s + 1.15, s + 1.85), ease(s + 1.7, s + 2.5)],
-            mottoOut: Ease.smooth(Ease.progress(t, f - 0.3, f + 0.4)),
+            // One movement, after the spaces clear, landing on the score's chord (s + 1.72).
+            wordmark: ease(s + 0.7, s + 1.9),
+            wordmarkOut: Ease.smooth(Ease.progress(t, f - 0.3, f + 0.4)),
             fly: log.nodes.indices.map { Ease.inOut(Ease.progress(t, f + 0.25 + Double($0) * 0.05, f + 1.35 + Double($0) * 0.05)) },
             avatarFly: Ease.inOut(Ease.progress(t, f + 0.15, f + 1.25)),
             markFly: Ease.inOut(Ease.progress(t, f, f + 1.3)),
@@ -87,7 +94,7 @@ public enum Act4Timeline {
     }
 }
 
-/// The window the onboarding becomes; ReArc's real window takes this frame.
+/// The window the onboarding becomes; the app's real window takes this frame.
 public struct Act4Layout {
     public let size: CGSize
     public init(size: CGSize) { self.size = size }

@@ -39,7 +39,7 @@ public final class SunrisePlayer: ObservableObject {
     public var usesDemoSources = false
     /// Act 3, after the blue sweep.
     @Published public private(set) var act3: Act3Log? { didSet { rescore() } }
-    /// Act 4: the motto, then the window.
+    /// Act 4: the wordmark, then the window.
     @Published public private(set) var act4: Act4Log? { didSet { rescore() } }
     public let reduced: Bool
     public var line = "A New Dawn"

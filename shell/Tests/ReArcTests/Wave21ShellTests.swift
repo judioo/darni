@@ -394,7 +394,7 @@ final class Wave21ShellTests: XCTestCase {
         fake.canBecomeDefault = false
         model.setAsDefaultBrowser()
         XCTAssertEqual(fake.requests, 0)
-        XCTAssertEqual(model.defaultBrowserMessage, "Run ReArc from its app bundle to make it your default browser.")
+        XCTAssertEqual(model.defaultBrowserMessage, "Run Darni from its app bundle to make it your default browser.")
 
         fake.canBecomeDefault = true
         model.defaultBrowserMessage = nil
@@ -405,13 +405,13 @@ final class Wave21ShellTests: XCTestCase {
 
         model.setAsDefaultBrowser()
         XCTAssertEqual(fake.requests, 1, "already the default: nothing to ask")
-        XCTAssertEqual(model.defaultBrowserMessage, "ReArc is already your default browser.")
+        XCTAssertEqual(model.defaultBrowserMessage, "Darni is already your default browser.")
 
         let refused = FakeDefaultBrowser()
         refused.result = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "declined"])
         model.defaultBrowser = refused
         model.setAsDefaultBrowser()
-        XCTAssertEqual(model.defaultBrowserMessage, "ReArc could not become the default browser: declined")
+        XCTAssertEqual(model.defaultBrowserMessage, "Darni could not become the default browser: declined")
     }
 
     func testSystemDefaultBrowserIsNeverSetFromATestProcess() {
@@ -456,7 +456,7 @@ final class Wave21ShellTests: XCTestCase {
         model.clearLittleArcOpenRequests()
 
         model.openExternalURL(page)
-        XCTAssertEqual(model.store.littleArcLiveWindows.map(\.id), [first.id], "no second Little ReArc")
+        XCTAssertEqual(model.store.littleArcLiveWindows.map(\.id), [first.id], "no second Little Darni")
         XCTAssertEqual(model.littleArcOpenRequests, [first.id], "the open one is asked to the front")
         XCTAssertEqual(model.store.displayTabs().count, tabCount)
     }

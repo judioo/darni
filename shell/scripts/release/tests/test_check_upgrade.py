@@ -32,8 +32,8 @@ class CheckUpgradeTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def app(self, name, build, extra=""):
-        app = self.root / name / "ReArc.app"
+    def app(self, name, build, extra="", bundle="ReArc.app"):
+        app = self.root / name / bundle
         (app / "Contents" / "MacOS").mkdir(parents=True)
         (app / "Contents" / "MacOS" / "ReArc").write_text("#!/bin/bash\n")
         (app / "Contents" / "MacOS" / "ReArc").chmod(0o755)
@@ -82,6 +82,25 @@ class CheckUpgradeTests(unittest.TestCase):
         copy = sign[len("sign:"):]
         self.assertNotEqual(copy, str(old))
         self.assertTrue(any(c.startswith(f"open:-n -g {copy} ") for c in calls), calls)
+        self.assertNotIn("ReArcReleaseVerification", (old / "Contents" / "Info.plist").read_text(), "the original is untouched")
+
+    # From build 1054 the new app is Darni.app; the previous release may still be ReArc.app.
+    def test_a_rearc_previous_release_and_a_darni_build(self):
+        old = self.app("old", "1053")
+        new = self.app("new", "1060", VERIFY, bundle="Darni.app")
+        self.run_check(new, old)
+        calls = self.log.read_text().splitlines()
+        copy = next(c for c in calls if c.startswith("sign:"))[len("sign:"):]
+        self.assertTrue(copy.endswith("/previous-app-1053/ReArc.app"), "the copy keeps the old name: " + copy)
+        self.assertTrue(any(c.startswith(f"open:-n -g {copy} ") for c in calls), calls)
+
+    def test_a_darni_previous_release_and_a_darni_build(self):
+        old = self.app("old", "1060", bundle="Darni.app")
+        new = self.app("new", "1070", VERIFY, bundle="Darni.app")
+        self.run_check(new, old)
+        calls = self.log.read_text().splitlines()
+        copy = next(c for c in calls if c.startswith("sign:"))[len("sign:"):]
+        self.assertTrue(copy.endswith("/previous-app-1060/Darni.app"), copy)
         self.assertNotIn("ReArcReleaseVerification", (old / "Contents" / "Info.plist").read_text(), "the original is untouched")
 
 

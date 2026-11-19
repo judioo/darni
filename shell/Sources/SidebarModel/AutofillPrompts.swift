@@ -235,7 +235,7 @@ public struct AutofillSaveOffer: Identifiable, Equatable, Sendable {
     }
 
     public var footnote: String {
-        kind == .card ? "Saved in ReArc on this Mac only. Never the security code." : "Saved in ReArc on this Mac only."
+        kind == .card ? "Saved in Darni on this Mac only. Never the security code." : "Saved in Darni on this Mac only."
     }
 }
 

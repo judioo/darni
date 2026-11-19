@@ -353,11 +353,11 @@ final class Wave26AirTrafficModelTests: XCTestCase {
 
         let window = store.createLittleArcWindow(url: url)
         XCTAssertEqual(ExternalLinkRouting.route(url, destination: .littleArc, in: store), .focusLittleArc(window.id),
-                       "the Little ReArc still showing the page")
+                       "the Little Darni still showing the page")
 
         XCTAssertNotNil(store.promoteLittleArcToTab(id: window.id))
         XCTAssertEqual(ExternalLinkRouting.route(url, destination: .littleArc, in: store), .littleArc(url, profileID: profile),
-                       "moved into a space: the next click opens a new Little ReArc")
+                       "moved into a space: the next click opens a new Little Darni")
         XCTAssertNotEqual(ExternalLinkRouting.route(url, destination: .activeSpace, in: store), .littleArc(url, profileID: profile))
         guard case .focusTab = ExternalLinkRouting.route(url, destination: .activeSpace, in: store) else {
             return XCTFail("the current-space setting still focuses the open tab")
@@ -378,7 +378,7 @@ final class Wave26AirTrafficModelTests: XCTestCase {
         }
 
         store.createLittleArcWindow(url: url)
-        XCTAssertEqual(route(), .littleArc(url, profileID: other.id), "a Little ReArc of another profile is not the rule's")
+        XCTAssertEqual(route(), .littleArc(url, profileID: other.id), "a Little Darni of another profile is not the rule's")
 
         let start = Date()
         let older = store.createLittleArcWindow(url: url, profileID: other.id, at: start)
@@ -386,7 +386,7 @@ final class Wave26AirTrafficModelTests: XCTestCase {
         XCTAssertEqual(route(), .focusLittleArc(newer.id))
         store.touchLittleArcWindow(id: older.id, at: start.addingTimeInterval(2))
         XCTAssertEqual(route(), .focusLittleArc(older.id), "the most recently used")
-        XCTAssertEqual(ExternalLinkRouting.describe(.focusLittleArc(older.id), in: store), "The open Little ReArc “github.com”")
+        XCTAssertEqual(ExternalLinkRouting.describe(.focusLittleArc(older.id), in: store), "The open Little Darni “github.com”")
     }
 
     func testRoutingUsesTheFirstRuleWithALiveDestination() {
@@ -413,7 +413,7 @@ final class Wave26AirTrafficModelTests: XCTestCase {
                        .rejected)
 
         XCTAssertEqual(ExternalLinkRouting.describe(.newTab(url, spaceID: work), in: store), "New tab in Work")
-        XCTAssertEqual(ExternalLinkRouting.describe(.littleArc(url, profileID: other.id), in: store), "Little ReArc (Other)")
+        XCTAssertEqual(ExternalLinkRouting.describe(.littleArc(url, profileID: other.id), in: store), "Little Darni (Other)")
         XCTAssertEqual(ExternalLinkRouting.describe(.space(UUID()), in: store), "Deleted space")
     }
 

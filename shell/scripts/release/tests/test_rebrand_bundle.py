@@ -1,5 +1,6 @@
-"""rebrand-bundle.py on a fake ReArc.app: the alerts helpers macOS shows as the notifying app
-say ReArc and carry ReArc's icon, and the permission reasons name ReArc. No app, no signing."""
+"""rebrand-bundle.py on a fake Darni.app: the alerts helpers macOS shows as the notifying app
+say Darni and carry the app's icon, the permission reasons name Darni, and the helpers the
+engine build named "ReArc Helper" are named "Darni Helper". No app, no signing."""
 import plistlib
 from pathlib import Path
 import shutil
@@ -12,6 +13,8 @@ RELEASE = Path(__file__).resolve().parents[1]
 SCRIPT = RELEASE / "rebrand-bundle.py"
 HELPERS = "Contents/Frameworks/Chromium Framework.framework/Versions/Current/Helpers"
 ALERTS = ("Chromium Helper (Alerts).app", "Chromium Helper (Aperitif Alerts).app")
+OTHERS = ("Chromium Helper.app", "Chromium Helper (Renderer).app", "Chromium Helper (GPU).app",
+          "Chromium Helper (Aperitif Renderer).app")
 
 APP_STRINGS = (
     '"Chromium Shortcut" = "Chromium のショートカット";\n'
@@ -30,7 +33,7 @@ class RebrandBundleTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         root = Path(self.tmp.name)
-        self.app = root / "ReArc.app"
+        self.app = root / "Darni.app"
         self.icns = root / "ReArc.icns"
         self.icns.write_bytes(b"rearc-icon")
         ja = self.app / "Contents/Resources/ja.lproj"
@@ -48,7 +51,18 @@ class RebrandBundleTests(unittest.TestCase):
             (self.app / HELPERS / name / "Contents/Info.plist").write_bytes(plistlib.dumps({
                 "CFBundleIdentifier": "com.rearc.browser.framework.AlertNotificationService",
                 "CFBundleIconFile": "app.icns", "CFBundleIconName": "AppIcon",
+                "CFBundleName": name.removesuffix(".app").replace("Chromium", "ReArc"),
+                "CFBundleDisplayName": name.removesuffix(".app"), "CFBundleExecutable": name.removesuffix(".app"),
             }))
+        # The other helpers, as the engine build writes them (PRODUCT_SHORTNAME=ReArc).
+        for name in OTHERS:
+            contents = self.app / HELPERS / name / "Contents"
+            contents.mkdir(parents=True)
+            (contents / "Info.plist").write_bytes(plistlib.dumps({
+                "CFBundleIdentifier": "com.rearc.browser.helper", "CFBundleExecutable": name.removesuffix(".app"),
+                "CFBundleName": name.removesuffix(".app").replace("Chromium", "ReArc"),
+                "CFBundleDisplayName": name.removesuffix(".app"),
+            }, fmt=plistlib.FMT_BINARY))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -57,7 +71,7 @@ class RebrandBundleTests(unittest.TestCase):
         return subprocess.run([sys.executable, "-I", str(SCRIPT), *args],
                               capture_output=True, text=True)
 
-    def test_alert_helpers_say_rearc_with_rearc_icon(self):
+    def test_alert_helpers_say_darni_with_the_app_icon(self):
         result = self.run_script(str(self.app), str(self.icns))
         self.assertEqual(result.returncode, 0, result.stderr)
         printed = result.stdout.splitlines()
@@ -65,24 +79,43 @@ class RebrandBundleTests(unittest.TestCase):
             helper = self.app / HELPERS / name
             self.assertIn(str(helper), printed, "the caller re-signs every changed helper")
             strings = plistlib.loads((helper / "Contents/Resources/base.lproj/InfoPlist.strings").read_bytes())
-            self.assertEqual(strings["CFBundleDisplayName"], "ReArc")
+            self.assertEqual(strings["CFBundleDisplayName"], "Darni")
             self.assertEqual((helper / "Contents/Resources/app.icns").read_bytes(), b"rearc-icon")
             info = plistlib.loads((helper / "Contents/Info.plist").read_bytes())
             self.assertNotIn("CFBundleIconName", info, "Assets.car's Chromium AppIcon would win")
 
-    def test_permission_reasons_name_rearc_and_the_rest_stays(self):
+    def test_permission_reasons_name_darni_and_the_rest_stays(self):
         self.assertEqual(self.run_script(str(self.app), str(self.icns)).returncode, 0)
         text = (self.app / "Contents/Resources/ja.lproj/InfoPlist.strings").read_text(encoding="utf-8")
-        self.assertIn('NSCameraUsageDescription = "ReArc にアクセスを許可すると', text)
+        self.assertIn('NSCameraUsageDescription = "Darni にアクセスを許可すると', text)
         self.assertIn('"Chromium Shortcut" = "Chromium のショートカット";', text)
         self.assertIn("Copyright 2026 The Chromium Authors. All rights reserved.", text)
         self.assertIn('CFBundleGetInfoString = "Chromium 156', text)
 
-    def test_a_translated_engine_name_becomes_rearc_too(self):
+    def test_a_translated_engine_name_becomes_darni_too(self):
         self.assertEqual(self.run_script(str(self.app), str(self.icns)).returncode, 0)
         text = (self.app / "Contents/Resources/hi.lproj/InfoPlist.strings").read_text(encoding="utf-8")
-        self.assertIn('NSCameraUsageDescription = "ReArc को ऐक्सेस मिलने के बाद', text)
+        self.assertIn('NSCameraUsageDescription = "Darni को ऐक्सेस मिलने के बाद', text)
         self.assertIn('"Chromium Shortcut" = "Chromium का शॉर्टकट";', text)
+
+    def test_every_helper_is_named_darni_and_keeps_its_identity(self):
+        result = self.run_script(str(self.app), str(self.icns))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        printed = result.stdout.splitlines()
+        for name in ALERTS + OTHERS:
+            helper = self.app / HELPERS / name
+            info = plistlib.loads((helper / "Contents/Info.plist").read_bytes())
+            stem = name.removesuffix(".app")
+            self.assertEqual(info["CFBundleName"], stem.replace("Chromium", "Darni"))
+            self.assertEqual(info["CFBundleExecutable"], stem, "the executable keeps Chromium's name")
+            self.assertEqual(info["CFBundleDisplayName"], stem)
+            self.assertTrue(info["CFBundleIdentifier"].startswith("com.rearc.browser."), "the id stays")
+            self.assertEqual(printed.count(str(helper)), 1, "the caller re-signs every changed helper, once")
+        raw = (self.app / HELPERS / OTHERS[0] / "Contents/Info.plist").read_bytes()
+        self.assertTrue(raw.startswith(b"bplist"), "the plist keeps its format")
+        again = self.run_script(str(self.app), str(self.icns))
+        self.assertEqual(again.stdout.splitlines(), [str(self.app / HELPERS / name) for name in sorted(ALERTS)],
+                         "a second run renames nothing more")
 
     def test_a_missing_helper_fails(self):
         shutil.rmtree(self.app / HELPERS / ALERTS[0])

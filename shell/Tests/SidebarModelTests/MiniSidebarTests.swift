@@ -256,7 +256,7 @@ final class MiniSidebarTests: XCTestCase {
         let ids = ArcShortcuts.all.map(\.id)
         let sidebar = try XCTUnwrap(ids.firstIndex(of: "showSidebar"))
         XCTAssertEqual(ids[sidebar + 1], "toggleMiniSidebar")
-        XCTAssertNil(ArcShortcuts.binding(id: "savePageAs"), "Arc's Save Page As (never implemented in ReArc) gave up ⇧⌘S")
+        XCTAssertNil(ArcShortcuts.binding(id: "savePageAs"), "Arc's Save Page As (never implemented in Darni) gave up ⇧⌘S")
         XCTAssertEqual(ArcShortcuts.yieldedToReArc.map(\.arcID), ["savePageAs"])
         XCTAssertEqual(ArcShortcuts.yieldedToReArc.first?.display, ArcShortcuts.binding(id: "toggleMiniSidebar")?.display)
         XCTAssertTrue(ArcShortcuts.reArcIDs.isSubset(of: Set(ids)))

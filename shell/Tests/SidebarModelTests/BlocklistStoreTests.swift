@@ -785,7 +785,7 @@ final class BlocklistStoreTests: XCTestCase {
             BlocklistMirror.isCheckDue(blockingOn: on, state: BlocklistUpdateState(lastChecked: checked.map { now.addingTimeInterval(-$0) },
                                                                                   lastAttempt: attempt.map { now.addingTimeInterval(-$0) }), now: now)
         }
-        XCTAssertFalse(due(false), "blocking off in every profile: ReArc asks the mirror for nothing")
+        XCTAssertFalse(due(false), "blocking off in every profile: Darni asks the mirror for nothing")
         XCTAssertFalse(due(false, checked: 30 * 86400))
         XCTAssertTrue(due(true), "never checked")
         XCTAssertFalse(due(true, checked: 23 * 3600))

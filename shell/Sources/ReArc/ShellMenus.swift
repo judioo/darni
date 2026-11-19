@@ -133,8 +133,8 @@ struct ShellMenuItem: Identifiable {
 enum ShellMenus {
     /// ReArc menu: remains available after dismissing the sidebar card.
     static func finishSetup(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
-        [[ShellMenuItem("Finish Setting Up ReArc…", liveTitle: {
-            model.onboardingSetupState.showsMenuItem ? "Finish Setting Up ReArc…" : nil
+        [[ShellMenuItem("Finish Setting Up Darni…", liveTitle: {
+            model.onboardingSetupState.showsMenuItem ? "Finish Setting Up Darni…" : nil
         }) { model.showBrowserImport() }]]
     }
 
@@ -168,7 +168,7 @@ enum ShellMenus {
         [[
             ShellMenuItem("New Note", "n", [.control, .shift]) { _ = model.executeCommand(.newNote, commandID: nil) },
             ShellMenuItem("New Easel", "e", [.control, .shift]) { _ = model.executeCommand(.newEasel, commandID: nil) },
-            ShellMenuItem("Open Little ReArc or Peek in Space", "o") { model.openLittleArcOrPeekInSpace() },
+            ShellMenuItem("Open Little Darni or Peek in Space", "o") { model.openLittleArcOrPeekInSpace() },
         ]]
     }
 
@@ -406,8 +406,8 @@ enum ShellMenus {
     /// Window menu (P3.22). Arc binds no keys to these.
     static func littleArcs(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
         [[
-            ShellMenuItem("Show All Little ReArcs") { model.showAllLittleArcs() },
-            ShellMenuItem("Close All Little ReArcs") { model.closeAllLittleArcs() },
+            ShellMenuItem("Show All Little Darnis") { model.showAllLittleArcs() },
+            ShellMenuItem("Close All Little Darnis") { model.closeAllLittleArcs() },
         ]]
     }
 

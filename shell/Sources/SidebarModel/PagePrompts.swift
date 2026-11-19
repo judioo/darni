@@ -26,11 +26,18 @@ public enum PageOrigin {
         return URLComponents(string: origin)?.scheme?.lowercased() == "http" ? "http://" + host : host
     }
 
-    /// A host for one line of trusted UI: whole labels from the right, the registrable domain
+    /// A host for one line of trusted UI: whole labels from the right, the site's own name
     /// always kept, and "…" in front of what was cut. A long host such as
     /// `accounts.google.com.verify-session.evil.example` then shows its real domain rather than
-    /// its trusted-looking start (security RC-0.1.0-544 N-06). An `http://` prefix and a port stay.
-    public static func shortenedHost(_ text: String, limit: Int = 36) -> String {
+    /// its trusted-looking start (security RC-0.1.0-544 N-06).
+    ///
+    /// What is always kept is the registrable domain by the engine's public suffix list
+    /// (`SiteNames`), so `long-name.web.app` and `bucket.s3.amazonaws.com` keep the label that
+    /// says whose page it is. Without that list it is the shell's guess and one label more:
+    /// the guess is a suffix for such hosts, and the extra label is then the site's own
+    /// (`long-name.web.app` never shows as `…web.app`, security AG-05). An `http://` prefix and
+    /// a port stay.
+    public static func shortenedHost(_ text: String, limit: Int = 36, names: SiteNames? = .shared) -> String {
         guard text.count > limit else { return text }
         let scheme = text.hasPrefix("http://") ? "http://" : ""
         var host = String(text.dropFirst(scheme.count))
@@ -40,7 +47,8 @@ public enum PageOrigin {
             host = String(host[..<colon])
         }
         let labels = host.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-        let floor = BoostScopeMatcher.registrableDomain(host).split(separator: ".").count
+        let floor = names?.site(of: host).map { $0.name.split(separator: ".").count }
+            ?? BoostScopeMatcher.registrableDomain(host).split(separator: ".").count + 1
         var kept = Array(labels.suffix(min(floor, labels.count)))
         for label in labels.dropLast(kept.count).reversed() {
             let candidate = ([label] + kept).joined(separator: ".")
@@ -607,7 +615,7 @@ public enum PageContextMenuItem: Equatable, Sendable {
         case .openLinkInNewTab: return "Open Link in New Tab"
         case .openLinkInNewWindow: return "Open Link in New Window"
         case .openLinkInNewSplit: return "Open Link in Split View"
-        case .openLinkInLittleArc: return "Open Link in Little ReArc"
+        case .openLinkInLittleArc: return "Open Link in Little Darni"
         case .openLinkInPrivateWindow: return "Open Link in Private Window"
         case .saveLinkAs: return "Save Link As…"
         case .copyLink: return "Copy Link Address"

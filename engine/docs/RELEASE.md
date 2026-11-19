@@ -30,6 +30,75 @@ distribution.
 | `release/signing-env.sh` | Shared loader for `shell/signing.local.env`. Environment wins, and it never prints a value. |
 | `release/dmg-background.swift` | Draws the DMG background (brand canvas and cobalt arrow). |
 
+## The rename: ReArc is Darni from build 1054
+
+ReArc was renamed Darni on 2026-11-19. The first Darni build is the "bridge" release. It
+changes only the names people read, so an installed ReArc takes it as an ordinary update.
+The rest of this document was written before the rename. Where it says `ReArc.app` or
+`ReArc-<version>.dmg`, builds from 1054 on make `Darni.app` and `Darni-<version>.dmg`.
+
+What a release makes now:
+
+| | Up to build 1053 | From build 1054 |
+|---|---|---|
+| App bundle | `ReArc.app` | `Darni.app` |
+| `CFBundleName`, `CFBundleDisplayName` | ReArc | Darni |
+| DMG | `ReArc-<version>.dmg`, volume "ReArc" | `Darni-<version>.dmg`, volume "Darni" |
+| Delta (named by Sparkle's `generate_appcast`) | `ReArc<to>-<from>.delta` | `Darni<to>-<from>.delta` |
+| `RELEASES.md` heading and release title | `## ReArc <version>`, "ReArc <version>" | `## Darni <version>`, "Darni <version>" |
+| Update check User-Agent (Sparkle builds it from the name) | `ReArc/<version> Sparkle/2.10.1` | `Darni/<version> Sparkle/2.10.1` |
+| Git tag | `v<version>` | `v<version>` |
+
+`release/version.py` holds the build number of the change (`FIRST_DARNI_BUILD`) and decides
+the heading and the DMG name for a build. The feed's channel title stays "ReArc":
+`generate_appcast` names a feed when it creates it and never again, and nothing shows it.
+
+What must never change, because installed copies depend on it:
+
+| Identifier | Value | What breaks if it changes |
+|---|---|---|
+| Bundle id, and the helper and framework ids under it | `com.rearc.browser` | macOS sees a new app: preferences, privacy permissions, default browser and passkeys are lost. Sparkle finds a renamed app in an update only by its bundle id, so the update fails for everyone. |
+| Safe Storage Keychain item | "ReArc Safe Storage", account "ReArc", from `PRODUCT_SHORTNAME=ReArc` in `release/BRANDING` | The engine makes a new key. Everyone is signed out and saved passwords cannot be read. Nothing migrates the old item. |
+| iCloud container | `iCloud.com.rearc.browser` | CloudKit containers cannot be renamed. Synced data is stranded. |
+| Data folder | `~/Library/Application Support/ReArc` | A first-launch migration with nothing to gain. |
+| Update feed and key | `SUFeedURL` `https://rearc.imara.ae/updates/appcast.xml`, `SUPublicEDKey`, the Keychain account `ReArc` of the private key | Installed builds poll the URL and accept the key built into them. |
+| Feed marker | prefix `rearc:`, namespace `https://rearc.imara.ae/xml-namespaces/update` | Older builds read `rearc:requiredBelow` by that name. |
+| Blocklists URL | `https://rearc.imara.ae/blocklists/latest.json` | Built into every installed build. |
+| Executable, icon file, Info.plist keys, `REARC_*`, `~/.config/rearc`, module and folder names | `Contents/MacOS/ReArc`, `ReArc.icns`, `ReArcRelease` and the rest | Nothing a person reads. Scripts, crash report names and tests use them. |
+
+Never change the app's file name and its bundle id in the same release, and never the update
+key and the Team ID in the same release.
+
+`PRODUCT_SHORTNAME` reaches two things besides the Keychain item: the app's `CFBundleName`,
+which `bundle-chromium.sh` sets to Darni, and each helper's `CFBundleName` ("ReArc Helper
+(Renderer)"), which `rebrand-bundle.py` rewrites to "Darni Helper (Renderer)". The Keychain
+item's own name is the one place where a person still reads "ReArc": in Keychain Access, and
+in the macOS prompt if the item's access is ever asked for again.
+
+The gates, all without a launch:
+
+| Script | Checks |
+|---|---|
+| `release/check-rename.sh APP [--engine-out DIR] [--qa]` | Run by `release.sh` on every build, after bundling and again on the bundle as it ships. The bundle is `Darni.app` with `CFBundleName` and `CFBundleDisplayName` Darni. The bundle id, the helper and framework ids, the executable, `SUFeedURL`, `SUPublicEDKey`, the iCloud container and the blocklists URL in the executable are the values above. Without `--qa` the bundle must be a release bundle: `ReArcRelease` true, the feed URL present, and no `REARC_*` variable in `LSEnvironment` (the mark of an update test copy). `--qa` (passed for `release.sh --qa`) lets a test bundle lack the release marker or carry another feed URL. |
+| `release/check-safe-storage-name.py APP [--engine-out DIR]` | Called by `check-rename.sh`. `release/BRANDING` says `PRODUCT_SHORTNAME=ReArc`, the engine binary in the bundle holds "ReArc Safe Storage" and no other "<name> Safe Storage" except Chromium's "Endpoint Verification Safe Storage", and the header the engine build generated names the same service and account. |
+| `release/tests/test_sparkle_rename.py` | Sparkle 2.10.1's rule for finding the app in an update (`SUInstaller.m`), ported, on a DMG's layout: a ReArc install finds `Darni.app` by bundle id, an updated or new install by name, and a new bundle id is never found. With Sparkle's own `generate_appcast` and `BinaryDelta` and a throwaway key: one feed for archives of both names, the delta's name, and the delta applied to a host named `ReArc.app` and one named `Darni.app`. |
+
+The live check, which launches the app and needs the screen, is
+`release/check-rename-update.sh`: a test copy of an installed build updates itself from a
+feed on 127.0.0.1 with Sparkle's own installer. The script's header has the four cases to run
+before the bridge release ships and what makes a test copy safe beside the person's own
+install (a throwaway update key, and a throwaway data directory in the copy's `LSEnvironment`
+so that Sparkle's relaunch cannot open the real profile).
+
+Engine strings a person reads (the version line of `chrome://version`, the blocker
+extension's name and description) are in overlay patch
+`engine/patches/chrome/008-darni-visible-names.patch`. **It is held back: the file is kept
+but it is not in `engine/patches/series`, and the bridge release's engine does not have it.**
+Security's condition 1 for the bridge release (`security/PRE-darni-bridge.md`) is that its
+engine stays as built, overlay `9f2767b4c1`, through `tab/098`. Add the patch's line to
+`series` after `tab/098` for the first engine build after the bridge. `series` must always
+match what is built: `engine/tests/replay_overlay.py` compares the two.
+
 ## Exact steps
 
 ```sh

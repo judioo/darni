@@ -322,6 +322,20 @@ class DisplayVersionTests(unittest.TestCase):
         self.check(text.replace("ReArc-2026.1112.726.dmg", "ReArc-0.1.0-726.dmg"), ok=False,
                    args=("--version", 726, "--display-version", "2026.1112.726"), message="expected ReArc-2026.1112.726.dmg")
 
+    def test_a_darni_build_downloads_a_darni_dmg(self):
+        """From the first Darni build on the enclosure is Darni-V.dmg; older items keep ReArc's."""
+        text = dated_feed_template().format(version=1060, critical="")
+        args = ("--version", 1060, "--display-version", "2026.1112.1060")
+        self.check(text, ok=False, args=args, message="expected Darni-2026.1112.1060.dmg")
+        darni = text.replace("ReArc-2026.1112.1060.dmg", "Darni-2026.1112.1060.dmg")
+        self.assertIn("ReArc-0.1.0-677.dmg", darni, "the older item keeps its name")
+        self.check(darni, ok=True, args=args)
+        self.check(darni, ok=True)
+        last_rearc = dated_feed_template().format(version=1053, critical="")
+        self.check(last_rearc, ok=True, args=("--version", 1053, "--display-version", "2026.1112.1053"))
+        self.check(last_rearc.replace("ReArc-2026.1112.1053.dmg", "Darni-2026.1112.1053.dmg"), ok=False,
+                   args=("--version", 1053, "--display-version", "2026.1112.1053"), message="expected ReArc-2026.1112.1053.dmg")
+
     def test_a_display_version_that_is_not_one_is_refused(self):
         text = dated_feed_template().format(version=726, critical="")
         for bad, message in [("2026.1112.725", "another build's version"), ("0.1.0 beta", "not a version"),

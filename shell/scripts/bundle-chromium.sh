@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Builds the Chromium-enabled shell and assembles a runnable ReArc.app around
+# Builds the Chromium-enabled shell and assembles a runnable Darni.app around
 # the existing engine build output (never builds Chromium, never writes to engine/).
 #
+# The app is named Darni (ReArc until build 1053). Only the names people see changed: the
+# bundle's file name, CFBundleName and CFBundleDisplayName. The executable, the bundle id
+# com.rearc.browser, the icon file, the Info.plist keys and the REARC_* variables keep the
+# name ReArc, and so does the "ReArc Safe Storage" Keychain item (release/BRANDING).
+#
 # Layout (engine/docs/C-ABI.md "Linking and startup"):
-#   $DIST/ReArc.app/Contents/MacOS/ReArc                 shell executable (rpath @executable_path/../Frameworks)
-#   $DIST/ReArc.app/Contents/Frameworks/Chromium Framework.framework/Versions/<ver>/
+#   $DIST/Darni.app/Contents/MacOS/ReArc                 shell executable (rpath @executable_path/../Frameworks)
+#   $DIST/Darni.app/Contents/Frameworks/Chromium Framework.framework/Versions/<ver>/
 #        Chromium Framework, Helpers/*.app, Libraries/, Resources/   physical copy of the upstream framework
 #   $DIST/*.dylib                                        component dylib closure; the framework's LC_RPATH
 #                                                        @loader_path/../../../../../.. resolves to $DIST
@@ -154,7 +159,7 @@ BIN="$(swift build "${SWIFT_ARGS[@]}" --show-bin-path)/rearc"
 
 # 3. App bundle: physical (APFS clone) copy of the upstream app so helper bundles,
 #    Info.plists, LSUIElement, entitlements and framework-relative paths are preserved.
-APP="$DIST/ReArc.app"
+APP="$DIST/Darni.app"
 echo "==> assembling $APP"
 rm -rf "$DIST"
 mkdir -p "$DIST"
@@ -189,10 +194,12 @@ else
   plutil -remove ReArcReleaseVerification "$PLIST" 2>/dev/null || true
 fi
 
+# The executable keeps its name; the two names people see (menu bar, Dock, Finder's Get Info,
+# and Sparkle's User-Agent "Darni/<version> Sparkle/<version>") are Darni.
 plutil -replace CFBundleExecutable -string ReArc "$PLIST"
-plutil -replace CFBundleName -string ReArc "$PLIST"
-plutil -replace CFBundleDisplayName -string ReArc "$PLIST"
-# ReArc's version, not Chromium's (RELEASE.md, "Versioning"): YYYY.MMDD.<build> of the commit,
+plutil -replace CFBundleName -string Darni "$PLIST"
+plutil -replace CFBundleDisplayName -string Darni "$PLIST"
+# The app's version, not Chromium's (RELEASE.md, "Versioning"): YYYY.MMDD.<build> of the commit,
 # as for any build that is not a release; release.sh stamps a release's own afterwards.
 if shell_stamp="$(python3 -I "$SHELL_DIR/scripts/release/version.py" commit --repo "$REPO" 2>/dev/null)"; then
   read -r shell_version shell_build <<<"$shell_stamp"
@@ -218,14 +225,14 @@ plutil -replace NSCameraUsageDescription -string "A website you allowed wants to
 plutil -replace NSMicrophoneUsageDescription -string "A website you allowed wants to use your microphone." "$PLIST"
 plutil -replace NSLocationUsageDescription -string "A website you allowed wants to know your location." "$PLIST"
 plutil -replace NSLocationWhenInUseUsageDescription -string "A website you allowed wants to know your location." "$PLIST"
-# The ReArc icon instead of Chromium's. CFBundleIconName (the AppIcon in Assets.car) wins
+# The app's icon instead of Chromium's (the file keeps the name ReArc.icns). CFBundleIconName (the AppIcon in Assets.car) wins
 # over CFBundleIconFile on macOS, so it is removed; Assets.car itself stays for its other
 # assets. Before signing, so the seal covers the icon and Info.plist.
 cp "$SHELL_DIR/Resources/ReArc.icns" "$APP/Contents/Resources/ReArc.icns"
 # Settings › Icon's alternates (AppIconChoice), sealed with the rest.
 rm -rf "$APP/Contents/Resources/AppIcons"
 cp -R "$SHELL_DIR/Resources/AppIcons" "$APP/Contents/Resources/AppIcons"
-# About ReArc's sting (media/out/deliver/rearc-sting-path, 720 px, plays once).
+# The About window's sting (media/out/deliver/rearc-sting-path, 720 px, plays once).
 cp "$SHELL_DIR/Resources/AboutSting.gif" "$APP/Contents/Resources/AboutSting.gif"
 # The built-in blocklists (docs/FEATURE-SPECS/CONTENT-BLOCKING.md, section 4): the signed
 # bundle the app starts with, checked against the lists key and copied without the raw upstream
@@ -235,8 +242,9 @@ python3 -I "$SHELL_DIR/scripts/blocklists/build-blocklists.py" install \
   || die "the built-in blocklists do not verify against scripts/blocklists/blocklists-public-key.txt"
 plutil -replace CFBundleIconFile -string ReArc "$PLIST"
 plutil -remove CFBundleIconName "$PLIST" 2>/dev/null || true
-# ReArc's name instead of Chromium's where the engine's localized strings still say
+# Darni's name instead of Chromium's where the engine's localized strings still say
 # Chromium: the alerts helpers macOS shows as the notifying app, and the permission reasons.
+# Also the helpers' CFBundleName, which the engine build writes from PRODUCT_SHORTNAME.
 # The changed helpers are re-signed ad hoc so their seal covers the new strings and icon
 # (sign-release.sh signs them again for a release).
 rebranded="$(python3 -I "$SHELL_DIR/scripts/release/rebrand-bundle.py" "$APP" "$SHELL_DIR/Resources/ReArc.icns")" \
@@ -252,7 +260,7 @@ if [[ $DEV_MOCK_KEYCHAIN == 1 ]]; then
 fi
 # Only the replaced browser executable is re-signed here; it is the process that reads the
 # "ReArc Safe Storage" Keychain item. Nested framework/helper code keeps the engine
-# build's signatures, except the two alerts helpers re-signed ad hoc above. Ad-hoc: the
+# build's signatures, except the helpers renamed and re-signed ad hoc above. Ad-hoc: the
 # identity changes on every build, so macOS may ask again for Safe Storage access. With
 # REARC_SIGN_IDENTITY the designated requirement (bundle id + certificate) is stable, so
 # one "Always Allow" survives rebuilds. Distribution still needs a Developer ID identity,
@@ -268,7 +276,7 @@ if [[ -n $REARC_ICLOUD_CONTAINER ]]; then
   actual_team="$(codesign -dv "$APP/Contents/MacOS/ReArc" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
   [[ $actual_team == "$TEAM_ID" ]] || die "signed with team '$actual_team', expected REARC_TEAM_ID=$TEAM_ID"
   icloud_verify "$APP/Contents/MacOS/ReArc"
-  echo "==> signed ReArc.app with iCloud: $SIGN_IDENTITY (team $TEAM_ID, id $BUNDLE_ID)"
+  echo "==> signed Darni.app with iCloud: $SIGN_IDENTITY (team $TEAM_ID, id $BUNDLE_ID)"
 elif [[ -n $SIGN_IDENTITY ]]; then
   codesign --force --sign "$SIGN_IDENTITY" --identifier "$BUNDLE_ID" --timestamp=none \
     --entitlements "$SHELL_DIR/scripts/ReArc.entitlements" "$APP/Contents/MacOS/ReArc"
@@ -276,10 +284,10 @@ elif [[ -n $SIGN_IDENTITY ]]; then
     actual_team="$(codesign -dv "$APP/Contents/MacOS/ReArc" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
     [[ $actual_team == "$TEAM_ID" ]] || die "signed with team '$actual_team', expected REARC_TEAM_ID=$TEAM_ID"
   fi
-  echo "==> signed ReArc executable: $SIGN_IDENTITY (team ${TEAM_ID:-unchecked}, id $BUNDLE_ID)"
+  echo "==> signed the app's executable: $SIGN_IDENTITY (team ${TEAM_ID:-unchecked}, id $BUNDLE_ID)"
 else
   codesign --force --sign - --entitlements "$SHELL_DIR/scripts/ReArc.entitlements" "$APP/Contents/MacOS/ReArc" 2>/dev/null
-  echo "==> ad-hoc signed ReArc executable (set REARC_SIGN_IDENTITY for a stable signature)"
+  echo "==> ad-hoc signed the app's executable (set REARC_SIGN_IDENTITY for a stable signature)"
 fi
 
 # 4. Dylib closure next to the app (where the framework's rpath points), component builds only.
@@ -317,7 +325,7 @@ echo "==> dylib closure resolves (executable, framework, ${count} dylibs)"
 
 cat <<EOF
 
-ReArc.app (Chromium ${VERSION}) assembled:
+Darni.app (Chromium ${VERSION}) assembled:
   $APP
 Run the Chromium engine:
   "$APP/Contents/MacOS/ReArc" --rearc-engine=chromium      (or REARC_ENGINE=chromium)

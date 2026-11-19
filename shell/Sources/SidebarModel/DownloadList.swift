@@ -693,7 +693,7 @@ public enum DownloadFormat {
         case 34, 36: return "Forbidden"
         case 30 ..< 40: return "Server error"
         case 40: return "Cancelled"
-        case 41: return "Interrupted when ReArc quit"
+        case 41: return "Interrupted when Darni quit"
         case 50: return "Browser crashed"
         default: return "Interrupted"
         }

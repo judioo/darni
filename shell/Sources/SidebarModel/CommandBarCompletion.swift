@@ -119,7 +119,7 @@ public enum CommandBarRoute: String, CaseIterable, Sendable {
         case .current: return "↩ Open"
         case .newTab: return "⌘↩ New Tab"
         case .splitView: return "⌥↩ Split View"
-        case .littleArc: return "⇧↩ Little ReArc"
+        case .littleArc: return "⇧↩ Little Darni"
         }
     }
 }

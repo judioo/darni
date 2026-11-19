@@ -141,9 +141,9 @@ final class OnePasswordConnectTests: XCTestCase {
     // MARK: The words
 
     func testTheWordsAreTheOwners() {
-        XCTAssertEqual(OnePasswordConnect.title, "Connect 1Password to ReArc")
+        XCTAssertEqual(OnePasswordConnect.title, "Connect 1Password to Darni")
         XCTAssertEqual(OnePasswordConnect.message,
-                       "1Password unlocks in ReArc once you add ReArc as a browser in 1Password: Settings › Browser › Add Browser, then choose ReArc. Restart ReArc afterwards.")
+                       "1Password unlocks in Darni once you add Darni as a browser in 1Password: Settings › Browser › Add Browser, then choose Darni. Restart Darni afterwards.")
         XCTAssertEqual(OnePasswordConnect.open, "Open 1Password")
         XCTAssertEqual(OnePasswordConnect.done, "Done")
         XCTAssertEqual(OnePasswordConnect.settingsLabel, "1Password")
@@ -153,7 +153,7 @@ final class OnePasswordConnectTests: XCTestCase {
         XCTAssertEqual(OnePasswordConnect.connected, "Connected")
         XCTAssertEqual(OnePasswordConnect.settingsMessage(connected: false), OnePasswordConnect.message)
         XCTAssertEqual(OnePasswordConnect.settingsMessage(connected: true),
-                       "If 1Password stays locked in ReArc, add ReArc as a browser in 1Password: Settings › Browser › Add Browser, then choose ReArc. Restart ReArc afterwards.")
+                       "If 1Password stays locked in Darni, add Darni as a browser in 1Password: Settings › Browser › Add Browser, then choose Darni. Restart Darni afterwards.")
         // The steps are in both, and neither says that 1Password trusts ReArc.
         for connected in [false, true] {
             let words = OnePasswordConnect.settingsMessage(connected: connected)

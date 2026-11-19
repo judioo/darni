@@ -87,7 +87,7 @@ final class ChromiumQuitTests: XCTestCase {
     func testAQuitRightAfterAVetoIsForced() {
         var retry = QuitRetry()
         retry.quitUndone(at: start)
-        XCTAssertTrue(retry.takeForce(at: start + .seconds(2)), "a page can't keep ReArc open twice in a row")
+        XCTAssertTrue(retry.takeForce(at: start + .seconds(2)), "a page can't keep Darni open twice in a row")
         // The whole chain: Stay, then ⌘Q again.
         var quit = ChromiumQuit()
         _ = quit.request(force: false, mustDefer: false)

@@ -1,3 +1,4 @@
+import SidebarModel
 import SwiftUI
 
 public struct Act2Controls {
@@ -142,10 +143,8 @@ extension SunrisePainter {
         line(&ctx, Text(g.shown.summary).font(.system(size: H * 0.018).monospacedDigit()).foregroundColor(ink.opacity(0.7)),
              at: sub, opacity: g.bringingLine)
 
-        line(&ctx, Text("ReStored.").font(.system(size: H * 0.05, weight: .light)).foregroundColor(ink), at: mid, opacity: g.restored)
-        line(&ctx, Text(g.totals.summary).font(small).foregroundColor(ink.opacity(0.6)), at: sub, opacity: g.restored)
-        line(&ctx, Text("A clean start.").font(small).foregroundColor(ink.opacity(0.6)), at: sub, opacity: g.refocused)
-        line(&ctx, Text("ReFocused.").font(.system(size: H * 0.05, weight: .light)).foregroundColor(ink), at: mid, opacity: g.refocused)
+        // The wordmark, alone under the mark: no word and no line beside it.
+        line(&ctx, wordmark(height: H), at: mid, opacity: g.wordmark)
         line(&ctx, Text("Now, where are you going?").font(lineFont).foregroundColor(ink), at: mid, opacity: g.next)
     }
 }

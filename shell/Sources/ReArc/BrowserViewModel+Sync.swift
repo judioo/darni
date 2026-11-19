@@ -137,7 +137,7 @@ extension BrowserViewModel {
             guard let self else { return }
             switch detection {
             case .found(let found): self.chooseCloudSidebar(choice, from: found)
-            case .empty: self.syncCloudMessage = "iCloud has no ReArc sidebar any more. Turn Sync Sidebar on to upload this Mac's."
+            case .empty: self.syncCloudMessage = "iCloud has no Darni sidebar any more. Turn Sync Sidebar on to upload this Mac's."
             case .signedOut(let message), .unreachable(let message), .unavailable(let message): self.syncCloudMessage = message
             }
         }
@@ -164,7 +164,7 @@ extension BrowserViewModel {
         do {
             _ = try SidebarBackup.write(store.makeSnapshot(), besides: persistence.fileURL, reason: "before-icloud")
         } catch {
-            syncCloudMessage = "ReArc couldn't save a copy of this Mac's sidebar, so nothing was changed."
+            syncCloudMessage = "Darni couldn't save a copy of this Mac's sidebar, so nothing was changed."
             return
         }
         MainActor.assumeIsolated {
@@ -184,7 +184,7 @@ extension BrowserViewModel {
             do {
                 try await control.deleteCloudSidebar()
             } catch {
-                self?.syncCloudMessage = (error as? SyncTransportError)?.userMessage ?? "iCloud couldn't delete ReArc's sidebar. Try again in a moment."
+                self?.syncCloudMessage = (error as? SyncTransportError)?.userMessage ?? "iCloud couldn't delete Darni's sidebar. Try again in a moment."
             }
             self?.checkCloudSidebar()
         }

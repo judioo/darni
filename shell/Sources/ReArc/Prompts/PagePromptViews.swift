@@ -357,7 +357,7 @@ private struct PermissionPromptCard: View {
                 PromptCloseButton(help: "Dismiss — the site can ask again") { prompts.answerPermission(.dismiss) }
             }
             if request.needsSystemAuthorization {
-                Text("macOS may also ask to allow ReArc.")
+                Text("macOS may also ask to allow Darni.")
                     .font(.caption)
                     .foregroundStyle(chrome.tertiaryText)
             }

@@ -39,13 +39,13 @@ struct MainMenuCommandIndexTests {
 
     @Test func menuSnapshotMarksAppActionsExactAndFormatsShiftedKeys() throws {
         _ = NSApplication.shared
-        let menu = NSMenu(title: "ReArc")
+        let menu = NSMenu(title: "Darni")
         menu.autoenablesItems = false
-        menu.addItem(NSMenuItem(title: "Hide ReArc", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
-        menu.addItem(NSMenuItem(title: "Quit ReArc", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Hide Darni", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        menu.addItem(NSMenuItem(title: "Quit Darni", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         menu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
         let rows = MainMenuCommandIndex.commands(in: menu)
-        #expect(rows.filter(\.requiresExactQuery).map(\.title) == ["Hide ReArc", "Quit ReArc"])
+        #expect(rows.filter(\.requiresExactQuery).map(\.title) == ["Hide Darni", "Quit Darni"])
         #expect(rows.last?.keyEquivalent == "⇧⌘Z")
     }
 

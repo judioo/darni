@@ -19,7 +19,7 @@ final class OnboardingResumeTicketTests: XCTestCase {
         let ticket = OnboardingResumeTicket(dataDirectory: "/tmp/demo", bundlePath: "/x/ReArc.app", name: "Kai", colourIndex: 3,
                                             isRehearsal: false, written: now)
         ticket.write(to: url)
-        XCTAssertNil(OnboardingResumeTicket.peek(at: url, bundlePath: "/Applications/ReArc.app", now: now), "another ReArc ignores it")
+        XCTAssertNil(OnboardingResumeTicket.peek(at: url, bundlePath: "/Applications/ReArc.app", now: now), "another Darni ignores it")
         XCTAssertEqual(OnboardingResumeTicket.peek(at: url, bundlePath: "/x/ReArc.app", now: now), ticket)
         XCTAssertEqual(OnboardingResumeTicket.take(at: url, bundlePath: "/x/ReArc.app", now: now), ticket)
         XCTAssertNil(OnboardingResumeTicket.take(at: url, bundlePath: "/x/ReArc.app", now: now), "once")
@@ -77,7 +77,7 @@ final class OnboardingResumeTicketTests: XCTestCase {
                        .adopt(dataDirectory: data.path))
         let marker = data.appendingPathComponent(OnboardingResumeTicket.markerName)
         chmod(marker.path, 0o644)
-        XCTAssertNil(OnboardingResumeTicket.boundNonce(in: data.path), "a marker others can read or write is not ReArc's")
+        XCTAssertNil(OnboardingResumeTicket.boundNonce(in: data.path), "a marker others can read or write is not Darni's")
 
         ticket.write(to: url)
         var info = stat()

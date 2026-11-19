@@ -1,17 +1,22 @@
-# ReArc releases
+# Darni releases
+
+Darni was called ReArc up to build 1053. The entries for those builds keep the name they
+shipped under.
 
 Every distributed build (a DMG or an update in the appcast) has an entry here, newest
 first. The entry lists everything that changed since the previous release, written for
-the people who use ReArc. `shell/scripts/release.sh --dmg` refuses to build until the
+the people who use Darni. `shell/scripts/release.sh --dmg` refuses to build until the
 committed `RELEASES.md` has a heading for the build it is about to make:
 
-    ## ReArc <YYYY.MMDD>.<build> — <YYYY-MM-DD>
+    ## Darni <YYYY.MMDD>.<build> — <YYYY-MM-DD>
 
-for example `## ReArc 2026.1114.741 — 2026-11-14`: the version is the release's date, the
+for example `## Darni 2026.1120.1060 — 2026-11-20`: the version is the release's date, the
 same date as after the dash, and its build. `<build>` is the commit count of the commit
 that adds the entry, so write it as the last commit before the release, with
-`echo $(( $(git rev-list --count HEAD) + 1 ))` as the number. Entries up to 677 keep their
-`## ReArc 0.1.0 (<build>) — <YYYY-MM-DD>` headings. Details: engine/docs/RELEASE.md,
+`echo $(( $(git rev-list --count HEAD) + 1 ))` as the number. Entries for builds 678 to
+1053 keep their `## ReArc <YYYY.MMDD>.<build> — <YYYY-MM-DD>` headings, and entries up to
+677 keep `## ReArc 0.1.0 (<build>) — <YYYY-MM-DD>`. The script that checks this is
+`shell/scripts/release/version.py check-notes`. Details: engine/docs/RELEASE.md,
 "Release notes" and "Versioning".
 
 ## Unreleased
@@ -19,15 +24,50 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1119.1049 — 2026-11-19
+## Darni 2026.1119.1079 — 2026-11-19
+
+**ReArc is now Darni**
+- ReArc has a new name, Darni. It is the same browser. Your spaces, tabs, bookmarks, history,
+  saved passwords, sign-ins, passkeys, extensions and settings are where you left them, and
+  nothing needs setting up again. Updates arrive the same way as before.
+- If you update from ReArc, the app in your Applications folder is still called ReArc. The menu
+  bar, the windows and the About window say Darni. Finder shows the file's old name, and the
+  Dock may too, until you rename it. To rename it, quit Darni, change the name from ReArc to
+  Darni in the Applications folder, then open it again. Renaming is optional. Updates work
+  either way.
+- A new download is called Darni. The disk image is named Darni and holds Darni.app.
+- Keep one copy. The simplest way is to let ReArc update itself. If you download Darni instead,
+  quit ReArc and move ReArc.app to the Trash before you open Darni. Both use the same data on
+  your Mac, and two copies running at once can lose changes to your sidebar.
+- Little ReArc is now Little Darni. Menus, Settings and messages use the new name throughout.
+- The sunrise you see on first launch no longer lands on three words. It ends on the Darni name
+  under the mark. The welcome page and the membership card show the name the same way.
+- If 1Password stops filling in Darni, add it again in 1Password under Settings › Browser ›
+  Add Browser, then restart Darni.
+- macOS may still say ReArc in a few places that do not change with the name. The keychain
+  item that protects your saved passwords is still called "ReArc Safe Storage", and your data
+  stays in the same folder on your Mac. That is on purpose. It is what keeps you signed in.
+
 
 **New**
+- See what was blocked on a page. In the site controls (the button beside the address), the
+  "Block ads and trackers" row now has an arrow beside "N blocked on this page". It opens a list
+  of the sites whose requests were blocked on this page, each with how many and with what blocked
+  it: Ad, Tracker, Annoyance, or Your rule for one of your own rules.
+- Allow a blocked site on one site. Point at a line of that list and choose Allow: Darni adds one
+  line to your own rules (Settings › Profiles › Advanced), reloads the page and shows the site
+  under "Allowed on this site", where Remove takes it back. A name that covers more than one
+  site, such as `localhost` or `co.uk`, has no Allow.
+- The list is kept in memory, for that tab only, and starts again when the page loads. It is
+  never saved, synced or sent anywhere, and it holds site names only, never full addresses. A
+  private window shows the list without Allow. Very busy pages show the first 100 sites and how
+  many more requests were blocked.
 - A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
   Choose Image… or Paste Image, or drop an image on the picker. A big picture is scaled down to
   icon size (64 pixels on its longer side) and kept whole, not cropped. Remove Image goes back to
-  the space's icon. With Sync Sidebar on, the picture goes to your other Macs; a Mac still on an
-  older ReArc shows the space's icon or emoji instead until it updates. Opening your profile in an
-  older ReArc and coming back drops the picture unless Sync Sidebar brings it back; set it again.
+  the space's icon. With Sync Sidebar on, the picture goes to your other Macs. A Mac still on
+  ReArc shows the space's icon or emoji instead until it updates. Opening your profile in ReArc
+  and coming back drops the picture unless Sync Sidebar brings it back, so set it again.
 
 **Fixes**
 - Emoji icons work again. The icon pickers for spaces, profiles, folders and tabs have an Emoji tab
@@ -35,28 +75,48 @@ lines and this section starts empty again.
   into the search field offers that one first, flags and skin tones included. Until now the
   Emoji & Symbols button did nothing in Create a Space, and an emoji picked from the system's
   palette closed the picker before it arrived.
-- In a space with its own container, Settings' first tab and the membership card name your profile, not
-  the container; Change Name renames the profile; Settings › Profiles opens on the profile, where
-  ad and tracker blocking is set (a container follows its profile).
+- With two windows open on the same space, ⌘T and ⌘L open the command bar only in the window
+  you are using. Until now it opened in both, and what you typed showed in both. Clicking into
+  another window closes it.
+- In a space with its own container, Settings' first tab and the membership card name your profile,
+  not the container. Change Name renames the profile, and Settings › Profiles opens on the profile,
+  where ad and tracker blocking is set (a container follows its profile).
 - A page you cannot see gets no passkey request at all. A sign-in request from a background
-  tab, a hidden or minimised window, a hidden Little ReArc window or a window that another
-  app's window covers is now refused as it starts, before ReArc looks for a security key, a
+  tab, a hidden or minimised window, a hidden Little Darni window or a window that another
+  app's window covers is now refused as it starts, before Darni looks for a security key, a
   phone or Bluetooth. Until now it was refused a moment later, when its sheet was about to
   open, and on a Mac that had never answered macOS's Bluetooth question such a page could
   bring that question up. A request you started while its page was in view stays open when you
-  switch away, as before. ReArc's log now says when a request is refused.
+  switch away, as before. Darni's log now says when a request is refused.
 
 **Security**
+- "Turn Off Blocking for This Site" turns blocking off for the site you are on, worked out the way
+  Chromium does, and never for a whole shared ending. In ReArc 2026.1118.1027, turning it off on a
+  site such as `someone.web.app` stored `web.app`, which is every site under it, and the same for
+  other shared addresses. Settings › Profiles › Advanced now marks such an entry "Off for every
+  site under web.app", and the site's controls offer "Turn Off Blocking for This Site Only", which
+  keeps blocking off for that one site and turns it back on for the rest. Darni does not change
+  these entries by itself. A name like `web.app` or `co.uk` can no longer be added there.
+- "Turn Off Blocking for This Site" acts on the page the panel was opened for. If the page
+  changed in the meantime, nothing is changed and Darni says so.
+- A boost can no longer apply to a whole group of unrelated sites. A boost made on
+  `someone.web.app` or `school.edu.au` used to be scoped to `web.app` or `edu.au`, and a boost
+  from a file could name such a scope and bring a script with it. Darni now refuses a boost
+  whose scope is one of these shared endings, and a boost you already have with such a scope
+  stops running until you set its scope to one site. New boosts are scoped to the site you are on.
+- A long site address shortened in the address bar, Little Darni, Peek and the permission and
+  sign-in prompts always keeps the site's own name. Until now a long name on a shared address
+  such as web.app, github.io or vercel.app could show as "…web.app".
 - A passkey or security key request that you left open in a tab or window you no longer see is
   cancelled when a page in front of you starts one. Until now it stayed open, and a touch of
   your security key meant for the page in front could have answered the older request.
-- A page you cannot see can ask for a passkey over and over, and each try is refused. ReArc's log
+- A page you cannot see can ask for a passkey over and over, and each try is refused. Darni's log
   now has one line for a tab's first refusal and counts the rest (a line at the 10th, the 100th,
   the 1000th and so on, and the total when the tab closes), so such a page cannot fill the log.
 
 **Changes**
 - The passkey sheet and the dialogs a page opens (alerts and confirmations, HTTP sign-in, choosing a
-  certificate) use your space's colours, like ReArc's notices and permission cards.
+  certificate) use your space's colours, like Darni's notices and permission cards.
 
 ## ReArc 2026.1118.1027 — 2026-11-18
 

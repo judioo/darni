@@ -169,10 +169,10 @@ struct DragHelperView: View {
                 .resizable()
                 .frame(width: 52, height: 52)
                 .onDrag { NSItemProvider(object: appURL as NSURL) }
-                .help("Drag ReArc into the Full Disk Access list")
+                .help("Drag Darni into the Full Disk Access list")
             VStack(alignment: .leading, spacing: 3) {
                 Text("Not in the list?").font(.system(size: 13, weight: .semibold))
-                Text("Drag ReArc into it, then switch it on.").font(.system(size: 12)).foregroundStyle(.secondary)
+                Text("Drag Darni into it, then switch it on.").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }

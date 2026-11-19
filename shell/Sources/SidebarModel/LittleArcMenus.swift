@@ -19,10 +19,14 @@ public enum LittleArcDockMenu {
         return entries
     }
 
-    /// The page title, else its host, else "Little Arc" (a blank one).
+    /// A blank window's stored title. Windows saved before the rename (build 1054) hold
+    /// "Little ReArc", and they are restored across launches and updates.
+    static let blankTitles: Set<String> = ["Little Darni", "Little ReArc", "Little Arc"]
+
+    /// The page title, else its host, else "Little Darni" (a blank one).
     public static func title(of window: LittleArcWindow) -> String {
         let trimmed = window.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty, trimmed != "Little ReArc", trimmed != "Little Arc" { return trimmed }
-        return window.url.host() ?? "Little ReArc"
+        if !trimmed.isEmpty, !blankTitles.contains(trimmed) { return trimmed }
+        return window.url.host() ?? "Little Darni"
     }
 }

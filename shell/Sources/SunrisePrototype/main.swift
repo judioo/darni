@@ -10,7 +10,7 @@ import Onboarding
 //   --act1 [--name Kai]       ...carrying on into Act 1 with a scripted person.
 //   --act2 [--real]           ...and into Act 2 (demo browsers, or this Mac's with --real).
 //   --act3 [--fresh]          ...and Act 3 (spaces from the import, or suggested with --fresh).
-//   --act4                    ...and Act 4: the motto and the drop into the browser.
+//   --act4                    ...and Act 4: the wordmark and the drop into the browser.
 //   --audio-only              Just score.wav (the frames do not depend on the score).
 //   --later STYLE [--later-at S]  "Onboard later" at S seconds: sunset, fade or nightfall.
 // sunrise --scan               Counts what Act 2 would find on this Mac (no names).

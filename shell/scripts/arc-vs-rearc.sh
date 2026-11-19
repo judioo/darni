@@ -21,7 +21,7 @@
 #   --iterations N  measured iterations per scenario (20); --warmups N first (3)
 #   --pause-ms MS   pause before each key (600); --pre-quiet-ms MS the window must
 #                   have been still this long before a key is posted (300)
-#   --bundle APP    ReArc bundle (shell/dist/release/ReArc.app). It runs as a new
+#   --bundle APP    the app's bundle (shell/dist/release/Darni.app). It runs as a new
 #                   instance on a throwaway REARC_DATA_DIR seeded with two spaces of
 #                   five local pages; --keep-data keeps that directory
 #   --out DIR       results (shell/bench/results/arc-vs-rearc-<UTC time>-<sha>/, git-ignored):
@@ -97,7 +97,7 @@ fi
 [[ -x $BIN ]] || die "no $BIN (drop --no-build)"
 
 REV="$(git -C "$REPO" rev-parse --short=8 HEAD 2>/dev/null || echo unknown)"
-[[ $HAVE_BUNDLE == 1 ]] || ARGS+=(--bundle "$SHELL_DIR/dist/release/ReArc.app")
+[[ $HAVE_BUNDLE == 1 ]] || ARGS+=(--bundle "$SHELL_DIR/dist/release/Darni.app")
 [[ $HAVE_OUT == 1 ]] || ARGS+=(--out "$SHELL_DIR/bench/results/arc-vs-rearc-$(date -u +%Y-%m-%dT%H-%M-%SZ)-$REV")
 
 if [[ $DRY == 1 ]]; then

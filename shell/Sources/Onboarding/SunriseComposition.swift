@@ -318,14 +318,16 @@ extension SunriseScore {
 
     mutating func compose(_ a: Act4Log) {
         let s = a.start, f = s + Act4Timeline.flight
-        // A breath in as the spaces clear for the motto.
+        // A breath in as the spaces clear for the wordmark.
         airs.append(Air(id: 42, s - 0.4, s + 0.7, cutoff: 400 ... 1600, gain: 0.018))
-        // ReFocused. ReStored. ReArc. The last word lands on the chord.
-        for (i, d) in [0.6, 1.15, 1.7].enumerated() {
-            hits.append(Hit(s + d, [587.33, 739.99, 880.0][i], 0.045, pan: Double(i) * 0.3 - 0.3))
-        }
+        // The wordmark arrives in one movement and lands on the chord. The three notes that
+        // once rose one by one under the motto's words sound together inside it, spread as
+        // they were, so the arrival keeps its weight and nothing counts out words.
         for f0 in [73.42, 110.0, 146.83, 220.0, 293.66, 369.99, 440.0, 1174.66] {
             hits.append(Hit(s + 1.72, f0, f0 < 150 ? 0.09 : 0.04))
+        }
+        for (i, f0) in [587.33, 739.99, 880.0].enumerated() {
+            hits.append(Hit(s + 1.72, f0, 0.03, pan: Double(i) * 0.3 - 0.3))
         }
         // The mark shrinks into the first tab: it rises as it goes, and lands with a tink.
         airs.append(Air(id: 40, f - 0.1, f + 1.3, cutoff: 700 ... 2600, opens: false, gain: 0.03, pan: (0, -0.7)))
@@ -350,8 +352,8 @@ extension SunriseScore {
         for (k, f0) in [293.66, 369.99, 440.0, 587.33].enumerated() {
             hits.append(Hit(f + 2.1 + Double(k) * 0.05, f0, 0.018, pan: Double(k) * 0.1 - 0.15))
         }
-        // Home: a slow chord under the finished window, the motto's three notes
-        // once more, softly and falling, and a last bell as the scene lets go.
+        // Home: a slow chord under the finished window, the arrival's three top
+        // notes once more, softly and falling, and a last bell as the scene lets go.
         for (f0, g) in [(146.83, 0.012), (220.0, 0.008), (369.99, 0.006)] {
             tones.append(Tone(pitch: Pitch(constant: f0), gain: Self.held(from: f + 3.0, attack: 1.5, level: g, until: a.handOff),
                               bright: Curve(constant: 0.3)))
@@ -383,7 +385,7 @@ extension SunriseScore {
     }
 
     /// Act 0's chord and the arpeggio step back for what each act brings, and
-    /// come forward again for the motto.
+    /// come forward again for the wordmark.
     mutating func composeLevels(act2: Act2Log?, act3: Act3Log?, act4: Act4Log?) {
         var pad = [(0.0, 1.0)], arp = [(0.0, 1.0)]
         if let a2 = act2 {

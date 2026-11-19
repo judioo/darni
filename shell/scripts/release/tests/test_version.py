@@ -1,4 +1,4 @@
-"""ReArc's version from a date and a build, the RELEASES.md heading check, the DMG name and the
+"""The app's version from a date and a build, the RELEASES.md heading check, the DMG name and the
 tag (version.py). No network; `commit` and `release` read a throwaway git repository."""
 import datetime
 import importlib.util
@@ -110,6 +110,29 @@ class ReleaseNotesTests(unittest.TestCase):
             self.check(text, 727)
         self.assertIn("two entries", str(raised.exception))
 
+    def test_darni_from_the_bridge_release_on(self):
+        first = version.FIRST_DARNI_BUILD
+        self.assertEqual(first, 1054, "1053 was the last build released as ReArc")
+        self.assertEqual((version.product(first - 1), version.product(first), version.product(first + 500)),
+                         ("ReArc", "Darni", "Darni"))
+        older = [f"## ReArc 2026.1119.{first - 1} {DASH} 2026-11-19", f"## ReArc 0.1.0 (677) {DASH} 2026-11-11"]
+        text = notes(f"## Darni 2026.1120.{first + 6} {DASH} 2026-11-20", *older)
+        self.assertEqual(self.check(text, first + 6), f"2026.1120.{first + 6}", "older ReArc headings stay valid")
+        self.assertEqual(self.check(text, first - 1), f"2026.1119.{first - 1}")
+        cases = {
+            f"## ReArc 2026.1120.{first + 6} {DASH} 2026-11-20": f"\"## Darni 2026.1120.{first + 6} {DASH} 2026-11-20\"",
+            f"## Darni 2026.1119.{first - 2} {DASH} 2026-11-19": f"\"## ReArc 2026.1119.{first - 2} {DASH} 2026-11-19\"",
+            f"## Darni 0.1.0 ({first + 6}) {DASH} 2026-11-20": "",
+        }
+        for heading, message in cases.items():
+            with self.subTest(heading):
+                with self.assertRaises(version.VersionError) as raised:
+                    self.check(notes(heading, *older), first + 6)
+                self.assertIn(message, str(raised.exception), "it says what to write")
+        with self.assertRaises(version.VersionError) as raised:
+            self.check(notes(*older), first + 6)
+        self.assertIn(f"\"## Darni <YYYY.MMDD>.{first + 6} {DASH} <YYYY-MM-DD>\"", str(raised.exception))
+
     def test_the_current_trunk_notes_pass_for_older_builds(self):
         trunk = Path(__file__).resolve().parents[4] / "RELEASES.md"
         if not trunk.exists():
@@ -117,8 +140,9 @@ class ReleaseNotesTests(unittest.TestCase):
         text = trunk.read_text(encoding="utf-8")
         newest = version.headings(text)[0]
         built = int(version.OLD_HEADING.fullmatch(newest).group(2)) if version.OLD_HEADING.fullmatch(newest) \
-            else int(version.NEW_HEADING.fullmatch(newest).group(4))
-        stamped = notes(f"## ReArc 2026.1112.{built + 1} {DASH} 2026-11-12") + text.split("## Unreleased", 1)[1]
+            else int(version.NEW_HEADING.fullmatch(newest).group(5))
+        stamped = notes(f"## {version.product(built + 1)} 2026.1112.{built + 1} {DASH} 2026-11-12") \
+            + text.split("## Unreleased", 1)[1]
         self.assertEqual(self.check(stamped, built + 1), f"2026.1112.{built + 1}", "every older heading is accepted")
 
 
@@ -129,6 +153,11 @@ class NamesTests(unittest.TestCase):
         self.assertRaises(version.VersionError, version.dmg_name, "2026.1112.725", 726)
         self.assertRaises(version.VersionError, version.dmg_name, "../evil", 726)
         self.assertEqual(run("dmg-name", "2026.1112.726", 726).stdout, "ReArc-2026.1112.726.dmg\n")
+        self.assertEqual(version.dmg_name("2026.1119.1053", 1053), "ReArc-2026.1119.1053.dmg", "the last ReArc build")
+        self.assertEqual(version.dmg_name("2026.1119.1054", 1054), "Darni-2026.1119.1054.dmg", "the first Darni build")
+        self.assertEqual(run("dmg-name", "2026.1120.1060", 1060).stdout, "Darni-2026.1120.1060.dmg\n")
+        self.assertEqual((run("product", 1053).stdout, run("product", 1054).stdout), ("ReArc\n", "Darni\n"))
+        self.assertNotEqual(run("product", "x").returncode, 0)
 
     def test_tag(self):
         self.assertEqual(run("tag", "2026.1112.726").stdout, "v2026.1112.726\n")

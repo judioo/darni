@@ -4,10 +4,10 @@
 # `ready` on the Chromium path. Two launches: plain, and with a link (the GetURL Apple
 # Event other apps send). Each runs `--rearc-launch-probe` on a throwaway profile and never
 # builds the sidebar, so the user's data is untouched; `-n` starts a separate instance, so
-# a ReArc that is already running is left alone.
+# a copy that is already running is left alone.
 #
-# Usage: scripts/check-launch.sh [--crash-baseline FILE] [path/to/ReArc.app]
-#   (default bundle: dist/chromium/ReArc.app)
+# Usage: scripts/check-launch.sh [--crash-baseline FILE] [path/to/Darni.app]
+#   (default bundle: dist/chromium/Darni.app; a bundle still named ReArc.app works the same)
 #   --crash-baseline FILE  crash reports that existed before; written when FILE is missing.
 #                          release.sh takes it once, so a crash from a first attempt still
 #                          fails a retry (security RC-0.1.0-564 S-10).
@@ -18,7 +18,7 @@ set -euo pipefail
 SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINE=""
 if [[ ${1:-} == --crash-baseline ]]; then BASELINE="${2:?--crash-baseline needs a file}"; shift 2; fi
-APP="$(cd "$(dirname "${1:-$SHELL_DIR/dist/chromium/ReArc.app}")" && pwd)/$(basename "${1:-ReArc.app}")"
+APP="$(cd "$(dirname "${1:-$SHELL_DIR/dist/chromium/Darni.app}")" && pwd)/$(basename "${1:-Darni.app}")"
 [[ -d $APP ]] || { echo "check-launch: no bundle at $APP" >&2; exit 1; }
 # A shipped release bundle ignores REARC_DATA_DIR, --user-data-dir and the verification modes
 # (RC-0.1.0-602 T-04): launched here it would open the person's own profile. Only the bundle
@@ -48,9 +48,10 @@ reports() {
   done
   return 0
 }
-# A minidump names its modules' paths (UTF-16): one of this ReArc.app's, not another Chromium's.
+# A minidump names its modules' paths (UTF-16): one of the app's (Darni.app, or ReArc.app, the
+# name before build 1054 that an updated copy keeps on disk), not another Chromium's.
 rearc_dump() {
-  python3 -I -c 'import sys; d = open(sys.argv[1], "rb").read(); sys.exit(0 if b"ReArc.app" in d or "ReArc.app".encode("utf-16-le") in d else 1)' "$1"
+  python3 -I -c 'import sys; d = open(sys.argv[1], "rb").read(); sys.exit(0 if any(n.encode() in d or n.encode("utf-16-le") in d for n in ("Darni.app", "ReArc.app")) else 1)' "$1"
 }
 [[ -n $BASELINE ]] || BASELINE="$WORK/crash-baseline"
 [[ -f $BASELINE ]] || reports >"$BASELINE"
@@ -94,8 +95,9 @@ probe() {
 
 probe plain
 probe link "$LINK"
-# New reports since the baseline: ReArc's own, or a helper's from a ReArc.app (paths in
-# reports are anonymised, but the bundle name stays).
+# New reports since the baseline: the app's own (named after its executable, ReArc), or a
+# helper's from a Darni.app or ReArc.app (paths in reports are anonymised, but the bundle
+# name stays).
 while IFS= read -r report; do
   [[ -n $report ]] || continue
   if [[ $report == crashpad:* ]]; then
@@ -103,7 +105,7 @@ while IFS= read -r report; do
       echo "check-launch: new Chromium crash dump ${report#crashpad:}" >&2
       failed=1
     fi
-  elif [[ $report == ReArc* ]] || grep -q 'ReArc\.app' "$REPORTS/$report" 2>/dev/null; then
+  elif [[ $report == ReArc* ]] || grep -Eq '(Darni|ReArc)\.app' "$REPORTS/$report" 2>/dev/null; then
     echo "check-launch: new crash report $REPORTS/$report" >&2
     failed=1
   fi

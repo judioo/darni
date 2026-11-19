@@ -50,7 +50,8 @@ case "${1:-}" in
       exit 0
     fi
     build="$(key "$app" CFBundleVersion)"
-    copy="$work/previous-app-$build/ReArc.app"
+    # The copy keeps the original's file name (ReArc.app up to build 1053, Darni.app after).
+    copy="$work/previous-app-$build/$(basename "$app")"
     echo "upgrade-bundles: $app (build $build) refuses REARC_DATA_DIR; making a verification copy of it" >&2
     rm -rf "$(dirname "$copy")"
     mkdir -p "$(dirname "$copy")"

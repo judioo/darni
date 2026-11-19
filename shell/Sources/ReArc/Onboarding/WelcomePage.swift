@@ -3,7 +3,7 @@ import Onboarding
 import SidebarModel
 
 /// The first tab after the onboarding: the page Act 4 draws, for real. A
-/// local file in ReArc's data folder, so it is there on the next launch too.
+/// local file in the app's data folder, so it is there on the next launch too.
 enum WelcomePage {
     static func write(name: String, colour: RGBA, spaces: Int, imported: ImportStats?,
                       to directory: URL = ShellDataLocation.root.appendingPathComponent("Welcome", isDirectory: true)) -> URL {
@@ -23,7 +23,7 @@ enum WelcomePage {
     }
 
     static func html(name: String, colour: RGBA, spaces: Int, imported: ImportStats?) -> String {
-        let greeting = name.isEmpty ? "Welcome to ReArc." : "Welcome to ReArc, <span class=\"you\">\(escape(name))</span>."
+        let greeting = name.isEmpty ? "Welcome to Darni." : "Welcome to Darni, <span class=\"you\">\(escape(name))</span>."
         let ready = "Your profile and \(spaces) space\(spaces == 1 ? " is" : "s are") ready."
         // The import continues installing extensions in the background.
         var came = imported ?? ImportStats()
@@ -38,14 +38,13 @@ enum WelcomePage {
         return """
         <!doctype html>
         <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Welcome to ReArc</title>
+        <title>Welcome to Darni</title>
         <style>
         :root { --ink: #1D2160; --muted: rgba(29,33,96,.6); --faint: rgba(29,33,96,.4); --sun: #FF5B3A; --you: \(hex(colour)); --bg: #FFFDFB; --key: rgba(29,33,96,.05); --keyline: rgba(29,33,96,.12); }
         @media (prefers-color-scheme: dark) { :root { --ink: #EEF0FF; --muted: rgba(238,240,255,.65); --faint: rgba(238,240,255,.4); --bg: #12142B; --key: rgba(255,255,255,.06); --keyline: rgba(255,255,255,.14); } }
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font: 17px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; display: flex; align-items: center; }
         main { margin: 0 12%; max-width: 980px; }
-        .motto { color: var(--sun); font-size: 12px; font-weight: 600; letter-spacing: .25em; margin: 0 0 18px; }
         h1 { font-weight: 300; font-size: clamp(32px, 4.4vw, 52px); line-height: 1.15; margin: 0 0 16px; letter-spacing: -.01em; }
         .you { color: var(--you); }
         .ready { font-size: 19px; color: var(--muted); margin: 0; }
@@ -55,7 +54,6 @@ enum WelcomePage {
         footer { position: fixed; bottom: 28px; left: 12%; color: var(--faint); font-size: 13px; }
         </style></head>
         <body><main>
-        <p class="motto">REFOCUSED · RESTORED · REARC</p>
         <h1>\(greeting)</h1>
         <p class="ready">\(ready)</p>
         \(brought)

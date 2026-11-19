@@ -140,7 +140,7 @@ final class UpdateNoticeCenterTests: XCTestCase {
         for _ in 0 ..< 60 where center.notice.phase != .installing {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        XCTAssertEqual(center.notice.phase, .installing, "the preview stops at Restarting ReArc… and nothing quits")
+        XCTAssertEqual(center.notice.phase, .installing, "the preview stops at Restarting Darni… and nothing quits")
     }
 
     // MARK: About ReArc

@@ -62,17 +62,17 @@ public enum SyncTransportError: Error, Equatable, Sendable {
         switch self {
         case .serverRecordChanged: return "A change from another Mac is being merged."
         case .zoneNotFound: return "The iCloud sync zone is missing; it will be created again."
-        case .userDeletedZone: return "ReArc's iCloud data was deleted. Turn sync on again to upload this Mac's sidebar."
+        case .userDeletedZone: return "Darni's iCloud data was deleted. Turn sync on again to upload this Mac's sidebar."
         case .changeTokenExpired: return "Sync history expired; fetching everything again."
         case .unknownItem: return "A synced item no longer exists in iCloud."
         case .networkUnavailable: return "No network connection. Changes are queued."
         case .serviceUnavailable: return "iCloud is unavailable right now. Changes are queued."
-        case .rateLimited: return "iCloud asked ReArc to slow down. Changes are queued."
+        case .rateLimited: return "iCloud asked Darni to slow down. Changes are queued."
         case .quotaExceeded: return "Your iCloud storage is full. Changes are queued until there is space."
         case .notAuthenticated: return "Sign in to iCloud to sync."
-        case .permissionFailure: return "iCloud refused access to ReArc's container."
+        case .permissionFailure: return "iCloud refused access to Darni's container."
         case .schemaNotDeployed:
-            return "iCloud can't accept some changes from this version of ReArc yet. They're kept on this Mac and upload once it can."
+            return "iCloud can't accept some changes from this version of Darni yet. They're kept on this Mac and upload once it can."
         case .other:
             return "Sync isn't available right now. Your sidebar is safe on this Mac and will sync when it is."
         }

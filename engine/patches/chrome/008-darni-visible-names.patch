@@ -1,0 +1,85 @@
+From: ReArc Authors
+Subject: [PATCH] P-BUILD-001 the names people read say Darni: chrome://version and the blocker's name
+
+ReArc was renamed Darni (the bridge release, RELEASES.md "ReArc is now Darni").
+Only what a person reads changes. Two strings in the engine are read by people:
+
+1. chrome/browser/ui/webui/version/version_ui.cc: the version line of
+   chrome://version, which the app menu's "About Chromium Engine" opens, said
+   "ReArc 156.0.8078.109" (app/002). It says "Darni 156.0.8078.109".
+2. chrome/browser/rearc_bridge/rearc_content_blocker.cc: the built-in blocker's
+   manifest name and description, "ReArc Blocker" and "ReArc's built-in ad and
+   tracker blocking." (tab/095). The name is the "Extension:" row of the task
+   manager. They say "Darni Blocker" and "Darni's built-in ad and tracker
+   blocking.".
+
+What does not change, on purpose:
+- PRODUCT_SHORTNAME=ReArc in BRANDING (chrome/002). The Safe Storage Keychain
+  item "ReArc Safe Storage" / "ReArc" is named from it, and existing profiles
+  are encrypted with that item's key. shell/scripts/release/
+  check-safe-storage-name.py fails a release whose engine names another item.
+- MAC_BUNDLE_ID=com.rearc.browser and the helper and framework ids under it.
+- The blocker's extension IDs and manifest keys (kManifestKeys), so Chromium's
+  stored state for it (the indexed rulesets, keyed by extension ID) is the
+  same extension's. A name is not part of an extension's identity.
+- The "ReArc Blocker" folder in the user data directory, which holds the
+  prepared bundles of installed copies.
+- Log lines ("ReArc bridge:", "ReArc Blocker:"), the "[ReArc Boost]" console
+  prefix, the ReArc* C ABI names and every rearc_ file and feature name.
+- The placeholder main menu's title in rearc_app_delegate_mac.mm: AppKit never
+  shows a main menu's own title, and the host replaces the menu.
+
+HELD BACK, not in `series`: this patch goes in after the bridge release. The
+bridge release's engine stays as built (overlay 9f2767b4c1, through tab/098),
+which is security's condition 1 for that release (security/PRE-darni-bridge.md):
+with the engine unchanged, the Safe Storage item's name cannot have moved. Add
+its line to `series` after tab/098 for the first engine build after the bridge,
+and check then that the blocker's manifest check (CB-03) still passes.
+
+No ABI change: REARC_ABI_MINOR_VERSION and the bridge version stay as tab/098
+leaves them. Applies after tab/095; it touches no line another patch's hunk
+has in its context (checked against the tree after tab/097 and after tab/098).
+
+Not built: written from `git show` of the overlay tree, with no write to
+engine/chromium/src or out/ (another build was running). Needs an engine
+rebuild of two translation units to take effect.
+
+Last rebased: 2026-11-19 onto Chromium 156.0.8078.109, after tab/098.
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+---
+ chrome/browser/rearc_bridge/rearc_content_blocker.cc | 7 +++++--
+ chrome/browser/ui/webui/version/version_ui.cc        | 2 +-
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
+index 7922dd3..2e037a4 100644
+--- a/chrome/browser/rearc_bridge/rearc_content_blocker.cc
++++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
+@@ -543,8 +543,11 @@ std::optional<Bundle> PrepareBundle(const base::FilePath& source,
+ base::DictValue BlockerManifest(const Bundle& bundle, int slot) {
+   base::DictValue manifest;
+   manifest.Set("manifest_version", 3);
+-  manifest.Set("name", "ReArc Blocker");
+-  manifest.Set("description", "ReArc's built-in ad and tracker blocking.");
++  // What people read (the task manager's "Extension:" row): ReArc was renamed
++  // Darni. The extension IDs, the manifest keys, the "ReArc Blocker" folder in
++  // the user data directory and the log prefix keep the old name.
++  manifest.Set("name", "Darni Blocker");
++  manifest.Set("description", "Darni's built-in ad and tracker blocking.");
+   manifest.Set("version", ExtensionVersion(bundle.version));
+   manifest.Set("key", kManifestKeys[slot]);
+   manifest.Set("incognito", "split");
+diff --git a/chrome/browser/ui/webui/version/version_ui.cc b/chrome/browser/ui/webui/version/version_ui.cc
+index b87342a..efd7a88 100644
+--- a/chrome/browser/ui/webui/version/version_ui.cc
++++ b/chrome/browser/ui/webui/version/version_ui.cc
+@@ -250,7 +250,7 @@ void VersionUI::AddVersionDetailStrings(content::WebUIDataSource* html_source) {
+   // Data strings.
+   html_source->AddString(
+       version_ui::kVersion,
+-      base::StrCat({"ReArc ", version_info::GetVersionNumber()}));
++      base::StrCat({"Darni ", version_info::GetVersionNumber()}));
+   html_source->AddString(version_ui::kVersionSuffix,
+                          GetVersionInformationalSuffix());
+ 

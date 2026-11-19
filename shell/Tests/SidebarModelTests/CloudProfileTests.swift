@@ -144,16 +144,16 @@ final class CloudProfileTests: XCTestCase {
         let offline = await here.sync.detectCloudSidebar()
         server.fault = nil
         XCTAssertEqual(ProfileCloudPresence.of(other.personal, detection: offline, looking: false),
-                       .unknown("ReArc can't reach iCloud. Check your connection and try again."))
+                       .unknown("Darni can't reach iCloud. Check your connection and try again."))
         XCTAssertEqual(ProfileCloudPresence.of(ownAkilu, detection: offline, looking: false),
-                       .unknown("ReArc can't reach iCloud. Check your connection and try again."), "never “Only on this Mac” unread")
+                       .unknown("Darni can't reach iCloud. Check your connection and try again."), "never “Only on this Mac” unread")
     }
 
     func testWhatTheDeleteOfALocalProfileSays() {
         let base = "Its spaces and their tabs are deleted too. This can't be undone."
         XCTAssertEqual(ProfileCloudText.localDeleteMessage(.onlyHere, syncOn: false), base)
         XCTAssertEqual(ProfileCloudText.localDeleteMessage(.looking(nil), syncOn: false), base + " iCloud is still being checked, so only this Mac changes.")
-        XCTAssertEqual(ProfileCloudText.localDeleteMessage(.unknown("Offline"), syncOn: false), base + " ReArc couldn't check iCloud, so only this Mac changes.")
+        XCTAssertEqual(ProfileCloudText.localDeleteMessage(.unknown("Offline"), syncOn: false), base + " Darni couldn't check iCloud, so only this Mac changes.")
         XCTAssertTrue(ProfileCloudText.localDeleteMessage(.looking(nil), syncOn: true).hasSuffix("also deleted from iCloud and other Macs that sync."),
                       "with sync on, never “only this Mac”")
         XCTAssertEqual(ProfileCloudText.note(.inICloud, syncOn: false), ProfileCloudText.syncOffNote)
@@ -332,7 +332,7 @@ final class CloudProfileTests: XCTestCase {
         edited.payload.fields["title"] = SyncField(value: .string("Board 2"), stamp: SyncStamp(millis: SyncStamp.millis(of: date), device: "B"))
         server.beforeModify = { $0.overwrite(account: "alice", record: edited) }
         let result = await here.sync.deleteCloudProfile(try plan(other.akilu, found), in: found, backup: { _ in self.backupURL })
-        XCTAssertEqual(result, .failed("iCloud changed while ReArc was deleting, so nothing was deleted. Look at iCloud again and try again."))
+        XCTAssertEqual(result, .failed("iCloud changed while Darni was deleting, so nothing was deleted. Look at iCloud again and try again."))
         let after = server.records(account: "alice")
         XCTAssertEqual(after.filter { $0.key != board.recordName }, before.filter { $0.key != board.recordName }, "all or none")
     }

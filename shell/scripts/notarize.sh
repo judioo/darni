@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Notarizes and staples a Developer ID signed ReArc.app or DMG. Docs: engine/docs/RELEASE.md.
+# Notarizes and staples a Developer ID signed Darni.app or DMG. Docs: engine/docs/RELEASE.md.
 #
 # Prerequisites, done once by the account holder (this script never sees Apple ID
 # credentials; it only names a keychain profile):

@@ -39,12 +39,12 @@ enum ImportPrivacyAccess {
         let names = ListFormatter.localizedString(byJoining: browsers.map(\.name))
         switch permission {
         case .appData:
-            return "macOS keeps \(names) private. Under ReArc in Privacy & Security › Files & Folders, "
+            return "macOS keeps \(names) private. Under Darni in Privacy & Security › Files & Folders, "
                 + "switch on \(names), then come back."
         case .fullDiskAccess:
-            return "macOS keeps \(names) private. Switch on ReArc in Privacy & Security › Full Disk Access. "
+            return "macOS keeps \(names) private. Switch on Darni in Privacy & Security › Full Disk Access. "
                 + (macOSReopensThisCopy ? "If macOS offers Quit & Reopen, choose it."
-                    : "If macOS offers Quit & Reopen, choose Later, then come back and relaunch ReArc here.")
+                    : "If macOS offers Quit & Reopen, choose Later, then come back and relaunch Darni here.")
         }
     }
 

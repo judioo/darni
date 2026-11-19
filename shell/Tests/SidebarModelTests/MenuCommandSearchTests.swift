@@ -21,11 +21,11 @@ struct MenuCommandSearchTests {
     }
 
     @Test func quitAndHideRequireExactTitle() {
-        let quit = MenuCommand(id: "quit", title: "Quit ReArc", path: "ReArc › Quit ReArc", requiresExactQuery: true)
-        for query in ["", "quit", "qra", "rearc"] {
+        let quit = MenuCommand(id: "quit", title: "Quit Darni", path: "Darni › Quit Darni", requiresExactQuery: true)
+        for query in ["", "quit", "qda", "darni", "quit rearc"] {
             #expect(MenuCommandSearch.matches([quit], query: query, registered: []).isEmpty)
         }
-        #expect(MenuCommandSearch.matches([quit], query: " QUIT REARC ", registered: []) == [quit])
+        #expect(MenuCommandSearch.matches([quit], query: " QUIT DARNI ", registered: []) == [quit])
     }
 
     @Test func menuRowsFollowRegisteredCommandsAndCarryShortcut() {

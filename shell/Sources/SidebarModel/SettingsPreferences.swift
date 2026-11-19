@@ -65,7 +65,7 @@ public enum QuitWarning {
         enabled && browserWindows > 0
     }
 
-    public static let title = "Quit ReArc?"
+    public static let title = "Quit Darni?"
 
     public static func message(browserWindows: Int) -> String {
         browserWindows == 1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release-signs an assembled, monolithic (non-component) ReArc.app the way Chromium's own
+# Release-signs an assembled, monolithic (non-component) Darni.app the way Chromium's own
 # signing pipeline does (chrome/installer/mac/signing/parts.py at the pin): every nested
 # code object inside-out, hardened runtime, secure timestamps and the role-specific
 # entitlements in scripts/release/entitlements, then the outer app. Verifies the result.
@@ -7,9 +7,9 @@
 #
 # Order: framework Libraries/*.dylib -> Helpers (Renderer, GPU, plain, Alerts and their
 # Aperitif variants, crashpad handler, app_mode_loader, web_app_shortcut_copier) ->
-# Chromium Framework.framework -> ReArc.app.
+# Chromium Framework.framework -> the app (its executable keeps the name ReArc).
 #
-# Usage: scripts/sign-release.sh [path/to/ReArc.app]   (default dist/release/ReArc.app)
+# Usage: scripts/sign-release.sh [path/to/Darni.app]   (default dist/release/Darni.app)
 #   REARC_RELEASE_IDENTITY  "Developer ID Application: … (TEAMID)" for distribution. When unset,
 #                           falls back to REARC_SIGN_IDENTITY (an Apple Development identity):
 #                           everything but Gatekeeper and notarization can be verified with it.
@@ -26,7 +26,7 @@ set -euo pipefail
 
 SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="$SHELL_DIR/scripts/release"
-APP="${1:-$SHELL_DIR/dist/release/ReArc.app}"
+APP="${1:-$SHELL_DIR/dist/release/Darni.app}"
 die() { echo "sign-release: $*" >&2; exit 1; }
 [[ -d $APP ]] || die "no app bundle at $APP"
 APP="$(cd "$APP" && pwd)"

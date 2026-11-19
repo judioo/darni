@@ -114,11 +114,16 @@ final class ContentBlockingHostTests: XCTestCase {
         }
     }
 
-    func testAnExceptionIsKeptUnderTheSitesRegistrableHost() {
+    func testAnExceptionIsKeptUnderThePagesOwnHost() {
         func host(_ url: String) -> String? { ContentBlockingHost.exceptionHost(for: URL(string: url)) }
-        XCTAssertEqual(host("https://www.news.example.com/story"), "example.com")
-        XCTAssertEqual(host("https://shop.example.co.uk/"), "example.co.uk")
+        XCTAssertEqual(host("https://www.news.example.com/story"), "news.example.com")
+        XCTAssertEqual(host("https://www.example.com/story"), "example.com")
+        XCTAssertEqual(host("https://shop.example.co.uk/"), "shop.example.co.uk")
         XCTAssertEqual(host("https://someone.github.io/blog"), "someone.github.io", "a shared host's tenants are separate sites")
+        // Security CB-12: a suffix the shell's guess does not know is never the exception.
+        XCTAssertEqual(host("https://someone.web.app/"), "someone.web.app")
+        XCTAssertEqual(host("https://shop.azurewebsites.net/"), "shop.azurewebsites.net")
+        XCTAssertEqual(host("https://uni.edu.au/"), "uni.edu.au")
         XCTAssertEqual(host("http://localhost:3000/"), "localhost")
         XCTAssertEqual(host("http://192.168.1.10:8080/"), "192.168.1.10")
         XCTAssertNil(host("http://[::1]:3000/"), "the engine's exception hosts are names")
@@ -138,6 +143,16 @@ final class ContentBlockingHostTests: XCTestCase {
         XCTAssertNil(settings.exception(covering: URL(string: "https://shop.test.evil.example/")), "a suffix match is on whole labels")
         settings.removeException("https://shop.test/")
         XCTAssertEqual(settings.exceptions, ["a.test", "b.test"])
+    }
+
+    func testTurningBlockingBackOnRemovesAnExceptionStoredUnderASuffix() {
+        // 1027 kept `someone.web.app` under `web.app` (CB-12); on again at that page removes it.
+        var settings = ContentBlockingSettings(isEnabled: true, exceptions: ["web.app"])
+        XCTAssertTrue(settings.setException(false, forPage: URL(string: "https://someone.web.app/")))
+        XCTAssertEqual(settings.exceptions, [])
+        XCTAssertTrue(settings.setException(true, forPage: URL(string: "https://someone.web.app/")))
+        XCTAssertEqual(settings.exceptions, ["someone.web.app"])
+        XCTAssertNil(settings.exception(covering: URL(string: "https://other.web.app/")))
     }
 
     func testTurningBlockingOffAndOnForAPage() {
@@ -764,5 +779,102 @@ final class ContentBlockingSiteRowTests: XCTestCase {
         XCTAssertEqual(rows.map(\.kind), [.contentBlocking, .autoPictureInPicture])
         XCTAssertEqual(SiteControlCenter.settingRows(permissions: [], permissionsInEngine: true, autoPiP: .enabled, autoPiPEnabled: true).map(\.kind),
                        [.autoPictureInPicture], "an engine without blocking: the panel is as it was")
+    }
+
+    // MARK: Site exceptions with the engine's site names (§9, security CB-12)
+
+    /// Chromium's answers for the names these tests use.
+    private let siteNames = SiteNames { host in
+        let suffixes = ["web.app", "co.uk", "github.io", "com"]
+        if suffixes.contains(host) { return #"{"host":"\#(host)","registrable":false,"suffix":true}"# }
+        if host == "localhost" { return #"{"host":"localhost","registrable":false,"suffix":false}"# }
+        if host.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) { return #"{"host":"\#(host)","registrable":true,"suffix":false}"# }
+        guard let suffix = suffixes.first(where: { host.hasSuffix("." + $0) }) else { return nil }
+        let label = host.dropLast(suffix.count + 1).split(separator: ".").last ?? ""
+        return #"{"host":"\#(label).\#(suffix)","registrable":true,"suffix":false}"#
+    }
+
+    func testAnExceptionIsKeyedByThePagesRealSite() {
+        func key(_ page: String, _ names: SiteNames?) -> String? { ContentBlockingHost.exceptionHost(for: URL(string: page), names: names) }
+        XCTAssertEqual(key("https://www.example.co.uk/a", siteNames), "example.co.uk")
+        XCTAssertEqual(key("https://m.example.co.uk/a", siteNames), "example.co.uk", "the site's other hosts are the same site again")
+        XCTAssertEqual(key("https://someone.web.app/", siteNames), "someone.web.app")
+        XCTAssertEqual(key("https://a.someone.web.app/", siteNames), "someone.web.app")
+        XCTAssertEqual(key("http://203.0.113.7:8080/", siteNames), "203.0.113.7")
+        XCTAssertEqual(key("http://localhost:3000/", siteNames), "localhost", "a name with no suffix is its own key")
+        XCTAssertNil(key("https://github.io/", siteNames), "a page on a suffix itself: its exception would be every site under it")
+        // Without the engine's list: the page's own host, never a guess.
+        XCTAssertEqual(key("https://www.example.co.uk/a", nil), "example.co.uk")
+        XCTAssertEqual(key("https://m.example.co.uk/a", nil), "m.example.co.uk")
+        XCTAssertEqual(key("https://someone.web.app/", nil), "someone.web.app")
+        XCTAssertEqual(key("https://unknown.test/", siteNames), "unknown.test", "no answer for the name: the same")
+
+        var settings = ContentBlockingSettings.newProfile
+        XCTAssertTrue(settings.setException(true, forPage: URL(string: "https://www.example.co.uk/a"), names: siteNames))
+        XCTAssertEqual(settings.exceptions, ["example.co.uk"])
+        XCTAssertNotNil(settings.exception(covering: URL(string: "https://m.example.co.uk/")))
+        XCTAssertNil(settings.exception(covering: URL(string: "https://other.co.uk/")))
+        XCTAssertFalse(settings.setException(true, forPage: URL(string: "https://github.io/"), names: siteNames))
+        XCTAssertEqual(settings.exceptions, ["example.co.uk"])
+        XCTAssertTrue(settings.setException(false, forPage: URL(string: "https://m.example.co.uk/"), names: siteNames))
+        XCTAssertEqual(settings.exceptions, [])
+    }
+
+    func testATypedExceptionThatIsAPublicSuffixIsRefused() {
+        var settings = ContentBlockingSettings.newProfile
+        for suffix in ["web.app", "co.uk", "com", "*.github.io", "https://web.app/"] {
+            XCTAssertFalse(settings.addException(suffix, names: siteNames), suffix)
+        }
+        XCTAssertEqual(settings.exceptions, [])
+        XCTAssertTrue(settings.addException("someone.web.app", names: siteNames))
+        XCTAssertTrue(settings.addException("localhost", names: siteNames), "the person's own machine")
+        XCTAssertTrue(settings.addException("unknown.test", names: siteNames))
+        XCTAssertEqual(settings.exceptions, ["localhost", "someone.web.app", "unknown.test"])
+        // Without the engine's list a name is taken as typed, as before.
+        XCTAssertTrue(settings.addException("web.app", names: nil))
+        XCTAssertTrue(ContentBlockingHost.isPublicSuffix("web.app", names: siteNames))
+        XCTAssertFalse(ContentBlockingHost.isPublicSuffix("web.app", names: nil))
+        XCTAssertFalse(ContentBlockingHost.isPublicSuffix("someone.web.app", names: siteNames))
+    }
+
+    /// Builds 1027 to 1049 stored `web.app` for a page on `someone.web.app`.
+    /// It is marked, not rewritten: the shell cannot know which site was
+    /// meant, and the list syncs.
+    func testAStoredSuffixExceptionIsFoundAndCanBeNarrowedToThePagesSite() {
+        let page = URL(string: "https://someone.web.app/x")
+        var settings = ContentBlockingSettings(isEnabled: true, exceptions: ["web.app", "news.test"])
+        XCTAssertEqual(settings.exceptions, ["news.test", "web.app"], "a stored list is kept as it is")
+        XCTAssertEqual(settings.suffixException(covering: page, names: siteNames), "web.app")
+        XCTAssertNil(settings.suffixException(covering: page, names: nil), "only the engine's list can say")
+        XCTAssertNil(settings.suffixException(covering: URL(string: "https://news.test/"), names: siteNames))
+
+        XCTAssertTrue(settings.narrowSuffixException(toPage: page, names: siteNames))
+        XCTAssertEqual(settings.exceptions, ["news.test", "someone.web.app"])
+        XCTAssertNotNil(settings.exception(covering: page), "blocking stays off for the site the person is on")
+        XCTAssertNil(settings.exception(covering: URL(string: "https://another.web.app/")), "and is back on for the others")
+        XCTAssertFalse(settings.narrowSuffixException(toPage: page, names: siteNames), "nothing left to narrow")
+        XCTAssertFalse(settings.narrowSuffixException(toPage: URL(string: "https://news.test/"), names: siteNames))
+        XCTAssertEqual(settings.exceptions, ["news.test", "someone.web.app"])
+    }
+
+    func testTheRowSaysHowFarASuffixExceptionReaches() {
+        func row(_ settings: ContentBlockingSettings, _ page: String, _ names: SiteNames?) -> SiteControlCenter.SettingRow {
+            SiteControlCenter.contentBlockingRow(settings: settings, pageURL: URL(string: page), blockedCount: nil, listsAvailable: true,
+                                                 isPrivate: false, names: names)
+        }
+        let stored = ContentBlockingSettings(isEnabled: true, exceptions: ["web.app"])
+        let marked = row(stored, "https://someone.web.app/", siteNames)
+        XCTAssertEqual(marked.state, "Off for every site under web.app")
+        XCTAssertEqual(marked.actions, [.turnOffBlockingForSiteOnly, .turnOnBlockingForSite])
+        XCTAssertTrue(marked.isBlocked)
+        XCTAssertEqual(SiteControlCenter.SettingAction.turnOffBlockingForSiteOnly.title, "Turn Off Blocking for This Site Only")
+        // Without the engine's list the row is as it was.
+        let unmarked = row(stored, "https://someone.web.app/", nil)
+        XCTAssertEqual(unmarked.state, "Off for this site")
+        XCTAssertEqual(unmarked.actions, [.turnOnBlockingForSite])
+        // A page on a suffix itself has no site to turn blocking off for.
+        XCTAssertEqual(row(.newProfile, "https://github.io/", siteNames).actions, [])
+        XCTAssertEqual(row(.newProfile, "https://someone.github.io/", siteNames).actions, [.turnOffBlockingForSite])
+        XCTAssertTrue(SiteControlCenter.suffixExceptionRefusal("web.app").contains("example.web.app"))
     }
 }

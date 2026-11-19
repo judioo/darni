@@ -97,7 +97,7 @@ public struct SecretImportConsent: Equatable, Sendable {
     public var explanation: String {
         let what = kinds.contains(.cookies) ? "saved passwords and sign-ins" : "saved passwords"
         return "To read \(browser.name)'s \(what), macOS will ask you to allow access to \u{201C}\(browser.safeStorageService)\u{201D} in your keychain. "
-            + "Choose Allow (not Always Allow). ReArc reads it once for this import and does not keep it."
+            + "Choose Allow (not Always Allow). Darni reads it once for this import and does not keep it."
     }
 }
 

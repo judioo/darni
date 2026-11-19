@@ -148,7 +148,7 @@ final class Wave34BottomBarTests: XCTestCase {
 
     func testUpdateBannerTitle() {
         // The pill's words are UpdateNoticeText's (UpdateNoticeTests); this is the mini header's menu item.
-        XCTAssertEqual(AvailableUpdate.title, "Restart and Update ReArc")
+        XCTAssertEqual(AvailableUpdate.title, "Restart and Update Darni")
         XCTAssertEqual(AvailableUpdate(version: "1.2"), AvailableUpdate(version: "1.2"))
     }
 }

@@ -148,7 +148,7 @@ struct BrowserImportView: View {
             if session.canFinishSetup {
                 Button("Start Fresh") { session.finishWithoutImporting() }
                     .disabled(session.isImporting)
-                    .help("Finish setting up ReArc without importing from another browser")
+                    .help("Finish setting up Darni without importing from another browser")
             }
             Button(session.isUpToDate ? "Imported" : "Import") { session.performImport() }
                 .keyboardShortcut(.defaultAction)
@@ -235,7 +235,7 @@ private struct ArcSidebarImportPane: View {
         if settings.restoreWindows != nil { names.append("reopen windows") }
         if settings.externalLinkDestination != nil { names.append("external links") }
         if settings.autoArchive != nil { names.append("archive tabs after") }
-        if settings.littleArcArchive != nil { names.append("archive Little ReArcs after") }
+        if settings.littleArcArchive != nil { names.append("archive Little Darnis after") }
         return names.joined(separator: ", ").capitalizedFirst
     }
 
@@ -267,7 +267,7 @@ private struct ArcSidebarImportPane: View {
                 set: { session.arcChoices.profileTargets[profile] = $0 }
             )) {
                 ForEach(session.reArcProfiles) { existing in
-                    Text("ReArc profile \u{201C}\(existing.name)\u{201D}").tag(ArcProfileTarget.existing(existing.id))
+                    Text("Darni profile \u{201C}\(existing.name)\u{201D}").tag(ArcProfileTarget.existing(existing.id))
                 }
                 Text("New profile \u{201C}\(name)\u{201D}").tag(ArcProfileTarget.newProfile)
             }
@@ -297,8 +297,8 @@ private struct ChromiumProfileImportPane: View {
         Form {
             Section {
                 Text("\(profile.browser.name) \u{2014} \(profile.name)").font(.headline)
-                SettingsRow(label: "Into ReArc profile") {
-                    Picker("Into ReArc profile", selection: $session.targetProfileID) {
+                SettingsRow(label: "Into Darni profile") {
+                    Picker("Into Darni profile", selection: $session.targetProfileID) {
                         ForEach(session.reArcProfiles) { Text($0.name).tag($0.id) }
                     }
                     .labelsHidden().fixedSize()
@@ -312,14 +312,14 @@ private struct ChromiumProfileImportPane: View {
                     .disabled((detail.newHistoryPages ?? 0) == 0)
                 if let engine = detail.setup.searchEngine {
                     let isNew = session.newSearchEngine(detail) != nil
-                    SettingsToggleRow(label: "Search engine", detail: isNew ? "\(engine.name), if ReArc offers it" : "\(engine.name): already the default, or not offered",
+                    SettingsToggleRow(label: "Search engine", detail: isNew ? "\(engine.name), if Darni offers it" : "\(engine.name): already the default, or not offered",
                                       isOn: $session.includeSearchEngine)
                         .disabled(!isNew)
                 }
                 if !detail.siteSearches.isEmpty {
                     let new = session.newSiteSearchCount(detail)
                     SettingsToggleRow(label: "Site searches",
-                                      detail: new == 0 ? "Already in ReArc" : "\(new) shortcut\(new == 1 ? "" : "s") for the command bar (keyword, then Tab)",
+                                      detail: new == 0 ? "Already in Darni" : "\(new) shortcut\(new == 1 ? "" : "s") for the command bar (keyword, then Tab)",
                                       isOn: $session.includeSiteSearches)
                         .disabled(new == 0)
                 }
@@ -423,10 +423,10 @@ private struct BlockedBrowsersRow: View {
                 .controlSize(.small)
                 .help("Opens System Settings › Privacy & Security › \(permission.paneName)")
             if session.offersRelaunch(for: permission) {
-                Text("Switched on and still locked? macOS may need ReArc to start again.")
+                Text("Switched on and still locked? macOS may need Darni to start again.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Relaunch ReArc") { session.relaunch() }
+                Button("Relaunch Darni") { session.relaunch() }
                     .controlSize(.small)
             }
         }

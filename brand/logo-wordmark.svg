@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 180" width="680" height="180" fill="none">
   <defs>
     <style>
-      .rearc-text-prefix { fill: #0F172A; }
+      .rearc-text-prefix { fill: #1D2160; }
       .rearc-text-suffix { fill: #2740FF; }
       @media (prefers-color-scheme: dark) {
-        .rearc-text-prefix { fill: #F8FAFC; }
-        .rearc-text-suffix { fill: #7C8FFF; }
+        .rearc-text-prefix { fill: #F3EBD3; }
+        .rearc-text-suffix { fill: #8EA0FF; }
         .rearc-navy { stroke: #6A5CF0; } .rearc-deep { stroke: #3B52F0; }
       }
     </style>
@@ -18,5 +18,5 @@
 <path class="rearc-navy" fill="none" stroke="#190C99" d="M 212.6 666.0 A 380 380 0 0 1 485.5 520.9" stroke-width="130" stroke-linecap="round"/>
 <path class="rearc-blue" fill="none" stroke="#2740FF" d="M 420.1 531.3 A 380 380 0 0 1 811.4 666.0" stroke-width="130" stroke-linecap="round"/>
 <g mask="url(#w-navy)"><path class="rearc-deep" fill="none" stroke="#1627C8" d="M 420.1 531.3 A 380 380 0 0 1 811.4 666.0" stroke-width="130" stroke-linecap="round"/></g></g>
-  <text x="226" y="118" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif" font-size="88" font-weight="700" letter-spacing="-2"><tspan class="rearc-text-prefix">Re</tspan><tspan class="rearc-text-suffix">Arc</tspan></text>
+  <text x="226" y="118" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', sans-serif" font-size="88" font-weight="700" letter-spacing="-2"><tspan class="rearc-text-prefix">Dar</tspan><tspan class="rearc-text-suffix">ni</tspan></text>
 </svg>

@@ -46,7 +46,7 @@ struct LittleArcWindowView: View {
                         .findBar(model.findBar, for: engine)
                 }
             } else {
-                Text("Little ReArc window unavailable")
+                Text("Little Darni window unavailable")
                     .foregroundStyle(.secondary)
             }
         }
@@ -169,7 +169,7 @@ struct LittleArcWindowView: View {
                             .frame(width: 8, height: 8)
                             .accessibilityHidden(true)
                     }
-                    Text(target?.name ?? "ReArc")
+                    Text(target?.name ?? "Darni")
                         .fontWeight(.medium)
                         .foregroundStyle(Color(nsColor: Self.labelColor))
                     Text("⌘O")
@@ -186,7 +186,7 @@ struct LittleArcWindowView: View {
             }
             .buttonStyle(.plain)
             .help("Move this page into a tab in \(target?.name ?? "your current space")")
-            .accessibilityLabel("Open in \(target?.name ?? "ReArc")")
+            .accessibilityLabel("Open in \(target?.name ?? "Darni")")
             if !others.isEmpty {
                 Divider().frame(height: 14)
                 Menu {

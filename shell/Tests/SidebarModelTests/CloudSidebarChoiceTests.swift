@@ -158,7 +158,7 @@ final class CloudSidebarChoiceTests: XCTestCase {
         server.fault = .networkUnavailable
         server.faultBudget = 1
         let detection = await here.sync.detectCloudSidebar()
-        XCTAssertEqual(detection, .unreachable("ReArc can't reach iCloud. Check your connection and try again."))
+        XCTAssertEqual(detection, .unreachable("Darni can't reach iCloud. Check your connection and try again."))
     }
 
     // MARK: - Choices

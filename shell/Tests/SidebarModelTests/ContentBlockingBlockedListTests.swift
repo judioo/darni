@@ -1,0 +1,311 @@
+import XCTest
+@testable import SidebarModel
+
+/// "Blocked on this page" (CONTENT-BLOCKING.md §3): reading the engine's
+/// reply as a stranger's, the cap, the tags, and the one own rule that
+/// allows a host on a site.
+final class ContentBlockingBlockedListTests: XCTestCase {
+    private typealias List = ContentBlockingBlockedList
+    private let lists = ContentBlockingLists.known
+
+    private func json(_ hosts: [(String, Int, [String])], more: Int? = nil) -> String {
+        let entries = hosts.map { host, count, lists in
+            #"{"host":"\#(host)","count":\#(count),"registrable":true,"lists":[\#(lists.map { "\"\($0)\"" }.joined(separator: ","))]}"#
+        }
+        return #"{"hosts":[\#(entries.joined(separator: ","))]\#(more.map { #","more":\#($0)"# } ?? "")}"#
+    }
+
+    // MARK: The reply
+
+    func testTheListIsMostBlockedFirstThenByNameWithATagFromEachList() throws {
+        let list = try XCTUnwrap(List.decode(json([
+            ("google-analytics.com", 1, ["easyprivacy"]),
+            ("doubleclick.net", 3, ["easylist"]),
+            ("adnxs.com", 1, ["peter-lowe", "easylist"]),
+            ("cookie-banner.test", 1, ["easylist-cookie"]),
+            ("mine.test", 2, ["_dynamic"]),
+        ]), lists: lists))
+        XCTAssertEqual(list.entries, [
+            .init(host: "doubleclick.net", count: 3, kinds: [.ad]),
+            .init(host: "mine.test", count: 2, kinds: [.ownRule]),
+            .init(host: "adnxs.com", count: 1, kinds: [.ad, .tracker]),
+            .init(host: "cookie-banner.test", count: 1, kinds: [.annoyance]),
+            .init(host: "google-analytics.com", count: 1, kinds: [.tracker]),
+        ])
+        XCTAssertEqual(list.uncounted, 0)
+        XCTAssertNil(list.uncountedText)
+        XCTAssertEqual(list.entries[2].tagText, "Ad, Tracker")
+        XCTAssertEqual(list.entries[2].spokenText, "adnxs.com, Ad, Tracker, 1 blocked")
+        XCTAssertEqual(List.decode(#"{"hosts":[],"more":0}"#, lists: lists), List())
+        XCTAssertTrue(List().isEmpty)
+    }
+
+    /// EasyList → Ad, EasyPrivacy → Tracker: by the level of the list in the
+    /// bundle's signed manifest, then by this build's table.
+    func testATagIsTheLevelOfTheListThatBlocked() {
+        XCTAssertEqual(List.kind(ofList: "easyprivacy", in: lists), .tracker)
+        XCTAssertEqual(List.kind(ofList: "peter-lowe", in: lists), .tracker)
+        XCTAssertEqual(List.kind(ofList: "easylist", in: lists), .ad)
+        XCTAssertEqual(List.kind(ofList: "easylist-germany", in: lists), .ad, "a regional list is an ad list")
+        XCTAssertEqual(List.kind(ofList: "fanboy-annoyance", in: lists), .annoyance)
+        XCTAssertEqual(List.kind(ofList: "_dynamic", in: lists), .ownRule)
+        XCTAssertNil(List.kind(ofList: "from-the-future", in: lists))
+        XCTAssertNil(List.kind(ofList: "../easylist", in: lists), "not a list ID")
+        // A list the mirror added after this build: the bundle says what level it is.
+        let bundle = lists + [ContentBlockingList(id: "from-the-future", title: "New", level: .trackersOnly)]
+        XCTAssertEqual(List.kind(ofList: "from-the-future", in: bundle), .tracker)
+        // The bundle moved a list this build knows: the signed manifest wins.
+        let moved = [ContentBlockingList(id: "easylist", title: "EasyList", level: .strict)]
+        XCTAssertEqual(List.kind(ofList: "easylist", in: moved), .annoyance)
+        XCTAssertEqual(List.decode(json([("x.test", 1, ["from-the-future"])]), lists: lists)?.entries, [.init(host: "x.test", count: 1, kinds: [])],
+                       "a site blocked by a list nobody can name is still listed, without a tag")
+    }
+
+    /// A page chooses the hosts it asks for: nothing but a host gets through.
+    func testANameThatIsNoHostIsLeftOutAndOnlyCounted() throws {
+        let list = try XCTUnwrap(List.decode(#"""
+        {"hosts":[{"host":"ok.test","count":2,"registrable":true,"lists":["easylist"]},
+                  {"host":"evil.test^$important","count":4,"lists":["easylist"]},
+                  {"host":"UPPER.test","count":1},
+                  {"host":"a b.test","count":1},
+                  {"host":"line\nbreak.test","count":1},
+                  {"host":"","count":1},
+                  {"host":"zero.test","count":0},
+                  {"host":"minus.test","count":-5},
+                  {"host":"ok.test","count":1,"registrable":true,"lists":["easyprivacy","easylist"]}],
+         "more":-3}
+        """#, lists: lists))
+        XCTAssertEqual(list.entries, [.init(host: "ok.test", count: 3, kinds: [.ad, .tracker])], "the same site twice is one line")
+        XCTAssertEqual(list.uncounted, 8, "what was left out is still counted")
+        XCTAssertEqual(list.uncountedText, "and 8 more requests")
+        XCTAssertEqual(List(uncounted: 1).uncountedText, "and 1 more request")
+    }
+
+    func testAReplyThatIsNotTheListIsNoList() {
+        for reply in ["", "[]", "{}", #"{"hosts":"x"}"#, #"{"hosts":[{"host":1,"count":1}]}"#, #"{"hosts":[{"host":"a.test"}]}"#, "not json"] {
+            XCTAssertNil(List.decode(reply, lists: lists), reply)
+        }
+        XCTAssertNotNil(List.decode(#"{"hosts":[{"host":"a.test","count":1}],"new_key":true}"#, lists: lists), "a key this build does not know is ignored")
+    }
+
+    // MARK: The cap
+
+    func testOnePageHoldsAtMostAHundredSitesAndCountsTheRest() throws {
+        let hosts = (0..<150).map { ("site\($0).test", $0 < 5 ? 10 : 1, ["easylist"]) }
+        let list = try XCTUnwrap(List.decode(json(hosts, more: 7), lists: lists))
+        XCTAssertEqual(list.entries.count, List.maxEntries)
+        XCTAssertEqual(list.entries.count, 100)
+        XCTAssertEqual(list.entries.prefix(5).map(\.count), [10, 10, 10, 10, 10], "the most blocked are the ones kept")
+        XCTAssertEqual(list.uncounted, 7 + 50, "the engine's own remainder and what this cut")
+        XCTAssertEqual(list.entries.reduce(0) { $0 + $1.count } + list.uncounted, 5 * 10 + 145 + 7, "no blocked request is lost from the total")
+    }
+
+    func testAReplyOverTheSizeLimitIsNotRead() {
+        let long = (0..<3000).map { ("a-long-enough-name-number-\($0).test", 1, ["easylist"]) }
+        let reply = json(long)
+        XCTAssertGreaterThan(reply.utf8.count, List.maxReplyBytes)
+        XCTAssertNil(List.decode(reply, lists: lists))
+        // The engine's largest honest reply fits: a hundred names of the longest length a host has.
+        let label = String(repeating: "a", count: 63)
+        let longest = (0..<100).map { index in
+            (([String(format: "%03d", index) + String(repeating: "b", count: 58)] + Array(repeating: label, count: 3)).joined(separator: "."), 1_000_000,
+             ["easylist", "easyprivacy", "peter-lowe", "fanboy-annoyance", "easylist-cookie", "_dynamic"])
+        }
+        XCTAssertEqual(longest[0].0.utf8.count, 253)
+        let full = json(longest, more: 1_000_000)
+        XCTAssertLessThanOrEqual(full.utf8.count, List.maxReplyBytes)
+        XCTAssertEqual(List.decode(full, lists: lists)?.entries.count, 100)
+    }
+
+    func testANumberIsCutToWhatAPageCanReach() throws {
+        let list = try XCTUnwrap(List.decode(#"{"hosts":[{"host":"a.test","count":9223372036854775807},{"host":"a.test","count":5}],"more":9223372036854775807}"#, lists: lists))
+        XCTAssertEqual(list.entries.map(\.count), [1_000_000])
+        XCTAssertEqual(list.uncounted, 1_000_000)
+    }
+
+    // MARK: Which lines have Allow (security BL-02)
+
+    /// The engine says whether a name is one site, from Chromium's suffix
+    /// list. This build must agree before a line gets Allow: a rule for a
+    /// single label or a public suffix would allow every name under it.
+    func testALineHasAllowOnlyWhenItsNameIsOneSite() throws {
+        let list = try XCTUnwrap(List.decode(#"""
+        {"hosts":[{"host":"doubleclick.net","count":9,"registrable":true},
+                  {"host":"someone.github.io","count":8,"registrable":true},
+                  {"host":"203.0.113.7","count":7,"registrable":true},
+                  {"host":"co.uk","count":6,"registrable":false},
+                  {"host":"localhost","count":5,"registrable":false},
+                  {"host":"edu.au","count":4,"registrable":false},
+                  {"host":"old-engine.test","count":3},
+                  {"host":"localhost.","count":2,"registrable":true},
+                  {"host":"com","count":2,"registrable":true},
+                  {"host":"co.uk","count":1,"registrable":true},
+                  {"host":"github.io","count":1,"registrable":true}]}
+        """#, lists: lists))
+        XCTAssertEqual(list.entries.filter(\.canBeAllowed).map(\.host), ["doubleclick.net", "someone.github.io", "203.0.113.7"])
+        XCTAssertEqual(list.entries.map(\.host), ["doubleclick.net", "someone.github.io", "203.0.113.7", "co.uk", "localhost", "edu.au", "old-engine.test",
+                                                  "com", "github.io"], "a name without Allow is still listed")
+        XCTAssertEqual(list.entries.first { $0.host == "co.uk" }?.count, 7, "once the engine said no, a second entry cannot say yes")
+
+        for host in ["doubleclick.net", "a.b.news.test", "someone.github.io", "203.0.113.7", "127.0.0.1", "example.co.uk", "xn--bcher-kva.example"] {
+            XCTAssertTrue(ContentBlockingSiteAllow.isOneSite(host), host)
+        }
+        for host in ["localhost", "com", "wiki", "co.uk", "com.au", "github.io", "cloudfront.net", "", "a b.test", "A.test", "[::1]", "a.test."] {
+            XCTAssertFalse(ContentBlockingSiteAllow.isOneSite(host), host)
+        }
+    }
+
+    // MARK: The order while the list is open (security BL-03)
+
+    func testAnOpenListKeepsItsLinesInPlaceAndPutsNewSitesUnderneath() throws {
+        let first = try XCTUnwrap(List.decode(json([("a.test", 5, []), ("b.test", 3, []), ("c.test", 1, [])]), lists: lists))
+        let shown = first.entries(keeping: []).map(\.host)
+        XCTAssertEqual(shown, ["a.test", "b.test", "c.test"], "opened: most blocked first")
+        // The page blocks c.test more often than the others, and asks a new host.
+        let later = try XCTUnwrap(List.decode(json([("a.test", 5, []), ("b.test", 3, []), ("c.test", 40, []), ("d.test", 9, []), ("e.test", 20, [])]), lists: lists))
+        XCTAssertEqual(later.entries.map(\.host), ["c.test", "e.test", "d.test", "a.test", "b.test"], "what a newly opened list would show")
+        let kept = later.entries(keeping: shown)
+        XCTAssertEqual(kept.map(\.host), ["a.test", "b.test", "c.test", "e.test", "d.test"], "no line moved; new sites went underneath")
+        XCTAssertEqual(kept.map(\.count), [5, 3, 40, 20, 9], "counts change in place")
+        // A site that is gone (the page navigated) leaves; nothing else moves.
+        let after = try XCTUnwrap(List.decode(json([("c.test", 2, []), ("a.test", 1, [])]), lists: lists))
+        XCTAssertEqual(after.entries(keeping: kept.map(\.host)).map(\.host), ["a.test", "c.test"])
+        XCTAssertEqual(List().entries(keeping: shown), [])
+    }
+
+    // MARK: The row
+
+    func testTheRowOffersItsListOnlyWhileSomethingIsCounted() {
+        let page = URL(string: "https://www.news.test/story")
+        func row(_ settings: ContentBlockingSettings, count: Int?, available: Bool = true, lists: Bool = true) -> SiteControlCenter.SettingRow {
+            SiteControlCenter.contentBlockingRow(settings: settings, pageURL: page, blockedCount: count, listsAvailable: lists,
+                                                 isPrivate: false, blockedListAvailable: available)
+        }
+        XCTAssertTrue(row(.newProfile, count: 3).hasBlockedList)
+        XCTAssertFalse(row(.newProfile, count: 0).hasBlockedList)
+        XCTAssertFalse(row(.newProfile, count: nil).hasBlockedList)
+        XCTAssertFalse(row(.newProfile, count: 3, available: false).hasBlockedList, "an engine that only counts")
+        XCTAssertFalse(row(.off, count: 3).hasBlockedList)
+        XCTAssertFalse(row(.newProfile, count: 3, lists: false).hasBlockedList)
+        var excepted = ContentBlockingSettings.newProfile
+        excepted.setException(true, forPage: page)
+        XCTAssertFalse(row(excepted, count: 3).hasBlockedList)
+        // A private window's row reports, and its list is read like any other tab's.
+        let privateRow = SiteControlCenter.contentBlockingRow(settings: .newProfile, pageURL: page, blockedCount: 3, listsAvailable: true,
+                                                              isPrivate: true, blockedListAvailable: true)
+        XCTAssertTrue(privateRow.hasBlockedList)
+        XCTAssertEqual(privateRow.actions, [])
+    }
+
+    // MARK: The page's own site (security BL-10, BL-11)
+
+    /// Allow writes for the site the engine names in the same reply as the
+    /// lines, from Chromium's suffix list. The shell's own idea of a site
+    /// (the last two or three labels) takes `web.app` or `edu.au` for one.
+    func testThePagesSiteIsTheEnginesAndNeverCutFromAnAddressHere() throws {
+        func page(_ json: String) -> List? { List.decode(#"{"page":\#(json),"hosts":[],"more":0}"#, lists: lists) }
+        for site in ["someone.web.app", "school.edu.au", "club.or.jp", "x.azurewebsites.net", "news.test", "203.0.113.7"] {
+            let list = try XCTUnwrap(page(#"{"host":"\#(site)","registrable":true}"#))
+            XCTAssertEqual(list.pageSite, site)
+            XCTAssertEqual(list.allowSite, site, "the engine's name, whole")
+            var settings = ContentBlockingSettings.newProfile
+            XCTAssertNil(settings.allowHost("doubleclick.net", onSite: site))
+            XCTAssertEqual(settings.ownRules, "@@||doubleclick.net^$domain=\(site)\n")
+        }
+        // What the shell's guess would have written for those pages is a suffix: the engine
+        // says such a name is not one site, and then there is no Allow.
+        for suffix in ["web.app", "edu.au", "or.jp", "azurewebsites.net", "localhost", "co.uk"] {
+            let list = try XCTUnwrap(page(#"{"host":"\#(suffix)","registrable":false}"#))
+            XCTAssertEqual(list.pageSite, suffix)
+            XCTAssertNil(list.allowSite, suffix)
+        }
+        // The engine said yes and this build knows better: still no.
+        XCTAssertNil(page(#"{"host":"co.uk","registrable":true}"#)?.allowSite)
+        XCTAssertNil(page(#"{"host":"wiki","registrable":true}"#)?.allowSite)
+        XCTAssertNil(page(#"{"host":"news.test"}"#)?.allowSite, "an engine that does not say is not a yes")
+        // A name that is no host is no site at all.
+        for bad in [#"{"host":"news.test^$important","registrable":true}"#, #"{"host":"","registrable":true}"#, #"{"host":"[::1]","registrable":true}"#] {
+            let list = try XCTUnwrap(page(bad))
+            XCTAssertNil(list.pageSite)
+            XCTAssertNil(list.allowSite)
+        }
+        XCTAssertNil(List.decode(#"{"hosts":[],"more":0}"#, lists: lists)?.pageSite, "a page that is no site")
+        XCTAssertEqual(List(pageSite: nil, pageSiteIsOneSite: true).allowSite, nil)
+    }
+
+    // MARK: Allow on this site
+
+    func testAllowIsOneOwnRuleForTheSiteAndConvertsToAnAllowRule() throws {
+        var settings = ContentBlockingSettings.newProfile
+        XCTAssertNil(settings.allowHost("doubleclick.net", onSite: "news.test"))
+        XCTAssertEqual(settings.ownRules, "@@||doubleclick.net^$domain=news.test\n")
+        XCTAssertEqual(settings.allowedHosts(onSite: "news.test"), ["doubleclick.net"])
+        XCTAssertEqual(settings.allowedHosts(onSite: "other.test"), [], "allowed on one site only")
+        XCTAssertNil(settings.allowHost("doubleclick.net", onSite: "news.test"), "allowed already")
+        XCTAssertEqual(settings.ownRules, "@@||doubleclick.net^$domain=news.test\n", "and not written twice")
+
+        let conversion = ContentBlockingRuleConverter.convert(settings.ownRules)
+        XCTAssertEqual(conversion.dropped, [])
+        let rule = try XCTUnwrap(conversion.rules.first)
+        XCTAssertEqual(rule.action.type, "allow")
+        XCTAssertEqual(rule.priority, ContentBlockingRuleConverter.Priority.allow)
+        XCTAssertEqual(rule.condition.urlFilter, "||doubleclick.net^")
+        XCTAssertEqual(rule.condition.initiatorDomains, ["news.test"])
+        XCTAssertNil(rule.condition.resourceTypes, "requests, never the page itself")
+    }
+
+    func testAllowKeepsThePersonsOwnRulesAndRemoveDeletesOnlyItsLine() {
+        let site = "127.0.0.1"
+        var settings = ContentBlockingSettings(isEnabled: true, ownRules: "! mine\n||ads.test^")
+        XCTAssertNil(settings.allowHost("adsterra.com", onSite: site))
+        XCTAssertNil(settings.allowHost("cdn.test", onSite: site))
+        XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||adsterra.com^$domain=127.0.0.1\n@@||cdn.test^$domain=127.0.0.1\n")
+        XCTAssertEqual(settings.allowedHosts(onSite: site), ["adsterra.com", "cdn.test"])
+        XCTAssertEqual(ContentBlockingRuleConverter.convert(settings.ownRules).rules.map(\.condition.initiatorDomains), [nil, ["127.0.0.1"], ["127.0.0.1"]],
+                       "an address is a site of its own")
+
+        settings.removeAllowedHost("adsterra.com", onSite: site)
+        XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||cdn.test^$domain=127.0.0.1\n")
+        settings.removeAllowedHost("ads.test", onSite: site)
+        settings.removeAllowedHost("cdn.test", onSite: "other.test")
+        XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||cdn.test^$domain=127.0.0.1\n", "a rule Allow did not write for this site stays")
+        // A wider rule the person typed is theirs: it is not listed as allowed here, and Remove leaves it.
+        settings.setOwnRules("@@||cdn.test^\n@@||cdn.test^$domain=127.0.0.1|other.test\n@@||cdn.test^$domain=127.0.0.1,script")
+        XCTAssertEqual(settings.allowedHosts(onSite: site), [])
+    }
+
+    /// Both names come from pages. Neither may carry filter syntax into the
+    /// rule, and neither may be a name that covers more than one site.
+    func testANameThatIsNotOneSiteNeverReachesTheOwnRules() {
+        var settings = ContentBlockingSettings.newProfile
+        let notOneSite = ["evil.test^$important", "a.test,b.test", "a.test|b.test", "a.test\n||everything^", "*.test", "a.test/path", "A.test", "a.test:80",
+                          " a.test", "", "a..test", "-a.test", "[::1]", "localhost", "com", "co.uk", "github.io", "wiki"]
+        for name in notOneSite {
+            XCTAssertEqual(settings.allowHost(name, onSite: "news.test"), .notOneSite, name)
+            XCTAssertEqual(settings.allowHost("ok.test", onSite: name), .noSite, name)
+            XCTAssertNil(ContentBlockingSiteAllow.rule(host: name, site: "news.test"), name)
+            XCTAssertNil(ContentBlockingSiteAllow.rule(host: "ok.test", site: name), name)
+            XCTAssertEqual(settings.allowedHosts(onSite: name), [], name)
+        }
+        XCTAssertEqual(settings.ownRules, "")
+        XCTAssertEqual(ContentBlockingSiteAllow.rule(host: "xn--bcher-kva.example", site: "news.test"), "@@||xn--bcher-kva.example^$domain=news.test")
+        XCTAssertEqual(ContentBlockingSiteAllow.hosts(in: "@@||evil.test^$important^$domain=news.test\n@@||^$domain=news.test\n@@||co.uk^$domain=news.test",
+                                                      site: "news.test"), [])
+        XCTAssertNil(settings.allowHost("ok.test", onSite: "someone.github.io"), "one tenant of a shared host is a site")
+        for refusal in [ContentBlockingSiteAllow.Refusal.pageMoved, .noSite, .notOneSite, .full] { XCTAssertFalse(refusal.message.isEmpty) }
+    }
+
+    func testAllowIsRefusedWhenTheOwnRulesAreFull() {
+        // The limit of rules.
+        var rules = ContentBlockingSettings(isEnabled: true, ownRules: (0..<ContentBlockingRuleConverter.maxRules).map { "||ad\($0).test^" }.joined(separator: "\n"))
+        let before = rules.ownRules
+        XCTAssertEqual(rules.allowHost("ok.test", onSite: "news.test"), .full)
+        XCTAssertEqual(rules.ownRules, before)
+        // The limit of text.
+        var text = ContentBlockingSettings(isEnabled: true, ownRules: "! " + String(repeating: "x", count: ContentBlockingSettings.maxOwnRulesBytes - 12))
+        XCTAssertEqual(text.ownRules.utf8.count, ContentBlockingSettings.maxOwnRulesBytes - 10)
+        let full = text.ownRules
+        XCTAssertEqual(text.allowHost("ok.test", onSite: "news.test"), .full, "a line that does not fit is not half written")
+        XCTAssertEqual(text.ownRules, full)
+    }
+}

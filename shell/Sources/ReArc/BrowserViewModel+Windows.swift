@@ -19,6 +19,10 @@ extension BrowserViewModel {
     /// load what it shows (the key window's host also takes the tab's lease).
     func windowBecameKey(_ window: SidebarWindowID) {
         if store.keyWindowID != window { cancelTabSwitcher() }
+        // The bar belongs to the window it opened in: another window taking
+        // the keys closes it, as Arc does, so typing never lands in a bar
+        // that window does not show.
+        if isCommandBarPresented, let opened = commandBarWindowID, opened != window { dismissCommandBar() }
         keyLittleArcID = nil
         store.windowBecameKey(window)
         reconcileEngineOwnership()

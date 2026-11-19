@@ -35,7 +35,7 @@ final class ReArcRelaunchTests: XCTestCase {
                        "started by some other process")
         let live = ProcessInfo.processInfo.processIdentifier
         XCTAssertFalse(ReArcRelaunch.accepts(request("/Applications/ReArc.app", live), ownBundle: own, parent: 1),
-                       "orphaned, but the named ReArc is still running: not its relaunch")
+                       "orphaned, but the named Darni is still running: not its relaunch")
         XCTAssertFalse(ReArcRelaunch.accepts(request("/usr/bin", 4242), ownBundle: URL(fileURLWithPath: "/usr/bin"), parent: 4242),
                        "only from an app bundle")
     }

@@ -308,7 +308,7 @@ final class OnePasswordConnectShellTests: XCTestCase {
         XCTAssertEqual(storedConnection, true)
         XCTAssertTrue(model.showsOnePasswordSettingsRow, "The row and its steps stay")
         XCTAssertEqual(OnePasswordConnectPreference.load(from: defaults), OnePasswordConnectPreference(),
-                       "ReArc does not press Done for the person")
+                       "Darni does not press Done for the person")
         XCTAssertTrue(app.opened.isEmpty)
     }
 

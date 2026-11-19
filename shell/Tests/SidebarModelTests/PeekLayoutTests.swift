@@ -231,7 +231,7 @@ final class PeekLayoutTests: XCTestCase {
         let region = CGRect(origin: .zero, size: arcWindow)
         XCTAssertEqual(PeekOutsideClick.outcome(at: CGPoint(x: 370, y: 700), windowSize: arcWindow, layout: nil,
                                                 sheetAttached: false, windowControls: controls), .pass,
-                       "another window (a menu, a panel, Settings, a Little ReArc), or no Peek")
+                       "another window (a menu, a panel, Settings, a Little Darni), or no Peek")
         XCTAssertEqual(outcome(CGPoint(x: 370, y: 700), sheet: true), .pass, "a sheet is up")
         XCTAssertEqual(outcome(CGPoint(x: 370, y: 700), layout: PeekLayout(region: region, isFullscreen: true)), .pass,
                        "the Peek's page is fullscreen")

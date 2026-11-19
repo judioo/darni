@@ -12,7 +12,7 @@
 # networking on. A ReArc that is already running is left alone; only the launched process is
 # signalled, found by its executable path and its data dir.
 #
-# Usage: scripts/release/check-safe-browsing-lists.sh path/to/ReArc.app
+# Usage: scripts/release/check-safe-browsing-lists.sh path/to/Darni.app
 #   REARC_SB_TIMEOUT  seconds to wait for lists (default 360; Chromium's first update runs
 #                     60 to 300 s after launch)
 #   REARC_SB_POLL     seconds between checks (default 5)
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 die() { echo "check-safe-browsing-lists: $*" >&2; exit 1; }
-[[ $# == 1 ]] || die "usage: $0 path/to/ReArc.app"
+[[ $# == 1 ]] || die "usage: $0 path/to/Darni.app"
 [[ -d $1 ]] || die "no bundle at $1"
 APP="$(cd "$1" && pwd)"
 EXE="$APP/Contents/MacOS/ReArc"

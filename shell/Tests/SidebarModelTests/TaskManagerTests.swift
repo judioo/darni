@@ -41,7 +41,7 @@ final class TaskManagerTests: XCTestCase {
 
     func testOneGroupPerProcessWithChromesPrefixes() {
         let groups = groups()
-        XCTAssertEqual(groups.map(\.pid), [100, 200, 250, 300, 310, 320, 330], "ReArc, its helpers, then the pages, by pid")
+        XCTAssertEqual(groups.map(\.pid), [100, 200, 250, 300, 310, 320, 330], "Darni, its helpers, then the pages, by pid")
         XCTAssertEqual(groups.map { $0.tasks.map(\.title) }, [
             ["Browser"],
             ["GPU Process"],

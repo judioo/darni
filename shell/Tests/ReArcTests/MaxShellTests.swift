@@ -20,7 +20,7 @@ struct MaxShellTests {
     @Test func theTabSaysPlainlyThatNothingHereIsAI() {
         #expect(MaxSettingsPane.intro == "Small scripted helpers. No AI: they follow fixed rules on this Mac and send nothing.")
         #expect(MaxSettingsPane.assistantsIntro.contains("only a shortcut to that company’s own site"))
-        #expect(MaxSettingsPane.assistantsIntro.contains("ReArc itself runs no AI"))
+        #expect(MaxSettingsPane.assistantsIntro.contains("Darni itself runs no AI"))
         #expect(MaxSettingsPane.footer == "These run on this Mac. Nothing is sent.")
         #expect(MaxSettingsPane.assistantsFooter == "An assistant opens its own site with what you typed.")
         #expect(MaxSettingsPane.helperRows == [.tidyTabs, .instantLinks, .tidyTabTitles, .tidyDownloads])

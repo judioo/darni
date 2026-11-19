@@ -52,6 +52,24 @@ struct ChromiumContentBlockingCalls {
     }
 }
 
+/// The list behind the count (ABI 1.69, feature `content_blocking_hosts`;
+/// C-ABI.md "Blocked hosts", engine patch `tab/098-blocked-hosts`): one call,
+/// newer than the six above and looked up by itself, so an engine that only
+/// counts still blocks and the site controls row shows the count alone.
+struct ChromiumBlockedHostsCall {
+    /// `ReArcStatus ReArcTabCopyBlockedHosts(uint64_t tab_id, char** json)`:
+    /// the JSON is the engine's allocation and is freed with `ReArcBufferFree`.
+    typealias CopyBlockedHosts = @convention(c) (UInt64, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?) -> ReArcStatus
+
+    static let symbol = "ReArcTabCopyBlockedHosts"
+
+    let copy: CopyBlockedHosts
+
+    static func resolve() -> ChromiumBlockedHostsCall? {
+        ChromiumSymbols.address(symbol).map { ChromiumBlockedHostsCall(copy: unsafeBitCast($0, to: CopyBlockedHosts.self)) }
+    }
+}
+
 private let blockedCountCallback: ChromiumContentBlockingCalls.BlockedCountCallback = { context, _, _ in
     guard let context else { return }
     let engine = Unmanaged<ChromiumContentBlockingEngine>.fromOpaque(context).takeUnretainedValue()
@@ -64,13 +82,19 @@ private let blockedCountCallback: ChromiumContentBlockingCalls.BlockedCountCallb
 final class ChromiumContentBlockingEngine: ContentBlockingEngine {
     private unowned let runtime: ChromiumRuntime
     private let calls: ChromiumContentBlockingCalls
+    /// nil on an engine that only counts.
+    private let blockedHostsCall: ChromiumBlockedHostsCall?
     /// Some tab's blocked count changed (at most every 250 ms).
     var onBlockedCountChanged: (() -> Void)?
 
-    init(runtime: ChromiumRuntime, calls: ChromiumContentBlockingCalls) {
+    init(runtime: ChromiumRuntime, calls: ChromiumContentBlockingCalls, blockedHosts: ChromiumBlockedHostsCall? = nil) {
         self.runtime = runtime
         self.calls = calls
+        blockedHostsCall = blockedHosts
     }
+
+    /// The engine can say which sites a tab's count is of.
+    var listsBlockedHosts: Bool { blockedHostsCall != nil }
 
     private var isUsable: Bool { runtime.isReady && !runtime.isStopping }
 
@@ -114,6 +138,24 @@ final class ChromiumContentBlockingEngine: ContentBlockingEngine {
         return Int(calls.blockedCount(tab))
     }
 
+    /// The sites of the requests blocked in the tab's current page, as the
+    /// engine's JSON (`ContentBlockingBlockedList.decode`); nil when it has
+    /// none to give. The reply names sites the person's page asked for: it is
+    /// handed to the caller and never logged, here or by the caller.
+    func blockedHosts(tab: UInt64) -> String? {
+        guard isUsable, tab != 0, let call = blockedHostsCall else { return nil }
+        var json: UnsafeMutablePointer<CChar>?
+        let status = call.copy(tab, &json)
+        defer { if let json { ReArcBufferFree(json) } }
+        guard status == .rearcOK, let json else {
+            if status != .rearcOK { ChromiumLog.trace("content blocking: \(ChromiumBlockedHostsCall.symbol)(\(tab)) rejected: \(status.rearcName)") }
+            return nil
+        }
+        // A reply longer than the shell reads is not copied.
+        guard strnlen(json, ContentBlockingBlockedList.maxReplyBytes + 1) <= ContentBlockingBlockedList.maxReplyBytes else { return nil }
+        return String(cString: json)
+    }
+
     private static func json(_ strings: [String]) -> String {
         (try? String(decoding: JSONEncoder().encode(strings), as: UTF8.self)) ?? "[]"
     }
@@ -133,12 +175,23 @@ extension ChromiumContentBlockingEngine {
                 + (missing.isEmpty ? "" : ", missing \(missing.joined(separator: ", "))") + "); blocking is hidden")
             return
         }
-        let engine = ChromiumContentBlockingEngine(runtime: runtime, calls: calls)
+        // The list behind the count is a later call: without it the row shows the count alone.
+        let blockedHosts = runtime.capabilities.contentBlockingHosts ? ChromiumBlockedHostsCall.resolve() : nil
+        if blockedHosts == nil {
+            ChromiumLog.info("content blocking: this engine counts blocked requests and cannot list them (feature "
+                + "\(runtime.capabilities.contentBlockingHosts ? "advertised, \(ChromiumBlockedHostsCall.symbol) missing" : "not advertised"))")
+        }
+        let engine = ChromiumContentBlockingEngine(runtime: runtime, calls: calls, blockedHosts: blockedHosts)
         engine.onBlockedCountChanged = { [weak model] in model?.contentBlocking.blockedCountChanged() }
         engine.listenForBlockedCounts()
         model.onContentBlockingEvent = { ChromiumLog.info("content blocking: \($0)") }
         model.contentBlocking.blockedCount = { [weak engine] page in
             (page as? ChromiumEngine).flatMap { engine?.blockedCount(tab: $0.tabID) }
+        }
+        if engine.listsBlockedHosts {
+            model.contentBlocking.blockedHosts = { [weak engine] page in
+                (page as? ChromiumEngine).flatMap { engine?.blockedHosts(tab: $0.tabID) }
+            }
         }
         runtime.onEngineProfileOpened = { [weak model] key, engineProfile in
             guard !key.isOffTheRecord else { return }

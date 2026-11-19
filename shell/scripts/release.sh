@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds a release ReArc.app end to end from an already-built release engine
+# Builds a release Darni.app end to end from an already-built release engine
 # (scripts/build-engine-release.sh): release shell build, bundle, version stamp, nested
 # hardened-runtime signing (scripts/sign-release.sh), dSYMs, then verification: a
 # LaunchServices launch to ready (scripts/check-launch.sh) and the self-test against the real
@@ -11,7 +11,7 @@
 #
 # Usage: scripts/release.sh [--engine-out DIR] [--dist DIR] [--worktree] [--no-verify] [--dmg]
 #   --engine-out DIR  release engine output (default engine/chromium/src/out/ReArc-release-arm64)
-#   --dist DIR        output (default shell/dist/release): ReArc.app, symbols/, logs, the DMG
+#   --dist DIR        output (default shell/dist/release): Darni.app, symbols/, logs, the DMG
 #   --worktree        build the shell from the working tree instead of the committed HEAD;
 #                     the version is then marked "-dirty" when shell/ has local changes
 #   --no-verify       skip the launch check and self-test
@@ -25,8 +25,9 @@
 #   --blocklists DIR  also copy the blocklist mirror files (blocklists-<version>.tar.gz and
 #                     latest.json, always written to <dist>/blocklists) to DIR, outside the dist
 #   --allow-outdated-engine  override the Mac Stable/Extended security release gate
-#   --previous-app PATH  the ReArc.app of the release now on the feed; a DMG needs it for the
-#                     upgrade check (scripts/release/check-upgrade.sh). Also REARC_PREVIOUS_RELEASE_APP.
+#   --previous-app PATH  the app of the release now on the feed (ReArc.app up to build 1053,
+#                     Darni.app after); a DMG needs it for the upgrade check
+#                     (scripts/release/check-upgrade.sh). Also REARC_PREVIOUS_RELEASE_APP.
 #   --allow-no-upgrade-check  make a DMG without the upgrade check (recorded as an override)
 #   --allow-no-safe-browsing  make a DMG from an engine without a real Google API key, and
 #                     skip the live list-download check (Safe Browsing may not work; warns
@@ -173,8 +174,17 @@ fi
 #    the two alerts helpers it renames.
 START=$SECONDS
 REARC_ICLOUD_CONTAINER="" "$SHELL_DIR/scripts/bundle-chromium.sh" --release --engine-out "$OUT" --dist "$DIST"
-APP="$DIST/ReArc.app"
+APP="$DIST/Darni.app"
 PLIST="$APP/Contents/Info.plist"
+
+# 2b. The rename gate, for every build: the names people see are Darni, every identifier an
+#     existing install depends on is unchanged, and the engine still reads its Safe Storage key
+#     from the "ReArc Safe Storage" Keychain item (scripts/release/check-rename.sh). A build
+#     that fails here would sign every existing user out, or stop their updates.
+rename_gate=("$SHELL_DIR/scripts/release/check-rename.sh" "$APP" --engine-out "$OUT")
+[[ $QA == 0 ]] || rename_gate+=(--qa)
+"${rename_gate[@]}" 2>&1 | tee "$DIST/check-rename.log" \
+  || die "the rename gate failed (log $DIST/check-rename.log)"
 
 # 3. Version stamp (RELEASE.md, "Versioning"). The engine framework keeps its own version.
 # Checked before the build: builds from this one on must not count as required.
@@ -303,7 +313,7 @@ if [[ $DMG == 1 ]]; then
     echo "==> WARNING: --allow-no-upgrade-check: opening a previous release's profile was NOT checked" >&2
   else
     [[ -n $PREVIOUS_APP && -d $PREVIOUS_APP ]] \
-      || die "a DMG needs --previous-app PATH (the ReArc.app of the release now on the feed) for the upgrade check, or --allow-no-upgrade-check for a build that is not distributed"
+      || die "a DMG needs --previous-app PATH (the app of the release now on the feed, ReArc.app or Darni.app) for the upgrade check, or --allow-no-upgrade-check for a build that is not distributed"
     # REARC_UPGRADE_PROFILES: extra saved data directories of older builds, colon-separated.
     IFS=: read -r -a upgrade_profiles <<<"${REARC_UPGRADE_PROFILES:-}"
     "$SHELL_DIR/scripts/release/check-upgrade.sh" "$APP" "$PREVIOUS_APP" ${upgrade_profiles[@]+"${upgrade_profiles[@]}"} 2>&1 \
@@ -337,6 +347,10 @@ fi
 if [[ $QA == 0 ]] && plutil -extract ReArcReleaseVerification raw "$PLIST" >/dev/null 2>&1; then
   die "the bundle still has ReArcReleaseVerification; it must never ship"
 fi
+
+# The rename gate again, on the bundle as it ships (signed, with its iCloud container).
+"${rename_gate[@]}" 2>&1 | tee "$DIST/check-rename-shipped.log" \
+  || die "the rename gate failed on the shipped bundle (log $DIST/check-rename-shipped.log)"
 
 # 6. Optional notarization, DMG and local appcast. Never uploads.
 if [[ $NOTARIZE == 1 ]]; then "$SHELL_DIR/scripts/notarize.sh" "$APP"; fi

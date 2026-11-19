@@ -24,14 +24,26 @@ build is the element's text. Older ReArc builds ignore the element.
       digits and dots (version.py: 2026.1112.726 carries the item's own build;
       items from before that keep 0.1.0). With --version, the item for BUILD
       exists and carries exactly the flags given; with --display-version, it
-      shows V and its enclosure is ReArc-V.dmg.
+      shows V and its enclosure is the DMG version.py names for that build:
+      Darni-V.dmg from the first Darni build on, ReArc-V.dmg before it.
+
+The marker's prefix and namespace keep the name ReArc after the rename to Darni:
+installed builds look the element up by its prefixed name.
 
 Reads only the bytes before a Sparkle signature block. No network, no Keychain.
 """
 import argparse
+import importlib.util
+from pathlib import Path
 import re
 import sys
 import xml.etree.ElementTree as ET
+
+# The DMG's name per build (ReArc before the rename, Darni after) is version.py's to decide.
+# Loaded by path: this script runs under `python3 -I`, which keeps its folder off sys.path.
+_spec = importlib.util.spec_from_file_location("rearc_version", Path(__file__).resolve().with_name("version.py"))
+release_version = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(release_version)
 
 NAMESPACE = "https://rearc.imara.ae/xml-namespaces/update"
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
@@ -151,8 +163,12 @@ def check(data, version=None, critical=False, required_below=None, display_versi
         if display_version is not None:
             if short != display_version:
                 raise FeedError(f"the item for build {version} shows {short!r}, expected {display_version!r}")
-            if (url or "").rsplit("/", 1)[-1] != f"ReArc-{display_version}.dmg":
-                raise FeedError(f"the item for build {version} downloads {url!r}, expected ReArc-{display_version}.dmg")
+            try:
+                dmg = release_version.dmg_name(display_version, version)
+            except release_version.VersionError as error:
+                raise FeedError(f"no DMG name for build {version}: {error}")
+            if (url or "").rsplit("/", 1)[-1] != dmg:
+                raise FeedError(f"the item for build {version} downloads {url!r}, expected {dmg}")
     elif display_version is not None:
         raise FeedError("--display-version needs --version")
     return found

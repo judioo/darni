@@ -97,13 +97,13 @@ public enum BoostInterchange {
     public static func describe(_ error: BoostInterchangeError) -> String {
         switch error {
         case .invalidFormat: return "This file is not a ReArc boost."
-        case .unsupportedVersion: return "This boost was made by a newer ReArc."
+        case .unsupportedVersion: return "This boost was made by a newer Darni."
         case .decodeFailed: return "This file could not be read as a boost."
         case .validationFailed(let errors):
             if errors.contains(.remoteImportInCSS) || errors.contains(.remoteScriptSourceInJS) {
-                return "The boost loads files from the web, which ReArc does not allow."
+                return "The boost loads files from the web, which Darni does not allow."
             }
-            return "The boost did not pass ReArc's checks."
+            return "The boost did not pass Darni's checks."
         }
     }
 

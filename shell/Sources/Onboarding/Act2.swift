@@ -5,8 +5,12 @@ import SidebarModel
 /// Act 2, "Where you've been": The Sun's Path, reused. You stand at the apex
 /// of a great arc; your other browsers' profiles sit along its navy side, the
 /// past. What you choose to bring flows along the trail into you as points of
-/// light. Then "ReStored." (or "ReFocused." for a clean start), and the blue
-/// sweeps ahead: where you're going, which is Act 3.
+/// light. Then the Darni wordmark, alone under the mark, and the blue sweeps
+/// ahead: where you're going, which is Act 3.
+///
+/// The wordmark stands where a word of the old motto did ("ReStored.", or
+/// "ReFocused." for a clean start). The owner dropped the motto with the
+/// rename (2026-11-19): no word and no line under the wordmark replaces it.
 ///
 /// Passwords are not a category: reading them needs a Keychain prompt per
 /// browser and an engine import that do not exist yet (PROFILE-IMPORT §2.3),
@@ -71,22 +75,22 @@ public struct Act2Log: Equatable, Sendable {
         let explanation = "macOS keeps \(names) private."
         if offersRelaunch {
             return (explanation, permission == .fullDiskAccess
-                ? "Switched on? macOS applies it when ReArc starts again."
-                : "Switched on and still locked? ReArc may need to start again.")
+                ? "Switched on? macOS applies it when Darni starts again."
+                : "Switched on and still locked? Darni may need to start again.")
         }
         if settingsElsewhere { return (explanation, "System Settings opened on your other display.") }
         switch permission {
         case .fullDiskAccess:
             return (explanation, quitAndReopenIsSafe
-                ? "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose it."
-                : "Switch on ReArc in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
-        case .appData: return (explanation, "Under ReArc in Files & Folders, switch on \(names), then come back.")
+                ? "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose it."
+                : "Switch on Darni in Full Disk Access. If macOS offers Quit & Reopen, choose Later, then come back.")
+        case .appData: return (explanation, "Under Darni in Files & Folders, switch on \(names), then come back.")
         }
     }
 
     /// The one button: "Allow access…", or "Relaunch ReArc" once a new
     /// launch is what macOS is waiting for.
-    public var permissionButton: String { offersRelaunch ? "Relaunch ReArc" : "Allow access\u{2026}" }
+    public var permissionButton: String { offersRelaunch ? "Relaunch Darni" : "Allow access\u{2026}" }
 
     /// The pane the one "Allow access…" button opens: Full Disk Access when
     /// Safari is among them (it covers the others too), else Files & Folders.
@@ -159,7 +163,7 @@ public struct Act2Log: Equatable, Sendable {
     public var bringing: Bool { choice?.bring == true && sources.indices.contains { isOn(source: $0, at: choice!.time) } }
 
     public var flowStart: Double? { bringing ? choice!.time + 0.6 : nil }
-    /// "ReStored." or "ReFocused."
+    /// The import is done, or the clean start chosen: the wordmark appears.
     public var done: Double? {
         guard let c = choice else { return nil }
         return bringing ? c.time + 0.6 + Act2Timeline.flow + 0.3 : c.time + 0.7
@@ -208,8 +212,8 @@ public struct Act2Frame: Equatable {
     public var totals: ImportStats
     public var shown: ImportStats
     public var arrivals: Double
-    public var restored: Double
-    public var refocused: Double
+    /// The wordmark, alone, once the import is done or the clean start chosen.
+    public var wordmark: Double
     public var sweep: Double
     public var next: Double
 }
@@ -289,8 +293,8 @@ public enum Act2Timeline {
             totals: totals,
             shown: shown,
             arrivals: min(1, arrivals),
-            restored: log.bringing ? ease(done, done + 0.9) * out(done + 2.6, done + 3.2) : 0,
-            refocused: fresh ? ease(done, done + 0.9) * out(done + 2.6, done + 3.2) : 0,
+            // After "Bringing it home." has gone (done + 0.3), so the two never share the line.
+            wordmark: ease(done + 0.3, done + 1.0) * out(done + 2.6, done + 3.2),
             sweep: Ease.inOut(Ease.progress(t, done + 1.4, done + 2.8)),
             next: ease(done + 3.2, done + 4.0))
     }

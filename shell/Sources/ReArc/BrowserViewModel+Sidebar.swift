@@ -586,7 +586,7 @@ extension BrowserViewModel {
                 : " Its containers for \(ListFormatter.localizedString(byJoining: containers)) and their sign-ins go too."
             // The dialog says what happens: a container on the startup folder keeps its data (S-07).
             let message = profileKeepsDataOnDelete?(id) == true
-                ? "Its \(spaces) and favorites are deleted.\(alongside) Its browsing data stays on this Mac: it is in the first profile's folder, which ReArc never removes. This cannot be undone."
+                ? "Its \(spaces) and favorites are deleted.\(alongside) Its browsing data stays on this Mac: it is in the first profile's folder, which Darni never removes. This cannot be undone."
                 : "Its \(spaces), favorites and browsing data are deleted.\(alongside) This cannot be undone."
             return ("Delete “\(profile?.name ?? "Profile")”?", message, "Delete Profile")
         case .container(let id):

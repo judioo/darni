@@ -196,17 +196,17 @@ extension BrowserViewModel {
     /// `defaultBrowserMessage` when there is something to say.
     func setAsDefaultBrowser() {
         guard defaultBrowser.canBecomeDefault else {
-            defaultBrowserMessage = "Run ReArc from its app bundle to make it your default browser."
+            defaultBrowserMessage = "Run Darni from its app bundle to make it your default browser."
             return
         }
         guard !defaultBrowser.isDefault else {
-            defaultBrowserMessage = "ReArc is already your default browser."
+            defaultBrowserMessage = "Darni is already your default browser."
             return
         }
         defaultBrowser.makeDefault { [weak self] error in
             guard let self else { return }
             if let error {
-                self.defaultBrowserMessage = "ReArc could not become the default browser: \(error.localizedDescription)"
+                self.defaultBrowserMessage = "Darni could not become the default browser: \(error.localizedDescription)"
             } else {
                 self.defaultBrowserRevision += 1
             }

@@ -5,13 +5,16 @@
 #                            [--display-version V]
 #   CHANNEL               beta, or empty for the default channel
 #   --critical            new items are Sparkle critical updates for every older build
-#                         (<sparkle:criticalUpdate/>; no skipping, ReArc's notice says why)
+#                         (<sparkle:criticalUpdate/>; no skipping, the app's notice says why)
 #   --required-below N    the item for BUILD is required for builds below N
 #                         (<rearc:requiredBelow>N</rearc:requiredBelow>, appcast-marker.py);
 #                         N is at most BUILD. Display only for now (UPDATE-NOTICE.md §5).
 #   --version BUILD       the new item's sparkle:version (needed by --required-below)
 #   --display-version V   the new item must show V (sparkle:shortVersionString, the app's
-#                         CFBundleShortVersionString) and download ReArc-V.dmg; needs --version
+#                         CFBundleShortVersionString) and download Darni-V.dmg (ReArc-V.dmg
+#                         before build 1054, version.py dmg-name); needs --version
+# The Keychain account of the update key (--account ReArc), the rearc: marker and the download
+# URL keep the name ReArc after the rename to Darni: installed builds depend on all three.
 set -euo pipefail
 USAGE="usage: generate-appcast.sh ARCHIVES_DIR [CHANNEL] [--critical] [--required-below N --version BUILD] [--display-version V]"
 DIR="${1:?$USAGE}"

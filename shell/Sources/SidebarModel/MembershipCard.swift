@@ -217,9 +217,9 @@ public struct MembershipCardStamp: Hashable, Sendable {
     public var ring: String {
         switch kind {
         case .arcYear: return "ARC · ANNIVERSARY"
-        case .rearcDayOne: return "REARC · DAY ONE"
-        case .rearcDays: return "REARC · DAYS"
-        case .rearcYear: return "REARC · ANNIVERSARY"
+        case .rearcDayOne: return "DARNI · DAY ONE"
+        case .rearcDays: return "DARNI · DAYS"
+        case .rearcYear: return "DARNI · ANNIVERSARY"
         }
     }
 
@@ -227,10 +227,10 @@ public struct MembershipCardStamp: Hashable, Sendable {
         switch kind {
         case .arcYear(1): return "One year with Arc"
         case .arcYear(let n): return "\(n) years with Arc"
-        case .rearcDayOne: return "Day one with ReArc"
-        case .rearcDays(let n): return "\(n) days with ReArc"
-        case .rearcYear(1): return "One year with ReArc"
-        case .rearcYear(let n): return "\(n) years with ReArc"
+        case .rearcDayOne: return "Day one with Darni"
+        case .rearcDays(let n): return "\(n) days with Darni"
+        case .rearcYear(1): return "One year with Darni"
+        case .rearcYear(let n): return "\(n) years with Darni"
         }
     }
 }
@@ -366,7 +366,7 @@ public enum MembershipCardTransition {
         public var dateText = 0
         /// The date cell's turn about its X axis, 0 (flat) to 90 (edge-on).
         public var flipAngle: Double = 0
-        /// The strip's label, "ARC" (0) to "REARC" (1); "ARC SINCE" comes in with it.
+        /// The strip's label, "ARC" (0) to "DARNI" (1); "ARC SINCE" comes in with it.
         public var label: Double = 0
         /// The new stamp: nil before it drops.
         public var stampScale: Double?

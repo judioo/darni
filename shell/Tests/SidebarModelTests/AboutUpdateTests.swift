@@ -67,10 +67,10 @@ final class AboutUpdateTests: XCTestCase {
     func testTheInstallInProgressAndItsFailure() {
         XCTAssertEqual(line(notice(.found(latest, downloaded: false), .installRequested, .downloadStarted, .downloadExpected(100), .downloadReceived(42))),
                        AboutUpdateLine(text: "Latest: 2026.1114.741 — Update available", detail: "Downloading… 42%"))
-        XCTAssertEqual(line(notice(.found(latest, downloaded: true), .installRequested))?.detail, "Restarting ReArc…")
+        XCTAssertEqual(line(notice(.found(latest, downloaded: true), .installRequested))?.detail, "Restarting Darni…")
         XCTAssertEqual(line(notice(.found(latest, downloaded: false), .installRequested, .failed(.offline))),
                        AboutUpdateLine(text: "Latest: 2026.1114.741 — Update available",
-                                       detail: "ReArc can't reach the update server. Check your connection.", action: .retryInstall))
+                                       detail: "Darni can't reach the update server. Check your connection.", action: .retryInstall))
     }
 
     func testAboutsOwnCheck() {

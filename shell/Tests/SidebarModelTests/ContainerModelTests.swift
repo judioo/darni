@@ -85,7 +85,7 @@ final class ContainerModelTests: XCTestCase {
         XCTAssertNil(store.profile(withID: container.id))
         XCTAssertNil(store.space(withID: client.id))
         XCTAssertNil(store.space(withID: workSpace.id))
-        XCTAssertNil(store.littleArcWindow(withID: littleArc.id), "S-07: its Little ReArcs go too")
+        XCTAssertNil(store.littleArcWindow(withID: littleArc.id), "S-07: its Little Darnis go too")
 
         // The last profile with containers cannot go.
         let only = try XCTUnwrap(store.createContainer(forSpace: store.spaces[0].id))

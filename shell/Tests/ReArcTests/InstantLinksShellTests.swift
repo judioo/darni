@@ -36,9 +36,9 @@ final class InstantLinksShellTests: XCTestCase {
         XCTAssertNil(model.instantLinksQuery)
         model.submitCommandBar(route: .littleArc)
         XCTAssertEqual(model.store.littleArcLiveWindows.first?.url.absoluteString, "https://duckduckgo.com/?q=swift%20testing",
-                       "the search, in Little ReArc, as before")
+                       "the search, in Little Darni, as before")
         XCTAssertEqual(CommandBarResultRow.modifierHelp(for: .search, instantLinks: false),
-                       "↩ Open · ⌘↩ New Tab · ⌥↩ Split View · ⇧↩ Little ReArc")
+                       "↩ Open · ⌘↩ New Tab · ⌥↩ Split View · ⇧↩ Little Darni")
     }
 
     func testOnAPlainSearchOpensItsTopResultInTheBarsTab() throws {
@@ -49,11 +49,11 @@ final class InstantLinksShellTests: XCTestCase {
         model.submitCommandBar(route: .littleArc)
         XCTAssertFalse(model.isCommandBarPresented)
         XCTAssertEqual(model.store.selectedTab?.url.absoluteString, "https://duckduckgo.com/?q=%5Cswift%20testing")
-        XCTAssertTrue(model.store.littleArcLiveWindows.isEmpty, "not Little ReArc")
+        XCTAssertTrue(model.store.littleArcLiveWindows.isEmpty, "not Little Darni")
         XCTAssertEqual(CommandBarResultRow.modifierHelp(for: .search, instantLinks: true),
                        "↩ Open · ⌘↩ New Tab · ⌥↩ Split View · ⇧↩ Top Result")
         XCTAssertEqual(CommandBarResultRow.modifierHelp(for: .openTab, instantLinks: true),
-                       "↩ Open · ⌘↩ New Tab · ⌥↩ Split View · ⇧↩ Little ReArc")
+                       "↩ Open · ⌘↩ New Tab · ⌥↩ Split View · ⇧↩ Little Darni")
     }
 
     func testAnAddressATabOrAChipKeepsLittleReArc() throws {

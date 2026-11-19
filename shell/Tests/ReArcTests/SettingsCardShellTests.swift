@@ -73,7 +73,7 @@ final class SettingsCardShellTests: XCTestCase {
     func testAnImportedCardPlaysItsTransitionOnceThenOnReplay() throws {
         let model = makeModel()
         model.membershipCard.accountTabAppeared(reduceMotion: true)
-        XCTAssertNil(model.membershipCard.transitionStart, "a plain ReArc card has no story")
+        XCTAssertNil(model.membershipCard.transitionStart, "a plain Darni card has no story")
         model.importArcMembershipCard(ArcMembershipCardImport(title: "STATUESQUE HUNTER", palette: 6, shape: 2,
                                                               memberSince: Date(timeIntervalSinceReferenceDate: 738_929_101.8), name: "Akilu"))
         XCTAssertFalse(model.membershipCard.ensureLoaded().transitionShown)
@@ -157,8 +157,8 @@ final class SettingsCardShellTests: XCTestCase {
         let image = try XCTUnwrap(NSBitmapImageRep(data: data))
         XCTAssertEqual(image.pixelsWide, 1648)
         XCTAssertEqual(image.pixelsHigh, 2124)
-        XCTAssertEqual(MembershipCardExport.fileName(for: "Ada"), "Ada_ReArc.png")
-        XCTAssertEqual(MembershipCardExport.fileName(for: "a/b"), "a-b_ReArc.png")
+        XCTAssertEqual(MembershipCardExport.fileName(for: "Ada"), "Ada_Darni.png")
+        XCTAssertEqual(MembershipCardExport.fileName(for: "a/b"), "a-b_Darni.png")
     }
 
     func testTheIconItemDrawsReArcsMark() {
