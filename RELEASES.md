@@ -24,6 +24,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1119.1079 — 2026-11-19
+
 **ReArc is now Darni**
 - ReArc has a new name, Darni. It is the same browser. Your spaces, tabs, bookmarks, history,
   saved passwords, sign-ins, passkeys, extensions and settings are where you left them, and
@@ -46,6 +48,7 @@ lines and this section starts empty again.
   item that protects your saved passwords is still called "ReArc Safe Storage", and your data
   stays in the same folder on your Mac. That is on purpose. It is what keeps you signed in.
 
+
 **New**
 - See what was blocked on a page. In the site controls (the button beside the address), the
   "Block ads and trackers" row now has an arrow beside "N blocked on this page". It opens a list
@@ -59,41 +62,12 @@ lines and this section starts empty again.
   never saved, synced or sent anywhere, and it holds site names only, never full addresses. A
   private window shows the list without Allow. Very busy pages show the first 100 sites and how
   many more requests were blocked.
-
-**Fixes**
-- With two windows open on the same space, ⌘T and ⌘L open the command bar only in the window
-  you are using. Until now it opened in both, and what you typed showed in both. Clicking into
-  another window closes it.
-- "Turn Off Blocking for This Site" means the whole site again. Since 2026.1119.1051 it covered
-  only the exact address you were on, so blocking came back when a site moved you from `www.`
-  to `m.` or `app.`. Darni now works out the site the way Chromium does.
-- If you turned blocking off on a site such as `someone.web.app` between 2026.1118.1027 and
-  2026.1119.1049, Darni stored `web.app`, which is every site under it. Settings › Profiles ›
-  Advanced now marks such an entry "Off for every site under web.app", and the site's controls
-  offer "Turn Off Blocking for This Site Only", which keeps blocking off for that one site and
-  turns it back on for the rest. Darni does not change these entries by itself. A name like
-  `web.app` or `co.uk` can no longer be added there.
-
-**Security**
-- A boost can no longer apply to a whole group of unrelated sites. A boost made on
-  `someone.web.app` or `school.edu.au` used to be scoped to `web.app` or `edu.au`, and a boost
-  from a file could name such a scope and bring a script with it. Darni now refuses a boost
-  whose scope is one of these shared endings, and a boost you already have with such a scope
-  stops running until you set its scope to one site. New boosts are scoped to the site you are on.
-- A long address in prompts and address lines always keeps the name of the site you are on,
-  also on shared hosts such as `s3.amazonaws.com`.
-- "Turn Off Blocking for This Site" acts on the page the panel was opened for. If the page
-  changed in the meantime, nothing is changed and Darni says so.
-
-## ReArc 2026.1119.1053 — 2026-11-19
-
-**New**
 - A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
   Choose Image… or Paste Image, or drop an image on the picker. A big picture is scaled down to
   icon size (64 pixels on its longer side) and kept whole, not cropped. Remove Image goes back to
-  the space's icon. With Sync Sidebar on, the picture goes to your other Macs; a Mac still on an
-  older ReArc shows the space's icon or emoji instead until it updates. Opening your profile in an
-  older ReArc and coming back drops the picture unless Sync Sidebar brings it back; set it again.
+  the space's icon. With Sync Sidebar on, the picture goes to your other Macs. A Mac still on
+  ReArc shows the space's icon or emoji instead until it updates. Opening your profile in ReArc
+  and coming back drops the picture unless Sync Sidebar brings it back, so set it again.
 
 **Fixes**
 - Emoji icons work again. The icon pickers for spaces, profiles, folders and tabs have an Emoji tab
@@ -101,36 +75,48 @@ lines and this section starts empty again.
   into the search field offers that one first, flags and skin tones included. Until now the
   Emoji & Symbols button did nothing in Create a Space, and an emoji picked from the system's
   palette closed the picker before it arrived.
-- In a space with its own container, Settings' first tab and the membership card name your profile, not
-  the container; Change Name renames the profile; Settings › Profiles opens on the profile, where
-  ad and tracker blocking is set (a container follows its profile).
+- With two windows open on the same space, ⌘T and ⌘L open the command bar only in the window
+  you are using. Until now it opened in both, and what you typed showed in both. Clicking into
+  another window closes it.
+- In a space with its own container, Settings' first tab and the membership card name your profile,
+  not the container. Change Name renames the profile, and Settings › Profiles opens on the profile,
+  where ad and tracker blocking is set (a container follows its profile).
 - A page you cannot see gets no passkey request at all. A sign-in request from a background
-  tab, a hidden or minimised window, a hidden Little ReArc window or a window that another
-  app's window covers is now refused as it starts, before ReArc looks for a security key, a
+  tab, a hidden or minimised window, a hidden Little Darni window or a window that another
+  app's window covers is now refused as it starts, before Darni looks for a security key, a
   phone or Bluetooth. Until now it was refused a moment later, when its sheet was about to
   open, and on a Mac that had never answered macOS's Bluetooth question such a page could
   bring that question up. A request you started while its page was in view stays open when you
-  switch away, as before. ReArc's log now says when a request is refused.
+  switch away, as before. Darni's log now says when a request is refused.
 
 **Security**
-- A long site address shortened in the address bar, Little ReArc, Peek and the permission and
+- "Turn Off Blocking for This Site" turns blocking off for the site you are on, worked out the way
+  Chromium does, and never for a whole shared ending. In ReArc 2026.1118.1027, turning it off on a
+  site such as `someone.web.app` stored `web.app`, which is every site under it, and the same for
+  other shared addresses. Settings › Profiles › Advanced now marks such an entry "Off for every
+  site under web.app", and the site's controls offer "Turn Off Blocking for This Site Only", which
+  keeps blocking off for that one site and turns it back on for the rest. Darni does not change
+  these entries by itself. A name like `web.app` or `co.uk` can no longer be added there.
+- "Turn Off Blocking for This Site" acts on the page the panel was opened for. If the page
+  changed in the meantime, nothing is changed and Darni says so.
+- A boost can no longer apply to a whole group of unrelated sites. A boost made on
+  `someone.web.app` or `school.edu.au` used to be scoped to `web.app` or `edu.au`, and a boost
+  from a file could name such a scope and bring a script with it. Darni now refuses a boost
+  whose scope is one of these shared endings, and a boost you already have with such a scope
+  stops running until you set its scope to one site. New boosts are scoped to the site you are on.
+- A long site address shortened in the address bar, Little Darni, Peek and the permission and
   sign-in prompts always keeps the site's own name. Until now a long name on a shared address
   such as web.app, github.io or vercel.app could show as "…web.app".
-- Turn Off Blocking for This Site turns blocking off for that site only, the address you are on
-  without "www.", and its subdomains. Until now it could cover far more: on a site such as
-  someone.web.app it turned blocking off for every site under web.app, and the same for other
-  shared addresses. If you turned blocking off on such a site, turn it back on there and off
-  again; Settings › Profiles lists the sites blocking is off for.
 - A passkey or security key request that you left open in a tab or window you no longer see is
   cancelled when a page in front of you starts one. Until now it stayed open, and a touch of
   your security key meant for the page in front could have answered the older request.
-- A page you cannot see can ask for a passkey over and over, and each try is refused. ReArc's log
+- A page you cannot see can ask for a passkey over and over, and each try is refused. Darni's log
   now has one line for a tab's first refusal and counts the rest (a line at the 10th, the 100th,
   the 1000th and so on, and the total when the tab closes), so such a page cannot fill the log.
 
 **Changes**
 - The passkey sheet and the dialogs a page opens (alerts and confirmations, HTTP sign-in, choosing a
-  certificate) use your space's colours, like ReArc's notices and permission cards.
+  certificate) use your space's colours, like Darni's notices and permission cards.
 
 ## ReArc 2026.1118.1027 — 2026-11-18
 
