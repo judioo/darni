@@ -844,17 +844,49 @@ final class ContentBlockingSiteRowTests: XCTestCase {
         let page = URL(string: "https://someone.web.app/x")
         var settings = ContentBlockingSettings(isEnabled: true, exceptions: ["web.app", "news.test"])
         XCTAssertEqual(settings.exceptions, ["news.test", "web.app"], "a stored list is kept as it is")
-        XCTAssertEqual(settings.suffixException(covering: page, names: siteNames), "web.app")
-        XCTAssertNil(settings.suffixException(covering: page, names: nil), "only the engine's list can say")
-        XCTAssertNil(settings.suffixException(covering: URL(string: "https://news.test/"), names: siteNames))
+        XCTAssertEqual(settings.widerException(covering: page, names: siteNames), "web.app")
+        XCTAssertNil(settings.widerException(covering: page, names: nil), "only the engine's list can say")
+        XCTAssertNil(settings.widerException(covering: URL(string: "https://news.test/"), names: siteNames))
 
-        XCTAssertTrue(settings.narrowSuffixException(toPage: page, names: siteNames))
+        XCTAssertTrue(settings.narrowException(toPage: page, names: siteNames))
         XCTAssertEqual(settings.exceptions, ["news.test", "someone.web.app"])
         XCTAssertNotNil(settings.exception(covering: page), "blocking stays off for the site the person is on")
         XCTAssertNil(settings.exception(covering: URL(string: "https://another.web.app/")), "and is back on for the others")
-        XCTAssertFalse(settings.narrowSuffixException(toPage: page, names: siteNames), "nothing left to narrow")
-        XCTAssertFalse(settings.narrowSuffixException(toPage: URL(string: "https://news.test/"), names: siteNames))
+        XCTAssertFalse(settings.narrowException(toPage: page, names: siteNames), "nothing left to narrow")
+        XCTAssertFalse(settings.narrowException(toPage: URL(string: "https://news.test/"), names: siteNames))
         XCTAssertEqual(settings.exceptions, ["news.test", "someone.web.app"])
+    }
+
+    /// The old guess was also too wide where it was no suffix: for a tenant
+    /// of `cloudapp.azure.com` it stored `azure.com`, a real domain that
+    /// holds every tenant. On a page the engine's list says what the site
+    /// is, so an exception above it is found and narrowed the same way.
+    func testAStoredExceptionAboveThePagesSiteIsWiderWithoutBeingASuffix() {
+        let azure = SiteNames { host in
+            if host == "cloudapp.azure.com" { return #"{"host":"cloudapp.azure.com","registrable":false,"suffix":true}"# }
+            if host.hasSuffix(".cloudapp.azure.com") {
+                return #"{"host":"\#(host.split(separator: ".").suffix(4).joined(separator: "."))","registrable":true,"suffix":false}"#
+            }
+            if host == "azure.com" || host.hasSuffix(".azure.com") { return #"{"host":"azure.com","registrable":true,"suffix":false}"# }
+            return nil
+        }
+        let tenant = URL(string: "https://www.tenant.cloudapp.azure.com/")
+        var settings = ContentBlockingSettings(isEnabled: true, exceptions: ["azure.com"])
+        XCTAssertFalse(ContentBlockingHost.isPublicSuffix("azure.com", names: azure), "a real domain: Settings alone cannot tell")
+        XCTAssertEqual(settings.widerException(covering: tenant, names: azure), "azure.com")
+        // On a page of azure.com itself the same exception is that site's own.
+        XCTAssertNil(settings.widerException(covering: URL(string: "https://portal.azure.com/"), names: azure))
+        XCTAssertNil(settings.widerException(covering: tenant, names: nil))
+        let row = SiteControlCenter.contentBlockingRow(settings: settings, pageURL: tenant, blockedCount: nil, listsAvailable: true,
+                                                       isPrivate: false, names: azure)
+        XCTAssertEqual(row.state, "Off for every site under azure.com")
+        XCTAssertEqual(row.actions, [.turnOffBlockingForSiteOnly, .turnOnBlockingForSite])
+
+        XCTAssertTrue(settings.narrowException(toPage: tenant, names: azure))
+        XCTAssertEqual(settings.exceptions, ["tenant.cloudapp.azure.com"])
+        XCTAssertNil(settings.exception(covering: URL(string: "https://other.cloudapp.azure.com/")))
+        XCTAssertNil(settings.widerException(covering: tenant, names: azure), "the site's own exception is not wider than the site")
+        XCTAssertFalse(settings.narrowException(toPage: tenant, names: azure))
     }
 
     func testTheRowSaysHowFarASuffixExceptionReaches() {

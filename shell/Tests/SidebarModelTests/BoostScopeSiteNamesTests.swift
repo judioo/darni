@@ -122,4 +122,75 @@ final class BoostScopeSiteNamesTests: XCTestCase {
         XCTAssertFalse(BoostScopeMatcher.validateRule(rule("or.jp"), names: names))
         XCTAssertTrue(BoostScopeMatcher.validateRule(rule("club.or.jp"), names: names))
     }
+
+    // MARK: The library's row
+
+    /// A boost whose scope is refused stays as the person left it and does
+    /// not run. Its row says so, and why.
+    func testABoostWhoseScopeIsRefusedSaysSoOnItsRow() {
+        XCTAssertNil(BoostLibraryListing.scopeNote([rule("example.com")], names: names))
+        XCTAssertNil(BoostLibraryListing.scopeNote([], names: names))
+        XCTAssertEqual(BoostLibraryListing.scopeNote([rule("example.com"), rule("web.app")], names: names),
+                       "Not running: web.app is shared by many unrelated sites. Make this boost again on the one site it is for.")
+        XCTAssertEqual(BoostLibraryListing.scopeNote([rule("www.example.com")], names: names),
+                       "Not running: www.example.com is not a site a boost can be for. Make this boost again on the site it is for.")
+        // Without the engine's list the guess takes web.app for a site: no line, and the boost runs as before.
+        XCTAssertNil(BoostLibraryListing.scopeNote([rule("web.app")], names: nil))
+    }
+
+    /// The scope comes from a file or from sync. Text that is not a plain
+    /// host never goes into ReArc's own warning, and a long one is cut.
+    func testTheRowsNoteNamesOnlyAPlainHost() {
+        let other = "Not running: its scope is not a site a boost can be for. Make this boost again on the site it is for."
+        // Each is refused as a site rule (three labels are no registrable domain to the guess) and is not a plain host.
+        for text in ["www.evil.test\nReArc update required", "www.evil.test\u{202E}gpj.exe", "www.a b.test", "<b>x</b>.evil.test", "www.evil.test ",
+                     "www.ex\u{0430}mple.test", "www.*.test"] {
+            XCTAssertFalse(BoostScopeMatcher.validateRule(rule(text), names: names), text.debugDescription)
+            XCTAssertEqual(BoostLibraryListing.scopeNote([rule(text)], names: names), other, text.debugDescription)
+        }
+        // A suffix with a trailing dot is still a suffix to the engine, and still not a plain host here.
+        XCTAssertEqual(BoostLibraryListing.scopeNote([rule("web.app.")], names: names),
+                       "Not running: its scope is shared by many unrelated sites. Make this boost again on the one site it is for.")
+        let long = "www.\(String(repeating: "a", count: 60)).example.com"
+        let note = BoostLibraryListing.scopeNote([rule(long)], names: names)
+        XCTAssertEqual(note, "Not running: …example.com is not a site a boost can be for. Make this boost again on the site it is for.")
+        XCTAssertFalse(note?.contains(String(repeating: "a", count: 41)) ?? true)
+    }
+
+    // MARK: A rule stored with an international name (security BO-02)
+
+    /// What holds today, before anything about such rules is tightened.
+    ///
+    /// A page's address comes from the engine with its host in ASCII form
+    /// (`xn--…`). A rule stored in Unicode form therefore matches no page,
+    /// and one in ASCII form matches: requiring a plain ASCII host of a rule
+    /// that comes in would stop no boost that runs now.
+    func testARuleStoredInUnicodeFormMatchesNoPageToday() throws {
+        let page = try XCTUnwrap(URL(string: "https://www.xn--bcher-kva.example/a"))
+        let unicode = rule("b\u{FC}cher.example"), ascii = rule("xn--bcher-kva.example")
+        for names in [nil, self.names] as [SiteNames?] {
+            XCTAssertFalse(BoostScopeMatcher.matches(rule: unicode, url: page, names: names))
+            XCTAssertTrue(BoostScopeMatcher.matches(rule: ascii, url: page, names: names))
+        }
+        // The rule check takes both today, and a new boost on the page gets the ASCII form.
+        XCTAssertTrue(BoostScopeMatcher.validateRule(unicode, names: nil))
+        XCTAssertTrue(BoostScopeMatcher.validateRule(ascii, names: nil))
+        XCTAssertEqual(BoostScopeMatcher.defaultRule(forPage: page, names: nil)?.host, "xn--bcher-kva.example")
+        XCTAssertEqual(ContentBlockingHost.normalized("b\u{FC}cher.example"), "xn--bcher-kva.example", "what a rule that comes in would be stored as")
+    }
+
+    /// A site typed with an international name is a third form. Foundation
+    /// gives a URL made from such text a percent-encoded host, neither the
+    /// Unicode nor the ASCII form, and that is what the library stores as
+    /// the new boost's scope. It matches no page: a fault that is there
+    /// today, and the same normalising would mend it.
+    func testASiteTypedWithAnInternationalNameGetsAScopeThatMatchesNothingToday() throws {
+        let typed = try XCTUnwrap(BoostLibraryListing.siteURL(from: "b\u{FC}cher.example"))
+        XCTAssertEqual(typed.host()?.lowercased(), "b%c3%bccher.example")
+        let scope = try XCTUnwrap(BoostScopeMatcher.defaultRule(forPage: typed, names: nil))
+        XCTAssertEqual(scope.host, "b%c3%bccher.example")
+        let page = try XCTUnwrap(URL(string: "https://xn--bcher-kva.example/"))
+        XCTAssertFalse(BoostScopeMatcher.matches(rule: scope, url: page, names: nil))
+        XCTAssertFalse(ContentBlockingHost.isHost(scope.host), "not a plain host: a rule check that asked for one would refuse it")
+    }
 }

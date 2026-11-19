@@ -21,11 +21,41 @@ public struct BoostLibraryRow: Identifiable, Equatable, Sendable {
     public var styleNeedsApproval: Bool = false
     /// Every host rule, one per line, for the row's tooltip and the approval prompts.
     public var allSites: String = ""
+    /// The boost does not run although it may be switched on: one of its
+    /// sites is not a scope a boost may have (`BoostScopeMatcher.validateRule`).
+    /// The line says which and what to do. nil for a boost that can run.
+    public var scopeNote: String?
 }
 
 public enum BoostLibraryListing {
 
-    public static func rows(_ library: ProfileBoostLibrary, currentPage: URL? = nil, filter: String = "") -> [BoostLibraryRow] {
+    /// Why a boost with this scope does not run, for its row; nil when every rule is one a boost may have.
+    ///
+    /// With the engine's site names a scope that is a public suffix
+    /// (`web.app`, kept from the shell's old guess or brought by a file) is
+    /// refused and matches nothing (security BO-01). The boost stays as the
+    /// person left it, switched on or off; without this line it would only
+    /// stop working.
+    ///
+    /// The refused scope comes from a boost file or from sync, and the rule
+    /// check has let through any text without a colon or a slash, line breaks
+    /// and direction marks included. This is a warning in ReArc's own voice,
+    /// so the name goes into it only when it is a plain host, cut to a fixed
+    /// length; otherwise the line says "its scope" (security addendum 9).
+    public static func scopeNote(_ rules: [BoostHostRule], names: SiteNames? = .shared) -> String? {
+        guard let refused = rules.first(where: { !BoostScopeMatcher.validateRule($0, names: names) }) else { return nil }
+        let name = ContentBlockingHost.isHost(refused.host)
+            ? PageOrigin.shortenedHost(refused.host, limit: scopeNoteHostLimit, names: names) : "its scope"
+        if names?.site(of: refused.host)?.isSuffix == true {
+            return "Not running: \(name) is shared by many unrelated sites. Make this boost again on the one site it is for."
+        }
+        return "Not running: \(name) is not a site a boost can be for. Make this boost again on the site it is for."
+    }
+
+    /// The longest a refused scope's name is in the row's note.
+    static let scopeNoteHostLimit = 40
+
+    public static func rows(_ library: ProfileBoostLibrary, currentPage: URL? = nil, filter: String = "", names: SiteNames? = .shared) -> [BoostLibraryRow] {
         let needle = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let order = Dictionary(library.installations.map { ($0.packageID, $0.order) }, uniquingKeysWith: { first, _ in first })
         return library.packages
@@ -41,10 +71,11 @@ public enum BoostLibraryListing {
                     hasStyle: package.styleBoost != nil,
                     hasScript: package.hasScript,
                     scriptAllowed: package.scriptBoost?.userScriptEnabled ?? false,
-                    matchesCurrentPage: currentPage.map { BoostScopeMatcher.matches(scope: package.manifest.hostScope, url: $0) } ?? false,
+                    matchesCurrentPage: currentPage.map { BoostScopeMatcher.matches(scope: package.manifest.hostScope, url: $0, names: names) } ?? false,
                     siteURL: hosts.first.flatMap { URL(string: "https://\($0)/") },
                     styleNeedsApproval: !library.styleApproved(package),
-                    allSites: package.manifest.hostScope.map(describe).joined(separator: "\n")
+                    allSites: package.manifest.hostScope.map(describe).joined(separator: "\n"),
+                    scopeNote: scopeNote(package.manifest.hostScope, names: names)
                 )
                 guard needle.isEmpty
                         || row.name.lowercased().contains(needle)
