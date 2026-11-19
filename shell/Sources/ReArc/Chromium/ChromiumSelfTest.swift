@@ -3862,7 +3862,9 @@ extension ChromiumSelfTest {
                 throw Failure(description: "a line of the list cannot be allowed on \(site.host): the engine names the page's site "
                     + "'\(list()?.pageSite ?? "nil")', one site: \(list()?.pageSiteIsOneSite ?? false)")
             }
-            try check(pageSite == site.host, "the engine names the page's site '\(pageSite)', and the page is on \(site.host)")
+            // `site.host` is the display host, with the fixture server's port; a site name has none.
+            let pageHost = engine.currentURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.host }?.lowercased()
+            try check(pageSite == pageHost, "the engine names the page's site '\(pageSite)', and the page is on \(pageHost ?? "nil") (\(site.host))")
             log("PASS blocked list: \(describe(list())) for a page that asked a tracker's host and an ad server's host; "
                 + "the engine counts 2 and the row offers the list")
 
@@ -3940,11 +3942,26 @@ extension ChromiumSelfTest {
             guard let privateNSWindow = privateWindow.hostWindow else { throw Failure(description: "private window has no NSWindow") }
             shell.closeWindow(privateNSWindow)
             try await wait("the private session to close", timeout: 20) { model.privateWindows.isEmpty && runtime.engineProfileID(for: privateKey) == nil }
-            var reply: UnsafeMutablePointer<CChar>?
-            let status = call.copy(privateTab, &reply)
-            let left = reply.map { String(cString: $0) }.flatMap { ContentBlockingBlockedList.decode($0, lists: model.contentBlockingListRows) }
-            if let reply { ReArcBufferFree(reply) }
-            try check(status == .rearcOK && left?.isEmpty == true, "after the private window closed the engine answers \(status.rearcName) with \(describe(left)) for its tab")
+            // The engine tears the tab down after the shell lets go of the session, so the
+            // answer may take a moment to empty; it must, and the time it took is logged.
+            @MainActor func privateAnswer() -> (ReArcStatus, ContentBlockingBlockedList?) {
+                var reply: UnsafeMutablePointer<CChar>?
+                let status = call.copy(privateTab, &reply)
+                let left = reply.map { String(cString: $0) }.flatMap { ContentBlockingBlockedList.decode($0, lists: model.contentBlockingListRows) }
+                if let reply { ReArcBufferFree(reply) }
+                return (status, left)
+            }
+            let closedAt = Date()
+            do {
+                try await wait("the engine to answer nothing for the closed private tab", timeout: 15) {
+                    let (status, left) = privateAnswer()
+                    return status == .rearcOK && left?.isEmpty == true
+                }
+            } catch {
+                let (status, left) = privateAnswer()
+                throw Failure(description: "15 s after the private window closed the engine answers \(status.rearcName) with \(describe(left)) for its tab")
+            }
+            log("NOTE blocked list private window: the engine's answer for the closed tab emptied \(String(format: "%.2f", Date().timeIntervalSince(closedAt))) s after the session closed")
             log("PASS blocked list private window: its tab had \(describe(.init(entries: names))) and no Allow; closed, the engine has nothing for it")
 
             // 8. Memory only: no made-up site of step 5 is in a file. Last, so that what it finds is the only thing it fails.
