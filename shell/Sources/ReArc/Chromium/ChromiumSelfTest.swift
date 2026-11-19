@@ -3946,11 +3946,9 @@ extension ChromiumSelfTest {
             // The engine tears the tab down after the shell lets go of the session, so the
             // answer may take a moment to empty; it must, and the time it took is logged.
             @MainActor func privateAnswer() -> (ReArcStatus, ContentBlockingBlockedList?) {
-                var reply: UnsafeMutablePointer<CChar>?
-                let status = call.copy(privateTab, &reply)
-                let left = reply.map { String(cString: $0) }.flatMap { ContentBlockingBlockedList.decode($0, lists: model.contentBlockingListRows) }
-                if let reply { ReArcBufferFree(reply) }
-                return (status, left)
+                // The adapter's own read of the reply, with its length bound.
+                let (status, json) = call.reply(tab: privateTab)
+                return (status, json.flatMap { ContentBlockingBlockedList.decode($0, lists: model.contentBlockingListRows) })
             }
             let closedAt = Date()
             do {
