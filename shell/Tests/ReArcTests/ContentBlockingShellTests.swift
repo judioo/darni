@@ -416,6 +416,7 @@ final class ContentBlockingShellTests: XCTestCase {
         // Remove is held to the same: not from another site's page, and not without the engine's word.
         page = "bank.test"
         model.setBlockedHost("doubleclick.net", allowed: false, on: drawn, of: engine)
+        XCTAssertEqual(model.toast?.message, "The page changed before the site was removed. Nothing was changed.", "Remove's own words")
         model.contentBlocking.blockedHosts = { _ in nil }
         model.setBlockedHost("doubleclick.net", allowed: false, on: drawn, of: engine)
         XCTAssertEqual(model.store.contentBlocking().ownRules, "@@||doubleclick.net^$domain=news.test\n")
@@ -482,7 +483,20 @@ final class ContentBlockingShellTests: XCTestCase {
         model.setContentBlocking(false, forSiteOf: engine, site: site)
         XCTAssertEqual(model.store.contentBlocking().exceptions, [], "the tab is on another site by now")
         XCTAssertEqual(recorder.take(), [])
-        XCTAssertEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.pageMoved.message)
+        // The switch's own words: nothing was being allowed, and there is no list to open again.
+        XCTAssertEqual(model.toast?.message, "The page changed before blocking was turned off. Nothing was changed.")
+        XCTAssertNotEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.pageMoved.message)
+        model.setContentBlocking(true, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.toast?.message, "The page changed before blocking was turned on. Nothing was changed.")
+        model.narrowContentBlockingException(forSiteOf: engine, site: site)
+        XCTAssertEqual(model.toast?.message, "The page changed before blocking was narrowed to this site. Nothing was changed.")
+        XCTAssertEqual(model.store.contentBlocking().exceptions, [])
+        XCTAssertEqual(recorder.take(), [])
+        // House style for copy: full stops and commas.
+        for message in [SiteControlCenter.blockingNotTurnedOffMessage, SiteControlCenter.blockingNotTurnedOnMessage,
+                        SiteControlCenter.blockingNotNarrowedMessage, SiteControlCenter.allowedHostNotRemovedMessage] {
+            XCTAssertFalse(message.contains("\u{2014}") || message.contains(";"), message)
+        }
 
         // The engine says the tab is still on news.test; the shell's address already says bank.test.
         page = "news.test"
@@ -490,6 +504,39 @@ final class ContentBlockingShellTests: XCTestCase {
         model.setContentBlocking(false, forSiteOf: engine, site: site)
         XCTAssertEqual(model.store.contentBlocking().exceptions, ["news.test"], "for the site the panel drew")
         XCTAssertEqual(recorder.take(), ["exceptions 4 news.test"])
+    }
+
+    /// One question, asked in one place: is the engine's answer still about
+    /// the page a view drew. The list draws only then, and each write asks
+    /// it again at the click.
+    func testTheEnginesAnswerIsUsedOnlyWhileTheTabIsOnThePageThatWasDrawn() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        var reply: String? = Self.blockedReply(page: "news.test")
+        model.contentBlocking.blockedHosts = { _ in reply }
+
+        XCTAssertEqual(model.blockedList(for: engine, drawnFor: site)?.entries.count, 3, "the tab is on the page the panel drew")
+        XCTAssertNotNil(model.blockedList(for: engine, onPageOf: "news.test"))
+        XCTAssertNotNil(model.blockedList(for: engine, onPageOf: "m.news.test"), "another host of the same site")
+        XCTAssertNil(model.blockedList(for: engine, onPageOf: "othernews.test"), "a name that only ends the same")
+        XCTAssertNil(model.blockedList(for: engine, onPageOf: nil))
+
+        // The tab has moved to another site: the panel's list has nothing to draw, although the engine has an answer.
+        reply = Self.blockedReply(page: "bank.test")
+        XCTAssertEqual(model.blockedList(for: engine)?.entries.count, 3)
+        XCTAssertNil(model.blockedList(for: engine, drawnFor: site))
+        // A page that is no site, an answer that cannot be read, and no answer.
+        for other in [#"{"hosts":[],"more":0}"#, "not the list", nil] {
+            reply = other
+            XCTAssertNil(model.blockedList(for: engine, drawnFor: site), other ?? "nil")
+        }
+        // An engine that only counts has no list for any page.
+        model.contentBlocking.blockedHosts = nil
+        XCTAssertNil(model.blockedList(for: engine, drawnFor: site))
     }
 
     func testASuffixExceptionIsNarrowedToThePagesSiteAndATypedSuffixIsRefusedWithAReason() async throws {

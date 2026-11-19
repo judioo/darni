@@ -263,6 +263,27 @@ extension BrowserViewModel {
         return ContentBlockingBlockedList.decode(json, lists: contentBlockingListRows) ?? ContentBlockingBlockedList()
     }
 
+    /// The engine's answer for the tab, when it is still about the page a
+    /// view drew; nil when the tab is on another page by now, or the engine
+    /// cannot say. `host` is a host of the drawn page: its origin's, or the
+    /// site the engine named when the list was drawn.
+    ///
+    /// The one place that asks "is this answer for the page the person is
+    /// looking at". The list view draws only what this returns, and every
+    /// write from the panel (Allow, Remove, the site switch) asks it again
+    /// at the click: the tab's address in the shell may already be the next
+    /// page's, the engine's committed site is not (security BL-10).
+    func blockedList(for engine: any WebEngine, onPageOf host: String?) -> ContentBlockingBlockedList? {
+        guard let host, let list = blockedList(for: engine), let pageSite = list.pageSite,
+              ContentBlockingHost.covers(pageSite, host: host) else { return nil }
+        return list
+    }
+
+    /// As above, for the origin a panel was drawn with.
+    func blockedList(for engine: any WebEngine, drawnFor site: SiteControlCenter.Site) -> ContentBlockingBlockedList? {
+        blockedList(for: engine, onPageOf: ContentBlockingHost.pageHost(URL(string: site.origin)))
+    }
+
     /// A line of `list` can be allowed: the engine names the page's site
     /// and it is one site, in a window that is not private (nothing a
     /// private window showed is written to the profile). A line whose own
@@ -283,15 +304,16 @@ extension BrowserViewModel {
     ///
     /// `pageSite` is the site the list was drawn with. The rule is written
     /// for that site and no other: the engine is asked again where the tab
-    /// is (its committed page, not an address still on its way), and when
-    /// that is another site by now nothing is written and the person is told
-    /// (security BL-10). The site's name is the engine's, from Chromium's
-    /// suffix list, never one cut from an address here (BL-11).
+    /// is (`blockedList(for:onPageOf:)`), and when that is another site by
+    /// now nothing is written and the person is told (security BL-10). The
+    /// site's name is the engine's, from Chromium's suffix list, never one
+    /// cut from an address here (BL-11).
     func setBlockedHost(_ host: String, allowed: Bool, on pageSite: String, of engine: any WebEngine) {
         guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
               let profileID = engine.pagePrompts.profileID else { return }
-        guard let now = blockedList(for: engine), now.allowSite == pageSite else {
-            return showToast(ContentBlockingSiteAllow.Refusal.pageMoved.message, systemImage: "shield.slash")
+        guard blockedList(for: engine, onPageOf: pageSite)?.allowSite == pageSite else {
+            return showToast(allowed ? ContentBlockingSiteAllow.Refusal.pageMoved.message : SiteControlCenter.allowedHostNotRemovedMessage,
+                             systemImage: "shield.slash")
         }
         var changed = false
         var refusal: ContentBlockingSiteAllow.Refusal?
@@ -310,27 +332,26 @@ extension BrowserViewModel {
     /// A command used to take the tab's address at the click, which can be
     /// another site's by then, or one the tab has not reached (security
     /// BL-10, as for Allow). Where the engine names the tab's committed site
-    /// (`ReArcTabCopyBlockedHosts`' `page`), the drawn origin must belong to
-    /// it; otherwise the tab has moved on, nothing is written and the person
-    /// is told. On an engine that cannot say, the address at the click is
-    /// all there is, as before.
-    private func contentBlockingPage(drawnFor site: SiteControlCenter.Site, in engine: any WebEngine) -> URL? {
+    /// the drawn origin must belong to it (`blockedList(for:drawnFor:)`);
+    /// otherwise the tab has moved on, nothing is written and the person is
+    /// told, in the words of the command that was asked. On an engine that
+    /// cannot say, the address at the click is all there is, as before.
+    private func contentBlockingPage(drawnFor site: SiteControlCenter.Site, in engine: any WebEngine, elseSaying refusal: String) -> URL? {
         guard contentBlocking.blockedHosts != nil else { return engine.currentURL ?? URL(string: site.origin) }
-        let drawn = URL(string: site.origin)
-        guard let host = ContentBlockingHost.pageHost(drawn), let committed = blockedList(for: engine)?.pageSite,
-              ContentBlockingHost.covers(committed, host: host) else {
-            showToast(ContentBlockingSiteAllow.Refusal.pageMoved.message, systemImage: "shield.slash")
+        guard blockedList(for: engine, drawnFor: site) != nil else {
+            showToast(refusal, systemImage: "shield.slash")
             return nil
         }
-        return drawn
+        return URL(string: site.origin)
     }
 
     /// Blocking off or back on for the site of the page the panel drew, in
     /// its profile; the tab then reloads (spec §3). Never from a private
     /// window: the site would be written into the profile's exceptions.
     func setContentBlocking(_ blocking: Bool, forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
-        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
-              let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
+        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil, let profileID = engine.pagePrompts.profileID,
+              let url = contentBlockingPage(drawnFor: site, in: engine, elseSaying: blocking
+                  ? SiteControlCenter.blockingNotTurnedOnMessage : SiteControlCenter.blockingNotTurnedOffMessage) else { return }
         var changed = false
         changeContentBlocking(for: profileID) { settings in
             let before = settings.exceptions
@@ -345,8 +366,8 @@ extension BrowserViewModel {
     /// stored it): it goes, and the page's own site takes its place
     /// (security CB-12). The tab reloads.
     func narrowContentBlockingException(forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
-        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
-              let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
+        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil, let profileID = engine.pagePrompts.profileID,
+              let url = contentBlockingPage(drawnFor: site, in: engine, elseSaying: SiteControlCenter.blockingNotNarrowedMessage) else { return }
         var changed = false
         changeContentBlocking(for: profileID) { changed = $0.narrowException(toPage: url) }
         if changed { engine.reload() }
