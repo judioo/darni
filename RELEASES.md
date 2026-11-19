@@ -24,6 +24,31 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- A boost for a site with an international name, such as `bücher.example`, now works. Until
+  now a boost made by typing such a site in the Boosts library, or imported from a file, never
+  matched the site.
+- A boost that has stopped running says so in the Boosts library, with the reason, for example
+  "Not running: web.app is shared by many unrelated sites." Make the boost again on the one
+  site it is for.
+- If the page changes while you choose "Turn Off Blocking for This Site", Darni says that
+  nothing was changed, in that command's own words. It used to show the message that belongs
+  to Allow.
+- The site controls also mark an older "blocking off" entry that covers more than the site
+  you are on without being a shared ending, such as `azure.com` for a site under it, and offer
+  "Turn Off Blocking for This Site Only".
+
+**Security**
+- A boost that came from a file, carries a script and was set for a whole shared ending such as
+  `web.app` is switched off when Darni starts, and Darni tells you which one. Such a boost
+  could no longer run. Now it is also off, on your other Macs too if you sync.
+- A boost file is refused when one of its sites is not a plain site name.
+- The Boosts library and the sheets that ask you to allow a script or CSS show a boost's sites
+  with invisible and text-direction characters removed.
+- Allow in the "Blocked on this page" list is not offered on an error page, and it now judges
+  the page's own site by the same list as the rest of Darni. A page on a shared ending such as
+  `web.app` itself has no Allow.
+
 ## Darni 2026.1119.1080 — 2026-11-19
 
 **ReArc is now Darni**
