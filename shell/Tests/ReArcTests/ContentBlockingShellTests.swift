@@ -270,8 +270,13 @@ final class ContentBlockingShellTests: XCTestCase {
 
     // MARK: Blocked on this page
 
-    /// The engine's reply for the tests: two sites, one of them on two lists.
-    private static let blockedReply = #"""
+    /// The engine's reply for the tests: the page's own site, two blocked
+    /// sites, one of them on two lists, and a name that is not one site.
+    private static func blockedReply(page: String = "news.test") -> String {
+        blockedReplyHosts.replacingOccurrences(of: "{\"hosts\"", with: #"{"page":{"host":"\#(page)","registrable":true},"hosts""#)
+    }
+
+    private static let blockedReplyHosts = #"""
     {"hosts":[{"host":"google-analytics.com","count":1,"registrable":true,"lists":["easyprivacy"]},
               {"host":"doubleclick.net","count":3,"registrable":true,"lists":["easylist","peter-lowe"]},
               {"host":"localhost","count":1,"registrable":false,"lists":["easylist"]}],"more":0}
@@ -290,7 +295,7 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.hasBlockedList, false)
         XCTAssertNil(model.blockedList(for: engine))
 
-        var reply: String? = Self.blockedReply
+        var reply: String? = Self.blockedReply()
         var reads = 0
         model.contentBlocking.blockedHosts = { _ in
             reads += 1
@@ -304,6 +309,8 @@ final class ContentBlockingShellTests: XCTestCase {
             .init(host: "localhost", count: 1, kinds: [.ad], canBeAllowed: false),
         ])
         XCTAssertEqual(reads, 1)
+        XCTAssertEqual(model.blockedList(for: engine)?.allowSite, "news.test", "the site Allow writes for is the engine's")
+        reads = 0
 
         // The count callback says when the list changed: an open list is read again.
         let changed = expectation(description: "the list is read again")
@@ -327,7 +334,7 @@ final class ContentBlockingShellTests: XCTestCase {
         let tab = model.store.addTab(kind: .today, title: "News", url: url)
         let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
         model.contentBlocking.blockedCount = { _ in 4 }
-        model.contentBlocking.blockedHosts = { _ in Self.blockedReply }
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply() }
         XCTAssertEqual(model.blockedList(for: engine)?.entries.count, 3)
         model.contentBlocking.blockedCountChanged()
         model.persistence.flush()
@@ -348,30 +355,94 @@ final class ContentBlockingShellTests: XCTestCase {
         let url = URL(string: "https://www.news.test/story")!
         let tab = model.store.addTab(kind: .today, title: "News", url: url)
         let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
-        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
         model.contentBlockingProfileOpened(engineProfile: 4, profile: model.profileID(for: tab))
         model.setContentBlockingOwnRules("||mine.test^", for: model.profileID(for: tab))
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply() }
         _ = recorder.take()
 
-        XCTAssertTrue(model.canAllowBlockedHosts(for: engine, site: site))
-        model.setBlockedHost("doubleclick.net", allowed: true, forSiteOf: engine, site: site)
+        let list = try XCTUnwrap(model.blockedList(for: engine))
+        XCTAssertTrue(model.canAllowBlockedHosts(for: engine, on: list))
+        let site = try XCTUnwrap(list.allowSite)
+        model.setBlockedHost("doubleclick.net", allowed: true, on: site, of: engine)
         XCTAssertEqual(model.store.contentBlocking().ownRules, "||mine.test^\n@@||doubleclick.net^$domain=news.test\n")
         XCTAssertEqual(recorder.take(), ["rules 4"], "the engine has the rule before the tab reloads")
-        XCTAssertEqual(model.allowedBlockedHosts(for: engine, site: site), ["doubleclick.net"])
+        XCTAssertEqual(model.allowedBlockedHosts(for: engine, pageSite: site), ["doubleclick.net"])
 
         // A name that is not one site changes nothing, tells the engine nothing, and the person is told.
         for name in ["evil.test^$important", "localhost", "co.uk"] {
             model.toast = nil
-            model.setBlockedHost(name, allowed: true, forSiteOf: engine, site: site)
+            model.setBlockedHost(name, allowed: true, on: site, of: engine)
             XCTAssertEqual(model.store.contentBlocking().ownRules, "||mine.test^\n@@||doubleclick.net^$domain=news.test\n", name)
             XCTAssertEqual(recorder.take(), [], name)
             XCTAssertEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.notOneSite.message, name)
         }
 
-        model.setBlockedHost("doubleclick.net", allowed: false, forSiteOf: engine, site: site)
+        model.setBlockedHost("doubleclick.net", allowed: false, on: site, of: engine)
         XCTAssertEqual(model.store.contentBlocking().ownRules, "||mine.test^\n")
         XCTAssertEqual(recorder.take(), ["rules 4"])
-        XCTAssertEqual(model.allowedBlockedHosts(for: engine, site: site), [])
+        XCTAssertEqual(model.allowedBlockedHosts(for: engine, pageSite: site), [])
+    }
+
+    /// Security BL-10: the rule is for the site the list was drawn with. The
+    /// tab's address at the click may be another site's, or one the tab has
+    /// not reached; the engine is asked where the tab is, and when that is
+    /// not the drawn site nothing is written.
+    func testAllowWritesNothingOnceTheTabHasLeftTheSiteTheListWasShownFor() async throws {
+        let model = launch()
+        let recorder = RecordingEngine()
+        try await attach(model, engine: recorder)
+        let tab = model.store.addTab(kind: .today, title: "News", url: URL(string: "https://www.news.test/story")!)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        model.contentBlockingProfileOpened(engineProfile: 4, profile: model.profileID(for: tab))
+        var page = "news.test"
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply(page: page) }
+        let drawn = try XCTUnwrap(model.blockedList(for: engine)?.allowSite)
+        XCTAssertEqual(drawn, "news.test")
+        _ = recorder.take()
+
+        // The page starts a navigation as the person reaches for Allow, and it commits.
+        page = "bank.test"
+        model.setBlockedHost("doubleclick.net", allowed: true, on: drawn, of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "", "no rule for the site the tab moved to, and none for the one it left")
+        XCTAssertEqual(recorder.take(), [])
+        XCTAssertEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.pageMoved.message)
+
+        // The tab's address runs ahead of the commit: the engine still says news.test, and that is what counts.
+        page = "news.test"
+        model.store.updateTab(tab.id, url: URL(string: "https://bank.test/login")!)
+        model.setBlockedHost("doubleclick.net", allowed: true, on: drawn, of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "@@||doubleclick.net^$domain=news.test\n")
+
+        // Remove is held to the same: not from another site's page, and not without the engine's word.
+        page = "bank.test"
+        model.setBlockedHost("doubleclick.net", allowed: false, on: drawn, of: engine)
+        model.contentBlocking.blockedHosts = { _ in nil }
+        model.setBlockedHost("doubleclick.net", allowed: false, on: drawn, of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "@@||doubleclick.net^$domain=news.test\n")
+    }
+
+    /// Security BL-11: the site in the rule is the engine's name for the
+    /// page, from Chromium's suffix list. On `someone.web.app` the shell's
+    /// own idea of a site is `web.app`, which is every site under it.
+    func testAllowOnASharedSuffixIsForThatOneSite() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://someone.web.app/")!
+        let tab = model.store.addTab(kind: .today, title: "App", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        XCTAssertEqual(ContentBlockingHost.exceptionHost(for: url), "web.app", "what the shell alone would have written for")
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply(page: "someone.web.app") }
+        let list = try XCTUnwrap(model.blockedList(for: engine))
+        XCTAssertEqual(list.allowSite, "someone.web.app")
+        model.setBlockedHost("doubleclick.net", allowed: true, on: "someone.web.app", of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "@@||doubleclick.net^$domain=someone.web.app\n")
+
+        // A page the engine says is not one site has no Allow at all.
+        model.contentBlocking.blockedHosts = { _ in #"{"page":{"host":"web.app","registrable":false},"hosts":[],"more":0}"# }
+        let suffix = try XCTUnwrap(model.blockedList(for: engine))
+        XCTAssertFalse(model.canAllowBlockedHosts(for: engine, on: suffix))
+        model.setBlockedHost("google-analytics.com", allowed: true, on: "web.app", of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "@@||doubleclick.net^$domain=someone.web.app\n")
     }
 
     func testAPrivateWindowsListHasNoAllow() async throws {
@@ -381,11 +452,12 @@ final class ContentBlockingShellTests: XCTestCase {
         let engine = model.engineHost.privateEngine(session: UUID(), parentProfileID: model.store.activeProfileID, shellID: UUID())
         let site = try XCTUnwrap(SiteControlCenter.site(for: url))
         model.contentBlocking.blockedCount = { _ in 4 }
-        model.contentBlocking.blockedHosts = { _ in Self.blockedReply }
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply(page: "secret.test") }
         XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.hasBlockedList, true, "a private window may look")
-        XCTAssertEqual(model.blockedList(for: engine)?.entries.count, 3)
-        XCTAssertFalse(model.canAllowBlockedHosts(for: engine, site: site))
-        model.setBlockedHost("doubleclick.net", allowed: true, forSiteOf: engine, site: site)
+        let list = try XCTUnwrap(model.blockedList(for: engine))
+        XCTAssertEqual(list.entries.count, 3)
+        XCTAssertFalse(model.canAllowBlockedHosts(for: engine, on: list))
+        model.setBlockedHost("doubleclick.net", allowed: true, on: "secret.test", of: engine)
         XCTAssertEqual(model.store.contentBlocking().ownRules, "", "nothing a private window showed is written to the profile")
     }
 

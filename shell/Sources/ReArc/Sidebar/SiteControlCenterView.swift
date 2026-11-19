@@ -688,33 +688,36 @@ struct SiteControlsBlockedListView: View {
     let isOpen: Bool
 
     var body: some View {
-        let canAllow = model.canAllowBlockedHosts(for: engine, site: site)
-        let allowed = model.allowedBlockedHosts(for: engine, site: site)
-        if isOpen || !allowed.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                if isOpen, let list = model.blockedList(for: engine), !list.isEmpty { blocked(list, canAllow: canAllow) }
-                if !allowed.isEmpty {
-                    Text(SiteControlCenter.allowedOnSiteTitle)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(height: SiteControlsBlockedListMetrics.lineHeight)
-                    ForEach(allowed, id: \.self) { host in
-                        SiteControlsBlockedLine(host: host, tag: "", count: nil,
-                                                action: canAllow ? (title: "Remove", help: SiteControlCenter.removeAllowedHostTitle(host)) : nil,
-                                                actionAlwaysShows: true) {
-                            model.setBlockedHost(host, allowed: false, forSiteOf: engine, site: site)
+        // One reading of the engine gives the lines and the site they are for:
+        // Allow and Remove carry the site this drew, not the tab's address at the click.
+        if let list = model.blockedList(for: engine) {
+            let canAllow = model.canAllowBlockedHosts(for: engine, on: list)
+            let pageSite = list.pageSite
+            let allowed = pageSite.map { model.allowedBlockedHosts(for: engine, pageSite: $0) } ?? []
+            if (isOpen && !list.isEmpty) || !allowed.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    if isOpen, !list.isEmpty {
+                        SiteControlsBlockedLinesView(list: list, canAllow: canAllow) { host in
+                            if let pageSite { model.setBlockedHost(host, allowed: true, on: pageSite, of: engine) }
+                        }
+                    }
+                    if let pageSite, !allowed.isEmpty {
+                        Text(SiteControlCenter.allowedOnSiteTitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(height: SiteControlsBlockedListMetrics.lineHeight)
+                        ForEach(allowed, id: \.self) { host in
+                            SiteControlsBlockedLine(host: host, tag: "", count: nil,
+                                                    action: canAllow ? (title: "Remove", help: SiteControlCenter.removeAllowedHostTitle(host)) : nil,
+                                                    actionAlwaysShows: true) {
+                                model.setBlockedHost(host, allowed: false, on: pageSite, of: engine)
+                            }
                         }
                     }
                 }
+                .padding(.leading, SiteControlsBlockedListMetrics.inset)
+                .accessibilityIdentifier("site-controls-blocked-list")
             }
-            .padding(.leading, SiteControlsBlockedListMetrics.inset)
-            .accessibilityIdentifier("site-controls-blocked-list")
-        }
-    }
-
-    private func blocked(_ list: ContentBlockingBlockedList, canAllow: Bool) -> some View {
-        SiteControlsBlockedLinesView(list: list, canAllow: canAllow) { host in
-            model.setBlockedHost(host, allowed: true, forSiteOf: engine, site: site)
         }
     }
 }

@@ -2966,11 +2966,16 @@ page. This call says for which sites.
 
 | Function | Contract |
 |---|---|
-| `ReArcTabCopyBlockedHosts(tab, &json)` | `*json`: a malloc'd, NUL-terminated UTF-8 string the host frees with `ReArcBufferFree`. Synchronous, main thread. An unknown tab, blocking off or nothing blocked: `{"hosts":[],"more":0}`, `ok`. Null `json`: `invalid_argument`. Out of memory: `internal`, `*json` null. |
+| `ReArcTabCopyBlockedHosts(tab, &json)` | `*json`: a malloc'd, NUL-terminated UTF-8 string the host frees with `ReArcBufferFree`. Synchronous, main thread. An unknown tab: `{"hosts":[],"more":0}`, `ok`. Blocking off or nothing blocked: no hosts, and `page` as below. Null `json`: `invalid_argument`. Out of memory: `internal`, `*json` null. |
 
 ```json
-{"hosts":[{"host":"doubleclick.net","count":3,"registrable":true,"lists":["easylist"]}],"more":0}
+{"page":{"host":"example.com","registrable":true},
+ "hosts":[{"host":"doubleclick.net","count":3,"registrable":true,"lists":["easylist"]}],"more":0}
 ```
+
+- `page`: the tab's own site, named exactly as a blocked one is (`host`, `registrable`), from
+  the primary main frame's **committed** address; absent when that is not http or https. It is
+  never an address that is only pending. See "A rule from two names" below.
 
 - `host`: the registrable domain of a blocked request's host, private registries included
   (`someone.github.io` stays itself), lower-case ASCII (an international name in its `xn--`
@@ -3019,6 +3024,17 @@ matches a path on any host it can fill the list with names it made up. A host tr
 `host` as untrusted text: checks it before it draws it or builds anything from it, and does not
 log it. The engine does not log it either.
 
+**A rule from two names** (security BL-10, BL-11). A host that offers "allow this host on this
+site" writes a rule from a blocked site's name and the page's. Both must come from one reply:
+
+- The page's site is `page.host`, never a name the host cuts from an address itself. Without
+  the public suffix list a host takes `web.app`, `edu.au` or `or.jp` for the site of every page
+  under them, and the rule would apply to all of them.
+- A rule is written only when both names have `registrable` true.
+- Before it writes, the host calls again and compares `page.host` with the one its list was
+  drawn with. If they differ the tab has moved on, and nothing is written. The tab's address
+  as the host knows it may run ahead of the commit; `page` does not.
+
 **When to ask.** While the list is shown: once, and again on `ReArcBlockedCountCallback` (1.66)
 for the tab. The list changes exactly when the count does. The reply is read from the tracker
 at the call; the count the callback carries is delivered at most every 250 ms and may be a
@@ -3033,11 +3049,13 @@ fails against a tree without the patch. What these import checks share is now
 `rearc::kContentBlockerExtensionIds` and are compared as literals; a site is recorded only at
 the two increments of the count; the patch removes no line of the tracker and does not touch
 the code that moves matched rules to the unknown tab ID; the limits; only the host of a
-request is read; no added line logs or writes; nothing of the manifest changes. Neither needs
+request is read; the page's site is the committed address's, through the same function; no
+added line logs or writes; nothing of the manifest changes. Neither needs
 a build. No host test exists. The shell's self-test has the run
 (`contentBlockingBlockedListChecks`): two sites of two lists with their counts and tags; a
 same-document navigation keeps the list and a navigation to another document empties it; a
-single-label name and a public suffix are listed with `registrable` false; 105 sites give 100
-and 5 more; a private tab's list, and nothing for its tab once it is closed; none of the 105
+single-label name and a public suffix are listed with `registrable` false; the page's site is
+the fixture's own address, and an Allow asked for another site writes nothing; 105 sites give
+100 and 5 more; a private tab's list, and nothing for its tab once it is closed; none of the 105
 names in a file of the engine's or the shell's data folders; and, in the cold launch's list
 update, the list after blocking has moved to the second blocker. **None of it has run.**

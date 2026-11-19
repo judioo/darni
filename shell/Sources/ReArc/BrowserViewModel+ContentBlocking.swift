@@ -263,31 +263,41 @@ extension BrowserViewModel {
         return ContentBlockingBlockedList.decode(json, lists: contentBlockingListRows) ?? ContentBlockingBlockedList()
     }
 
-    /// A blocked line can be allowed: a page of one site, in a window that
-    /// is not private (nothing a private window showed is written to the
-    /// profile). A line whose name is not one site still has no Allow
-    /// (`ContentBlockingBlockedList.Entry.canBeAllowed`).
-    func canAllowBlockedHosts(for engine: any WebEngine, site: SiteControlCenter.Site) -> Bool {
+    /// A line of `list` can be allowed: the engine names the page's site
+    /// and it is one site, in a window that is not private (nothing a
+    /// private window showed is written to the profile). A line whose own
+    /// name is not one site still has no Allow (`Entry.canBeAllowed`).
+    func canAllowBlockedHosts(for engine: any WebEngine, on list: ContentBlockingBlockedList) -> Bool {
         contentBlocking.isAvailable && engine.pagePrompts.privateSession == nil && engine.pagePrompts.profileID != nil
-            && ContentBlockingSettings.canAllowHosts(onSiteOf: engine.currentURL ?? URL(string: site.origin))
+            && list.allowSite != nil
     }
 
-    /// The hosts the person allowed on the site of `engine`'s page.
-    func allowedBlockedHosts(for engine: any WebEngine, site: SiteControlCenter.Site) -> [String] {
+    /// The hosts the person allowed on `pageSite`, the engine's name for the page's site.
+    func allowedBlockedHosts(for engine: any WebEngine, pageSite: String) -> [String] {
         guard contentBlocking.isAvailable, let profileID = engine.pagePrompts.profileID else { return [] }
-        return store.contentBlocking(for: profileID).allowedHosts(onSiteOf: engine.currentURL ?? URL(string: site.origin))
+        return store.contentBlocking(for: profileID).allowedHosts(onSite: pageSite)
     }
 
     /// "Allow <host> on This Site", or that taken back: one line of the
     /// profile's own rules, and the tab reloads. Never from a private window.
-    func setBlockedHost(_ host: String, allowed: Bool, forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
-        guard canAllowBlockedHosts(for: engine, site: site), let profileID = engine.pagePrompts.profileID else { return }
-        let url = engine.currentURL ?? URL(string: site.origin)
+    ///
+    /// `pageSite` is the site the list was drawn with. The rule is written
+    /// for that site and no other: the engine is asked again where the tab
+    /// is (its committed page, not an address still on its way), and when
+    /// that is another site by now nothing is written and the person is told
+    /// (security BL-10). The site's name is the engine's, from Chromium's
+    /// suffix list, never one cut from an address here (BL-11).
+    func setBlockedHost(_ host: String, allowed: Bool, on pageSite: String, of engine: any WebEngine) {
+        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
+              let profileID = engine.pagePrompts.profileID else { return }
+        guard let now = blockedList(for: engine), now.allowSite == pageSite else {
+            return showToast(ContentBlockingSiteAllow.Refusal.pageMoved.message, systemImage: "shield.slash")
+        }
         var changed = false
         var refusal: ContentBlockingSiteAllow.Refusal?
         changeContentBlocking(for: profileID) { settings in
             let before = settings.ownRules
-            if allowed { refusal = settings.allowHost(host, onSiteOf: url) } else { settings.removeAllowedHost(host, onSiteOf: url) }
+            if allowed { refusal = settings.allowHost(host, onSite: pageSite) } else { settings.removeAllowedHost(host, onSite: pageSite) }
             changed = settings.ownRules != before
         }
         if changed { engine.reload() }

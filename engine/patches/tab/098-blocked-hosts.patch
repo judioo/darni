@@ -59,6 +59,18 @@ and returns malloc'd JSON for ReArcBufferFree. It keeps nothing. No new
 callback: the list changes exactly when the count does, and
 ReArcBlockedCountCallback says so.
 
+The page's own site. The reply also names the tab's own site ("page"), with
+the same function and so the same public suffix list as the blocked sites
+(ActionTracker::GetSiteOfUrl), from the primary main frame's committed
+address. The host's "Allow this host on this site" writes a rule from two
+names, and the review's read of the code found both faults in the second
+(security BL-10, BL-11): the shell took it from the tab's address at the
+click, which may be another site by then or one the tab has not reached, and
+cut it to a "site" with a guess (the last two or three labels) that makes
+web.app, edu.au or or.jp the site of every page under them. With "page" both
+names come from one reply, and the host reads the reply again before it
+writes.
+
 Checked without a build (the release of 2026-11-19 was building from
 out/ReArc-codecs-arm64): action_tracker.cc and rearc_content_blocker.cc
 type-check with the tree's clang and plugins from a scratch view of the
@@ -104,7 +116,7 @@ index b2276ef..b4d73e8 100644
  _ReArcEngineSetMediaCaptureCallback
  _ReArcTabGetMediaCapture
 diff --git a/chrome/browser/rearc_bridge/rearc_content_blocker.cc b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
-index 7922dd3..ae1c82a 100644
+index 7922dd3..be7e0e5 100644
 --- a/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 +++ b/chrome/browser/rearc_bridge/rearc_content_blocker.cc
 @@ -35,6 +35,8 @@
@@ -147,7 +159,7 @@ index 7922dd3..ae1c82a 100644
  #include "extensions/browser/api/declarative_net_request/composite_matcher.h"
  #include "extensions/browser/api/declarative_net_request/prefs_helper.h"
  #include "extensions/browser/api/declarative_net_request/rules_monitor_service.h"
-@@ -1168,6 +1174,98 @@ std::optional<base::ListValue> ReadList(const char* json) {
+@@ -1168,6 +1174,115 @@ std::optional<base::ListValue> ReadList(const char* json) {
    return base::JSONReader::ReadList(text, base::JSON_PARSE_RFC);
  }
  
@@ -175,6 +187,12 @@ index 7922dd3..ae1c82a 100644
 +// (ActionTracker::BlockedSites), in memory only; this reads them and keeps
 +// nothing. While a list update has two blockers a site's entries are added
 +// up, as the counts are. The sites are never logged.
++// "page" is the tab's own site, from the same function and so the same
++// public suffix list as the blocked sites: the site of the primary main
++// frame's committed address, http and https only. The host writes "allow this
++// host on this site" from the two names of one reply, and reads the reply
++// again before it writes: an address that is only pending is not in it
++// (security BL-10, BL-11).
 +std::string BlockedHostsJson(uint64_t tab_id) {
 +  struct Site {
 +    std::string name;
@@ -237,16 +255,27 @@ index 7922dd3..ae1c82a 100644
 +                     .Set("registrable", site.is_one_site)
 +                     .Set("lists", std::move(lists)));
 +  }
-+  return base::WriteJson(base::DictValue()
-+                             .Set("hosts", std::move(hosts))
-+                             .Set("more", base::saturated_cast<int>(more)))
-+      .value_or(R"({"hosts":[],"more":0})");
++  base::DictValue reply;
++  if (contents) {
++    const GURL& page = contents->GetLastCommittedURL();
++    std::string page_site;
++    bool page_is_one_site = false;
++    if (page.SchemeIsHTTPOrHTTPS() &&
++        dnr::ActionTracker::GetSiteOfUrl(page, &page_site, &page_is_one_site)) {
++      reply.Set("page", base::DictValue()
++                            .Set("host", std::move(page_site))
++                            .Set("registrable", page_is_one_site));
++    }
++  }
++  reply.Set("hosts", std::move(hosts));
++  reply.Set("more", base::saturated_cast<int>(more));
++  return base::WriteJson(reply).value_or(R"({"hosts":[],"more":0})");
 +}
 +
  }  // namespace
  
  bool OnContentBlockerActionCount(content::BrowserContext* context,
-@@ -1374,3 +1472,19 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
+@@ -1374,3 +1489,19 @@ void ReArcEngineSetBlockedCountCallback(ReArcBlockedCountCallback callback,
    rearc::g_count_callback = callback;
    rearc::g_count_context = callback ? context : nullptr;
  }
@@ -267,7 +296,7 @@ index 7922dd3..ae1c82a 100644
 +  return REARC_OK;
 +}
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index 39fd014..6631263 100644
+index 39fd014..e41d48c 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -279,15 +308,21 @@ index 39fd014..6631263 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1923,6 +1923,30 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
+@@ -1923,6 +1923,36 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
                                                       uint32_t index,
                                                       const char* text);
  
 +// Blocked hosts (content_blocking_hosts, ABI 1.69): what ReArcTabGetBlockedCount
 +// counts, by site, for a "Blocked on this page" list. *json is +1 malloc,
 +// NUL-terminated UTF-8; free with ReArcBufferFree.
-+//   {"hosts":[{"host":"doubleclick.net","count":3,"registrable":true,
++//   {"page":{"host":"example.com","registrable":true},
++//    "hosts":[{"host":"doubleclick.net","count":3,"registrable":true,
 +//              "lists":["easylist"]}],"more":0}
++// page: the tab's own site, named as a blocked one is, from the primary main
++// frame's committed address; absent when that is not http or https. A host
++// that writes a rule "allow this host on this site" takes both names from one
++// reply, and reads the reply again before it writes: if page has changed, the
++// tab has moved on and nothing is written.
 +// host: the registrable domain of a blocked request's host (private
 +// registries count: "someone.github.io"), lower-case ASCII (punycode); the
 +// host itself when it has no registrable domain. registrable: the name is
@@ -301,8 +336,8 @@ index 39fd014..6631263 100644
 +// untrusted text. The engine keeps the sites in memory only, beside the
 +// count, and drops them with it: at a main frame navigation to another
 +// document, with the tab, with the blocker. Nothing else of a request is
-+// kept. An unknown tab, blocking off or nothing blocked:
-+// {"hosts":[],"more":0}. Null json: invalid_argument. No new callback:
++// kept. An unknown tab: {"hosts":[],"more":0}. Blocking off or nothing
++// blocked: no hosts, and page as above. Null json: invalid_argument. No new callback:
 +// ReArcBlockedCountCallback says when the answer changed.
 +REARC_ENGINE_EXPORT ReArcStatus ReArcTabCopyBlockedHosts(uint64_t tab_id,
 +                                                         char** json);
@@ -336,7 +371,7 @@ index d2c9cac..52f630e 100644
  
  void ReArcEngineSetLifecycleCallbacks(
 diff --git a/extensions/browser/api/declarative_net_request/action_tracker.cc b/extensions/browser/api/declarative_net_request/action_tracker.cc
-index 8517106..f63461d 100644
+index 8517106..e2d7d30 100644
 --- a/extensions/browser/api/declarative_net_request/action_tracker.cc
 +++ b/extensions/browser/api/declarative_net_request/action_tracker.cc
 @@ -4,8 +4,14 @@
@@ -489,10 +524,23 @@ index 8517106..f63461d 100644
    if (!prefs_helper_.GetUseActionCountAsBadgeText(extension_id)) {
      return;
    }
-@@ -379,6 +484,36 @@ void ActionTracker::IncrementActionCountForTab(const ExtensionId& extension_id,
+@@ -379,6 +484,49 @@ void ActionTracker::IncrementActionCountForTab(const ExtensionId& extension_id,
    tracked_info.action_count = new_action_count;
  }
  
++// static
++bool ActionTracker::GetSiteOfUrl(const GURL& url,
++                                 std::string* site,
++                                 bool* is_one_site) {
++  std::optional<BlockedSiteName> name = BlockedSiteNameOf(url);
++  if (!name) {
++    return false;
++  }
++  *site = std::move(name->name);
++  *is_one_site = name->is_one_site;
++  return true;
++}
++
 +ActionTracker::BlockedSites ActionTracker::GetBlockedSites(
 +    const ExtensionId& extension_id,
 +    int tab_id) const {
@@ -527,7 +575,7 @@ index 8517106..f63461d 100644
  ActionTracker::TrackedInfoContextKey<T>::TrackedInfoContextKey(
      ExtensionId extension_id,
 diff --git a/extensions/browser/api/declarative_net_request/action_tracker.h b/extensions/browser/api/declarative_net_request/action_tracker.h
-index 1349f3e..680f11d 100644
+index 1349f3e..f344b42 100644
 --- a/extensions/browser/api/declarative_net_request/action_tracker.h
 +++ b/extensions/browser/api/declarative_net_request/action_tracker.h
 @@ -5,9 +5,13 @@
@@ -544,7 +592,16 @@ index 1349f3e..680f11d 100644
  #include <vector>
  
  #include "base/memory/raw_ptr.h"
-@@ -117,6 +121,62 @@ class ActionTracker {
+@@ -27,6 +31,8 @@ namespace content {
+ class BrowserContext;
+ }
+ 
++class GURL;
++
+ namespace extensions {
+ 
+ class Extension;
+@@ -117,6 +123,71 @@ class ActionTracker {
                                    int tab_id,
                                    int increment);
  
@@ -598,6 +655,15 @@ index 1349f3e..680f11d 100644
 +  static constexpr size_t kMaxBlockedSiteRulesets = 8;
 +  static constexpr size_t kMaxBlockedSiteBytes = 253;
 +
++  // The site of `url` as BlockedSite::site and ::is_one_site have it. False,
++  // and nothing written, for a URL without a host and for a name too long to
++  // keep. The bridge also names the tab's own page with it, so both names of
++  // a rule the host writes for "this host on this site" come from one reading
++  // of one public suffix list.
++  static bool GetSiteOfUrl(const GURL& url,
++                           std::string* site,
++                           bool* is_one_site);
++
 +  // A copy of what `extension_id` has blocked in the page of the tab with
 +  // extension tab ID `tab_id`. Empty for an extension that is not ReArc's
 +  // blocker, for the unknown tab ID and for a tab with nothing blocked.
@@ -607,7 +673,7 @@ index 1349f3e..680f11d 100644
   private:
    // Template key type used for TrackedInfo, specified by an extension_id and
    // another ID.
-@@ -167,6 +227,14 @@ class ActionTracker {
+@@ -167,6 +238,14 @@ class ActionTracker {
  
      // The list of rules matched. Includes allow rules.
      std::list<TrackedRule> matched_rules;

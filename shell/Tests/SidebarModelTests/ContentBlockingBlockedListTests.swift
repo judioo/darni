@@ -197,17 +197,51 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         XCTAssertEqual(privateRow.actions, [])
     }
 
+    // MARK: The page's own site (security BL-10, BL-11)
+
+    /// Allow writes for the site the engine names in the same reply as the
+    /// lines, from Chromium's suffix list. The shell's own idea of a site
+    /// (the last two or three labels) takes `web.app` or `edu.au` for one.
+    func testThePagesSiteIsTheEnginesAndNeverCutFromAnAddressHere() throws {
+        func page(_ json: String) -> List? { List.decode(#"{"page":\#(json),"hosts":[],"more":0}"#, lists: lists) }
+        for site in ["someone.web.app", "school.edu.au", "club.or.jp", "x.azurewebsites.net", "news.test", "203.0.113.7"] {
+            let list = try XCTUnwrap(page(#"{"host":"\#(site)","registrable":true}"#))
+            XCTAssertEqual(list.pageSite, site)
+            XCTAssertEqual(list.allowSite, site, "the engine's name, whole")
+            var settings = ContentBlockingSettings.newProfile
+            XCTAssertNil(settings.allowHost("doubleclick.net", onSite: site))
+            XCTAssertEqual(settings.ownRules, "@@||doubleclick.net^$domain=\(site)\n")
+        }
+        // What the shell's guess would have written for those pages is a suffix: the engine
+        // says such a name is not one site, and then there is no Allow.
+        for suffix in ["web.app", "edu.au", "or.jp", "azurewebsites.net", "localhost", "co.uk"] {
+            let list = try XCTUnwrap(page(#"{"host":"\#(suffix)","registrable":false}"#))
+            XCTAssertEqual(list.pageSite, suffix)
+            XCTAssertNil(list.allowSite, suffix)
+        }
+        // The engine said yes and this build knows better: still no.
+        XCTAssertNil(page(#"{"host":"co.uk","registrable":true}"#)?.allowSite)
+        XCTAssertNil(page(#"{"host":"wiki","registrable":true}"#)?.allowSite)
+        XCTAssertNil(page(#"{"host":"news.test"}"#)?.allowSite, "an engine that does not say is not a yes")
+        // A name that is no host is no site at all.
+        for bad in [#"{"host":"news.test^$important","registrable":true}"#, #"{"host":"","registrable":true}"#, #"{"host":"[::1]","registrable":true}"#] {
+            let list = try XCTUnwrap(page(bad))
+            XCTAssertNil(list.pageSite)
+            XCTAssertNil(list.allowSite)
+        }
+        XCTAssertNil(List.decode(#"{"hosts":[],"more":0}"#, lists: lists)?.pageSite, "a page that is no site")
+        XCTAssertEqual(List(pageSite: nil, pageSiteIsOneSite: true).allowSite, nil)
+    }
+
     // MARK: Allow on this site
 
     func testAllowIsOneOwnRuleForTheSiteAndConvertsToAnAllowRule() throws {
-        let page = URL(string: "https://www.news.test/story")
         var settings = ContentBlockingSettings.newProfile
-        XCTAssertTrue(ContentBlockingSettings.canAllowHosts(onSiteOf: page))
-        XCTAssertNil(settings.allowHost("doubleclick.net", onSiteOf: page))
+        XCTAssertNil(settings.allowHost("doubleclick.net", onSite: "news.test"))
         XCTAssertEqual(settings.ownRules, "@@||doubleclick.net^$domain=news.test\n")
-        XCTAssertEqual(settings.allowedHosts(onSiteOf: page), ["doubleclick.net"])
-        XCTAssertEqual(settings.allowedHosts(onSiteOf: URL(string: "https://other.test/")), [], "allowed on one site only")
-        XCTAssertNil(settings.allowHost("doubleclick.net", onSiteOf: page), "allowed already")
+        XCTAssertEqual(settings.allowedHosts(onSite: "news.test"), ["doubleclick.net"])
+        XCTAssertEqual(settings.allowedHosts(onSite: "other.test"), [], "allowed on one site only")
+        XCTAssertNil(settings.allowHost("doubleclick.net", onSite: "news.test"), "allowed already")
         XCTAssertEqual(settings.ownRules, "@@||doubleclick.net^$domain=news.test\n", "and not written twice")
 
         let conversion = ContentBlockingRuleConverter.convert(settings.ownRules)
@@ -221,63 +255,57 @@ final class ContentBlockingBlockedListTests: XCTestCase {
     }
 
     func testAllowKeepsThePersonsOwnRulesAndRemoveDeletesOnlyItsLine() {
-        let page = URL(string: "http://127.0.0.1:8123/blocking")
+        let site = "127.0.0.1"
         var settings = ContentBlockingSettings(isEnabled: true, ownRules: "! mine\n||ads.test^")
-        XCTAssertNil(settings.allowHost("adsterra.com", onSiteOf: page))
-        XCTAssertNil(settings.allowHost("cdn.test", onSiteOf: page))
+        XCTAssertNil(settings.allowHost("adsterra.com", onSite: site))
+        XCTAssertNil(settings.allowHost("cdn.test", onSite: site))
         XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||adsterra.com^$domain=127.0.0.1\n@@||cdn.test^$domain=127.0.0.1\n")
-        XCTAssertEqual(settings.allowedHosts(onSiteOf: page), ["adsterra.com", "cdn.test"])
+        XCTAssertEqual(settings.allowedHosts(onSite: site), ["adsterra.com", "cdn.test"])
         XCTAssertEqual(ContentBlockingRuleConverter.convert(settings.ownRules).rules.map(\.condition.initiatorDomains), [nil, ["127.0.0.1"], ["127.0.0.1"]],
                        "an address is a site of its own")
 
-        settings.removeAllowedHost("adsterra.com", onSiteOf: page)
+        settings.removeAllowedHost("adsterra.com", onSite: site)
         XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||cdn.test^$domain=127.0.0.1\n")
-        settings.removeAllowedHost("ads.test", onSiteOf: page)
-        settings.removeAllowedHost("cdn.test", onSiteOf: URL(string: "https://other.test/"))
+        settings.removeAllowedHost("ads.test", onSite: site)
+        settings.removeAllowedHost("cdn.test", onSite: "other.test")
         XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||cdn.test^$domain=127.0.0.1\n", "a rule Allow did not write for this site stays")
         // A wider rule the person typed is theirs: it is not listed as allowed here, and Remove leaves it.
         settings.setOwnRules("@@||cdn.test^\n@@||cdn.test^$domain=127.0.0.1|other.test\n@@||cdn.test^$domain=127.0.0.1,script")
-        XCTAssertEqual(settings.allowedHosts(onSiteOf: page), [])
+        XCTAssertEqual(settings.allowedHosts(onSite: site), [])
     }
 
     /// Both names come from pages. Neither may carry filter syntax into the
     /// rule, and neither may be a name that covers more than one site.
     func testANameThatIsNotOneSiteNeverReachesTheOwnRules() {
-        let page = URL(string: "https://news.test/")
         var settings = ContentBlockingSettings.newProfile
-        for host in ["evil.test^$important", "a.test,b.test", "a.test|b.test", "a.test\n||everything^", "*.test", "a.test/path", "A.test", "a.test:80",
-                     " a.test", "", "a..test", "-a.test", "[::1]", "localhost", "com", "co.uk", "github.io"] {
-            XCTAssertEqual(settings.allowHost(host, onSiteOf: page), .notOneSite, host)
-            XCTAssertNil(ContentBlockingSiteAllow.rule(host: host, site: "news.test"), host)
-            XCTAssertNil(ContentBlockingSiteAllow.rule(host: "ok.test", site: host), host)
+        let notOneSite = ["evil.test^$important", "a.test,b.test", "a.test|b.test", "a.test\n||everything^", "*.test", "a.test/path", "A.test", "a.test:80",
+                          " a.test", "", "a..test", "-a.test", "[::1]", "localhost", "com", "co.uk", "github.io", "wiki"]
+        for name in notOneSite {
+            XCTAssertEqual(settings.allowHost(name, onSite: "news.test"), .notOneSite, name)
+            XCTAssertEqual(settings.allowHost("ok.test", onSite: name), .noSite, name)
+            XCTAssertNil(ContentBlockingSiteAllow.rule(host: name, site: "news.test"), name)
+            XCTAssertNil(ContentBlockingSiteAllow.rule(host: "ok.test", site: name), name)
+            XCTAssertEqual(settings.allowedHosts(onSite: name), [], name)
         }
         XCTAssertEqual(settings.ownRules, "")
         XCTAssertEqual(ContentBlockingSiteAllow.rule(host: "xn--bcher-kva.example", site: "news.test"), "@@||xn--bcher-kva.example^$domain=news.test")
         XCTAssertEqual(ContentBlockingSiteAllow.hosts(in: "@@||evil.test^$important^$domain=news.test\n@@||^$domain=news.test\n@@||co.uk^$domain=news.test",
                                                       site: "news.test"), [])
-        // A page that is no site, or whose name could be a whole suffix, has nothing to allow on.
-        for url in [nil, URL(string: "about:blank"), URL(string: "file:///tmp/a.html"), URL(string: "chrome://settings/"),
-                    URL(string: "http://wiki/"), URL(string: "http://localhost:8080/"), URL(string: "https://github.io/")] {
-            XCTAssertEqual(settings.allowHost("ok.test", onSiteOf: url), .noSite, url?.absoluteString ?? "nil")
-            XCTAssertFalse(ContentBlockingSettings.canAllowHosts(onSiteOf: url))
-        }
-        XCTAssertEqual(settings.ownRules, "")
-        XCTAssertTrue(ContentBlockingSettings.canAllowHosts(onSiteOf: URL(string: "https://someone.github.io/")), "one tenant of a shared host is a site")
-        for refusal in [ContentBlockingSiteAllow.Refusal.noSite, .notOneSite, .full] { XCTAssertFalse(refusal.message.isEmpty) }
+        XCTAssertNil(settings.allowHost("ok.test", onSite: "someone.github.io"), "one tenant of a shared host is a site")
+        for refusal in [ContentBlockingSiteAllow.Refusal.pageMoved, .noSite, .notOneSite, .full] { XCTAssertFalse(refusal.message.isEmpty) }
     }
 
     func testAllowIsRefusedWhenTheOwnRulesAreFull() {
-        let page = URL(string: "https://news.test/")
         // The limit of rules.
         var rules = ContentBlockingSettings(isEnabled: true, ownRules: (0..<ContentBlockingRuleConverter.maxRules).map { "||ad\($0).test^" }.joined(separator: "\n"))
         let before = rules.ownRules
-        XCTAssertEqual(rules.allowHost("ok.test", onSiteOf: page), .full)
+        XCTAssertEqual(rules.allowHost("ok.test", onSite: "news.test"), .full)
         XCTAssertEqual(rules.ownRules, before)
         // The limit of text.
         var text = ContentBlockingSettings(isEnabled: true, ownRules: "! " + String(repeating: "x", count: ContentBlockingSettings.maxOwnRulesBytes - 12))
         XCTAssertEqual(text.ownRules.utf8.count, ContentBlockingSettings.maxOwnRulesBytes - 10)
         let full = text.ownRules
-        XCTAssertEqual(text.allowHost("ok.test", onSiteOf: page), .full, "a line that does not fit is not half written")
+        XCTAssertEqual(text.allowHost("ok.test", onSite: "news.test"), .full, "a line that does not fit is not half written")
         XCTAssertEqual(text.ownRules, full)
     }
 }

@@ -56,11 +56,25 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
     public var entries: [Entry]
     /// Blocked requests whose site is not in `entries`: the engine's cap, or this one.
     public var uncounted: Int
+    /// The page's own site, as the engine names it: the registrable domain
+    /// of the tab's committed address, from Chromium's suffix list, in the
+    /// same reply as the entries. It is the site Allow writes for. The shell
+    /// does not work it out from the tab's address: that may already be the
+    /// next page's, and the shell's own idea of a site takes `web.app` or
+    /// `edu.au` for one (security BL-10, BL-11). nil for a page that is no site.
+    public var pageSite: String?
+    /// `pageSite` is one site, by the engine and by `ContentBlockingSiteAllow.isOneSite`.
+    public var pageSiteIsOneSite: Bool
 
-    public init(entries: [Entry] = [], uncounted: Int = 0) {
+    public init(entries: [Entry] = [], uncounted: Int = 0, pageSite: String? = nil, pageSiteIsOneSite: Bool = false) {
         self.entries = entries
         self.uncounted = uncounted
+        self.pageSite = pageSite
+        self.pageSiteIsOneSite = pageSite != nil && pageSiteIsOneSite
     }
+
+    /// The site Allow may write a rule for; nil when the page has none.
+    public var allowSite: String? { pageSiteIsOneSite ? pageSite : nil }
 
     public var isEmpty: Bool { entries.isEmpty && uncounted == 0 }
 
@@ -104,6 +118,12 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
             var registrable: Bool?
         }
 
+        struct Page: Decodable {
+            var host: String
+            var registrable: Bool?
+        }
+
+        var page: Page?
         var hosts: [Host]
         var more: Int?
     }
@@ -141,7 +161,9 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
         }
         entries.sort { ($1.count, $0.host) < ($0.count, $1.host) }
         for cut in entries.dropFirst(maxEntries) { uncounted = min(uncounted + cut.count, maxCount) }
-        return ContentBlockingBlockedList(entries: Array(entries.prefix(maxEntries)), uncounted: uncounted)
+        let page = reply.page.flatMap { ContentBlockingHost.isHost($0.host) ? $0 : nil }
+        return ContentBlockingBlockedList(entries: Array(entries.prefix(maxEntries)), uncounted: uncounted, pageSite: page?.host,
+                                          pageSiteIsOneSite: page?.registrable == true && ContentBlockingSiteAllow.isOneSite(page?.host ?? ""))
     }
 
     /// The tag for a rule of list `id`: a list of the Trackers only level
@@ -169,6 +191,8 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
 public enum ContentBlockingSiteAllow {
     /// Why Allow wrote nothing. The person is told (`message`).
     public enum Refusal: Equatable, Sendable {
+        /// The tab is no longer on the site the list was shown for.
+        case pageMoved
         /// The page is not one site: no web page, or a host that could be a whole suffix.
         case noSite
         /// The name to allow is not one site: no host, a single label, a public suffix.
@@ -178,6 +202,7 @@ public enum ContentBlockingSiteAllow {
 
         public var message: String {
             switch self {
+            case .pageMoved: return "The page has changed, so nothing was allowed. Open the list again."
             case .noSite: return "Nothing can be allowed on this page."
             case .notOneSite: return "That name covers more than one site, so it can’t be allowed."
             case .full: return "Your own rules are full. Remove some in Settings › Profiles."
@@ -223,24 +248,20 @@ public enum ContentBlockingSiteAllow {
 }
 
 extension ContentBlockingSettings {
-    /// The hosts the person allowed on `url`'s site from the blocked list.
-    public func allowedHosts(onSiteOf url: URL?) -> [String] {
-        guard let site = ContentBlockingHost.exceptionHost(for: url) else { return [] }
-        return ContentBlockingSiteAllow.hosts(in: ownRules, site: site)
+    /// The hosts the person allowed on `site` from the blocked list. `site`
+    /// is the engine's name for the page (`ContentBlockingBlockedList.pageSite`).
+    public func allowedHosts(onSite site: String) -> [String] {
+        ContentBlockingSiteAllow.hosts(in: ownRules, site: site)
     }
 
-    /// Whether Allow has a site to write for on `url`'s page: the key
-    /// "Turn Off Blocking for This Site" uses, when it is one site.
-    public static func canAllowHosts(onSiteOf url: URL?) -> Bool {
-        ContentBlockingHost.exceptionHost(for: url).map(ContentBlockingSiteAllow.isOneSite) ?? false
-    }
-
-    /// Adds the own rule that lets `url`'s site ask `host`: one line, which
-    /// must convert as a typed rule does, to one allow rule for that site.
-    /// Returns why nothing was written, nil when the line is there.
+    /// Adds the own rule that lets `site` ask `host`: one line, which must
+    /// convert as a typed rule does, to one allow rule for that site.
+    /// `site` is the engine's name for the page the list was shown for,
+    /// never one cut from an address here. Returns why nothing was written,
+    /// nil when the line is there.
     @discardableResult
-    public mutating func allowHost(_ host: String, onSiteOf url: URL?) -> ContentBlockingSiteAllow.Refusal? {
-        guard let site = ContentBlockingHost.exceptionHost(for: url), ContentBlockingSiteAllow.isOneSite(site) else { return .noSite }
+    public mutating func allowHost(_ host: String, onSite site: String) -> ContentBlockingSiteAllow.Refusal? {
+        guard ContentBlockingSiteAllow.isOneSite(site) else { return .noSite }
         guard let line = ContentBlockingSiteAllow.rule(host: host, site: site) else { return .notOneSite }
         if ContentBlockingSiteAllow.hosts(in: ownRules, site: site).contains(host) { return nil }
         // The same converter and limits as a rule typed in Settings (security BL-04).
@@ -254,10 +275,9 @@ extension ContentBlockingSettings {
         return nil
     }
 
-    /// Deletes the lines `allowHost` wrote for `host` on `url`'s site, and no other.
-    public mutating func removeAllowedHost(_ host: String, onSiteOf url: URL?) {
-        guard let site = ContentBlockingHost.exceptionHost(for: url),
-              let line = ContentBlockingSiteAllow.rule(host: host, site: site), ownRules.contains(line) else { return }
+    /// Deletes the lines `allowHost` wrote for `host` on `site`, and no other.
+    public mutating func removeAllowedHost(_ host: String, onSite site: String) {
+        guard let line = ContentBlockingSiteAllow.rule(host: host, site: site), ownRules.contains(line) else { return }
         let kept = ownRules.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .filter { $0.trimmingCharacters(in: .whitespaces) != line }
         setOwnRules(kept.joined(separator: "\n"))

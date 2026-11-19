@@ -131,6 +131,19 @@ class BlockedHostsPatchTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r"request_info\.(\w+)", self.tracker)), 2)
         self.assertEqual(set(re.findall(r"request_info\.(\w+)", self.tracker)), {"url"})
 
+    def test_the_pages_own_site_is_the_committed_one_named_as_a_blocked_site_is(self):
+        # Security BL-10, BL-11: the host writes "allow this host on this site" from two names of
+        # one reply. The page's must be the committed address (never a pending one), from the
+        # same function, and so the same public suffix list, as a blocked site's.
+        reply = function_body(self.bridge, "std::string BlockedHostsJson(")
+        self.assertIn("const GURL& page = contents->GetLastCommittedURL();", reply)
+        for pending in ("GetVisibleURL", "GetURL()", "GetPendingEntry", "GetVirtualURL"):
+            self.assertNotIn(pending, self.bridge, pending)
+        self.assertIn("if (page.SchemeIsHTTPOrHTTPS() &&\n        dnr::ActionTracker::GetSiteOfUrl(page, &page_site, &page_is_one_site)) {", reply)
+        site = function_body(self.tracker, "bool ActionTracker::GetSiteOfUrl(")
+        self.assertIn("std::optional<BlockedSiteName> name = BlockedSiteNameOf(url);", site)
+        self.assertEqual(self.tracker.count("BlockedSiteNameOf("), 3, "its definition, a blocked request's site and the page's")
+
     def test_nothing_added_takes_a_site_out_of_memory(self):
         for leak in LEAKS:
             self.assertNotIn(leak, self.tracker, leak)
@@ -147,7 +160,7 @@ class BlockedHostsPatchTests(unittest.TestCase):
         self.assertEqual(self.bridge.count(empty_reply), 1)
         code = re.sub(r"^#include [^\n]*$", "", self.bridge, flags=re.M).replace(empty_reply, "")
         self.assertEqual(set(string_literals(code)) & FORBIDDEN_LITERALS, set())
-        self.assertEqual(set(string_literals(code)), {"host", "count", "registrable", "lists", "hosts", "more"})
+        self.assertEqual(set(string_literals(code)), {"page", "host", "count", "registrable", "lists", "hosts", "more"})
 
     def test_the_call_is_exported_and_advertised(self):
         for path in ("chrome/app/framework.exports", "chrome/app/framework.order"):
