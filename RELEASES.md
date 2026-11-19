@@ -19,7 +19,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## ReArc 2026.1119.1049 — 2026-11-19
+## ReArc 2026.1119.1051 — 2026-11-19
 
 **New**
 - A space's icon can be a picture. In Create a Space or Edit Space, under the icons, choose
