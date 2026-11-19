@@ -76,6 +76,10 @@ final class ContentBlockingController {
     @ObservationIgnored var fetcher: BlocklistFetching = URLSessionBlocklistFetcher()
     /// The engine's count of requests blocked in a tab's page; nil without one.
     @ObservationIgnored var blockedCount: ((any WebEngine) -> Int?)?
+    /// The engine's list of the sites those requests were for, as its JSON
+    /// (`ContentBlockingBlockedList.decode`); nil on an engine that only
+    /// counts. Read while the site controls show the list, never kept.
+    @ObservationIgnored var blockedHosts: ((any WebEngine) -> String?)?
     @ObservationIgnored fileprivate var checkTimer: Timer?
 
     /// The built-in bundle's place in the app: `Contents/Resources/Blocklists`.
@@ -239,17 +243,94 @@ extension BrowserViewModel {
             pageURL: url,
             blockedCount: counts ? contentBlocking.blockedCount?(engine) : nil,
             listsAvailable: contentBlocking.bundle != nil,
-            isPrivate: engine.pagePrompts.privateSession != nil
+            isPrivate: engine.pagePrompts.privateSession != nil,
+            blockedListAvailable: contentBlocking.blockedHosts != nil
         )
     }
 
-    /// Blocking off or back on for the site of `engine`'s page, in its
-    /// profile; the tab then reloads (spec §3). Never from a private window:
-    /// the site would be written into the profile's exceptions.
-    func setContentBlocking(_ blocking: Bool, forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
+    // MARK: Blocked on this page
+
+    /// What was blocked in `engine`'s page, for the list under the panel's
+    /// row (spec §3 "Blocked on this page"); nil when this engine cannot
+    /// say. The engine holds it, in memory, until the page's next
+    /// navigation; this reads it for a view that is on screen, and neither
+    /// keeps nor logs it.
+    func blockedList(for engine: any WebEngine) -> ContentBlockingBlockedList? {
+        guard contentBlocking.isAvailable, let read = contentBlocking.blockedHosts else { return nil }
+        // The list changes when the count does: the count callback bumps the revision this reads.
+        _ = contentBlocking.blockedCountRevision
+        guard let json = read(engine) else { return ContentBlockingBlockedList() }
+        return ContentBlockingBlockedList.decode(json, lists: contentBlockingListRows) ?? ContentBlockingBlockedList()
+    }
+
+    /// A line of `list` can be allowed: the engine names the page's site
+    /// and it is one site, in a window that is not private (nothing a
+    /// private window showed is written to the profile). A line whose own
+    /// name is not one site still has no Allow (`Entry.canBeAllowed`).
+    func canAllowBlockedHosts(for engine: any WebEngine, on list: ContentBlockingBlockedList) -> Bool {
+        contentBlocking.isAvailable && engine.pagePrompts.privateSession == nil && engine.pagePrompts.profileID != nil
+            && list.allowSite != nil
+    }
+
+    /// The hosts the person allowed on `pageSite`, the engine's name for the page's site.
+    func allowedBlockedHosts(for engine: any WebEngine, pageSite: String) -> [String] {
+        guard contentBlocking.isAvailable, let profileID = engine.pagePrompts.profileID else { return [] }
+        return store.contentBlocking(for: profileID).allowedHosts(onSite: pageSite)
+    }
+
+    /// "Allow <host> on This Site", or that taken back: one line of the
+    /// profile's own rules, and the tab reloads. Never from a private window.
+    ///
+    /// `pageSite` is the site the list was drawn with. The rule is written
+    /// for that site and no other: the engine is asked again where the tab
+    /// is (its committed page, not an address still on its way), and when
+    /// that is another site by now nothing is written and the person is told
+    /// (security BL-10). The site's name is the engine's, from Chromium's
+    /// suffix list, never one cut from an address here (BL-11).
+    func setBlockedHost(_ host: String, allowed: Bool, on pageSite: String, of engine: any WebEngine) {
         guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
               let profileID = engine.pagePrompts.profileID else { return }
-        let url = engine.currentURL ?? URL(string: site.origin)
+        guard let now = blockedList(for: engine), now.allowSite == pageSite else {
+            return showToast(ContentBlockingSiteAllow.Refusal.pageMoved.message, systemImage: "shield.slash")
+        }
+        var changed = false
+        var refusal: ContentBlockingSiteAllow.Refusal?
+        changeContentBlocking(for: profileID) { settings in
+            let before = settings.ownRules
+            if allowed { refusal = settings.allowHost(host, onSite: pageSite) } else { settings.removeAllowedHost(host, onSite: pageSite) }
+            changed = settings.ownRules != before
+        }
+        if changed { engine.reload() }
+        // Nothing was written: the person is told why (security BL-04).
+        if let refusal { showToast(refusal.message, systemImage: "shield.slash") }
+    }
+
+    /// The page a site controls command is for: the one the panel drew.
+    ///
+    /// A command used to take the tab's address at the click, which can be
+    /// another site's by then, or one the tab has not reached (security
+    /// BL-10, as for Allow). Where the engine names the tab's committed site
+    /// (`ReArcTabCopyBlockedHosts`' `page`), the drawn origin must belong to
+    /// it; otherwise the tab has moved on, nothing is written and the person
+    /// is told. On an engine that cannot say, the address at the click is
+    /// all there is, as before.
+    private func contentBlockingPage(drawnFor site: SiteControlCenter.Site, in engine: any WebEngine) -> URL? {
+        guard contentBlocking.blockedHosts != nil else { return engine.currentURL ?? URL(string: site.origin) }
+        let drawn = URL(string: site.origin)
+        guard let host = ContentBlockingHost.pageHost(drawn), let committed = blockedList(for: engine)?.pageSite,
+              ContentBlockingHost.covers(committed, host: host) else {
+            showToast(ContentBlockingSiteAllow.Refusal.pageMoved.message, systemImage: "shield.slash")
+            return nil
+        }
+        return drawn
+    }
+
+    /// Blocking off or back on for the site of the page the panel drew, in
+    /// its profile; the tab then reloads (spec §3). Never from a private
+    /// window: the site would be written into the profile's exceptions.
+    func setContentBlocking(_ blocking: Bool, forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
+        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
+              let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
         var changed = false
         changeContentBlocking(for: profileID) { settings in
             let before = settings.exceptions
@@ -257,6 +338,24 @@ extension BrowserViewModel {
             changed = settings.exceptions != before
         }
         if changed { engine.reload() }
+    }
+
+    /// An exception an older build stored under a public suffix covers the
+    /// page (blocking is off for every site under `web.app`): it goes, and
+    /// the page's own site takes its place (security CB-12). The tab reloads.
+    func narrowContentBlockingException(forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
+        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
+              let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
+        var changed = false
+        changeContentBlocking(for: profileID) { changed = $0.narrowSuffixException(toPage: url) }
+        if changed { engine.reload() }
+    }
+
+    /// Why a name typed into Settings' exceptions was refused, when the
+    /// reason is that it is a public suffix; nil for any other refusal.
+    func contentBlockingExceptionRefusal(for text: String) -> String? {
+        guard let host = ContentBlockingHost.normalized(text), ContentBlockingHost.isPublicSuffix(host) else { return nil }
+        return SiteControlCenter.suffixExceptionRefusal(host)
     }
 
     // MARK: Lists

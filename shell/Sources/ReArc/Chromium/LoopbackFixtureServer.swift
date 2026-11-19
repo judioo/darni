@@ -389,6 +389,8 @@ final class LoopbackFixtureServer {
         """,
         // Built-in blocking: asks a tracker's and an ad server's host for a script each.
         SelfTestBlockingFixture.pagePath: SelfTestBlockingFixture.pageHTML,
+        // The blocked list: asks names that are not one site, or more sites than a list holds, for blocked paths.
+        SelfTestBlockingFixture.listPagePath: SelfTestBlockingFixture.listPageHTML,
     ]
 
     // MARK: The blocking fixture's two scripts
@@ -404,15 +406,19 @@ final class LoopbackFixtureServer {
         blockingLock.withLock { blockingFetchCounts[run] ?? (0, 0) }
     }
 
-    /// The script for a request to one of the two paths, counted; nil for any other path.
+    /// The script for a request to one of the two paths, counted; the
+    /// blocked list page's pixel or tag, should the engine let one through;
+    /// nil for any other path.
     private static func blockingScript(_ pathAndQuery: String) -> (body: Data, type: String)? {
+        let script = (Data("window.rearcBlockingFixture = (window.rearcBlockingFixture || 0) + 1;\n".utf8), "text/javascript; charset=utf-8")
+        if let isTag = SelfTestBlockingFixture.listRequestIsTag(pathAndQuery) { return isTag ? script : (linkedGIF, "image/gif") }
         guard let request = SelfTestBlockingFixture.scriptRequest(pathAndQuery) else { return nil }
         blockingLock.withLock {
             var counts = blockingFetchCounts[request.run] ?? (0, 0)
             if request.isTracker { counts.tracker += 1 } else { counts.ad += 1 }
             blockingFetchCounts[request.run] = counts
         }
-        return (Data("window.rearcBlockingFixture = (window.rearcBlockingFixture || 0) + 1;\n".utf8), "text/javascript; charset=utf-8")
+        return script
     }
 
     /// 16x16 PNG served at /favicon.png (same bytes as engine/tests/run_c_abi.py's fixture).

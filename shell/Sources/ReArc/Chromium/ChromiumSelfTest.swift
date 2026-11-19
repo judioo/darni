@@ -1318,6 +1318,8 @@ final class ChromiumSelfTest {
         try await prerenderChecks(model: model, store: store)
         try await taskManagerChecks(model: model, store: store, window: first)
         try await contentBlockingChecks(model: model, store: store)
+        try await contentBlockingBlockedListChecks(model: model, store: store, shell: shell)
+        try hostSitesChecks()
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3752,6 +3754,283 @@ extension ChromiumSelfTest {
         }
     }
 
+    /// "Blocked on this page" (CONTENT-BLOCKING.md §3, patch `tab/098`, ABI
+    /// 1.69): the list behind the site controls row's count, and what the
+    /// security pre-review asks a run to show (security/PRE-blocked-list.md,
+    /// BL-09). An engine without `content_blocking_hosts` logs the gap.
+    ///
+    /// On the blocking fixture (a tracker's host and an ad server's host):
+    ///
+    /// 1. The list has two lines, the two registrable domains, 1 each,
+    ///    tagged Tracker and Ad, and the row offers it.
+    /// 2. A navigation inside the document leaves the list as it is.
+    /// 3. Allow (the list's own command) writes exactly one own rule, for
+    ///    the site the engine names as the page's; the ad's request then
+    ///    reaches the fixture server and only the tracker is counted and
+    ///    listed. Remove deletes the line, and both are blocked and listed
+    ///    again. Asked for a site the tab is not on, Allow writes nothing
+    ///    (security BL-10).
+    ///
+    /// On the list page (`SelfTestBlockingFixture.listPageHTML`):
+    ///
+    /// 4. A single-label name and a public suffix are listed, the first once
+    ///    with 3 and both tags, and neither can be allowed.
+    /// 5. More sites than a list holds give a full list and the rest as "more".
+    /// 6. A navigation to a page that asks for nothing empties the list.
+    /// 7. A private window's tab has a list and no Allow; once it is closed
+    ///    the engine has nothing for it.
+    /// 8. None of the made-up sites of step 5 is in a file of the engine's
+    ///    or the shell's data folders: the list was in memory only. (The
+    ///    security review repeats this after ReArc has quit.)
+    ///
+    /// The cold launch's list update checks the list once more, after
+    /// blocking has moved to the second blocker (`contentBlockingColdLaunch`).
+    /// No line this step logs names a made-up site.
+    @MainActor
+    private func contentBlockingBlockedListChecks(model: BrowserViewModel, store: SidebarStore, shell: ChromiumShell) async throws {
+        // Without blocking the gap is already logged (contentBlockingChecks).
+        guard model.contentBlocking.isAvailable else { return }
+        guard model.contentBlocking.blockedHosts != nil, let call = ChromiumBlockedHostsCall.resolve() else {
+            log("ABI-GAP content_blocking_hosts not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 69): "
+                + "the site controls row shows how many requests were blocked and cannot list their sites")
+            return
+        }
+        guard let bundle = model.contentBlocking.bundle else {
+            throw Failure(description: "blocked list: no blocklist bundle verified")
+        }
+        let unfit = SelfTestBlockingFixture.problems(in: bundle) + SelfTestBlockingFixture.listProblems(in: bundle)
+        try check(unfit.isEmpty, "the blocked list's pages do not fit the lists (\(unfit.joined(separator: "; "))): "
+            + "choose other hosts or paths in SelfTestBlockingFixture")
+        typealias Entry = ContentBlockingBlockedList.Entry
+        let tracker = SelfTestBlockingFixture.trackerHost, ad = SelfTestBlockingFixture.adHost
+        let marker = SelfTestBlockingFixture.listCapMarker
+        /// A list for a log or a failure: made-up sites are counted, never named.
+        func describe(_ list: ContentBlockingBlockedList?) -> String {
+            guard let list else { return "no list" }
+            let named = list.entries.filter { !$0.host.hasPrefix(marker) }
+            let lines = named.map { "\($0.host) \($0.count) \($0.tagText)\($0.canBeAllowed ? "" : " (no Allow)")" }
+            let madeUp = list.entries.count - named.count
+            return "[" + (lines + (madeUp > 0 ? ["\(madeUp) made-up site(s)"] : [])).joined(separator: "; ") + "], \(list.uncounted) more"
+        }
+
+        blockingRun += 1
+        let firstRun = blockingRun
+        try await withFixtureTab(model, store, title: "Blocked list", path: "\(SelfTestBlockingFixture.pagePath)?run=\(firstRun)") { tab, engine in
+            let profileID = model.profileID(for: tab)
+            let saved = store.contentBlocking(for: profileID)
+            defer {
+                store.setContentBlocking(saved, for: profileID)
+                model.contentBlockingSettingsChanged()
+            }
+            // The tab's first load ends before any other starts (as in contentBlockingChecks).
+            try await wait("the blocking fixture's page load \(firstRun) (title '\(engine.pageTitle ?? "nil")')", timeout: 20) {
+                SelfTestBlockingFixture.Verdict(title: engine.pageTitle)?.run == firstRun
+            }
+            guard let site = SiteControlCenter.site(for: engine.currentURL) else { throw Failure(description: "the blocking fixture's page has no site") }
+            @MainActor func settings() -> ContentBlockingSettings { store.contentBlocking(for: profileID) }
+            @MainActor func count(_ page: ChromiumEngine? = nil) -> Int? { model.contentBlocking.blockedCount?(page ?? engine) }
+            @MainActor func list(_ page: ChromiumEngine? = nil) -> ContentBlockingBlockedList? { model.blockedList(for: page ?? engine) }
+            /// The lines alone; the page's own site is checked where it matters.
+            @MainActor func shows(_ wanted: [Entry], _ page: ChromiumEngine? = nil) -> Bool {
+                list(page).map { $0.entries == wanted && $0.uncounted == 0 } ?? false
+            }
+            @MainActor func expectList(_ wanted: [Entry], _ label: String) async throws {
+                try await wait("\(label): the blocked list to be \(describe(.init(entries: wanted))) (now \(describe(list())))", timeout: 10) {
+                    shows(wanted) && count() == wanted.reduce(0) { $0 + $1.count }
+                }
+            }
+            /// One load of the list page in `engine`; returns when the page's requests have ended.
+            @MainActor func loadList(_ mode: SelfTestBlockingFixture.ListMode) async throws -> SelfTestBlockingFixture.ListVerdict {
+                blockingRun += 1
+                let run = blockingRun
+                loadShellTab(model, tab, engine, SelfTestBlockingFixture.listPageURL(base: serverBase, run: run, mode: mode))
+                return try await blockedListLoad(run, engine)
+            }
+
+            // 1. Ads and trackers, with no exception and no own rule in the way: two sites, two lists.
+            model.setContentBlockingEnabled(true, for: profileID)
+            model.setContentBlockingStrength(.adsAndTrackers, for: profileID)
+            for excepted in settings().exceptions { model.removeContentBlockingException(excepted, for: profileID) }
+            model.setContentBlockingOwnRules("", for: profileID)
+            let both = [Entry(host: tracker, count: 1, kinds: [.tracker]), Entry(host: ad, count: 1, kinds: [.ad])]
+            _ = try await waitForBlocking("at Ads and trackers, for the list", model, tab, engine, tracker: true, ad: true, timeout: 90)
+            try await expectList(both, "at Ads and trackers")
+            guard let row = model.contentBlockingRow(for: engine, site: site) else { throw Failure(description: "the site controls have no blocking row") }
+            try check(row.hasBlockedList && row.state == "2 blocked on this page", "the row does not offer its list: \(row)")
+            // The site Allow writes for is the engine's name for the page: here an address, which is itself.
+            guard let shown = list(), let pageSite = shown.allowSite, model.canAllowBlockedHosts(for: engine, on: shown) else {
+                throw Failure(description: "a line of the list cannot be allowed on \(site.host): the engine names the page's site "
+                    + "'\(list()?.pageSite ?? "nil")', one site: \(list()?.pageSiteIsOneSite ?? false)")
+            }
+            try check(pageSite == site.host, "the engine names the page's site '\(pageSite)', and the page is on \(site.host)")
+            log("PASS blocked list: \(describe(list())) for a page that asked a tracker's host and an ad server's host; "
+                + "the engine counts 2 and the row offers the list")
+
+            // 2. A navigation inside the document is the same page: the list stays.
+            let hash = try await engine.evaluate("history.pushState(null, '', location.pathname + location.search + '#same'), location.hash", in: .page) as? String
+            try check(hash == "#same", "the fixture did not navigate inside its document: location.hash is \(hash ?? "nil")")
+            try await Task.sleep(for: .milliseconds(600))
+            try check(shows(both) && count() == 2,
+                      "after a navigation inside the document the list is \(describe(list())) and the count \(count().map(String.init) ?? "nil")")
+
+            // 3. Allow, by the list's own command, which reloads the tab.
+            guard let line = ContentBlockingSiteAllow.rule(host: ad, site: pageSite) else {
+                throw Failure(description: "no Allow rule can be written for \(ad) on \(pageSite)")
+            }
+            // For a site the tab is not on (the list of a page it has left): nothing.
+            model.setBlockedHost(ad, allowed: true, on: "elsewhere.test", of: engine)
+            try check(settings().ownRules.isEmpty, "Allow for a site the tab is not on wrote '\(settings().ownRules)'")
+            model.setBlockedHost(ad, allowed: true, on: pageSite, of: engine)
+            try check(settings().ownRules == line + "\n", "Allow wrote '\(settings().ownRules)' into the own rules, not the one line '\(line)'")
+            try check(model.allowedBlockedHosts(for: engine, pageSite: pageSite) == [ad],
+                      "allowed on this site: \(model.allowedBlockedHosts(for: engine, pageSite: pageSite))")
+            // The server's word for it: waitForBlocking fails a load whose page and server disagree.
+            let allowedLoads = try await waitForBlocking("with \(ad) allowed", model, tab, engine, tracker: true, ad: false)
+            try await expectList([both[0]], "with \(ad) allowed")
+            model.setBlockedHost(ad, allowed: false, on: pageSite, of: engine)
+            try check(settings().ownRules.isEmpty, "Remove left '\(settings().ownRules)' in the own rules")
+            let againLoads = try await waitForBlocking("with the allow removed", model, tab, engine, tracker: true, ad: true)
+            try await expectList(both, "with the allow removed")
+            log("PASS blocked list allow: asked for a site the tab is not on, Allow wrote nothing; '\(line)' is the one line it wrote for "
+                + "the page's own site (it is the own rules' text in Settings); the ad's request "
+                + "then reached the fixture server (load \(allowedLoads)) and only \(tracker) was counted and listed; removed, both are "
+                + "blocked and listed again (load \(againLoads))")
+
+            // 4. Names that are not one site: listed, and never allowed.
+            _ = try await loadList(.sites)
+            let names = [Entry(host: SelfTestBlockingFixture.listHost, count: SelfTestBlockingFixture.listHostRequests, kinds: [.ad, .tracker], canBeAllowed: false),
+                         Entry(host: SelfTestBlockingFixture.listSuffixHost, count: 1, kinds: [.tracker], canBeAllowed: false)]
+            try await expectList(names, "a single-label name and a public suffix")
+            for name in names.map(\.host) {
+                model.setBlockedHost(name, allowed: true, on: pageSite, of: engine)
+                try check(settings().ownRules.isEmpty, "\(name) is not one site and Allow wrote '\(settings().ownRules)'")
+            }
+            log("PASS blocked list names: \(describe(list())); neither line can be allowed")
+
+            // 5. More sites than a list holds.
+            _ = try await loadList(.cap)
+            let sites = SelfTestBlockingFixture.listCapSites, held = ContentBlockingBlockedList.maxEntries
+            try await wait("the engine's count to be \(sites) (now \(count().map(String.init) ?? "nil"))", timeout: 20) { count() == sites }
+            let capped = list()
+            try check(capped?.entries.count == held && capped?.uncounted == sites - held
+                        && capped?.entries.allSatisfy { $0.count == 1 && $0.host.hasPrefix(marker) && $0.kinds == [.tracker] && $0.canBeAllowed } == true,
+                      "\(sites) blocked sites gave \(describe(capped)), not \(held) lines and \(sites - held) more")
+            log("PASS blocked list cap: \(sites) blocked sites are \(held) lines and \(sites - held) more")
+
+            // 6. A navigation to another document starts the list again, as it does the count.
+            _ = try await loadList(.quiet)
+            try await expectList([], "after a navigation to a page that asks for nothing")
+            let quietRow = model.contentBlockingRow(for: engine, site: site)
+            try check(quietRow?.hasBlockedList == false, "the row still offers a list on a page with nothing blocked: \(String(describing: quietRow))")
+            log("PASS blocked list cleared: a navigation inside the document kept the list; a navigation to another document emptied it, count 0")
+
+            // 7. A private window: a list, no Allow, and nothing once it is closed.
+            blockingRun += 1
+            let privateRun = blockingRun
+            let privateWindow = model.openPrivateWindow(url: SelfTestBlockingFixture.listPageURL(base: serverBase, run: privateRun))
+            guard let privateEngine = privateWindow.engine as? ChromiumEngine else { throw Failure(description: "private window engine is not Chromium") }
+            _ = try await blockedListLoad(privateRun, privateEngine)
+            try await wait("the private tab's blocked list to be \(describe(.init(entries: names))) (now \(describe(list(privateEngine))))", timeout: 10) {
+                shows(names, privateEngine) && count(privateEngine) == SelfTestBlockingFixture.listRequests
+            }
+            try check(list(privateEngine).map { !model.canAllowBlockedHosts(for: privateEngine, on: $0) } == true, "a private window's list offers Allow")
+            model.setBlockedHost(ad, allowed: true, on: pageSite, of: privateEngine)
+            try check(settings().ownRules.isEmpty, "Allow from a private window wrote '\(settings().ownRules)'")
+            let privateTab = privateEngine.tabID, privateKey = privateEngine.profileKey
+            guard let privateNSWindow = privateWindow.hostWindow else { throw Failure(description: "private window has no NSWindow") }
+            shell.closeWindow(privateNSWindow)
+            try await wait("the private session to close", timeout: 20) { model.privateWindows.isEmpty && runtime.engineProfileID(for: privateKey) == nil }
+            var reply: UnsafeMutablePointer<CChar>?
+            let status = call.copy(privateTab, &reply)
+            let left = reply.map { String(cString: $0) }.flatMap { ContentBlockingBlockedList.decode($0, lists: model.contentBlockingListRows) }
+            if let reply { ReArcBufferFree(reply) }
+            try check(status == .rearcOK && left?.isEmpty == true, "after the private window closed the engine answers \(status.rearcName) with \(describe(left)) for its tab")
+            log("PASS blocked list private window: its tab had \(describe(.init(entries: names))) and no Allow; closed, the engine has nothing for it")
+
+            // 8. Memory only: no made-up site of step 5 is in a file. Last, so that what it finds is the only thing it fails.
+            model.persistence.flush()
+            let folders = [runtime.userDataDir, model.persistence.fileURL.deletingLastPathComponent()].compactMap { $0 }
+            let found = await Task.detached { Self.files(containing: marker, in: folders) }.value
+            try check(found.isEmpty, "the blocked sites of a page were written to disk: '\(marker)…' is in \(found.prefix(5).joined(separator: ", "))"
+                + (found.count > 5 ? " and \(found.count - 5) more file(s)" : ""))
+            log("PASS blocked list in memory only: none of the \(sites) made-up sites is in a file under \(folders.map(\.path).joined(separator: " or "))")
+        }
+    }
+
+    /// The engine names sites by Chromium's public suffix list (CONTENT-BLOCKING.md
+    /// §9, patch `tab/098`, ABI 1.69 `host_sites`), through the shell's one
+    /// place to ask (`SiteNames.shared`). An engine without it logs the gap.
+    /// What must hold: a host is named by its registrable domain, private
+    /// registries included; a public suffix is said to be one and a name
+    /// with no suffix is not; and a name the engine would read as another
+    /// (`1.2` is an address to it) gets no answer at all (security BL-12).
+    /// A table lookup: nothing here loads a page or asks the network.
+    @MainActor
+    private func hostSitesChecks() throws {
+        guard runtime.capabilities.hostSites, let names = SiteNames.shared else {
+            log("ABI-GAP host_sites not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 69): "
+                + "the shell names a site by its own rules (the page's exact host for a blocking exception, its guess elsewhere)")
+            return
+        }
+        let wanted: [(String, SiteName?)] = [
+            ("www.example.co.uk", SiteName(name: "example.co.uk", isOneSite: true)),
+            ("a.someone.web.app", SiteName(name: "someone.web.app", isOneSite: true)),
+            ("someone.github.io", SiteName(name: "someone.github.io", isOneSite: true)),
+            ("school.edu.au", SiteName(name: "school.edu.au", isOneSite: true)),
+            ("WWW.Example.COM.", SiteName(name: "example.com", isOneSite: true)),
+            ("203.0.113.7", SiteName(name: "203.0.113.7", isOneSite: true)),
+            ("name.test", SiteName(name: "name.test", isOneSite: true)),
+            ("web.app", SiteName(name: "web.app", isOneSite: false, isSuffix: true)),
+            ("co.uk", SiteName(name: "co.uk", isOneSite: false, isSuffix: true)),
+            ("edu.au", SiteName(name: "edu.au", isOneSite: false, isSuffix: true)),
+            ("com", SiteName(name: "com", isOneSite: false, isSuffix: true)),
+            ("localhost", SiteName(name: "localhost", isOneSite: false, isSuffix: false)),
+            ("1.2", nil), ("0x7f.1", nil), ("123", nil), ("example.com:443", nil), ("https://example.com", nil), ("[::1]", nil), ("", nil),
+        ]
+        let wrong = wanted.compactMap { host, site -> String? in
+            let answer = names.site(of: host)
+            return answer == site ? nil : "'\(host)' is \(answer.map { "\($0)" } ?? "no answer"), not \(site.map { "\($0)" } ?? "no answer")"
+        }
+        try check(wrong.isEmpty, "the engine's site names: \(wrong.joined(separator: "; "))")
+        // The engine itself refuses a name it reads as another one; the shell's check is a second hold.
+        if let copy = ChromiumHostSites.resolve() {
+            let refused = ["1.2", "0x7f.1", "123", "a b", "example.com/x"].filter { ChromiumHostSites.reply(copy, $0) != nil }
+            try check(refused.isEmpty, "the engine answered for \(refused), which are not plain names of themselves")
+        }
+        log("PASS host sites: \(wanted.count) names, registrable domains by Chromium's suffix list (someone.web.app and school.edu.au are sites; "
+            + "web.app, co.uk and com are suffixes; localhost is neither), and no answer for a name the engine reads as another")
+    }
+
+    /// The files under `folders` that hold `text` as plain bytes. For a name
+    /// that must be in no file; a compressed copy would not be seen, and a
+    /// file over 256 MB is not read.
+    nonisolated private static func files(containing text: String, in folders: [URL]) -> [String] {
+        let needle = Data(text.utf8)
+        var found: Set<String> = []
+        for folder in folders {
+            guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]) else { continue }
+            for case let file as URL in files {
+                guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
+                      (values.fileSize ?? 0) <= 256 * 1024 * 1024 else { continue }
+                guard let data = try? Data(contentsOf: file, options: .mappedIfSafe), data.range(of: needle) != nil else { continue }
+                found.insert(file.path)
+            }
+        }
+        return found.sorted()
+    }
+
+    /// Waits for load `run` of the blocked list page to end and reads it.
+    @MainActor
+    private func blockedListLoad(_ run: Int, _ engine: ChromiumEngine, timeout: TimeInterval = 20) async throws -> SelfTestBlockingFixture.ListVerdict {
+        try await wait("the blocked list page's load \(run) (title '\(engine.pageTitle ?? "nil")')", timeout: timeout) {
+            SelfTestBlockingFixture.ListVerdict(title: engine.pageTitle)?.run == run
+        }
+        guard let verdict = SelfTestBlockingFixture.ListVerdict(title: engine.pageTitle) else {
+            throw Failure(description: "the blocked list page's title changed under the test: '\(engine.pageTitle ?? "nil")'")
+        }
+        return verdict
+    }
+
     /// One load of the blocking fixture in `tab`, as a page load with a
     /// number of its own: what the page saw of its two requests, and what
     /// the fixture server was asked for in that load. The two must agree: a
@@ -4188,6 +4467,14 @@ extension ChromiumSelfTest {
             // The engine marks the blocker that is ready, for the next launch, when its lists are on
             // (a takeover: the new one's, after indexing). That is not visible from here: time for it.
             try await Task.sleep(for: .seconds(step == .takeover ? 10 : 4))
+            if step == .takeover, model.contentBlocking.blockedHosts != nil {
+                // By now blocking has moved to the second blocker: the list must still be the page's
+                // (security BL-09; the next launch reads which blocker was left ready).
+                _ = try await waitForBlocking("after the list update", model, tab, engine, tracker: true, ad: true, timeout: 10)
+                let wanted = [SelfTestBlockingFixture.trackerHost, SelfTestBlockingFixture.adHost]
+                try await wait("the blocked list after the list update", timeout: 10) { model.blockedList(for: engine)?.entries.map(\.host) == wanted }
+                summary += "; after the update the blocked list still has both sites"
+            }
         }
         log("COLD-BLOCKING PASS \(summary)")
     }

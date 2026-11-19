@@ -90,7 +90,14 @@ before the bridge release ships and what makes a test copy safe beside the perso
 install (a throwaway update key, and a throwaway data directory in the copy's `LSEnvironment`
 so that Sparkle's relaunch cannot open the real profile).
 
-Engine strings a person reads are in overlay patch `chrome/008-darni-visible-names.patch`.
+Engine strings a person reads (the version line of `chrome://version`, the blocker
+extension's name and description) are in overlay patch
+`engine/patches/chrome/008-darni-visible-names.patch`. **It is held back: the file is kept
+but it is not in `engine/patches/series`, and the bridge release's engine does not have it.**
+Security's condition 1 for the bridge release (`security/PRE-darni-bridge.md`) is that its
+engine stays as built, overlay `9f2767b4c1`, through `tab/098`. Add the patch's line to
+`series` after `tab/098` for the first engine build after the bridge. `series` must always
+match what is built: `engine/tests/replay_overlay.py` compares the two.
 
 ## Exact steps
 

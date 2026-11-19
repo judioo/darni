@@ -29,16 +29,22 @@ What does not change, on purpose:
 - The placeholder main menu's title in rearc_app_delegate_mac.mm: AppKit never
   shows a main menu's own title, and the host replaces the menu.
 
-No ABI change: REARC_ABI_MINOR_VERSION and the bridge version stay as tab/097
-(or tab/098, when it is in the series) leaves them. Applies after tab/095; it
-touches no line another patch's hunk has in its context (checked against the
-tree after tab/097 and after tab/098).
+HELD BACK, not in `series`: this patch goes in after the bridge release. The
+bridge release's engine stays as built (overlay 9f2767b4c1, through tab/098),
+which is security's condition 1 for that release (security/PRE-darni-bridge.md):
+with the engine unchanged, the Safe Storage item's name cannot have moved. Add
+its line to `series` after tab/098 for the first engine build after the bridge,
+and check then that the blocker's manifest check (CB-03) still passes.
+
+No ABI change: REARC_ABI_MINOR_VERSION and the bridge version stay as tab/098
+leaves them. Applies after tab/095; it touches no line another patch's hunk
+has in its context (checked against the tree after tab/097 and after tab/098).
 
 Not built: written from `git show` of the overlay tree, with no write to
 engine/chromium/src or out/ (another build was running). Needs an engine
 rebuild of two translation units to take effect.
 
-Last rebased: 2026-11-19 onto Chromium 156.0.8078.109, after tab/097.
+Last rebased: 2026-11-19 onto Chromium 156.0.8078.109, after tab/098.
 
 Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
 ---

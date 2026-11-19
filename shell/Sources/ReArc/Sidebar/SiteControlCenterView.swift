@@ -73,12 +73,13 @@ extension BrowserViewModel {
             case .block: store.setAutoPiPDisabled(forHost: host)
             case .snoozeOneHour: store.snoozeAutoPiP(forHost: host)
             case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings,
-                 .removeDevice, .reloadPage: break
+                 .turnOffBlockingForSiteOnly, .removeDevice, .reloadPage: break
             }
         case .contentBlocking:
             switch action {
             case .turnOffBlockingForSite: setContentBlocking(false, forSiteOf: engine, site: site)
             case .turnOnBlockingForSite: setContentBlocking(true, forSiteOf: engine, site: site)
+            case .turnOffBlockingForSiteOnly: narrowContentBlockingException(forSiteOf: engine, site: site)
             case .openBlockingSettings: showSettings(.profiles)
             case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .removeDevice, .reloadPage: break
             }
@@ -100,7 +101,8 @@ extension BrowserViewModel {
                 sitePermissions.reset(origin: site.origin, scope: scope, type: type)
             case .openSiteSettings:
                 openSiteSettings(origin: site.origin)
-            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .removeDevice, .reloadPage:
+            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .turnOffBlockingForSiteOnly,
+                 .removeDevice, .reloadPage:
                 break
             }
         }
@@ -165,6 +167,8 @@ struct SiteControlCenterView: View {
     @Environment(\.colorScheme) private var colorScheme
     /// The pointer is over the Extensions section: Manage shows.
     @State private var isOverExtensions = false
+    /// The blocking row's list is open (spec §3 "Blocked on this page").
+    @State private var showsBlockedList = false
 
     static let tile = CGSize(width: 48, height: 32)
     static let spacing: CGFloat = 8
@@ -216,9 +220,13 @@ struct SiteControlCenterView: View {
     private var settingRows: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(model.siteControlSettingRows(for: engine, site: site)) { row in
-                SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark) { action in
+                SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark,
+                                           disclosure: row.hasBlockedList ? $showsBlockedList : nil) { action in
                     if action == .openSiteSettings || action == .openBlockingSettings || action == .reloadPage { dismiss() }
                     model.performSiteSetting(action, on: row, engine: engine, site: site)
+                }
+                if row.kind == .contentBlocking {
+                    SiteControlsBlockedListView(model: model, engine: engine, site: site, isOpen: row.hasBlockedList && showsBlockedList)
                 }
             }
         }
@@ -578,6 +586,9 @@ enum SiteControlsPreview {
 struct SiteControlsSettingRowView: View {
     let row: SiteControlCenter.SettingRow
     let isDark: Bool
+    /// The row has a list under it: a chevron at its right edge opens and
+    /// closes it, apart from the row's own click.
+    var disclosure: Binding<Bool>?
     let perform: (SiteControlCenter.SettingAction) -> Void
     @State private var anchor: NSView?
     @State private var isHovering = false
@@ -585,6 +596,27 @@ struct SiteControlsSettingRowView: View {
     private static let disc = Color(.sRGB, red: 0.80, green: 0.76, blue: 0.72)
 
     var body: some View {
+        HStack(spacing: 0) {
+            rowButton
+            if let disclosure {
+                let title = disclosure.wrappedValue ? SiteControlCenter.hideBlockedListTitle : SiteControlCenter.showBlockedListTitle
+                Button { disclosure.wrappedValue.toggle() } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(disclosure.wrappedValue ? 90 : 0))
+                        .frame(width: SiteControlsBlockedListMetrics.disclosureWidth, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(title)
+                .accessibilityLabel(title)
+                .accessibilityIdentifier("site-controls-blocked-list-disclosure")
+            }
+        }
+    }
+
+    private var rowButton: some View {
         Button(action: click) {
             HStack(spacing: 10) {
                 Image(systemName: row.symbol)
@@ -626,6 +658,163 @@ struct SiteControlsSettingRowView: View {
             menu.addItem(ClosureMenuItem(action.title) { perform(action) })
         }
         popUp(menu, under: anchor)
+    }
+}
+
+enum SiteControlsBlockedListMetrics {
+    /// Narrow: the row's title only just fits the panel beside it.
+    static let disclosureWidth: CGFloat = 16
+    static let lineHeight: CGFloat = 22
+    /// More lines than this scroll.
+    static let visibleLines = 7
+    /// The list starts a little inside the row's icon.
+    static let inset: CGFloat = 8
+    /// A site's name is cut from the left past this many characters, so its registrable domain always shows.
+    static let hostLimit = 24
+}
+
+/// "Blocked on this page" (CONTENT-BLOCKING.md §3): under the blocking row,
+/// the sites whose requests were blocked in this tab's page, each with its
+/// tag and count, most blocked first. Under the pointer a line offers Allow,
+/// which adds one line to the person's own rules and reloads the tab; what
+/// was allowed that way on this site is listed below with Remove.
+///
+/// The list is the engine's, read while this view is on screen. Nothing of
+/// it is kept here once the panel closes.
+struct SiteControlsBlockedListView: View {
+    let model: BrowserViewModel
+    let engine: any WebEngine
+    let site: SiteControlCenter.Site
+    /// The row's disclosure. The hosts allowed on this site show either way:
+    /// once a host is allowed nothing of it is counted, and Remove must stay in reach.
+    let isOpen: Bool
+
+    var body: some View {
+        // One reading of the engine gives the lines and the site they are for:
+        // Allow and Remove carry the site this drew, not the tab's address at the click.
+        if let list = model.blockedList(for: engine) {
+            let canAllow = model.canAllowBlockedHosts(for: engine, on: list)
+            let pageSite = list.pageSite
+            let allowed = pageSite.map { model.allowedBlockedHosts(for: engine, pageSite: $0) } ?? []
+            if (isOpen && !list.isEmpty) || !allowed.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    if isOpen, !list.isEmpty {
+                        SiteControlsBlockedLinesView(list: list, canAllow: canAllow) { host in
+                            if let pageSite { model.setBlockedHost(host, allowed: true, on: pageSite, of: engine) }
+                        }
+                    }
+                    if let pageSite, !allowed.isEmpty {
+                        Text(SiteControlCenter.allowedOnSiteTitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(height: SiteControlsBlockedListMetrics.lineHeight)
+                        ForEach(allowed, id: \.self) { host in
+                            SiteControlsBlockedLine(host: host, tag: "", count: nil,
+                                                    action: canAllow ? (title: "Remove", help: SiteControlCenter.removeAllowedHostTitle(host)) : nil,
+                                                    actionAlwaysShows: true) {
+                                model.setBlockedHost(host, allowed: false, on: pageSite, of: engine)
+                            }
+                        }
+                    }
+                }
+                .padding(.leading, SiteControlsBlockedListMetrics.inset)
+                .accessibilityIdentifier("site-controls-blocked-list")
+            }
+        }
+    }
+}
+
+/// The blocked sites' lines. Made when the list opens, so the order by count
+/// is taken then: while it is open a line stays where it is, its count
+/// changes in place and new sites go underneath. The page decides the counts,
+/// and lines that sorted themselves could change places under the pointer as
+/// the person clicks Allow (security BL-03).
+private struct SiteControlsBlockedLinesView: View {
+    let list: ContentBlockingBlockedList
+    let canAllow: Bool
+    /// With the name the line showed.
+    let allow: (String) -> Void
+    /// The hosts shown, top to bottom.
+    @State private var order: [String] = []
+
+    var body: some View {
+        let entries = list.entries(keeping: order)
+        let lines = VStack(alignment: .leading, spacing: 0) {
+            ForEach(entries) { entry in
+                SiteControlsBlockedLine(host: entry.host, tag: entry.tagText, count: entry.count, spoken: entry.spokenText,
+                                        action: canAllow && entry.canBeAllowed ? (title: "Allow", help: SiteControlCenter.allowHostTitle(entry.host)) : nil) {
+                    allow(entry.host)
+                }
+            }
+            if let more = list.uncountedText {
+                Text(more)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(height: SiteControlsBlockedListMetrics.lineHeight)
+            }
+        }
+        let count = entries.count + (list.uncountedText == nil ? 0 : 1)
+        Group {
+            if count > SiteControlsBlockedListMetrics.visibleLines {
+                ScrollView { lines }
+                    .frame(height: CGFloat(SiteControlsBlockedListMetrics.visibleLines) * SiteControlsBlockedListMetrics.lineHeight)
+            } else {
+                lines
+            }
+        }
+        .onChange(of: entries.map(\.host), initial: true) { _, hosts in order = hosts }
+    }
+}
+
+/// One line of the blocked list: the site, never cut on its right; then its
+/// tag and count, or under the pointer its button.
+private struct SiteControlsBlockedLine: View {
+    let host: String
+    let tag: String
+    let count: Int?
+    var spoken: String?
+    /// nil: the line only reports (a private window).
+    let action: (title: String, help: String)?
+    var actionAlwaysShows = false
+    let perform: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(PageOrigin.shortenedHost(host, limit: SiteControlsBlockedListMetrics.hostLimit))
+                .font(.system(size: 12))
+                .foregroundStyle(.primary.opacity(0.85))
+                .lineLimit(1)
+                .fixedSize()
+            Spacer(minLength: 0)
+            if let action, actionAlwaysShows || isHovering {
+                Button(action.title, action: perform)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .help(action.help)
+                    .accessibilityLabel(action.help)
+            } else {
+                Text(tag)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+            }
+        }
+        .frame(height: SiteControlsBlockedListMetrics.lineHeight)
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .contextMenu { if let action { Button(action.help, action: perform) } }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(spoken ?? host)
+        // The button shows under the pointer only: VoiceOver gets the action on the line.
+        .accessibilityActions { if let action { Button(action.help, action: perform) } }
     }
 }
 

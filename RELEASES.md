@@ -46,6 +46,45 @@ lines and this section starts empty again.
   item that protects your saved passwords is still called "ReArc Safe Storage", and your data
   stays in the same folder on your Mac. That is on purpose. It is what keeps you signed in.
 
+**New**
+- See what was blocked on a page. In the site controls (the button beside the address), the
+  "Block ads and trackers" row now has an arrow beside "N blocked on this page". It opens a list
+  of the sites whose requests were blocked on this page, each with how many and with what blocked
+  it: Ad, Tracker, Annoyance, or Your rule for one of your own rules.
+- Allow a blocked site on one site. Point at a line of that list and choose Allow: Darni adds one
+  line to your own rules (Settings › Profiles › Advanced), reloads the page and shows the site
+  under "Allowed on this site", where Remove takes it back. A name that covers more than one
+  site, such as `localhost` or `co.uk`, has no Allow.
+- The list is kept in memory, for that tab only, and starts again when the page loads. It is
+  never saved, synced or sent anywhere, and it holds site names only, never full addresses. A
+  private window shows the list without Allow. Very busy pages show the first 100 sites and how
+  many more requests were blocked.
+
+**Fixes**
+- With two windows open on the same space, ⌘T and ⌘L open the command bar only in the window
+  you are using. Until now it opened in both, and what you typed showed in both. Clicking into
+  another window closes it.
+- "Turn Off Blocking for This Site" means the whole site again. Since 2026.1119.1051 it covered
+  only the exact address you were on, so blocking came back when a site moved you from `www.`
+  to `m.` or `app.`. Darni now works out the site the way Chromium does.
+- If you turned blocking off on a site such as `someone.web.app` between 2026.1118.1027 and
+  2026.1119.1049, Darni stored `web.app`, which is every site under it. Settings › Profiles ›
+  Advanced now marks such an entry "Off for every site under web.app", and the site's controls
+  offer "Turn Off Blocking for This Site Only", which keeps blocking off for that one site and
+  turns it back on for the rest. Darni does not change these entries by itself. A name like
+  `web.app` or `co.uk` can no longer be added there.
+
+**Security**
+- A boost can no longer apply to a whole group of unrelated sites. A boost made on
+  `someone.web.app` or `school.edu.au` used to be scoped to `web.app` or `edu.au`, and a boost
+  from a file could name such a scope and bring a script with it. Darni now refuses a boost
+  whose scope is one of these shared endings, and a boost you already have with such a scope
+  stops running until you set its scope to one site. New boosts are scoped to the site you are on.
+- A long address in prompts and address lines always keeps the name of the site you are on,
+  also on shared hosts such as `s3.amazonaws.com`.
+- "Turn Off Blocking for This Site" acts on the page the panel was opened for. If the page
+  changed in the meantime, nothing is changed and Darni says so.
+
 ## ReArc 2026.1119.1053 — 2026-11-19
 
 **New**

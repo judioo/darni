@@ -188,6 +188,9 @@ extension SiteControlCenter {
         case allow, block, reset, snoozeOneHour, openSiteSettings
         /// "Block ads and trackers": a site exception on or off, and the way to the switch.
         case turnOffBlockingForSite, turnOnBlockingForSite, openBlockingSettings
+        /// Blocking is off for every site under a public suffix (an exception
+        /// stored by an older build): keep it off for this site alone.
+        case turnOffBlockingForSiteOnly
         /// A device chosen for the site (USB, HID, serial, Bluetooth) is taken from it again.
         case removeDevice
         /// After a permission change: the loaded page keeps what it had until it is reloaded.
@@ -199,6 +202,7 @@ extension SiteControlCenter {
             case .reloadPage: return "Reload Page"
             case .turnOffBlockingForSite: return "Turn Off Blocking for This Site"
             case .turnOnBlockingForSite: return "Turn On Blocking for This Site"
+            case .turnOffBlockingForSiteOnly: return "Turn Off Blocking for This Site Only"
             case .openBlockingSettings: return "Blocking Settings…"
             case .allow: return "Allow"
             case .block: return "Block"
@@ -230,10 +234,30 @@ extension SiteControlCenter {
         public var isBlocked: Bool
         /// One action is a click; more are a menu; none is a label.
         public var actions: [SettingAction]
+        /// The row has a list behind it, opened by a disclosure at its right
+        /// edge: what was blocked on this page.
+        public var hasBlockedList = false
         public var id: Kind { kind }
     }
 
     public static let contentBlockingTitle = "Block ads and trackers"
+
+    /// The row's state, and the line in Settings, for an exception that is a
+    /// public suffix: blocking is off for far more than one site.
+    public static func suffixExceptionText(_ suffix: String) -> String { "Off for every site under \(suffix)" }
+    /// Under the field in Settings when the typed name is a public suffix.
+    public static func suffixExceptionRefusal(_ suffix: String) -> String {
+        "\(suffix) is not one site: every site under it is someone else’s. Type one site, such as example.\(suffix)."
+    }
+    /// The disclosure on the blocking row, closed and open.
+    public static let showBlockedListTitle = "Show What Was Blocked"
+    public static let hideBlockedListTitle = "Hide What Was Blocked"
+    /// The title over the hosts the person allowed on this site.
+    public static let allowedOnSiteTitle = "Allowed on this site"
+
+    /// A blocked line's button, and the same for an allowed one.
+    public static func allowHostTitle(_ host: String) -> String { "Allow \(host) on This Site" }
+    public static func removeAllowedHostTitle(_ host: String) -> String { "Block \(host) on This Site Again" }
 
     /// "N blocked on this page" (spec §3). The count is this tab's, read
     /// from the engine while the panel is open; it never leaves the Mac.
@@ -251,20 +275,33 @@ extension SiteControlCenter {
     /// Settings: one site's panel never turns blocking on for a profile.
     /// In a private window the row only reports, so a site visited there
     /// is never written into the profile's exceptions.
+    /// `blockedListAvailable`: the engine can say which sites the count is
+    /// of; the row then opens that list while something is blocked.
     public static func contentBlockingRow(
         settings: ContentBlockingSettings,
         pageURL: URL?,
         blockedCount: Int?,
         listsAvailable: Bool,
-        isPrivate: Bool
+        isPrivate: Bool,
+        blockedListAvailable: Bool = false,
+        names: SiteNames? = .shared
     ) -> SettingRow {
         var row = SettingRow(kind: .contentBlocking, title: contentBlockingTitle, state: blockedCountText(blockedCount),
                              symbol: "shield.lefthalf.filled", isBlocked: false, actions: [.turnOffBlockingForSite])
+        row.hasBlockedList = blockedListAvailable && (blockedCount ?? 0) > 0
         if !settings.isEnabled {
             row.state = "Off in Settings"
             row.symbol = "shield.slash"
             row.isBlocked = true
             row.actions = [.openBlockingSettings]
+        } else if let suffix = settings.suffixException(covering: pageURL, names: names) {
+            // An exception an older build stored under a public suffix
+            // (security CB-12): the row says how far it reaches, and offers
+            // this site alone as well as blocking back on.
+            row.state = suffixExceptionText(suffix)
+            row.symbol = "shield.slash"
+            row.isBlocked = true
+            row.actions = [.turnOffBlockingForSiteOnly, .turnOnBlockingForSite]
         } else if settings.exception(covering: pageURL) != nil {
             row.state = "Off for this site"
             row.symbol = "shield.slash"
@@ -274,7 +311,9 @@ extension SiteControlCenter {
             row.state = "No lists yet"
             row.actions = []
         }
-        if isPrivate || ContentBlockingHost.exceptionHost(for: pageURL) == nil { row.actions.removeAll { $0 != .openBlockingSettings } }
+        if isPrivate || ContentBlockingHost.exceptionHost(for: pageURL, names: names) == nil { row.actions.removeAll { $0 != .openBlockingSettings } }
+        // Off, excepted or without lists: nothing is counted, so nothing is listed.
+        if row.isBlocked || !listsAvailable { row.hasBlockedList = false }
         return row
     }
 

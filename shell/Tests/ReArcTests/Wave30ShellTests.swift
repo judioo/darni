@@ -234,6 +234,30 @@ final class Wave30ShellTests: XCTestCase {
         XCTAssertEqual(model.toast?.message, "Copied Current URL")
     }
 
+    func testTheCommandBarShowsOnlyInTheWindowItOpenedIn() {
+        // Owner's recording, 2026-11-19: two windows on one space both drew the bar for one ⌘T.
+        let model = makeModel()
+        let first = SidebarWindowID(), second = SidebarWindowID()
+        model.store.registerWindow(first)
+        model.store.registerWindow(second)
+        model.windowBecameKey(second)
+        model.windowBecameKey(first)
+
+        model.newTab()
+        XCTAssertTrue(model.showsCommandBar(in: first))
+        XCTAssertFalse(model.showsCommandBar(in: second), "the other window on the same space draws no bar")
+
+        model.windowBecameKey(first)
+        XCTAssertTrue(model.isCommandBarPresented, "its own window becoming key again keeps it")
+        model.windowBecameKey(second)
+        XCTAssertFalse(model.isCommandBarPresented, "another window taking the keys closes it")
+        XCTAssertFalse(model.showsCommandBar(in: first))
+
+        model.focusLocation()
+        XCTAssertTrue(model.showsCommandBar(in: second))
+        XCTAssertFalse(model.showsCommandBar(in: first))
+    }
+
     func testCommandTThenEscapeLeavesNoTabAndCommandLToggles() {
         let model = makeModel()
         let page = model.store.addTab(kind: .today, title: "Page", url: URL(string: "https://page.test/")!)

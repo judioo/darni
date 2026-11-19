@@ -110,7 +110,7 @@ struct BrowserView: View {
                 .allowsHitTesting(false)
             }
 
-            if model.isCommandBarPresented {
+            if model.showsCommandBar(in: windowID) {
                 // Arc does not dim the page: a clear layer only takes the click that closes the bar.
                 Color.clear
                     .contentShape(Rectangle())
