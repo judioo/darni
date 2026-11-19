@@ -1320,6 +1320,7 @@ final class ChromiumSelfTest {
         try await contentBlockingChecks(model: model, store: store)
         try await contentBlockingBlockedListChecks(model: model, store: store, shell: shell)
         try hostSitesChecks()
+        try await siteNamesUsersChecks(model: model, store: store)
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3999,6 +4000,110 @@ extension ChromiumSelfTest {
         }
         log("PASS host sites: \(wanted.count) names, registrable domains by Chromium's suffix list (someone.web.app and school.edu.au are sites; "
             + "web.app, co.uk and com are suffixes; localhost is neither), and no answer for a name the engine reads as another")
+    }
+
+    /// The four users of the engine's site names (CONTENT-BLOCKING.md §9;
+    /// security CB-12, BO-01, AG-05), on a page under a private suffix: the
+    /// blocking fixture loaded from `rearc-selftest.azurewebsites.net`, which
+    /// the shell's old guess took for a page of all of `azurewebsites.net`.
+    /// Needs the blocked list's call and `host_sites`; the gaps are logged by
+    /// the steps before. What must hold:
+    ///
+    /// - The engine names the page's site as the one tenant.
+    /// - "Turn Off Blocking for This Site" stores that tenant, and the
+    ///   fixture's two requests then load.
+    /// - A stored exception for the whole suffix (what builds 1027 to 1049
+    ///   wrote) is marked on the row, and "This Site Only" swaps it for the
+    ///   tenant. The suffix typed into Settings is refused.
+    /// - A new boost on the page is for the tenant; a scope of the suffix is
+    ///   refused and matches nothing.
+    /// - A long host under the suffix keeps its own label when shortened.
+    @MainActor
+    private func siteNamesUsersChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        guard model.contentBlocking.isAvailable, model.contentBlocking.blockedHosts != nil, runtime.capabilities.hostSites,
+              SiteNames.shared != nil, model.contentBlocking.bundle != nil else { return }
+        let host = SelfTestBlockingFixture.siteHost, suffix = SelfTestBlockingFixture.siteSuffix
+        // The fixture server by the site's name: the same port, another host.
+        let siteBase = serverBase.replacingOccurrences(of: "127.0.0.1", with: host)
+        try check(siteBase != serverBase, "the fixture server's address '\(serverBase)' has no 127.0.0.1 to put \(host) in for")
+
+        blockingRun += 1
+        try await withFixtureTab(model, store, title: "Site names", path: "\(SelfTestBlockingFixture.listPagePath)?run=\(blockingRun)&quiet=1") { tab, engine in
+            let profileID = model.profileID(for: tab)
+            let saved = store.contentBlocking(for: profileID)
+            defer {
+                store.setContentBlocking(saved, for: profileID)
+                model.contentBlockingSettingsChanged()
+            }
+            _ = try await blockedListLoad(blockingRun, engine)
+            @MainActor func settings() -> ContentBlockingSettings { store.contentBlocking(for: profileID) }
+            /// Loads the fixture from the site's name until the page shows the wanted state.
+            @MainActor func loadUntil(tracker: Bool, ad: Bool, _ what: String, timeout: TimeInterval = 30) async throws {
+                let deadline = Date().addingTimeInterval(timeout)
+                while true {
+                    blockingRun += 1
+                    let run = blockingRun
+                    loadShellTab(model, tab, engine, SelfTestBlockingFixture.pageURL(base: siteBase, run: run))
+                    let load = try await blockingFixtureLoad(run, engine)
+                    if load.verdict.trackerBlocked == tracker && load.verdict.adBlocked == ad { return }
+                    guard Date() < deadline else {
+                        throw Failure(description: "site names \(what): after \(Int(timeout)) s the page on \(host) still has \(load.verdict.text)")
+                    }
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+            }
+
+            model.setContentBlockingEnabled(true, for: profileID)
+            model.setContentBlockingStrength(.adsAndTrackers, for: profileID)
+            for excepted in settings().exceptions { model.removeContentBlockingException(excepted, for: profileID) }
+            model.setContentBlockingOwnRules("", for: profileID)
+
+            // 1. The page under the suffix, blocked; the engine names its site as the tenant.
+            try await loadUntil(tracker: true, ad: true, "at Ads and trackers", timeout: 60)
+            guard let site = SiteControlCenter.site(for: engine.currentURL), let pageURL = engine.currentURL else {
+                throw Failure(description: "the page on \(host) has no site")
+            }
+            let named = model.blockedList(for: engine)
+            try check(named?.pageSite == host && named?.pageSiteIsOneSite == true,
+                      "the engine names the page's site '\(named?.pageSite ?? "nil")' (one site: \(named?.pageSiteIsOneSite ?? false)), not \(host)")
+
+            // 2. Turn Off Blocking for This Site: the tenant, not the suffix.
+            model.setContentBlocking(false, forSiteOf: engine, site: site)
+            try check(settings().exceptions == [host], "Turn Off for This Site stored \(settings().exceptions), not [\(host)]")
+            try await loadUntil(tracker: false, ad: false, "with the site's exception")
+
+            // 3. What an older build stored: the whole suffix. Marked, narrowed, and refused when typed.
+            store.updateContentBlocking(for: profileID) { $0.setExceptions([suffix]) }
+            model.contentBlockingSettingsChanged()
+            guard let marked = model.contentBlockingRow(for: engine, site: site) else { throw Failure(description: "the site controls have no blocking row") }
+            try check(marked.state == SiteControlCenter.suffixExceptionText(suffix) && marked.actions.contains(.turnOffBlockingForSiteOnly),
+                      "the row for a stored '\(suffix)' exception: \(marked)")
+            model.performSiteSetting(.turnOffBlockingForSiteOnly, on: marked, engine: engine, site: site)
+            try check(settings().exceptions == [host], "This Site Only left \(settings().exceptions), not [\(host)]")
+            try check(!model.addContentBlockingException(suffix, for: profileID) && settings().exceptions == [host],
+                      "'\(suffix)' typed into Settings was taken: \(settings().exceptions)")
+            model.setContentBlocking(true, forSiteOf: engine, site: site)
+            try check(settings().exceptions.isEmpty, "Turn On for This Site left \(settings().exceptions)")
+            try await loadUntil(tracker: true, ad: true, "with the exception removed")
+
+            // 4. Boost scopes.
+            let scope = BoostScopeMatcher.defaultRule(forPage: pageURL)
+            try check(scope?.host == host && scope?.hostMatch == .registrable, "a new boost on \(host) is scoped to \(String(describing: scope))")
+            let wide = BoostHostRule(host: suffix, schemes: ["http"])
+            try check(!BoostScopeMatcher.validateRule(wide) && !BoostScopeMatcher.validateRule(BoostHostRule(host: suffix, hostMatch: .exact)),
+                      "a boost scoped to \(suffix) is accepted")
+            try check(!BoostScopeMatcher.matches(rule: wide, url: pageURL) && (scope.map { BoostScopeMatcher.matches(rule: $0, url: pageURL) } ?? false),
+                      "a boost scoped to \(suffix) matches the page on \(host), or one scoped to \(host) does not")
+
+            // 5. The shortened host.
+            let long = "login.\(String(repeating: "a", count: 30)).\(suffix)"
+            let short = PageOrigin.shortenedHost(long)
+            try check(short == "…" + long.dropFirst("login.".count), "'\(long)' is shortened to '\(short)'")
+
+            log("PASS site names in use: on \(host) the engine names the tenant as the site; Turn Off for This Site stores it and the "
+                + "page's requests load; a stored '\(suffix)' is marked on the row and narrowed to the tenant, and refused when typed; a new "
+                + "boost is for the tenant and a scope of '\(suffix)' is refused and matches nothing; a long host keeps its own label")
+        }
     }
 
     /// The files under `folders` that hold `text` as plain bytes. For a name

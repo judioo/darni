@@ -91,17 +91,21 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
 
     // MARK: The resolver rule
 
-    /// Chromium takes the first rule that matches a name, so the two hosts
-    /// come before the rule that fails every other name; nothing else resolves.
-    func testTheSelfTestAnswersOnlyTheTwoHostsFromLoopback() throws {
+    /// Chromium takes the first rule that matches a name, so the fixture's
+    /// hosts come before the rule that fails every other name; nothing else resolves.
+    func testTheSelfTestAnswersOnlyItsOwnHostsFromLoopback() throws {
         let arguments = ChromiumLaunchArguments.selfTestArguments(["ReArc", "--user-data-dir=/tmp/x"])
         let rules = try XCTUnwrap(arguments.first { $0.hasPrefix("--host-resolver-rules=") })
         XCTAssertEqual(arguments.filter { $0.hasPrefix("--host-resolver-rules=") }.count, 1)
         let entries = rules.dropFirst("--host-resolver-rules=".count).components(separatedBy: ", ")
         XCTAssertEqual(entries, ["MAP \(SelfTestBlockingFixture.trackerHost) 127.0.0.1", "MAP \(SelfTestBlockingFixture.adHost) 127.0.0.1",
+                                 "MAP \(SelfTestBlockingFixture.siteHost) 127.0.0.1",
                                  "MAP * ~NOTFOUND", "EXCLUDE 127.0.0.1", "EXCLUDE localhost"])
-        // Whole names, no wildcard: a subdomain of either still fails to resolve.
-        for host in [SelfTestBlockingFixture.trackerHost, SelfTestBlockingFixture.adHost] {
+        // The page's own site sits under a suffix the shell's guess does not know: the guess is the suffix.
+        XCTAssertEqual(SelfTestBlockingFixture.siteHost, "rearc-selftest.azurewebsites.net")
+        XCTAssertEqual(BoostScopeMatcher.registrableDomain(SelfTestBlockingFixture.siteHost), SelfTestBlockingFixture.siteSuffix)
+        // Whole names, no wildcard: a subdomain of any still fails to resolve.
+        for host in [SelfTestBlockingFixture.trackerHost, SelfTestBlockingFixture.adHost, SelfTestBlockingFixture.siteHost] {
             XCTAssertFalse(host.contains("*"))
             XCTAssertNotNil(ContentBlockingHost.normalized(host))
         }
