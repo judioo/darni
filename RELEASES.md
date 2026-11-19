@@ -24,7 +24,8 @@ lines and this section starts empty again.
   Choose Image… or Paste Image, or drop an image on the picker. A big picture is scaled down to
   icon size (64 pixels on its longer side) and kept whole, not cropped. Remove Image goes back to
   the space's icon. With Sync Sidebar on, the picture goes to your other Macs; a Mac still on an
-  older ReArc shows the space's icon or emoji instead until it updates.
+  older ReArc shows the space's icon or emoji instead until it updates. Opening your profile in an
+  older ReArc and coming back drops the picture unless Sync Sidebar brings it back; set it again.
 
 **Fixes**
 - Emoji icons work again. The icon pickers for spaces, profiles, folders and tabs have an Emoji tab

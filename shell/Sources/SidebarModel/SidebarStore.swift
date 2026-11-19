@@ -513,7 +513,7 @@ public final class SidebarStore {
     /// Only a picture `SpaceIconImage.image(from:)` can draw is kept (security SI-03).
     public func setSpacePicture(_ id: Space.ID, picture: Data?) {
         guard let index = spaces.firstIndex(where: { $0.id == id }), spaces[index].iconPicture != picture else { return }
-        if let picture, SpaceIconImage.image(from: picture) == nil { return }
+        if let picture, SpaceIconImage.drawable(picture) == nil { return }
         spaces[index].iconPicture = picture
         notifyMutation(.upsertSpace(id: id))
     }

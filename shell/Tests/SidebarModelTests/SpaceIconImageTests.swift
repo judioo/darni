@@ -45,6 +45,12 @@ final class SpaceIconImageTests: XCTestCase {
         XCTAssertNil(SpaceIconImage.validated(Data(count: SpaceIconImage.maxBytes + 1)))
         XCTAssertNil(SpaceIconImage.picture(fromSync: .string("!!!")))
         XCTAssertNil(SpaceIconImage.picture(fromSync: .string(Data("GIF89a".utf8).base64EncodedString())))
+        // Small, and starts as a PNG, but never draws: not kept from sync or sidebar.json.
+        let truncated = Data(SpaceIconImage.pngSignature) + Data(repeating: 0, count: 40)
+        XCTAssertNotNil(SpaceIconImage.validated(truncated))
+        XCTAssertNil(SpaceIconImage.picture(fromSync: SpaceIconImage.syncValue(truncated)))
+        let stored = #"{"id":"\#(UUID().uuidString)","name":"Home","theme":\#(String(data: try JSONEncoder().encode(SpaceTheme.default), encoding: .utf8)!),"iconName":"star.fill","iconPicture":"\#(truncated.base64EncodedString())"}"#
+        XCTAssertNil(try JSONDecoder().decode(Space.self, from: Data(stored.utf8)).iconPicture)
     }
 
     func testTheStoreKeepsThePictureBesideTheGlyph() throws {
