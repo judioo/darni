@@ -473,6 +473,17 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertFalse(ChromiumCapabilities.none.contentBlockingHosts)
     }
 
+    /// ABI 1.69, feature `host_sites`: the engine's public suffix list. It
+    /// does not depend on blocking: boosts and address lines ask it too.
+    func testTheEngineFeatureGatesTheSiteNames() {
+        let all: (String) -> Bool = { _ in true }
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 68, hasFeature: all).hostSites)
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: all).hostSites)
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: { $0 != "host_sites" }).hostSites)
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: { $0 != "content_blocking" }).hostSites)
+        XCTAssertFalse(ChromiumCapabilities.none.hostSites)
+    }
+
     func testAPrivateWindowNeverWritesItsSiteIntoTheProfile() async throws {
         let model = launch()
         try await attach(model, engine: RecordingEngine())

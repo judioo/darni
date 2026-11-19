@@ -1319,6 +1319,7 @@ final class ChromiumSelfTest {
         try await taskManagerChecks(model: model, store: store, window: first)
         try await contentBlockingChecks(model: model, store: store)
         try await contentBlockingBlockedListChecks(model: model, store: store, shell: shell)
+        try hostSitesChecks()
         try await wave27ShellChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
         try await wave28ShellChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await devToolsChecks(model: model, store: store, shell: shell, tab: tabA, engine: engineA, base: base, window: first)
@@ -3954,6 +3955,50 @@ extension ChromiumSelfTest {
                 + (found.count > 5 ? " and \(found.count - 5) more file(s)" : ""))
             log("PASS blocked list in memory only: none of the \(sites) made-up sites is in a file under \(folders.map(\.path).joined(separator: " or "))")
         }
+    }
+
+    /// The engine names sites by Chromium's public suffix list (CONTENT-BLOCKING.md
+    /// §9, patch `tab/098`, ABI 1.69 `host_sites`), through the shell's one
+    /// place to ask (`SiteNames.shared`). An engine without it logs the gap.
+    /// What must hold: a host is named by its registrable domain, private
+    /// registries included; a public suffix is said to be one and a name
+    /// with no suffix is not; and a name the engine would read as another
+    /// (`1.2` is an address to it) gets no answer at all (security BL-12).
+    /// A table lookup: nothing here loads a page or asks the network.
+    @MainActor
+    private func hostSitesChecks() throws {
+        guard runtime.capabilities.hostSites, let names = SiteNames.shared else {
+            log("ABI-GAP host_sites not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 69): "
+                + "the shell names a site by its own rules (the page's exact host for a blocking exception, its guess elsewhere)")
+            return
+        }
+        let wanted: [(String, SiteName?)] = [
+            ("www.example.co.uk", SiteName(name: "example.co.uk", isOneSite: true)),
+            ("a.someone.web.app", SiteName(name: "someone.web.app", isOneSite: true)),
+            ("someone.github.io", SiteName(name: "someone.github.io", isOneSite: true)),
+            ("school.edu.au", SiteName(name: "school.edu.au", isOneSite: true)),
+            ("WWW.Example.COM.", SiteName(name: "example.com", isOneSite: true)),
+            ("203.0.113.7", SiteName(name: "203.0.113.7", isOneSite: true)),
+            ("name.test", SiteName(name: "name.test", isOneSite: true)),
+            ("web.app", SiteName(name: "web.app", isOneSite: false, isSuffix: true)),
+            ("co.uk", SiteName(name: "co.uk", isOneSite: false, isSuffix: true)),
+            ("edu.au", SiteName(name: "edu.au", isOneSite: false, isSuffix: true)),
+            ("com", SiteName(name: "com", isOneSite: false, isSuffix: true)),
+            ("localhost", SiteName(name: "localhost", isOneSite: false, isSuffix: false)),
+            ("1.2", nil), ("0x7f.1", nil), ("123", nil), ("example.com:443", nil), ("https://example.com", nil), ("[::1]", nil), ("", nil),
+        ]
+        let wrong = wanted.compactMap { host, site -> String? in
+            let answer = names.site(of: host)
+            return answer == site ? nil : "'\(host)' is \(answer.map { "\($0)" } ?? "no answer"), not \(site.map { "\($0)" } ?? "no answer")"
+        }
+        try check(wrong.isEmpty, "the engine's site names: \(wrong.joined(separator: "; "))")
+        // The engine itself refuses a name it reads as another one; the shell's check is a second hold.
+        if let copy = ChromiumHostSites.resolve() {
+            let refused = ["1.2", "0x7f.1", "123", "a b", "example.com/x"].filter { ChromiumHostSites.reply(copy, $0) != nil }
+            try check(refused.isEmpty, "the engine answered for \(refused), which are not plain names of themselves")
+        }
+        log("PASS host sites: \(wanted.count) names, registrable domains by Chromium's suffix list (someone.web.app and school.edu.au are sites; "
+            + "web.app, co.uk and com are suffixes; localhost is neither), and no answer for a name the engine reads as another")
     }
 
     /// The files under `folders` that hold `text` as plain bytes. For a name

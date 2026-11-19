@@ -73,6 +73,7 @@ struct ChromiumCapabilities: Equatable {
     static let taskManagerFeature = "task_manager"
     static let contentBlockingFeature = "content_blocking"
     static let contentBlockingHostsFeature = "content_blocking_hosts"
+    static let hostSitesFeature = "host_sites"
     static let sitePermissionsFeature = "site_permissions"
     static let webAuthnPromptsFeature = "webauthn_prompts"
 
@@ -139,6 +140,7 @@ struct ChromiumCapabilities: Equatable {
         sitePermissionsFeature: 67,
         webAuthnPromptsFeature: 68,
         contentBlockingHostsFeature: 69,
+        hostSitesFeature: 69,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -282,6 +284,10 @@ struct ChromiumCapabilities: Equatable {
     /// for the list under the site controls row (ABI 1.69). Without it the
     /// row shows the count alone.
     var contentBlockingHosts: Bool
+    /// `ReArcEngineCopySiteOfHost`: the site of a host by Chromium's public
+    /// suffix list (ABI 1.69). Without it the shell names a site by its own
+    /// rules, which are narrower where they cannot be sure (`SiteNames`).
+    var hostSites: Bool
     /// What Chromium holds for a tab's site: every setting with its state,
     /// the devices chosen for it and what the page uses now, with allow,
     /// block, reset and revoke (ABI 1.67). Without it the site panel shows
@@ -357,6 +363,7 @@ struct ChromiumCapabilities: Equatable {
         taskManager = perfMetrics && adopted(Self.taskManagerFeature)
         contentBlocking = profiles && adopted(Self.contentBlockingFeature)
         contentBlockingHosts = contentBlocking && adopted(Self.contentBlockingHostsFeature)
+        hostSites = adopted(Self.hostSitesFeature)
         sitePermissions = adopted(Self.sitePermissionsFeature)
         passkeyPrompts = adopted(Self.webAuthnPromptsFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
@@ -447,6 +454,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.taskManagerFeature, taskManager),
             (Self.contentBlockingFeature, contentBlocking),
             (Self.contentBlockingHostsFeature, contentBlockingHosts),
+            (Self.hostSitesFeature, hostSites),
             (Self.sitePermissionsFeature, sitePermissions),
             (Self.webAuthnPromptsFeature, passkeyPrompts),
             (Self.pageThemeColorFeature, pageThemeColor),

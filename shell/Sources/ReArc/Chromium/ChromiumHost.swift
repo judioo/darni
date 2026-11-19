@@ -379,6 +379,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         }
         // Built-in ad and tracker blocking, when the engine has its calls (CONTENT-BLOCKING.md §5).
         ChromiumContentBlockingEngine.attach(to: model, runtime: runtime)
+        ChromiumHostSites.attach(runtime: runtime)
         model.presentSettings = { [weak self] pane in MainActor.assumeIsolated { self?.presentSettings(pane) } }
         model.onShortcutOverridesChanged = { [weak self, weak model] in
             guard let self, let model, let menu = NSApp.mainMenu else { return }
