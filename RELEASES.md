@@ -19,6 +19,20 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**New**
+- See what was blocked on a page. In the site controls (the button beside the address), the
+  "Block ads and trackers" row now has an arrow beside "N blocked on this page". It opens a list
+  of the sites whose requests were blocked on this page, each with how many and with what blocked
+  it: Ad, Tracker, Annoyance, or Your rule for one of your own rules.
+- Allow a blocked site on one site. Point at a line of that list and choose Allow: ReArc adds one
+  line to your own rules (Settings › Profiles › Advanced), reloads the page and shows the site
+  under "Allowed on this site", where Remove takes it back. A name that covers more than one
+  site, such as `localhost` or `co.uk`, has no Allow.
+- The list is kept in memory, for that tab only, and starts again when the page loads. It is
+  never saved, synced or sent anywhere, and it holds site names only, never full addresses. A
+  private window shows the list without Allow. Very busy pages show the first 100 sites and how
+  many more requests were blocked.
+
 ## ReArc 2026.1119.1049 — 2026-11-19
 
 **New**
