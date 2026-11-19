@@ -33,6 +33,28 @@ lines and this section starts empty again.
   private window shows the list without Allow. Very busy pages show the first 100 sites and how
   many more requests were blocked.
 
+**Fixes**
+- "Turn Off Blocking for This Site" means the whole site again. Since 2026.1119.1051 it covered
+  only the exact address you were on, so blocking came back when a site moved you from `www.`
+  to `m.` or `app.`. ReArc now works out the site the way Chromium does.
+- If you turned blocking off on a site such as `someone.web.app` between 2026.1118.1027 and
+  2026.1119.1049, ReArc stored `web.app`, which is every site under it. Settings › Profiles ›
+  Advanced now marks such an entry "Off for every site under web.app", and the site's controls
+  offer "Turn Off Blocking for This Site Only", which keeps blocking off for that one site and
+  turns it back on for the rest. ReArc does not change these entries by itself. A name like
+  `web.app` or `co.uk` can no longer be added there.
+
+**Security**
+- A boost can no longer apply to a whole group of unrelated sites. A boost made on
+  `someone.web.app` or `school.edu.au` used to be scoped to `web.app` or `edu.au`, and a boost
+  from a file could name such a scope and bring a script with it. ReArc now refuses a boost
+  whose scope is one of these shared endings, and a boost you already have with such a scope
+  stops running until you set its scope to one site. New boosts are scoped to the site you are on.
+- A long address in prompts and address lines always keeps the name of the site you are on,
+  also on shared hosts such as `s3.amazonaws.com`.
+- "Turn Off Blocking for This Site" acts on the page the panel was opened for. If the page
+  changed in the meantime, nothing is changed and ReArc says so.
+
 ## ReArc 2026.1119.1053 — 2026-11-19
 
 **New**
