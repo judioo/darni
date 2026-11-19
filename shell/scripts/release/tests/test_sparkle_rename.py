@@ -26,9 +26,13 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_generate_appcast import OPENSSL  # noqa: E402
 
 SHELL = Path(__file__).resolve().parents[3]
 TOOLS = Path(os.environ.get("REARC_SPARKLE_TOOLS") or SHELL / ".build-chromium/artifacts/sparkle/Sparkle/bin")
@@ -149,17 +153,8 @@ class FindingTheAppTests(unittest.TestCase):
         self.assertEqual(find_app(folder, "ReArc.app", "ReArc", BUNDLE_ID), folder / "Darni.app")
 
 
-def openssl():
-    for candidate in (os.environ.get("REARC_OPENSSL"), "/opt/homebrew/bin/openssl", "/usr/local/bin/openssl", shutil.which("openssl")):
-        if candidate and os.access(candidate, os.X_OK):
-            version = subprocess.run([candidate, "version"], capture_output=True, text=True).stdout
-            if version.startswith("OpenSSL ") and int(version.split()[1].split(".")[0]) >= 3:
-                return candidate
-    return None
-
-
 @unittest.skipUnless((TOOLS / "generate_appcast").is_file() and (TOOLS / "BinaryDelta").is_file(), f"no Sparkle tools in {TOOLS}")
-@unittest.skipUnless(openssl(), "needs OpenSSL 3 or later for a throwaway Ed25519 key")
+@unittest.skipUnless(OPENSSL, "needs OpenSSL 3 or later for a throwaway Ed25519 key")
 class SparkleToolsTests(unittest.TestCase):
     """Part 2: Sparkle's own tools on archives of both names. A throwaway key, never the real one."""
 
@@ -168,7 +163,7 @@ class SparkleToolsTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="rearc-sparkle-rename-tools-")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.root = Path(cls.temp.name)
-        ssl = openssl()
+        ssl = OPENSSL
         der = subprocess.run([ssl, "genpkey", "-algorithm", "ed25519", "-outform", "DER"], capture_output=True, check=True).stdout
         public = subprocess.run([ssl, "pkey", "-inform", "DER", "-pubout", "-outform", "DER"], input=der, capture_output=True, check=True).stdout
         # The 32-byte seed and the 32-byte public key are the last bytes of each DER form.

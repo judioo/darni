@@ -96,7 +96,7 @@ public enum BoostInterchange {
 
     public static func describe(_ error: BoostInterchangeError) -> String {
         switch error {
-        case .invalidFormat: return "This file is not a ReArc boost."
+        case .invalidFormat: return "This file is not a Darni boost."
         case .unsupportedVersion: return "This boost was made by a newer Darni."
         case .decodeFailed: return "This file could not be read as a boost."
         case .validationFailed(let errors):

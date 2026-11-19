@@ -3043,7 +3043,8 @@ at the call; the count the callback carries is delivered at most every 250 ms an
 moment behind it.
 
 **Tests:** `engine/tests/check_abi169_imports.py` compares every ABI 1.68 struct layout, checks
-that the header adds exactly this one function, no struct and no callback type, and typechecks
+that the header adds exactly the two functions of 1.69 (this one and `ReArcEngineCopySiteOfHost`
+below), no struct and no callback type, and typechecks
 gated Swift adoption; it passes against the patched header (`REARC_TEST_ABI_HEADER_DIR`) and
 fails against a tree without the patch; since the build it passes against the tree itself
 (the checks for 1.66 and 1.68 each hold their own minor version and no longer pass, as 1.66's
@@ -3066,8 +3067,9 @@ update, the list after blocking has moved to the second blocker. **None of it ha
 
 ## Host sites (ABI 1.69, bridge 0.79.0)
 
-Patch `tab/098-blocked-hosts`, feature `host_sites`. **Built, not run** (the same engine), and
-the shell does not call it yet: the design for its four users is `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9.
+Patch `tab/098-blocked-hosts`, feature `host_sites`. **Built, not run** (the same engine). The
+shell calls it in one place (`ChromiumHostSites`, for `SiteNames`): its four users are in
+`docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9.
 No struct changes.
 
 A host application keeps things per site: a blocking exception, a boost's scope, the labels of

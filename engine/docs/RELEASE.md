@@ -112,9 +112,9 @@ shell/scripts/build-engine-release.sh
 # 2. Commit the shell changes you want to ship, then:
 shell/scripts/release.sh --dmg
 # 3. With Developer ID only (never before):
-shell/scripts/notarize.sh shell/dist/release/ReArc.app      # notarize + staple the app
-shell/scripts/make-dmg.sh shell/dist/release/ReArc.app      # DMG from the stapled app
-shell/scripts/notarize.sh shell/dist/release/ReArc-<version>.dmg   # ReArc-2026.1114.741.dmg
+shell/scripts/notarize.sh shell/dist/release/Darni.app      # notarize + staple the app
+shell/scripts/make-dmg.sh shell/dist/release/Darni.app      # DMG from the stapled app
+shell/scripts/notarize.sh shell/dist/release/Darni-<version>.dmg   # Darni-2026.1119.1079.dmg
 ```
 
 `release.sh --worktree` builds the uncommitted working tree for local testing; its
@@ -331,7 +331,8 @@ shell, with `check-upgrade-data.py` passing against the release on the feed.
   version: the detector never sees the outer one. Keep it that way: an engine built with
   `enable_updater` would report an update that is not there. Crashpad's `ver` annotation
   is the framework's version (Chromium's), not ReArc's; macOS crash reports show both.
-- DMG name: `ReArc-<CFBundleShortVersionString>.dmg`, for example `ReArc-2026.1114.741.dmg`
+- DMG name: `Darni-<CFBundleShortVersionString>.dmg` from build 1054, for example
+  `Darni-2026.1119.1079.dmg`, and `ReArc-<CFBundleShortVersionString>.dmg` before it
   (`version.py dmg-name`). Builds up to 726 were `ReArc-0.1.0-<build>.dmg`. The same name
   is used in `dist/` and in the update feed; delta names (`ReArc741-677.delta`) are
   Sparkle's.

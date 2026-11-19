@@ -80,7 +80,7 @@ while [[ $# -gt 0 ]]; do
     --blocklists) mkdir -p "$2"; BLOCKLISTS_COPY="$(cd "$2" && pwd)"; shift ;;
     --selftest-timeout) SELFTEST_TIMEOUT="$2"; shift ;;
     --qa) QA=1 ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -171,7 +171,7 @@ fi
 
 # 2. Release shell build + bundle. iCloud entitlements are added by sign-release.sh, which
 #    signs every code object again; the bundle step only signs the executable and, ad hoc,
-#    the two alerts helpers it renames.
+#    the helpers it renames (rebrand-bundle.py).
 START=$SECONDS
 REARC_ICLOUD_CONTAINER="" "$SHELL_DIR/scripts/bundle-chromium.sh" --release --engine-out "$OUT" --dist "$DIST"
 APP="$DIST/Darni.app"

@@ -47,6 +47,10 @@
 #   check-upgrade.sh's copies do. A separate macOS user account avoids both and is the better
 #   place for the first run; it is also the fresh-install check.
 # - A copy already running, and the person's own ReArc or Arc, are left alone.
+#
+# Also reads: REARC_OPENSSL (an OpenSSL 3 for the throwaway Ed25519 key, default: Homebrew's
+# or the one on PATH) and REARC_SPARKLE_TOOLS (Sparkle's command line tools, default: the
+# ones under shell/.build-chromium, as generate-appcast.sh).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
