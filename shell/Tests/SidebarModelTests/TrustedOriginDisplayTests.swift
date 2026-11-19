@@ -52,8 +52,13 @@ final class TrustedOriginDisplayTests: XCTestCase {
         let insecure = PageOrigin.shortenedHost("http://login.bank.example.attacker-controlled-subdomain.co.uk:8443")
         XCTAssertTrue(insecure.hasPrefix("http://…"), insecure)
         XCTAssertTrue(insecure.hasSuffix(".co.uk:8443"), insecure)
-        // A registrable domain longer than the limit is still shown whole.
-        let long = "a.\(String(repeating: "x", count: 60)).example"
-        XCTAssertEqual(PageOrigin.shortenedHost(long), "…\(String(repeating: "x", count: 60)).example")
+        // A registrable domain longer than the limit is still shown whole, with one label more.
+        let long = "b.a.\(String(repeating: "x", count: 60)).example"
+        XCTAssertEqual(PageOrigin.shortenedHost(long), "…a.\(String(repeating: "x", count: 60)).example")
+        // Security AG-05: a suffix the guess does not know never stands for the site.
+        let tenant = "accounts-google-com-sign-in-verify.web.app"
+        XCTAssertEqual(PageOrigin.shortenedHost(tenant), tenant)
+        let deep = "login.accounts-google-com-sign-in-verify.web.app"
+        XCTAssertEqual(PageOrigin.shortenedHost(deep), "…accounts-google-com-sign-in-verify.web.app")
     }
 }

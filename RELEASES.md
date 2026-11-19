@@ -47,6 +47,9 @@ lines and this section starts empty again.
   switch away, as before. ReArc's log now says when a request is refused.
 
 **Security**
+- A long site address shortened in the address bar, Little ReArc, Peek and the permission and
+  sign-in prompts always keeps the site's own name. Until now a long name on a shared address
+  such as web.app, github.io or vercel.app could show as "…web.app".
 - Turn Off Blocking for This Site turns blocking off for that site only, the address you are on
   without "www.", and its subdomains. Until now it could cover far more: on a site such as
   someone.web.app it turned blocking off for every site under web.app, and the same for other

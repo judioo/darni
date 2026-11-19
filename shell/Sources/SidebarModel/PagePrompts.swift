@@ -27,9 +27,12 @@ public enum PageOrigin {
     }
 
     /// A host for one line of trusted UI: whole labels from the right, the registrable domain
-    /// always kept, and "…" in front of what was cut. A long host such as
+    /// and one label more always kept, and "…" in front of what was cut. A long host such as
     /// `accounts.google.com.verify-session.evil.example` then shows its real domain rather than
-    /// its trusted-looking start (security RC-0.1.0-544 N-06). An `http://` prefix and a port stay.
+    /// its trusted-looking start (security RC-0.1.0-544 N-06). The extra label is the site's own
+    /// name where the shell's registrable-domain guess is a public suffix it does not know
+    /// (`long-name.web.app` never shows as `…web.app`, security AG-05); the engine's suffix list
+    /// is to replace the guess. An `http://` prefix and a port stay.
     public static func shortenedHost(_ text: String, limit: Int = 36) -> String {
         guard text.count > limit else { return text }
         let scheme = text.hasPrefix("http://") ? "http://" : ""
@@ -40,7 +43,7 @@ public enum PageOrigin {
             host = String(host[..<colon])
         }
         let labels = host.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-        let floor = BoostScopeMatcher.registrableDomain(host).split(separator: ".").count
+        let floor = BoostScopeMatcher.registrableDomain(host).split(separator: ".").count + 1
         var kept = Array(labels.suffix(min(floor, labels.count)))
         for label in labels.dropLast(kept.count).reversed() {
             let candidate = ([label] + kept).joined(separator: ".")
