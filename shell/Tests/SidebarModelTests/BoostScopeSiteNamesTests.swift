@@ -122,4 +122,19 @@ final class BoostScopeSiteNamesTests: XCTestCase {
         XCTAssertFalse(BoostScopeMatcher.validateRule(rule("or.jp"), names: names))
         XCTAssertTrue(BoostScopeMatcher.validateRule(rule("club.or.jp"), names: names))
     }
+
+    // MARK: The library's row
+
+    /// A boost whose scope is refused stays as the person left it and does
+    /// not run. Its row says so, and why.
+    func testABoostWhoseScopeIsRefusedSaysSoOnItsRow() {
+        XCTAssertNil(BoostLibraryListing.scopeNote([rule("example.com")], names: names))
+        XCTAssertNil(BoostLibraryListing.scopeNote([], names: names))
+        XCTAssertEqual(BoostLibraryListing.scopeNote([rule("example.com"), rule("web.app")], names: names),
+                       "Not running: web.app is shared by many unrelated sites. Make this boost again on the one site it is for.")
+        XCTAssertEqual(BoostLibraryListing.scopeNote([rule("www.example.com")], names: names),
+                       "Not running: www.example.com is not a site a boost can be for. Make this boost again on the site it is for.")
+        // Without the engine's list the guess takes web.app for a site: no line, and the boost runs as before.
+        XCTAssertNil(BoostLibraryListing.scopeNote([rule("web.app")], names: nil))
+    }
 }
