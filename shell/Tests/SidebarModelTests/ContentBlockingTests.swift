@@ -114,11 +114,16 @@ final class ContentBlockingHostTests: XCTestCase {
         }
     }
 
-    func testAnExceptionIsKeptUnderTheSitesRegistrableHost() {
+    func testAnExceptionIsKeptUnderThePagesOwnHost() {
         func host(_ url: String) -> String? { ContentBlockingHost.exceptionHost(for: URL(string: url)) }
-        XCTAssertEqual(host("https://www.news.example.com/story"), "example.com")
-        XCTAssertEqual(host("https://shop.example.co.uk/"), "example.co.uk")
+        XCTAssertEqual(host("https://www.news.example.com/story"), "news.example.com")
+        XCTAssertEqual(host("https://www.example.com/story"), "example.com")
+        XCTAssertEqual(host("https://shop.example.co.uk/"), "shop.example.co.uk")
         XCTAssertEqual(host("https://someone.github.io/blog"), "someone.github.io", "a shared host's tenants are separate sites")
+        // Security CB-12: a suffix the shell's guess does not know is never the exception.
+        XCTAssertEqual(host("https://someone.web.app/"), "someone.web.app")
+        XCTAssertEqual(host("https://shop.azurewebsites.net/"), "shop.azurewebsites.net")
+        XCTAssertEqual(host("https://uni.edu.au/"), "uni.edu.au")
         XCTAssertEqual(host("http://localhost:3000/"), "localhost")
         XCTAssertEqual(host("http://192.168.1.10:8080/"), "192.168.1.10")
         XCTAssertNil(host("http://[::1]:3000/"), "the engine's exception hosts are names")
@@ -138,6 +143,16 @@ final class ContentBlockingHostTests: XCTestCase {
         XCTAssertNil(settings.exception(covering: URL(string: "https://shop.test.evil.example/")), "a suffix match is on whole labels")
         settings.removeException("https://shop.test/")
         XCTAssertEqual(settings.exceptions, ["a.test", "b.test"])
+    }
+
+    func testTurningBlockingBackOnRemovesAnExceptionStoredUnderASuffix() {
+        // 1027 kept `someone.web.app` under `web.app` (CB-12); on again at that page removes it.
+        var settings = ContentBlockingSettings(isEnabled: true, exceptions: ["web.app"])
+        XCTAssertTrue(settings.setException(false, forPage: URL(string: "https://someone.web.app/")))
+        XCTAssertEqual(settings.exceptions, [])
+        XCTAssertTrue(settings.setException(true, forPage: URL(string: "https://someone.web.app/")))
+        XCTAssertEqual(settings.exceptions, ["someone.web.app"])
+        XCTAssertNil(settings.exception(covering: URL(string: "https://other.web.app/")))
     }
 
     func testTurningBlockingOffAndOnForAPage() {

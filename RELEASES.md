@@ -47,6 +47,11 @@ lines and this section starts empty again.
   switch away, as before. ReArc's log now says when a request is refused.
 
 **Security**
+- Turn Off Blocking for This Site turns blocking off for that site only, the address you are on
+  without "www.", and its subdomains. Until now it could cover far more: on a site such as
+  someone.web.app it turned blocking off for every site under web.app, and the same for other
+  shared addresses. If you turned blocking off on such a site, turn it back on there and off
+  again; Settings › Profiles lists the sites blocking is off for.
 - A passkey or security key request that you left open in a tab or window you no longer see is
   cancelled when a page in front of you starts one. Until now it stayed open, and a touch of
   your security key meant for the page in front could have answered the older request.
