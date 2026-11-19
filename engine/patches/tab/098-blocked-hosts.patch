@@ -91,14 +91,16 @@ table lookup: no network, no profile, nothing kept. Feature host_sites. The
 shell does not call it yet; the design for its four users is the spec's
 section 9.
 
-Checked without a build (the release of 2026-11-19 was building from
-out/ReArc-codecs-arm64): action_tracker.cc and rearc_content_blocker.cc
-type-check with the tree's clang and plugins from a scratch view of the
-tree, against out/ReArc-dev-arm64's generated headers; a control with a
-deliberate error fails. The two .mm files change one string each and were
-not compiled. engine/tests/check_abi169_imports.py passes against the
-patched header (REARC_TEST_ABI_HEADER_DIR). Not built, not run: the shell's
-self-test step contentBlockingBlockedListChecks is the run (BL-09).
+Written without a build (a release was building from the tree) and
+type-checked with the tree's clang from a scratch view. Built on 2026-11-19
+in out/ReArc-codecs-arm64 (overlay 9f2767b4c1): the framework exports both
+calls and carries both feature strings and bridge 0.79.0; the series replays
+116 of 116 to the pin's tree and to the head's; engine/tests/
+check_abi169_imports.py passes against the tree. One new warning, the
+malloc'd reply's memcpy (-Wunsafe-buffer-usage-in-libc-call), as the
+bridge's other two. Not run: the shell's self-test step
+contentBlockingBlockedListChecks is the run (BL-09), and nothing calls
+ReArcEngineCopySiteOfHost yet.
 
 Touches: chrome/app/framework.exports, chrome/app/framework.order,
 chrome/browser/rearc_bridge/{rearc_content_blocker.cc, rearc_engine_abi.h,

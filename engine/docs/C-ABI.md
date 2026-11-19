@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
 ABI **1.69** (major remains 1 for existing hosts), bridge **0.79.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`, written and type-checked on 2026-11-19 and not yet built: no engine has it). Public header:
+(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, and not yet run). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2958,8 +2958,9 @@ hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.
 Patch `tab/098-blocked-hosts`, features `content_blocking_hosts` (this section) and
 `host_sites` (the next). Spec:
 `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 3, "Blocked on this page". Security
-pre-review: `security/PRE-blocked-list.md` (BL-01 to BL-09). **Not built:** the patch is
-type-checked; no engine has it yet. Hosts gate on the feature and look the symbol up. No struct
+pre-review: `security/PRE-blocked-list.md` (BL-01 to BL-12). **Built, not run:** the release
+engine of 2026-11-19 (`out/ReArc-codecs-arm64`, overlay 9f2767b4c1) has it. Hosts gate on the
+feature and look the symbol up. No struct
 changes and no new callback.
 
 `ReArcTabGetBlockedCount` (1.66) says how many requests the blocker has blocked in a tab's
@@ -3044,7 +3045,9 @@ moment behind it.
 **Tests:** `engine/tests/check_abi169_imports.py` compares every ABI 1.68 struct layout, checks
 that the header adds exactly this one function, no struct and no callback type, and typechecks
 gated Swift adoption; it passes against the patched header (`REARC_TEST_ABI_HEADER_DIR`) and
-fails against a tree without the patch. What these import checks share is now
+fails against a tree without the patch; since the build it passes against the tree itself
+(the checks for 1.66 and 1.68 each hold their own minor version and no longer pass, as 1.66's
+did not after 1.68). What these import checks share is now
 `engine/tests/abi_import_check.py`; the next minor's check calls it with its own numbers.
 `engine/tests/check_blocked_hosts_patch.py` reads the patch: the two IDs are those of
 `rearc::kContentBlockerExtensionIds` and are compared as literals; a site is recorded only at
@@ -3063,8 +3066,8 @@ update, the list after blocking has moved to the second blocker. **None of it ha
 
 ## Host sites (ABI 1.69, bridge 0.79.0)
 
-Patch `tab/098-blocked-hosts`, feature `host_sites`. **Not built**, and the shell does not call
-it yet: the design for its four users is `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9.
+Patch `tab/098-blocked-hosts`, feature `host_sites`. **Built, not run** (the same engine), and
+the shell does not call it yet: the design for its four users is `docs/FEATURE-SPECS/CONTENT-BLOCKING.md`, section 9.
 No struct changes.
 
 A host application keeps things per site: a blocking exception, a boost's scope, the labels of
@@ -3108,4 +3111,4 @@ every page under them (security CB-12, AG-05, BO-01). This call is Chromium's an
 **Tests:** the import check and the patch check of the section above cover it: the function is
 exported, the characters it takes, the refusals, that the name comes from the tracker's
 function, and that the suffix test is asked only of a canonical name that is not an address.
-Not built and not run.
+Built; not run.
