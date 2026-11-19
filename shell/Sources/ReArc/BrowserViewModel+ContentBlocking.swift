@@ -305,13 +305,32 @@ extension BrowserViewModel {
         if let refusal { showToast(refusal.message, systemImage: "shield.slash") }
     }
 
-    /// Blocking off or back on for the site of `engine`'s page, in its
-    /// profile; the tab then reloads (spec §3). Never from a private window:
-    /// the site would be written into the profile's exceptions.
+    /// The page a site controls command is for: the one the panel drew.
+    ///
+    /// A command used to take the tab's address at the click, which can be
+    /// another site's by then, or one the tab has not reached (security
+    /// BL-10, as for Allow). Where the engine names the tab's committed site
+    /// (`ReArcTabCopyBlockedHosts`' `page`), the drawn origin must belong to
+    /// it; otherwise the tab has moved on, nothing is written and the person
+    /// is told. On an engine that cannot say, the address at the click is
+    /// all there is, as before.
+    private func contentBlockingPage(drawnFor site: SiteControlCenter.Site, in engine: any WebEngine) -> URL? {
+        guard contentBlocking.blockedHosts != nil else { return engine.currentURL ?? URL(string: site.origin) }
+        let drawn = URL(string: site.origin)
+        guard let host = ContentBlockingHost.pageHost(drawn), let committed = blockedList(for: engine)?.pageSite,
+              ContentBlockingHost.covers(committed, host: host) else {
+            showToast(ContentBlockingSiteAllow.Refusal.pageMoved.message, systemImage: "shield.slash")
+            return nil
+        }
+        return drawn
+    }
+
+    /// Blocking off or back on for the site of the page the panel drew, in
+    /// its profile; the tab then reloads (spec §3). Never from a private
+    /// window: the site would be written into the profile's exceptions.
     func setContentBlocking(_ blocking: Bool, forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
         guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
-              let profileID = engine.pagePrompts.profileID else { return }
-        let url = engine.currentURL ?? URL(string: site.origin)
+              let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
         var changed = false
         changeContentBlocking(for: profileID) { settings in
             let before = settings.exceptions
@@ -319,6 +338,24 @@ extension BrowserViewModel {
             changed = settings.exceptions != before
         }
         if changed { engine.reload() }
+    }
+
+    /// An exception an older build stored under a public suffix covers the
+    /// page (blocking is off for every site under `web.app`): it goes, and
+    /// the page's own site takes its place (security CB-12). The tab reloads.
+    func narrowContentBlockingException(forSiteOf engine: any WebEngine, site: SiteControlCenter.Site) {
+        guard contentBlocking.isAvailable, engine.pagePrompts.privateSession == nil,
+              let profileID = engine.pagePrompts.profileID, let url = contentBlockingPage(drawnFor: site, in: engine) else { return }
+        var changed = false
+        changeContentBlocking(for: profileID) { changed = $0.narrowSuffixException(toPage: url) }
+        if changed { engine.reload() }
+    }
+
+    /// Why a name typed into Settings' exceptions was refused, when the
+    /// reason is that it is a public suffix; nil for any other refusal.
+    func contentBlockingExceptionRefusal(for text: String) -> String? {
+        guard let host = ContentBlockingHost.normalized(text), ContentBlockingHost.isPublicSuffix(host) else { return nil }
+        return SiteControlCenter.suffixExceptionRefusal(host)
     }
 
     // MARK: Lists

@@ -461,6 +461,79 @@ final class ContentBlockingShellTests: XCTestCase {
         XCTAssertEqual(model.store.contentBlocking().ownRules, "", "nothing a private window showed is written to the profile")
     }
 
+    // MARK: Site exceptions with the engine's word (§9, security CB-12, BL-10)
+
+    /// The panel's command is for the page it drew. Where the engine names
+    /// the tab's committed site, a tab that has moved on gets no exception,
+    /// and an address that runs ahead of the commit does not decide.
+    func testTurnOffForThisSiteWritesNothingOnceTheTabHasLeftTheSiteThePanelDrew() async throws {
+        let model = launch()
+        let recorder = RecordingEngine()
+        try await attach(model, engine: recorder)
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        model.contentBlockingProfileOpened(engineProfile: 4, profile: model.profileID(for: tab))
+        var page = "bank.test"
+        model.contentBlocking.blockedHosts = { _ in Self.blockedReply(page: page) }
+        _ = recorder.take()
+
+        model.setContentBlocking(false, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().exceptions, [], "the tab is on another site by now")
+        XCTAssertEqual(recorder.take(), [])
+        XCTAssertEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.pageMoved.message)
+
+        // The engine says the tab is still on news.test; the shell's address already says bank.test.
+        page = "news.test"
+        model.store.updateTab(tab.id, url: URL(string: "https://bank.test/login")!)
+        model.setContentBlocking(false, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().exceptions, ["news.test"], "for the site the panel drew")
+        XCTAssertEqual(recorder.take(), ["exceptions 4 news.test"])
+    }
+
+    func testASuffixExceptionIsNarrowedToThePagesSiteAndATypedSuffixIsRefusedWithAReason() async throws {
+        SiteNames.shared = SiteNames { host in
+            host == "web.app" ? #"{"host":"web.app","registrable":false,"suffix":true}"#
+                : host.hasSuffix(".web.app") ? #"{"host":"\#(host.split(separator: ".").suffix(3).joined(separator: "."))","registrable":true,"suffix":false}"# : nil
+        }
+        addTeardownBlock { SiteNames.shared = nil }
+        let model = launch()
+        let recorder = RecordingEngine()
+        try await attach(model, engine: recorder)
+        let url = URL(string: "https://someone.web.app/x")!
+        let tab = model.store.addTab(kind: .today, title: "App", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        let profile = model.profileID(for: tab)
+        model.contentBlockingProfileOpened(engineProfile: 4, profile: profile)
+        // What 1027 stored for this page.
+        model.store.updateContentBlocking(for: profile) { $0.setExceptions(["web.app"]) }
+        model.contentBlockingSettingsChanged()
+        _ = recorder.take()
+
+        let row = try XCTUnwrap(model.contentBlockingRow(for: engine, site: site))
+        XCTAssertEqual(row.state, "Off for every site under web.app")
+        model.performSiteSetting(.turnOffBlockingForSiteOnly, on: row, engine: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().exceptions, ["someone.web.app"])
+        XCTAssertEqual(recorder.take(), ["exceptions 4 someone.web.app"])
+        XCTAssertEqual(model.contentBlockingRow(for: engine, site: site)?.state, "Off for this site")
+
+        // Settings: a suffix is refused, with the reason; another refusal has none.
+        XCTAssertFalse(model.addContentBlockingException("web.app", for: profile))
+        XCTAssertEqual(model.contentBlockingExceptionRefusal(for: "web.app"), SiteControlCenter.suffixExceptionRefusal("web.app"))
+        XCTAssertNil(model.contentBlockingExceptionRefusal(for: "not a host"))
+        XCTAssertNil(model.contentBlockingExceptionRefusal(for: "another.web.app"))
+        XCTAssertTrue(model.addContentBlockingException("another.web.app", for: profile))
+        // A new exception from the panel is the page's real site.
+        model.setContentBlocking(true, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().exceptions, ["another.web.app"])
+        let deep = URL(string: "https://a.someone.web.app/")!
+        model.store.updateTab(tab.id, url: deep)
+        model.setContentBlocking(false, forSiteOf: engine, site: try XCTUnwrap(SiteControlCenter.site(for: deep)))
+        XCTAssertEqual(model.store.contentBlocking().exceptions, ["another.web.app", "someone.web.app"])
+    }
+
     /// ABI 1.69, feature `content_blocking_hosts`: without both the row shows the count alone.
     func testTheEngineFeatureGatesTheBlockedList() {
         let all: (String) -> Bool = { _ in true }

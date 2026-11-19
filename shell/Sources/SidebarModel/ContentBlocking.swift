@@ -196,11 +196,16 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
         exceptions = Array(normalised.sorted().prefix(Self.maxExceptions))
     }
 
-    /// False when `host` is no host, or the list is full.
+    /// False when `host` is no host, the list is full, or the name is a
+    /// public suffix (`web.app`, `co.uk`): an exception covers the names
+    /// under it, so that one would be every site there (security CB-12).
+    /// Only the engine's suffix list can say so (`SiteNames`); without it
+    /// the name is taken as typed.
     @discardableResult
-    public mutating func addException(_ host: String) -> Bool {
+    public mutating func addException(_ host: String, names: SiteNames? = .shared) -> Bool {
         guard let host = ContentBlockingHost.normalized(host) else { return false }
         guard !exceptions.contains(host) else { return true }
+        guard !ContentBlockingHost.isPublicSuffix(host, names: names) else { return false }
         guard exceptions.count < Self.maxExceptions else { return false }
         exceptions = (exceptions + [host]).sorted()
         return true
@@ -217,18 +222,39 @@ public struct ContentBlockingSettings: Equatable, Codable, Sendable {
         return exceptions.first { ContentBlockingHost.covers($0, host: host) }
     }
 
-    /// Turns blocking off or back on for `url`'s site. Off adds the page's
-    /// host (`ContentBlockingHost.exceptionHost`); on removes every exception
+    /// The exception covering `url`'s page that is a public suffix, if one
+    /// is: blocking is then off for every site under it. Builds 1027 to 1049
+    /// stored such an exception for a page on `someone.web.app` (security
+    /// CB-12). nil without the engine's suffix list.
+    public func suffixException(covering url: URL?, names: SiteNames? = .shared) -> String? {
+        guard let host = ContentBlockingHost.pageHost(url) else { return nil }
+        return exceptions.first { ContentBlockingHost.covers($0, host: host) && ContentBlockingHost.isPublicSuffix($0, names: names) }
+    }
+
+    /// Turns blocking off or back on for `url`'s site. Off adds the site's
+    /// key (`ContentBlockingHost.exceptionHost`); on removes every exception
     /// that covers the page.
     /// False when the page has no site (about:, file:, the engine's own pages).
     @discardableResult
-    public mutating func setException(_ excepted: Bool, forPage url: URL?) -> Bool {
-        guard let host = ContentBlockingHost.pageHost(url), let site = ContentBlockingHost.exceptionHost(for: url) else { return false }
+    public mutating func setException(_ excepted: Bool, forPage url: URL?, names: SiteNames? = .shared) -> Bool {
+        guard let host = ContentBlockingHost.pageHost(url), let site = ContentBlockingHost.exceptionHost(for: url, names: names) else { return false }
         if excepted {
-            return exception(covering: url) != nil || addException(site)
+            return exception(covering: url) != nil || addException(site, names: names)
         }
         exceptions.removeAll { ContentBlockingHost.covers($0, host: host) }
         return true
+    }
+
+    /// Blocking stays off for `url`'s site and comes back on for the other
+    /// sites under a suffix: every exception that covers the page and is a
+    /// public suffix goes, and the page's own site is added. False when
+    /// nothing changed.
+    @discardableResult
+    public mutating func narrowSuffixException(toPage url: URL?, names: SiteNames? = .shared) -> Bool {
+        guard let host = ContentBlockingHost.pageHost(url), suffixException(covering: url, names: names) != nil,
+              let site = ContentBlockingHost.exceptionHost(for: url, names: names) else { return false }
+        exceptions.removeAll { ContentBlockingHost.covers($0, host: host) && ContentBlockingHost.isPublicSuffix($0, names: names) }
+        return exception(covering: url) != nil || addException(site, names: names)
     }
 
     enum CodingKeys: String, CodingKey { case isEnabled, strength, listOverrides, ownRules, exceptions }
@@ -286,17 +312,34 @@ public enum ContentBlockingHost {
         return isHost(host) ? host : nil
     }
 
-    /// The host an exception for `url`'s site is kept under: the page's own
-    /// host (without `www.`), which is always one site, and its subdomains
-    /// are covered. Not the registrable domain: the shell has no public
-    /// suffix list, and its guess (`BoostScopeMatcher.registrableDomain`)
-    /// made `someone.web.app` an exception for all of `web.app` (security
-    /// CB-12). The site from the engine's suffix list replaces this later.
-    /// An exception stored under a suffix by 1027 stays until the site is
-    /// turned back on: on removes every exception that covers the page.
-    public static func exceptionHost(for url: URL?) -> String? {
+    /// The host an exception for `url`'s site is kept under; its subdomains
+    /// are covered.
+    ///
+    /// With the engine's suffix list (`SiteNames`) it is the page's
+    /// registrable domain, so `www.`, `m.` and `app.` of a site are one
+    /// site, and `someone.web.app` is itself. A page that sits on a public
+    /// suffix itself (`github.io`) has no key: its exception would be every
+    /// site under it. A name with no suffix (`localhost`) is its own key.
+    ///
+    /// Without that list it is the page's own host (without `www.`), which
+    /// is always one site. Never the shell's guess at a registrable domain
+    /// (`BoostScopeMatcher.registrableDomain`): that made `someone.web.app`
+    /// an exception for all of `web.app` (security CB-12, 1027 to 1049).
+    /// Such a stored exception is marked in Settings and on the site's row
+    /// (`suffixException`), and goes when the site is turned back on or
+    /// narrowed.
+    public static func exceptionHost(for url: URL?, names: SiteNames? = .shared) -> String? {
         guard let host = pageHost(url) else { return nil }
+        if let site = names?.site(of: host) {
+            if site.isSuffix { return nil }
+            if site.isOneSite { return site.name }
+        }
         return normalized(host) ?? host
+    }
+
+    /// `host` is itself a public suffix, by the engine's list; false without it.
+    public static func isPublicSuffix(_ host: String, names: SiteNames? = .shared) -> Bool {
+        names?.site(of: host)?.isSuffix == true
     }
 
     /// An exception covers its own host and every subdomain of it, as the

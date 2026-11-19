@@ -56,6 +56,8 @@ struct ContentBlockingAdvancedView: View {
     @State private var conversion = ContentBlockingRuleConverter.convert("")
     @State private var newException = ""
     @State private var exceptionRefused = false
+    /// Why, when the reason is worth a line (the name is a public suffix).
+    @State private var exceptionRefusal: String?
 
     private var settings: ContentBlockingSettings { model.store.contentBlocking(for: profileID) }
 
@@ -136,7 +138,15 @@ struct ContentBlockingAdvancedView: View {
                     VStack(spacing: 4) {
                         ForEach(settings.exceptions, id: \.self) { host in
                             HStack {
-                                Text(host).lineLimit(1).truncationMode(.middle)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(host).lineLimit(1).truncationMode(.middle)
+                                    // An exception an older build stored under a public suffix (security CB-12).
+                                    if ContentBlockingHost.isPublicSuffix(host) {
+                                        Label(SiteControlCenter.suffixExceptionText(host), systemImage: "exclamationmark.triangle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.orange)
+                                    }
+                                }
                                 Spacer()
                                 Button { model.removeContentBlockingException(host, for: profileID) } label: { Image(systemName: "trash") }
                                     .buttonStyle(.borderless)
@@ -153,10 +163,19 @@ struct ContentBlockingAdvancedView: View {
                     .textFieldStyle(.roundedBorder)
                     .foregroundStyle(exceptionRefused ? Color.red : Color.primary)
                     .onSubmit(addException)
-                    .onChange(of: newException) { _, _ in exceptionRefused = false }
+                    .onChange(of: newException) { _, _ in
+                        exceptionRefused = false
+                        exceptionRefusal = nil
+                    }
                     .accessibilityLabel("Site to turn blocking off for")
                 Button("Add", action: addException)
                     .disabled(newException.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            if let exceptionRefusal {
+                Text(exceptionRefusal)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -167,6 +186,7 @@ struct ContentBlockingAdvancedView: View {
             newException = ""
         } else {
             exceptionRefused = true
+            exceptionRefusal = model.contentBlockingExceptionRefusal(for: newException)
         }
     }
 }

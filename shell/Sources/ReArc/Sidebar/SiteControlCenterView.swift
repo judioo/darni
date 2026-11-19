@@ -73,12 +73,13 @@ extension BrowserViewModel {
             case .block: store.setAutoPiPDisabled(forHost: host)
             case .snoozeOneHour: store.snoozeAutoPiP(forHost: host)
             case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings,
-                 .removeDevice, .reloadPage: break
+                 .turnOffBlockingForSiteOnly, .removeDevice, .reloadPage: break
             }
         case .contentBlocking:
             switch action {
             case .turnOffBlockingForSite: setContentBlocking(false, forSiteOf: engine, site: site)
             case .turnOnBlockingForSite: setContentBlocking(true, forSiteOf: engine, site: site)
+            case .turnOffBlockingForSiteOnly: narrowContentBlockingException(forSiteOf: engine, site: site)
             case .openBlockingSettings: showSettings(.profiles)
             case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .removeDevice, .reloadPage: break
             }
@@ -100,7 +101,8 @@ extension BrowserViewModel {
                 sitePermissions.reset(origin: site.origin, scope: scope, type: type)
             case .openSiteSettings:
                 openSiteSettings(origin: site.origin)
-            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .removeDevice, .reloadPage:
+            case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .turnOffBlockingForSiteOnly,
+                 .removeDevice, .reloadPage:
                 break
             }
         }
