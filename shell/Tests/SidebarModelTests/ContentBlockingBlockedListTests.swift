@@ -155,6 +155,65 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         }
     }
 
+    // MARK: One site by the engine's list (security BL-02, consistency review 7)
+
+    /// Chromium's answers for the names of these tests.
+    private let engineNames = SiteNames { host in
+        let suffixes = ["web.app", "edu.au", "co.uk", "com"]
+        if suffixes.contains(host) { return #"{"host":"\#(host)","registrable":false,"suffix":true}"# }
+        if host == "amazonaws.com" || host == "gov.example" { return #"{"host":"\#(host)","registrable":true,"suffix":false}"# }
+        guard let suffix = suffixes.first(where: { host.hasSuffix("." + $0) }) else { return nil }
+        let label = host.dropLast(suffix.count + 1).split(separator: ".").last ?? ""
+        return #"{"host":"\#(label).\#(suffix)","registrable":true,"suffix":false}"#
+    }
+
+    /// `isOneSite` wrapped the shell's guess, by which `web.app` and
+    /// `edu.au` are one site each. It now asks the engine's list, as every
+    /// other user of a site's name does, and keeps the guess for when there
+    /// is no answer.
+    func testOneSiteIsTheEnginesWordAndTheGuessOnlyWithoutIt() {
+        for suffix in ["web.app", "edu.au"] {
+            XCTAssertTrue(ContentBlockingSiteAllow.isOneSite(suffix, names: nil), "\(suffix): the guess takes it for a site")
+            XCTAssertFalse(ContentBlockingSiteAllow.isOneSite(suffix, names: engineNames), "\(suffix): the engine's list does not")
+        }
+        for site in ["someone.web.app", "school.edu.au", "example.co.uk", "a.someone.web.app"] {
+            XCTAssertTrue(ContentBlockingSiteAllow.isOneSite(site, names: engineNames), site)
+        }
+        // A name the guess takes for a suffix and the list knows as a site.
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite("gov.example", names: nil))
+        XCTAssertTrue(ContentBlockingSiteAllow.isOneSite("gov.example", names: engineNames))
+        // This build's own refusals stay, whatever the engine says: it may refuse more, never less.
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite("amazonaws.com", names: engineNames))
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite("localhost", names: engineNames))
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite("evil.test^$important", names: engineNames))
+        // No answer for the name: the guess, as before.
+        XCTAssertTrue(ContentBlockingSiteAllow.isOneSite("unknown.test", names: engineNames))
+        XCTAssertFalse(ContentBlockingSiteAllow.isOneSite("co.uk", names: nil))
+    }
+
+    /// What that changes for Allow: a rule is never written for, nor read
+    /// back for, a page site that is a suffix the guess does not know.
+    func testAllowNeverWritesForASuffixTheGuessTookForASite() throws {
+        var settings = ContentBlockingSettings.newProfile
+        XCTAssertEqual(settings.allowHost("doubleclick.net", onSite: "web.app", names: engineNames), .noSite)
+        XCTAssertEqual(settings.allowHost("web.app", onSite: "news.test", names: engineNames), .notOneSite)
+        XCTAssertEqual(settings.ownRules, "")
+        XCTAssertNil(ContentBlockingSiteAllow.rule(host: "doubleclick.net", site: "edu.au", names: engineNames))
+        XCTAssertNotNil(ContentBlockingSiteAllow.rule(host: "doubleclick.net", site: "edu.au", names: nil), "the guess alone would have written it")
+        // A line an older build could have written for the suffix is not offered as "allowed on this site".
+        settings.setOwnRules("@@||doubleclick.net^$domain=web.app\n@@||web.app^$domain=someone.web.app\n@@||cdn.test^$domain=someone.web.app")
+        XCTAssertEqual(settings.allowedHosts(onSite: "web.app", names: engineNames), [])
+        XCTAssertEqual(settings.allowedHosts(onSite: "someone.web.app", names: engineNames), ["cdn.test"])
+        XCTAssertNil(settings.allowHost("doubleclick.net", onSite: "someone.web.app", names: engineNames))
+        // A reply's page and lines go through the same check.
+        let list = try XCTUnwrap(List.decode(#"""
+        {"page":{"host":"web.app","registrable":true},
+         "hosts":[{"host":"edu.au","count":2,"registrable":true},{"host":"school.edu.au","count":1,"registrable":true}]}
+        """#, lists: lists, names: engineNames))
+        XCTAssertNil(list.allowSite, "an engine reply that calls a suffix registrable is not believed twice")
+        XCTAssertEqual(list.entries.filter(\.canBeAllowed).map(\.host), ["school.edu.au"])
+    }
+
     // MARK: The order while the list is open (security BL-03)
 
     func testAnOpenListKeepsItsLinesInPlaceAndPutsNewSitesUnderneath() throws {
