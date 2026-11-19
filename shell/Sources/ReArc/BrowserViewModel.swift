@@ -1352,6 +1352,9 @@ final class BrowserViewModel {
             guard let self else { return }
             self.mutationFollowUpScheduled = false
             self.reconcileEngineOwnership()
+            // A boost that sync just brought, or one just switched on: a file's script boost
+            // scoped to a public suffix does not stay on until the next launch (security BO-01).
+            self.switchOffFileScriptBoostsScopedToASuffix()
             self.syncAllTabBoosts()
             self.contentBlockingSettingsChanged()
         }

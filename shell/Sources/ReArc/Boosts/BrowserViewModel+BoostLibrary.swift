@@ -44,10 +44,13 @@ extension BrowserViewModel {
         syncAllTabBoosts()
     }
 
-    /// At launch, once the engine can name sites: a boost that came from a
-    /// file with a script and a scope that is a public suffix is switched
-    /// off, and the person is told which (security BO-01,
-    /// `SidebarStore.switchOffFileScriptBoostsScopedToASuffix`).
+    /// A boost that came from a file with a script and a scope that is a
+    /// public suffix is switched off, and the person is told which
+    /// (security BO-01, `SidebarStore.switchOffFileScriptBoostsScopedToASuffix`).
+    /// Asked at launch, once the engine can name sites, and after every
+    /// change to the sidebar's state, so one that sync brings or the person
+    /// switches on does not show as on until the next launch. It reads a
+    /// few boosts and writes only when it finds one.
     func switchOffFileScriptBoostsScopedToASuffix() {
         let names = store.switchOffFileScriptBoostsScopedToASuffix()
         guard let message = Self.switchedOffBoostsMessage(names) else { return }

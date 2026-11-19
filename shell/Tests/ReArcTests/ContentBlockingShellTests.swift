@@ -637,6 +637,39 @@ final class ContentBlockingShellTests: XCTestCase {
         }
     }
 
+    /// A file's script boost scoped to a public suffix goes off when the
+    /// sidebar's state next changes, not only at launch: a sync that brings
+    /// one, or the person switching it on, does not leave it showing as on.
+    func testAFilesScriptBoostScopedToASuffixGoesOffAfterAChangeOfTheSidebar() async throws {
+        let model = launch()
+        // As an older build stored it: its rule check took web.app for a site.
+        var package = BoostPackage.newScript(name: "From a file", hostScope: [BoostHostRule(host: "web.app")], js: "document.title = 'x';", css: "")
+        package.provenance = BoostProvenance(imported: true)
+        XCTAssertNil(model.store.addBoost(package, enabled: true))
+        func isOn() -> Bool { model.store.boostLibrary().installation(for: package.manifest.id)?.enabled == true }
+        @MainActor func settle() async throws {
+            for _ in 0..<3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        }
+        _ = model.store.addTab(kind: .today, title: "A", url: URL(string: "https://a.test/")!)
+        try await settle()
+        XCTAssertTrue(isOn(), "without the engine's list nothing is touched")
+
+        SiteNames.shared = SiteNames { $0 == "web.app" ? #"{"host":"web.app","registrable":false,"suffix":true}"# : nil }
+        addTeardownBlock { SiteNames.shared = nil }
+        model.toast = nil
+        _ = model.store.addTab(kind: .today, title: "B", url: URL(string: "https://b.test/")!)
+        try await settle()
+        XCTAssertFalse(isOn())
+        XCTAssertEqual(model.toast?.message, "Darni switched off the boost “From a file”. Its script was set to run on many unrelated sites.")
+
+        // Switched on again by the person: off again, at once.
+        model.toast = nil
+        model.store.setBoostInstallationEnabled(packageID: package.manifest.id, enabled: true)
+        try await settle()
+        XCTAssertFalse(isOn())
+        XCTAssertNotNil(model.toast)
+    }
+
     /// ABI 1.69, feature `host_sites`: the engine's public suffix list. It
     /// does not depend on blocking: boosts and address lines ask it too.
     func testTheEngineFeatureGatesTheSiteNames() {

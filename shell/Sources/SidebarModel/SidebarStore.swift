@@ -1419,8 +1419,10 @@ public final class SidebarStore {
     /// the "on" state, so that it is off on a Mac whose build still runs it.
     /// A boost the person made, one without a script and one scoped to a
     /// real site are left as they are. Nothing happens without the engine's
-    /// answer. Switched on again by the person, it is switched off at the
-    /// next launch for as long as its scope stays a suffix.
+    /// answer. Switched on again by the person, or brought switched on by
+    /// sync, it is switched off the next time this is asked, for as long as
+    /// its scope stays a suffix: the shell asks at launch and after every
+    /// change of the sidebar's state.
     @discardableResult
     public func switchOffFileScriptBoostsScopedToASuffix(names: SiteNames? = .shared) -> [String] {
         guard let names else { return [] }
