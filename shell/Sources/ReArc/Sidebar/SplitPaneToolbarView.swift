@@ -38,11 +38,11 @@ struct SplitPaneToolbarView: View, Equatable {
         let ink = CardToolbarInk(chrome: chrome, tint: tint)
         let url = engine.currentURL ?? tab.url
         let side = model.sidebarSide
-        let showsToggle = !model.isSidebarVisible
+        let showsToggle = !model.isSidebarVisible(in: window)
         HStack(spacing: 0) {
             HStack(spacing: 0) {
                 if showsToggle, side == .left, row.isAtLeadingCorner {
-                    CardToolbarButton(symbol: side.toggleSymbol, help: "Show Sidebar (⌘S)") { model.toggleSidebar() }
+                    CardToolbarButton(symbol: side.toggleSymbol, help: "Show Sidebar (⌘S)") { model.toggleSidebar(in: window) }
                 }
                 CardToolbarButton(symbol: "arrow.left", help: "Back (⌘[)", enabled: engine.canGoBack) { engine.goBack() }
                 CardToolbarButton(symbol: "arrow.right", help: "Forward (⌘])", enabled: engine.canGoForward) { engine.goForward() }
@@ -82,7 +82,7 @@ struct SplitPaneToolbarView: View, Equatable {
                 .help("Close Pane (⌥-click to separate it from the split)")
                 .accessibilityLabel("Close Pane")
                 if showsToggle, side == .right, row.isAtTrailingCorner {
-                    CardToolbarButton(symbol: side.toggleSymbol, help: "Show Sidebar (⌘S)") { model.toggleSidebar() }
+                    CardToolbarButton(symbol: side.toggleSymbol, help: "Show Sidebar (⌘S)") { model.toggleSidebar(in: window) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)

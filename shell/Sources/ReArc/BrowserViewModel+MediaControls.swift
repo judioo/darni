@@ -118,7 +118,7 @@ extension BrowserViewModel {
     }
 
     private var showsLiveCardInSidebar: Bool {
-        isSidebarVisible && !isMiniSidebar(in: store.keyWindowID)
+        isSidebarVisible(in: store.keyWindowID) && !isMiniSidebar(in: store.keyWindowID)
     }
 
     func mediaStripInfo(for tabID: Tab.ID, in window: SidebarWindowID? = nil) -> MediaStripInfo? {

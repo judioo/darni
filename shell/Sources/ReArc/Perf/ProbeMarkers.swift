@@ -7,12 +7,14 @@ import SidebarModel
 /// Nothing is built unless `--rearc-bench` enabled the probe.
 struct BrowserProbeMarkers: View {
     let model: BrowserViewModel
+    /// The window the markers are drawn in.
+    let window: SidebarWindowID
     let pager: SpacePagerController
 
     var body: some View {
         if PresentationProbe.shared.isEnabled {
             ZStack {
-                SidebarProbe(model: model)
+                SidebarProbe(model: model, window: window)
                 SpaceProbe(model: model)
                 PagerProbe(pager: pager)
                 TabProbe(model: model)
@@ -28,11 +30,14 @@ struct BrowserProbeMarkers: View {
     }
 }
 
-/// "shown" / "hidden", "+peek" while the floating sidebar shows.
+/// "shown" / "hidden", "+peek" while the floating sidebar shows, for the
+/// window the marker is in.
 private struct SidebarProbe: View {
     let model: BrowserViewModel
+    let window: SidebarWindowID
     var body: some View {
-        ProbeMarker(name: "sidebar", token: (model.isSidebarVisible ? "shown" : "hidden") + (model.isSidebarPeeking ? "+peek" : ""))
+        ProbeMarker(name: "sidebar", token: (model.isSidebarVisible(in: window) ? "shown" : "hidden")
+            + (model.isSidebarPeeking(in: window) ? "+peek" : ""))
     }
 }
 

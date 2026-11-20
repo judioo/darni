@@ -26,7 +26,7 @@ extension BrowserViewModel {
     func setSidebarSide(_ side: SidebarSide) {
         side.save(to: externalLinkDefaults)
         guard side != (pendingSidebarSide ?? sidebarSide) else { return }
-        isSidebarPeeking = false
+        sidebarVisibility.endPeekingEverywhere()
         flipLayout { $0.pendingSidebarSide = side }
     }
 

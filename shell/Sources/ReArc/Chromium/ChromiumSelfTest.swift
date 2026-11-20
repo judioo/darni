@@ -1402,6 +1402,7 @@ final class ChromiumSelfTest {
         try checkOneLease(engineA, "reopened window")
         log("PASS closing the last window kept the app running (no quit); reopen attached tab A again (lease \(engineA.attachmentID ?? 0))")
         try await windowSessionChecks(shell: shell, model: model, sessionFile: sessionFile)
+        try await sidebarPerWindowChecks(shell: shell, model: model)
         try? FileManager.default.removeItem(at: sidebarFile)
         try? FileManager.default.removeItem(at: sessionFile)
     }
@@ -1477,6 +1478,94 @@ final class ChromiumSelfTest {
         shell.closeWindow(restored[1])
         try await wait("one window left") { shell.browserWindowCount == 1 }
         _ = store.removeSpace(work.id)
+    }
+
+    /// ⌘S per window. The owner's recording (builds 1080 and 1105) has two
+    /// browser windows side by side and ⌘S pressed three times: both sidebars
+    /// went and came back together, because the model the windows share held
+    /// one shown-or-hidden value. Here: two windows, ⌘S in the second, and the
+    /// first keeps its sidebar, in the model and on screen (its traffic
+    /// lights, which go with the sidebar, and its page's width). Then the View
+    /// menu's title follows the key window, a window opened from the hidden
+    /// one starts hidden, a closed one is forgotten, and three presses in the
+    /// first window leave the second as it was.
+    @MainActor
+    private func sidebarPerWindowChecks(shell: ChromiumShell, model: BrowserViewModel) async throws {
+        guard let first = shell.browserWindows.first, let firstID = shell.sidebarWindowID(of: first) else {
+            throw Failure(description: "per-window sidebar: no browser window")
+        }
+        func lightsHidden(_ window: NSWindow) -> Bool { window.standardWindowButton(.closeButton)?.isHidden ?? false }
+        func pageWidth(_ window: NSWindow) -> CGFloat? { window.contentView?.firstDescendant(ofType: ChromiumHostView.self)?.bounds.width }
+        func makeKey(_ window: NSWindow, _ id: SidebarWindowID, _ label: String) async -> KeyDelivery {
+            let delivery: KeyDelivery = await bringToFront(window, for: label) ? .appKit : .direct
+            window.makeKeyAndOrderFront(nil)
+            model.windowBecameKey(id)
+            return delivery
+        }
+        func commandS(in window: NSWindow, _ id: SidebarWindowID, _ label: String, shows: Bool) async throws {
+            let delivery = await makeKey(window, id, label)
+            press("s", keyCode: 1, .command, in: window, model: model, delivery: delivery)
+            try await wait("⌘S \(shows ? "showed" : "hid") the sidebar of \(label)", timeout: 5) {
+                model.isSidebarVisible(in: id) == shows && !model.isSidebarSliding(in: id)
+            }
+            try await wait("the traffic lights of \(label) went with its sidebar", timeout: 5) { lightsHidden(window) == !shows }
+        }
+
+        _ = await makeKey(first, firstID, "the first window")
+        if !model.isSidebarVisible(in: firstID) { model.toggleSidebar(in: firstID) }
+        try await wait("the first window shows its sidebar", timeout: 5) {
+            model.sidebarVisibility.state(in: firstID) == .shown && !lightsHidden(first)
+        }
+        guard let second = shell.openBrowserWindow(), let secondID = shell.sidebarWindowID(of: second) else {
+            throw Failure(description: "per-window sidebar: the second window did not open")
+        }
+        second.setFrame(first.frame.offsetBy(dx: 80, dy: -60), display: true)
+        try check(model.isSidebarVisible(in: secondID), "a window opened from one with its sidebar shown came up hidden")
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let firstWidth = pageWidth(first)
+
+        // The bug: this hid the first window's sidebar too.
+        try await commandS(in: second, secondID, "the second window", shows: false)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        try check(model.sidebarVisibility.state(in: firstID) == .shown,
+                  "⌘S in the second window changed the first window's sidebar: \(model.sidebarVisibility.state(in: firstID))")
+        try check(!lightsHidden(first), "⌘S in the second window hid the first window's traffic lights, so its sidebar went too")
+        if let firstWidth, let now = pageWidth(first) {
+            try check(abs(now - firstWidth) < 1, "⌘S in the second window resized the first window's page (\(firstWidth) -> \(now))")
+        }
+        try check(model.sidebarMenuTitle == "Show Sidebar", "the View menu says \(model.sidebarMenuTitle) with the key window's sidebar hidden")
+
+        // A window opened from the hidden one starts hidden, and closing it forgets it.
+        guard let third = shell.openBrowserWindow(), let thirdID = shell.sidebarWindowID(of: third) else {
+            throw Failure(description: "per-window sidebar: the third window did not open")
+        }
+        try check(!model.isSidebarVisible(in: thirdID), "a window opened from one with its sidebar hidden came up shown")
+        try await wait("the third window came up without traffic lights", timeout: 5) { lightsHidden(third) }
+        shell.closeWindow(third)
+        try await wait("the closed window's sidebar state is forgotten", timeout: 5) {
+            shell.browserWindowCount == 2 && !model.sidebarVisibility.isRegistered(thirdID)
+        }
+
+        // The recording's three presses, in the first window: the second never moves.
+        _ = await makeKey(first, firstID, "the first window")
+        try check(model.sidebarMenuTitle == "Hide Sidebar", "the View menu says \(model.sidebarMenuTitle) with the key window's sidebar shown")
+        for shows in [false, true, false] {
+            try await commandS(in: first, firstID, "the first window", shows: shows)
+            try check(model.sidebarVisibility.state(in: secondID) == .hidden && lightsHidden(second),
+                      "⌘S in the first window changed the second window's sidebar: \(model.sidebarVisibility.state(in: secondID))")
+        }
+        try await commandS(in: first, firstID, "the first window", shows: true)
+        try check(!model.isSidebarVisible(in: secondID), "the second window's sidebar came back with the first window's")
+
+        shell.closeWindow(second)
+        try await wait("one window left after the per-window sidebar step") {
+            shell.browserWindowCount == 1 && !model.sidebarVisibility.isRegistered(secondID)
+        }
+        _ = await makeKey(first, firstID, "the first window")
+        try check(model.isSidebarVisible, "the first window's sidebar is hidden after the step")
+        log("PASS ⌘S per window: with two browser windows, ⌘S in the second hid only its sidebar (the first kept its sidebar, traffic "
+            + "lights and page width\(firstWidth.map { " \(Int($0)) pt" } ?? "")); the View menu's title followed the key window; a window "
+            + "opened from the hidden one started hidden and was forgotten when closed; three ⌘S in the first window left the second hidden")
     }
 
     // MARK: Sidebar navigation controls (wave 17)

@@ -36,16 +36,17 @@ struct BrowserView: View {
     var body: some View {
         ZStack {
             // ⌘S pushes the sidebar with the card's edge beside it; the card
-            // is laid out beside it only at rest (`isSidebarLaidOut`).
+            // is laid out beside it only at rest (`isSidebarLaidOut(in:)`). Each
+            // window reads its own sidebar: ⌘S in one leaves the others alone.
             ZStack(alignment: Alignment(horizontal: placement.side.horizontalAlignment, vertical: .top)) {
                 contentCard
                     // ⇧⌘S widening: the sidebar's new rows are laid out at
                     // once, and the card sliding with its edge covers them.
                     .zIndex(model.sidebarMorph(in: windowID).map { $0.isNarrowing ? 0 : 1 } ?? 0)
-                if model.isSidebarVisible || model.isSidebarSliding, !isPageFullscreen {
+                if model.isSidebarVisible(in: windowID) || model.isSidebarSliding(in: windowID), !isPageFullscreen {
                     let width = model.sidebarWidth(in: windowID)
                     SidebarView(model: model, draggedItemID: $draggedItemID)
-                        .offset(x: CGFloat(placement.sidebarOffset(reveal: model.sidebarReveal, width: Double(width),
+                        .offset(x: CGFloat(placement.sidebarOffset(reveal: model.sidebarReveal(in: windowID), width: Double(width),
                                                                    growth: model.sidebarGrowth(in: windowID))))
                 }
             }
@@ -62,7 +63,7 @@ struct BrowserView: View {
             .opacity(model.sidebarFlipOpacity)
             .background(SpaceThemeBackground(model: model, window: windowID, pager: pager).ignoresSafeArea())
 
-            if !model.isSidebarVisible, model.isSidebarPeeking, !isPageFullscreen {
+            if !model.isSidebarVisible(in: windowID), model.isSidebarPeeking(in: windowID), !isPageFullscreen {
                 let edge = placement.side.edge
                 HStack(spacing: 0) {
                     if edge == .trailing { Spacer(minLength: 0) }
@@ -135,7 +136,7 @@ struct BrowserView: View {
                 .transition(.opacity)
             }
         }
-        .overlay(alignment: .topLeading) { BrowserProbeMarkers(model: model, pager: pager) }
+        .overlay(alignment: .topLeading) { BrowserProbeMarkers(model: model, window: windowID, pager: pager) }
         .task { await SiteControlsPreview.openWhenReady(in: model) }
         .tint(model.themeColor(in: windowID))
         .environment(\.themeChrome, themeChrome)
@@ -189,22 +190,28 @@ struct BrowserView: View {
         .background(
             SidebarEdgeHoverMonitor(
                 placement: placement,
-                isEnabled: !model.isSidebarVisible && !isPageFullscreen,
-                isPeeking: model.isSidebarPeeking,
+                isEnabled: !model.isSidebarVisible(in: windowID) && !isPageFullscreen,
+                isPeeking: model.isSidebarPeeking(in: windowID),
                 dismissWidth: model.sidebarWidth(in: windowID) + 36,
-                onChange: { model.setSidebarPeeking($0) }
+                onChange: { model.setSidebarPeeking($0, in: windowID) }
             )
             .frame(width: 0, height: 0)
         )
         .navigationTitle(contentTitle)
         .modifier(ProfileMoveAlert(model: model, isOwner: isKeyWindowSheetOwner))
-        .sheet(isPresented: $model.isCapturePreviewPresented) {
+        // One model serves every window, so each shared sheet and alert is
+        // presented by the key window alone: otherwise every open window
+        // puts up its own copy of the same question.
+        .sheet(isPresented: Binding(
+            get: { model.isCapturePreviewPresented && isKeyWindowSheetOwner },
+            set: { model.isCapturePreviewPresented = $0 }
+        )) {
             if let record = model.lastCapturePreview {
                 CapturePreviewSheet(record: record, model: model)
             }
         }
         .alert("Capture failed", isPresented: Binding(
-            get: { model.captureErrorMessage != nil },
+            get: { model.captureErrorMessage != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.captureErrorMessage = nil } }
         )) {
             Button("OK", role: .cancel) {}
@@ -266,7 +273,7 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: Binding(
-            get: { model.spaceEditorID != nil },
+            get: { model.spaceEditorID != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.spaceEditorID = nil } }
         )) {
             if let id = model.spaceEditorID {
@@ -283,7 +290,7 @@ struct BrowserView: View {
         }
         .modifier(SidebarPersonalizationSheets(model: model, isOwner: isKeyWindowSheetOwner))
         .alert(model.pendingRename?.alertTitle ?? "Rename", isPresented: Binding(
-            get: { model.pendingRename != nil },
+            get: { model.pendingRename != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingRename = nil } }
         )) {
             TextField("Name", text: $model.pendingRenameText)
@@ -295,7 +302,7 @@ struct BrowserView: View {
             }
         }
         .alert(model.pendingDeletionMessage.title, isPresented: Binding(
-            get: { model.pendingDeletion != nil },
+            get: { model.pendingDeletion != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingDeletion = nil } }
         )) {
             Button("Cancel", role: .cancel) { model.pendingDeletion = nil }
@@ -313,7 +320,7 @@ struct BrowserView: View {
             Text(spaceProfileChangeText.message)
         }
         .alert("Rename Profile", isPresented: Binding(
-            get: { model.pendingProfileRenameID != nil },
+            get: { model.pendingProfileRenameID != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingProfileRenameID = nil } }
         )) {
             TextField("Name", text: $model.pendingProfileRenameName)
@@ -427,7 +434,7 @@ struct BrowserView: View {
 
     @ViewBuilder
     private var boostEditorChrome: some View {
-        if let draft = model.boostEditorDraft {
+        if let draft = model.boostEditorDraft(in: windowID) {
             VStack {
                 if draft.pickerActive {
                     Text("Pick an element — Esc to cancel")
@@ -474,12 +481,12 @@ struct BrowserView: View {
         // ⇧⌘S moving the sidebar's edge: the page is laid out once, as for ⌘S.
         let morph = fullscreen || growth != nil ? nil : model.sidebarMorph(in: windowID)
         let slide = fullscreen ? SidebarSlide() : SidebarSlide(
-            reveal: model.sidebarReveal, width: sidebarWidth, inset: inset,
-            showing: model.isSidebarVisible, laidOut: model.isSidebarLaidOut, morph: morph
+            reveal: model.sidebarReveal(in: windowID), width: sidebarWidth, inset: inset,
+            showing: model.isSidebarVisible(in: windowID), laidOut: model.isSidebarLaidOut(in: windowID), morph: morph
         )
         let shape = CardShape(radius: radius, sidebarCut: slide.cut, cutEdge: placement.cardSidebarEdge)
         let panelLayout = sidePanelLayout
-        let lead = fullscreen ? 0 : SidePanelLayout.lead(sidebarLaidOut: model.isSidebarLaidOut,
+        let lead = fullscreen ? 0 : SidePanelLayout.lead(sidebarLaidOut: model.isSidebarLaidOut(in: windowID),
                                                           sidebarWidth: growth.map(\.from) ?? morph?.layoutWidth ?? Double(sidebarWidth),
                                                           inset: Double(inset))
         // A split's panes are cards of their own, each with its own row (SPLIT-VIEW §3.1).
@@ -555,7 +562,7 @@ struct BrowserView: View {
 
     /// The traffic lights show with the sidebar, as in Arc (ARC-RECORDING-ANALYSIS.md §3).
     private var showsTrafficLights: Bool {
-        (model.isSidebarVisible || model.isSidebarPeeking) && !isPageFullscreen
+        (model.isSidebarVisible(in: windowID) || model.isSidebarPeeking(in: windowID)) && !isPageFullscreen
     }
 
     static let cardInset: CGFloat = 10
