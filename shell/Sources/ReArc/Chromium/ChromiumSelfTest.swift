@@ -1198,8 +1198,13 @@ final class ChromiumSelfTest {
     /// the app shows, through the model's own commands.
     @MainActor
     private func shellChecks(base: String) async throws {
-        let sidebarFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("rearc-selftest-sidebar-\(UUID().uuidString).json")
+        // A folder of its own for the shell's files. The model keeps its other files beside
+        // the sidebar file, and "blocked list in memory only" reads every file of that folder:
+        // with the sidebar file directly in the temporary folder it read all of that.
+        let shellData = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rearc-selftest-shell-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: shellData, withIntermediateDirectories: true)
+        let sidebarFile = shellData.appendingPathComponent("sidebar.json")
         let store = SidebarStore()
         let tabA = store.addTab(kind: .today, title: "Shell A", url: URL(string: "\(base)/a")!)
         store.selectTab(tabA.id)
@@ -1212,8 +1217,7 @@ final class ChromiumSelfTest {
             faviconStore: FaviconStore(directory: nil)
         )
         // A temp session file: the user's window-session.json is never read or written.
-        let sessionFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("rearc-selftest-window-session-\(UUID().uuidString).json")
+        let sessionFile = shellData.appendingPathComponent("window-session.json")
         let shell = ChromiumShell(runtime: runtime, autosavesFrames: false, sessionFile: sessionFile)
         shell.start(model: model)
         // Before the first list check can start (it follows the bundles' verification, off this turn).
@@ -1508,8 +1512,7 @@ final class ChromiumSelfTest {
         log("PASS closing the last window kept the app running (no quit); reopen attached tab A again (lease \(engineA.attachmentID ?? 0))")
         try await windowSessionChecks(shell: shell, model: model, sessionFile: sessionFile)
         try await sidebarPerWindowChecks(shell: shell, model: model)
-        try? FileManager.default.removeItem(at: sidebarFile)
-        try? FileManager.default.removeItem(at: sessionFile)
+        try? FileManager.default.removeItem(at: shellData)
     }
 
     /// Window session restore (docs/WINDOW-RESTORE.md): two browser windows on
@@ -4232,9 +4235,16 @@ extension ChromiumSelfTest {
             log("PASS blocked list private window: its tab had \(describe(.init(entries: names))) and no Allow; closed, the engine has nothing for it")
 
             // 8. Memory only: no made-up site of step 5 is in a file. Last, so that what it finds is the only thing it fails.
+            // Every file the app could have written it to is read: the engine's profile folder and the folder of the
+            // shell's own files (the sidebar file's, where the model keeps the rest). Both are the app's alone. A folder
+            // other programs write to as well is not read: that is a fault of the test's setup, and it fails as one.
             model.persistence.flush()
             let folders = [runtime.userDataDir, model.persistence.fileURL.deletingLastPathComponent()].compactMap { $0 }
-            let found = await Task.detached { Self.files(containing: marker, in: folders) }.value
+            let shared = SelfTestDiskScan.sharedFolders(among: folders)
+            try check(shared.isEmpty, "blocked list in memory only: \(shared.joined(separator: " and ")) is not a folder of the app's own "
+                + "(the temporary folder, the home folder or one above them), so its files were not read; give the run a profile "
+                + "folder and a shell data folder of their own")
+            let found = await Task.detached { SelfTestDiskScan.files(containing: marker, in: folders) }.value
             try check(found.isEmpty, "the blocked sites of a page were written to disk: '\(marker)…' is in \(found.prefix(5).joined(separator: ", "))"
                 + (found.count > 5 ? " and \(found.count - 5) more file(s)" : ""))
             log("PASS blocked list in memory only: none of the \(sites) made-up sites is in a file under \(folders.map(\.path).joined(separator: " or "))")
@@ -4387,24 +4397,6 @@ extension ChromiumSelfTest {
                 + "page's requests load; a stored '\(suffix)' is marked on the row and narrowed to the tenant, and refused when typed; a new "
                 + "boost is for the tenant and a scope of '\(suffix)' is refused and matches nothing; a long host keeps its own label")
         }
-    }
-
-    /// The files under `folders` that hold `text` as plain bytes. For a name
-    /// that must be in no file; a compressed copy would not be seen, and a
-    /// file over 256 MB is not read.
-    nonisolated private static func files(containing text: String, in folders: [URL]) -> [String] {
-        let needle = Data(text.utf8)
-        var found: Set<String> = []
-        for folder in folders {
-            guard let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]) else { continue }
-            for case let file as URL in files {
-                guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
-                      (values.fileSize ?? 0) <= 256 * 1024 * 1024 else { continue }
-                guard let data = try? Data(contentsOf: file, options: .mappedIfSafe), data.range(of: needle) != nil else { continue }
-                found.insert(file.path)
-            }
-        }
-        return found.sorted()
     }
 
     /// Waits for load `run` of the blocked list page to end and reads it.

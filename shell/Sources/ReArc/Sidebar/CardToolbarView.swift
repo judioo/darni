@@ -58,7 +58,7 @@ struct CardToolbarView: View {
                 .buttonStyle(.plain)
                 .addressBarControlFocus()
                 .onHover { isHoveringURL = $0 }
-                .help(url?.absoluteString ?? "Open the command bar (⌘L)")
+                .help(url.map { WelcomePageAddress.displayAddress(for: $0) } ?? "Open the command bar (⌘L)")
             }
             .padding(.horizontal, 140)
             .padding(.trailing, 20) // centred about 10 pt left of the card's centre
@@ -241,7 +241,11 @@ struct CardToolbarButton: View {
 /// Puts the traffic lights where Arc draws them (THEMES.md §4.5): 14 pt
 /// buttons on a 23 pt pitch, centred at x 19.5 / 42.5 / 65.5 and y 23.5 from
 /// the window's top. AppKit lays the title bar out again on resize, key
-/// changes and full screen, so it re-applies after each.
+/// changes and full screen, so it re-applies after each. It also does so
+/// whenever the window's title changes (each tab switch and page title,
+/// through `navigationTitle`), which no window notification reports: the
+/// title is observed, and so are the title bar's own views, for any cause
+/// not listed here.
 struct TrafficLightPositioner: NSViewRepresentable {
     static let firstCentreX: CGFloat = 19.5
     static let pitch: CGFloat = 23
@@ -272,7 +276,12 @@ struct TrafficLightPositioner: NSViewRepresentable {
     }
 
     final class PositionerView: NSView {
+        private static let kinds: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         private var observers: [NSObjectProtocol] = []
+        private var titleObservation: NSKeyValueObservation?
+        /// True while `reposition` moves the views itself.
+        private var isRepositioning = false
+        private var repositionPending = false
         var buttonsHidden = false
         var centreY = TrafficLightPositioner.centreY
 
@@ -280,13 +289,15 @@ struct TrafficLightPositioner: NSViewRepresentable {
             super.viewDidMoveToWindow()
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
+            titleObservation = nil
             guard let window else { return }
+            observeTitlebarLayout(in: window)
             let names: [Notification.Name] = [
                 NSWindow.didResizeNotification, NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
                 NSWindow.didExitFullScreenNotification, NSWindow.didEndLiveResizeNotification,
                 NSWindow.didChangeScreenNotification,
             ]
-            observers = names.map { name in
+            observers += names.map { name in
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                     MainActor.assumeIsolated { self?.reposition() }
                 }
@@ -297,22 +308,64 @@ struct TrafficLightPositioner: NSViewRepresentable {
 
         deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
+        /// AppKit puts the title bar and its buttons back at the system's
+        /// place whenever it tiles the title bar, and a new window title
+        /// makes it tile. Seen on screen in build 1126: after a tab was
+        /// selected the buttons sat up and left of their place, and the
+        /// title bar again covered the window's whole top edge, until the
+        /// window next changed key.
+        ///
+        /// The title is observed, so the buttons are back before the
+        /// setter returns and no frame shows them out of place. The title
+        /// bar's views are observed too, for causes nobody listed. A view
+        /// cannot be moved from inside its own frame notification (AppKit
+        /// drops the change), so that path re-applies on the next turn of
+        /// the main queue, once for any number of moves.
+        private func observeTitlebarLayout(in window: NSWindow) {
+            titleObservation = window.observe(\.title) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.reposition() }
+            }
+            guard let close = window.standardWindowButton(.closeButton),
+                  let titlebar = close.superview, let container = titlebar.superview else { return }
+            let buttons = Self.kinds.compactMap { window.standardWindowButton($0) }
+            for view in [container, titlebar] + buttons {
+                view.postsFrameChangedNotifications = true
+                observers.append(NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: view,
+                                                                        queue: nil) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.titlebarViewMoved() }
+                })
+            }
+        }
+
+        private func titlebarViewMoved() {
+            guard !isRepositioning, !repositionPending else { return }
+            repositionPending = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.repositionPending = false
+                self.reposition()
+            }
+        }
+
         func reposition() {
-            for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard !isRepositioning else { return }
+            isRepositioning = true
+            defer { isRepositioning = false }
+            for kind in Self.kinds {
                 guard let button = window?.standardWindowButton(kind), button.isHidden != buttonsHidden else { continue }
                 button.isHidden = buttonsHidden
             }
+            // In full screen, and on the way in and out, the buttons are in AppKit's own window.
             guard let window, !window.styleMask.contains(.fullScreen),
                   let close = window.standardWindowButton(.closeButton),
-                  let titlebar = close.superview, let container = titlebar.superview else { return }
+                  let titlebar = close.superview, let container = titlebar.superview, container.window === window else { return }
             let height = TrafficLightPositioner.titlebarHeight
             // The titlebar container intercepts clicks even where it is transparent.
             // Keep it over the traffic lights, leaving the page toolbar and toast clickable.
             let frame = TrafficLightPositioner.titlebarFrame(windowSize: window.frame.size)
             if container.frame != frame { container.frame = frame }
             titlebar.frame = NSRect(x: 0, y: 0, width: container.bounds.width, height: height)
-            let kinds: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-            for (index, kind) in kinds.enumerated() {
+            for (index, kind) in Self.kinds.enumerated() {
                 guard let button = window.standardWindowButton(kind) else { continue }
                 let size = button.frame.size
                 let centreX = TrafficLightPositioner.firstCentreX + TrafficLightPositioner.pitch * CGFloat(index)

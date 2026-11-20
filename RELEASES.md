@@ -67,6 +67,13 @@ lines and this section starts empty again.
   it is. The visit is then kept in that profile's history. Only web pages can open in another
   profile or container. For any other page those spaces are greyed out and the menu says why.
   From a container's window, the spaces of its profile are marked as outside the container.
+  of the first profile stay in the first profile, so you may need to sign in again.
+- The red, yellow and green window buttons stay in their place. Until now they could jump up
+  and to the left when you chose a tab or when a page changed its title, and they stayed there
+  until you clicked another window and came back.
+- The site controls panel no longer stays cut off after you click Allow in the list of what
+  was blocked. Now and then the panel stayed too short, with its top buttons and bottom rows
+  out of view, until you closed and opened it again.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 

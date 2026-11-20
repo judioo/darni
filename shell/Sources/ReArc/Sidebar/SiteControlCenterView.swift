@@ -215,6 +215,8 @@ struct SiteControlCenterView: View {
         }
         .padding(10)
         .frame(width: Self.width + 20)
+        // The blocked list comes and goes with the page (a reload after Allow): the popover must end up as tall as this.
+        .background(PopoverContentSizeKeeper())
     }
 
     private var settingRows: some View {
