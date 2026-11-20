@@ -25,6 +25,8 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **Fixes**
+- A folder's menu has Move to Space. The folder moves to the other space whole, with its tabs
+  and the folders inside it, in the same order.
 - Little Darni's Open in button and its list of spaces look like Arc's. The button shows the
   space's name in the space's colour, adjusted so it is always easy to read, with ⌘O beside
   it. The arrow next to it opens a list of all your spaces with their icons. Type to search,

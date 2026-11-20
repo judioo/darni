@@ -137,6 +137,15 @@ struct FolderContextMenu: View {
         ItemIconMenu(model: model, itemID: folder.id)
         Button("New Folder Inside") { model.newFolder(parentFolderID: folder.id) }
         if let spaceID = store.spaceContaining(entryID: folder.id) {
+            // The folder goes whole: its tabs, its folders and their order (`moveEntries`).
+            let otherSpaces = store.spaceMoveDestinations(from: spaceID)
+            if !otherSpaces.isEmpty {
+                Menu("Move to Space") {
+                    ForEach(otherSpaces) { space in
+                        Button(model.spaceMenuTitle(space)) { model.moveItems([folder.id], toSpace: space.id) }
+                    }
+                }
+            }
             MoveToProfileMenu(model: model, ids: [folder.id], spaceID: spaceID)
         }
         Divider()

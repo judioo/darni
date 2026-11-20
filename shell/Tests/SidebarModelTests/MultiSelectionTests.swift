@@ -248,6 +248,17 @@ final class MultiSelectionTests: XCTestCase {
         XCTAssertEqual(f.store.parentFolderID(of: f.docs.id), f.folder.id)
     }
 
+    /// The folder row's own Move to Space (owner, 2026-11-20): one folder goes whole.
+    func testMoveOneFolderToSpaceTakesItsContents() {
+        let f = makeFixture()
+        let work = f.store.spaces[1].id
+        XCTAssertEqual(f.store.moveEntries([f.folder.id], toSpace: work), [f.folder.id])
+        XCTAssertEqual(f.store.spaceContaining(entryID: f.folder.id), work)
+        XCTAssertEqual(f.store.spaceContaining(tabID: f.docs.id), work)
+        XCTAssertEqual(f.store.parentFolderID(of: f.docs.id), f.folder.id)
+        XCTAssertFalse(f.store.outline(for: f.space).pinned.map(\.id).contains(f.folder.id))
+    }
+
     func testNewFolderWithSelectionAndMoveToFolder() {
         let f = makeFixture()
         let folder = f.store.createFolder(withSelection: [f.mail.id, f.google[1].id], in: f.space)!
