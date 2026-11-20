@@ -784,15 +784,7 @@ final class ContentBlockingSiteRowTests: XCTestCase {
     // MARK: Site exceptions with the engine's site names (§9, security CB-12)
 
     /// Chromium's answers for the names these tests use.
-    private let siteNames = SiteNames { host in
-        let suffixes = ["web.app", "co.uk", "github.io", "com"]
-        if suffixes.contains(host) { return #"{"host":"\#(host)","registrable":false,"suffix":true}"# }
-        if host == "localhost" { return #"{"host":"localhost","registrable":false,"suffix":false}"# }
-        if host.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) { return #"{"host":"\#(host)","registrable":true,"suffix":false}"# }
-        guard let suffix = suffixes.first(where: { host.hasSuffix("." + $0) }) else { return nil }
-        let label = host.dropLast(suffix.count + 1).split(separator: ".").last ?? ""
-        return #"{"host":"\#(label).\#(suffix)","registrable":true,"suffix":false}"#
-    }
+    private let siteNames = SiteNames.standIn(suffixes: ["web.app", "co.uk", "github.io", "com"], unsuffixed: ["localhost"], addresses: true)
 
     func testAnExceptionIsKeyedByThePagesRealSite() {
         func key(_ page: String, _ names: SiteNames?) -> String? { ContentBlockingHost.exceptionHost(for: URL(string: page), names: names) }

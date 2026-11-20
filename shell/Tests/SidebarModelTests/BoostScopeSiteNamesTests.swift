@@ -7,20 +7,10 @@ import XCTest
 /// the rules are what they were.
 final class BoostScopeSiteNamesTests: XCTestCase {
     /// Chromium's answers for the names these tests use.
-    private let names = SiteNames { host in
-        let sites = ["someone.web.app", "example.co.uk", "school.edu.au", "club.or.jp", "example.com", "amazonaws.com"]
-        let suffixes = ["web.app", "co.uk", "edu.au", "or.jp", "com", "github.io", "blogspot.co.uk"]
-        if suffixes.contains(host) { return #"{"host":"\#(host)","registrable":false,"suffix":true}"# }
-        if host == "localhost" { return #"{"host":"localhost","registrable":false,"suffix":false}"# }
-        if host.split(separator: ".").allSatisfy({ $0.allSatisfy(\.isNumber) }) { return #"{"host":"\#(host)","registrable":true,"suffix":false}"# }
-        if let site = sites.first(where: { host == $0 || host.hasSuffix("." + $0) }) { return #"{"host":"\#(site)","registrable":true,"suffix":false}"# }
-        // Any other name under a suffix: the suffix and one label more.
-        if let suffix = suffixes.first(where: { host.hasSuffix("." + $0) }) {
-            let label = host.dropLast(suffix.count + 1).split(separator: ".").last ?? ""
-            return #"{"host":"\#(label).\#(suffix)","registrable":true,"suffix":false}"#
-        }
-        return nil
-    }
+    private let names = SiteNames.standIn(
+        suffixes: ["web.app", "co.uk", "edu.au", "or.jp", "com", "github.io", "blogspot.co.uk"],
+        sites: ["someone.web.app", "example.co.uk", "school.edu.au", "club.or.jp", "example.com", "amazonaws.com"],
+        unsuffixed: ["localhost"], addresses: true)
 
     private func rule(_ host: String, _ match: BoostHostMatch = .registrable) -> BoostHostRule {
         BoostHostRule(host: host, hostMatch: match)
