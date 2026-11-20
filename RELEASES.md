@@ -63,6 +63,9 @@ lines and this section starts empty again.
   moved the page straight into that space. A space in the same profile takes the page as it
   is. A space in another profile opens the same address in a new tab there, and the sign-ins
   of the first profile stay in the first profile, so you may need to sign in again.
+- The red, yellow and green window buttons stay in their place. Until now they could jump up
+  and to the left when you chose a tab or when a page changed its title, and they stayed there
+  until you clicked another window and came back.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 
