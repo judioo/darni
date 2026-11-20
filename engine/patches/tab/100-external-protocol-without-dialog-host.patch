@@ -1,0 +1,94 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 a link to another app from a bridge tab is dropped, not a crash (EP-01)
+
+A link to a scheme that another app on the Mac handles (mailto:, zoommtg:,
+slack:) reaches ExternalProtocolHandler::RunExternalProtocolDialog, which
+makes Chromium's ExternalProtocolDialog. Its constructor calls
+constrained_window::ShowWebModalDialogViews, and CreateWebModalDialogViews
+(components/constrained_window/constrained_window_views.cc) takes the tab's
+WebContentsModalDialogManager and calls manager->delegate() with no check.
+A tab the host made has no such manager (tab/097 says so), so the browser
+process reads through a null pointer and Darni quits, every window and
+profile. Chromium lets the first such request through without a user
+gesture. Security review EP-01 (security/RC-2026.1120.after-1136.md).
+
+This is the stop-gap: when the tab (or the tab that embeds it) has no
+manager, the request is dropped, and the first drop in a run writes one
+warning line with the scheme only, never the address. The link then does
+nothing. The real fix routes these links to the host, which asks in its
+own sheet and opens the app itself; when it lands, this check stays as the
+guard for any tab the host does not route.
+
+The same unchecked read is reached by every caller of
+ShowWebModalDialogViews. The ones a page can start were read at the pin:
+FedCM returns when the tab has no TabInterface, and the device choosers
+and PaymentRequest when no browser window holds the tab. The password
+account chooser returns when the tab has no ManagePasswordsUIController.
+JavaScript dialogs, HTTP auth, client certificates and WebAuthn go to the
+host (tab/013, tab/056, tab/059, tab/097). The card CVC prompt is
+unchecked but needs a Google Payments card. Only this one is reached by
+any page with no gesture and no setup.
+
+Type-checked with the tree's clang (out/ReArc-dev-arm64 flags, Chromium's
+plugins, -fsyntax-only) against overlay 6274321b22. Not built, not run.
+
+Touches: chrome/browser/ui/views/{external_protocol_dialog.cc, BUILD.gn}
+(the target's dep on //components/web_modal). No other patch touches them.
+No bridge, ABI or feature string change.
+
+Last rebased: 2026-11-20 onto Chromium 156.0.8078.109 (overlay 6274321b22).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/chrome/browser/ui/views/BUILD.gn b/chrome/browser/ui/views/BUILD.gn
+index 3125abc..4b90b93 100644
+--- a/chrome/browser/ui/views/BUILD.gn
++++ b/chrome/browser/ui/views/BUILD.gn
+@@ -851,6 +851,7 @@ source_set("external_protocol_dialog") {
+     "//components/constrained_window",
+     "//components/prefs",
+     "//components/url_formatter",
++    "//components/web_modal",
+     "//ui/base",
+     "//ui/base/mojom:ui_base_types",
+     "//ui/gfx",
+diff --git a/chrome/browser/ui/views/external_protocol_dialog.cc b/chrome/browser/ui/views/external_protocol_dialog.cc
+index 6e5a662..c7bed1a 100644
+--- a/chrome/browser/ui/views/external_protocol_dialog.cc
++++ b/chrome/browser/ui/views/external_protocol_dialog.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <utility>
+ 
++#include "base/logging.h"
+ #include "base/strings/string_util.h"
+ #include "base/types/optional_util.h"
+ #include "build/build_config.h"
+@@ -22,6 +23,7 @@
+ #include "components/constrained_window/constrained_window_views.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/url_formatter/elide_url.h"
++#include "components/web_modal/web_contents_modal_dialog_manager.h"
+ #include "content/public/browser/weak_document_ptr.h"
+ #include "content/public/browser/web_contents.h"
+ #include "ui/base/l10n/l10n_util.h"
+@@ -108,6 +110,19 @@ void ExternalProtocolHandler::RunExternalProtocolDialog(
+     return;
+   }
+ 
++  // ReArc: a tab the host made has no WebContentsModalDialogManager, and
++  // CreateWebModalDialogViews reads through it unchecked. Drop the request
++  // until the host routes these links itself (EP-01).
++  if (!web_modal::WebContentsModalDialogManager::FromWebContents(
++          constrained_window::GetTopLevelWebContents(web_contents))) {
++    static bool warned = false;
++    LOG_IF(WARNING, !warned)
++        << "ReArc: dropped a link to another app (" << url.scheme()
++        << ":): this tab has no dialog host";
++    warned = true;
++    return;
++  }
++
+   // Windowing system takes ownership.
+   new ExternalProtocolDialog(web_contents, url, program_name, initiating_origin,
+                              std::move(initiator_document));
