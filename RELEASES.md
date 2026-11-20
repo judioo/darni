@@ -41,6 +41,12 @@ lines and this section starts empty again.
 - Spotlight, Finder, the Dock and Launchpad show Darni for a copy updated from ReArc, which
   keeps its file name ReArc.app. Until now they showed ReArc there, and Spotlight did not find
   the app by "Darni". Typing "ReArc" still finds it.
+- The arrow beside "Open in" in a Little Darni window now lists all your other spaces, in
+  every profile, under each profile's name. Until now it listed only the spaces of the
+  window's own profile. With one space in that profile there was no arrow at all, and a click
+  moved the page straight into that space. A space in the same profile takes the page as it
+  is. A space in another profile opens the same address in a new tab there, and the sign-ins
+  of the first profile stay in the first profile, so you may need to sign in again.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 

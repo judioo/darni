@@ -3,7 +3,7 @@ import SidebarModel
 
 /// Minimal standalone window (PEEK-LITTLE-BROWSER §2): a compact toolbar
 /// with back, forward and reload, the address placeholder that opens its
-/// mini command bar, the profile indicator and Open in <Space> (⌘O) with a menu of other spaces; then the page.
+/// mini command bar, the profile indicator and Open in <Space> (⌘O) with a menu of every other space; then the page.
 struct LittleArcWindowView: View {
     @Bindable var model: BrowserViewModel
     @Environment(\.dismissWindow) private var dismissWindow
@@ -150,12 +150,13 @@ struct LittleArcWindowView: View {
     static let labelColor = NSColor.textColor
 
     /// Arc's "Open in <Space> ⌘O ⌄": the space of the last focused browser
-    /// window, with a dot in its theme colour, and a menu of the profile's other spaces.
+    /// window, with a dot in its theme colour, and a menu of every other space,
+    /// grouped by profile (`LittleArcOpenInMenu`). The page moves only to a
+    /// space of its own session; in any other space its address opens afresh (S-01).
     @ViewBuilder
     private func openInButton(for record: LittleArcWindow) -> some View {
         let target = model.store.littleArcTargetSpace(for: windowID)
-        // Storage, not listing: a page opens only in a space of its own session (S-01).
-        let others = model.store.spaces(in: record.profileID).filter { $0.id != target?.id }
+        let sections = LittleArcOpenInMenu.sections(store: model.store, windowID: windowID)
         HStack(spacing: 0) {
             Button {
                 open(into: target?.id)
@@ -187,11 +188,15 @@ struct LittleArcWindowView: View {
             .buttonStyle(.plain)
             .help("Move this page into a tab in \(target?.name ?? "your current space")")
             .accessibilityLabel("Open in \(target?.name ?? "Darni")")
-            if !others.isEmpty {
+            if !sections.isEmpty {
                 Divider().frame(height: 14)
                 Menu {
-                    ForEach(others) { space in
-                        Button(space.name) { open(into: space.id) }
+                    ForEach(sections) { section in
+                        if let header = section.header {
+                            Section(header) { openInItems(section.entries) }
+                        } else {
+                            openInItems(section.entries)
+                        }
                     }
                 } label: {
                     Image(systemName: "chevron.down")
@@ -211,9 +216,38 @@ struct LittleArcWindowView: View {
         .fixedSize()
     }
 
+    /// The main button: the page becomes a tab in the target space.
     private func open(into spaceID: Space.ID?) {
         model.promoteLittleArcWindow(windowID, into: spaceID)
         dismiss()
+    }
+
+    /// One profile's spaces in the ⌄ menu, each with a dot in its theme colour.
+    private func openInItems(_ entries: [LittleArcOpenInMenu.Entry]) -> some View {
+        ForEach(entries) { entry in
+            Button {
+                // The window stays when nothing opened: the space went while the menu was up.
+                if model.openLittleArcWindow(windowID, in: entry.spaceID) != nil { dismiss() }
+            } label: {
+                Label {
+                    Text(entry.title)
+                } icon: {
+                    Image(nsImage: Self.menuDot(entry.theme))
+                }
+            }
+        }
+    }
+
+    /// A menu draws a template symbol in the text colour, so the space's
+    /// colour is a small picture of its own, as the dot on the main button.
+    static func menuDot(_ theme: SpaceTheme) -> NSImage {
+        let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
+            NSColor(srgbRed: theme.red, green: theme.green, blue: theme.blue, alpha: 1).setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 
     private func navButton(_ symbol: String, _ help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
