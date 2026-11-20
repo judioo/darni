@@ -45,18 +45,23 @@ public enum TopDomains {
 /// completes to "github.com" and shows "hub.com" after the caret.
 public enum InlineDomainCompletion {
     /// The domain `typed` completes to, or nil. `candidates` are hosts, best first.
+    /// A typed address is never completed into another one: nothing follows
+    /// a path, a port or a fragment, and a host typed in full that is itself
+    /// a candidate stays as typed ("google.com", not "google.com.au").
     public static func complete(_ typed: String, candidates: [String]) -> String? {
         guard !typed.isEmpty, !typed.contains(where: \.isWhitespace), !typed.hasPrefix(">") else { return nil }
         var needle = typed.lowercased()
         for scheme in ["https://", "http://"] where needle.hasPrefix(scheme) { needle.removeFirst(scheme.count) }
         if needle.hasPrefix("www.") { needle.removeFirst(4) }
-        guard !needle.isEmpty, !needle.contains("/"), !needle.contains(":") else { return nil }
+        guard !needle.isEmpty, !needle.contains(where: { "/:?#".contains($0) }) else { return nil }
+        var found: String?
         for candidate in candidates {
             let host = candidate.lowercased()
             let plain = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-            if plain.hasPrefix(needle), plain.count > needle.count { return plain }
+            if plain == needle { return nil }
+            if found == nil, plain.hasPrefix(needle), plain.count > needle.count { found = plain }
         }
-        return nil
+        return found
     }
 
     /// What follows the typed text in the field (the scheme and "www." the

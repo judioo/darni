@@ -78,7 +78,11 @@ public enum CommandBarSearch {
     /// Builds ranked results: open tabs first, then visit history (pages not
     /// already open), then the provider's suggestions, then commands, then the
     /// search fallback. A query that is itself an address puts its "Open" row
-    /// ahead of history, so Enter goes where the user typed. `live` results
+    /// first, ahead of any open tab, even one showing that same page, so
+    /// Return opens what the person typed (owner's report, 2026-11-20). Tabs
+    /// showing exactly that page follow it, then other matching tabs. With
+    /// `typedAddressFirst` false (⌘L's prefilled address, untouched) and
+    /// while an inline completion shows, tabs keep the lead. `live` results
     /// for this exact text replace the shell's history and URL-vs-search
     /// guess (Chromium) and add suggestions; for other text they are ignored.
     /// The prepared indexes (`tabIndex`, `commandIndex`, `menuIndex`) and
@@ -105,6 +109,7 @@ public enum CommandBarSearch {
         live: CommandBarLiveResults? = nil,
         searchProvider: SearchProvider = .duckDuckGo,
         inlineCompletion: String? = nil,
+        typedAddressFirst: Bool = true,
         now: Date = Date()
     ) -> [Result] {
         let (mode, needle) = parseMode(query)
@@ -145,28 +150,7 @@ public enum CommandBarSearch {
                 if let named { titles.insert(named) }
                 return true
             }
-            // The inline-completed domain is listed before any tab on another
-            // site, so Return goes where the field shows.
-            let completed = inlineCompletion.flatMap { URL(string: "https://\($0)/") }
-            let completedHost = completed.flatMap { Self.plainHost($0) }
-            let firstTabs = ranked.first.filter { completedHost == nil || Self.plainHost($0.tab.url) == completedHost }
-            let laterFirst = ranked.first.filter { completedHost != nil && Self.plainHost($0.tab.url) != completedHost }
-            for entry in firstTabs.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
-                output.append(TabIndex.row(entry))
-            }
-            if let completed, let inlineCompletion, !firstTabs.contains(where: { Self.plainHost($0.tab.url) == completedHost }),
-               isNew(completed, title: inlineCompletion) {
-                output.append(Result(
-                    id: "inline-\(inlineCompletion)",
-                    kind: .openURL,
-                    title: inlineCompletion,
-                    subtitle: completed.absoluteString,
-                    destinationURL: completed
-                ))
-            }
-            for entry in laterFirst.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
-                output.append(TabIndex.row(entry))
-            }
+            // What the typed text is: an address to open, or words to search.
             let current = live.flatMap { $0.applies(to: query) ? $0 : nil }
             let resolved: URL?
             let direct: URL?
@@ -181,14 +165,56 @@ public enum CommandBarSearch {
                 resolved = URLEntry.resolve(query, engine: navigationSchemes, provider: searchProvider)
                 direct = resolved.flatMap { looksLikeDirectNavigation(query) ? $0 : nil }
             }
-            if let url = direct, url.host() != completed?.host(), isNew(url, title: url.host() ?? url.absoluteString) {
-                output.append(Result(
+            func openRow(_ url: URL) -> Result {
+                Result(
                     id: "url-\(url.absoluteString)",
                     kind: .openURL,
                     title: "Open \(url.host() ?? url.absoluteString)",
                     subtitle: url.absoluteString,
                     destinationURL: url
-                ))
+                )
+            }
+            // The inline-completed domain is listed before any tab on another
+            // site, so Return goes where the field shows.
+            let completed = inlineCompletion.flatMap { URL(string: "https://\($0)/") }
+            let completedHost = completed.flatMap { Self.plainHost($0) }
+            if typedAddressFirst, completed == nil, let url = direct {
+                // A typed address opens itself. A tab already showing it is
+                // only the next row: another account's page (Gmail's u/0 and
+                // u/3) or path is a different page, never "the tab you typed".
+                output.append(openRow(url))
+                let typedKey = VisitHistory.key(for: url)
+                let exact = typedKey == nil ? [] : (ranked.first + ranked.later).filter { $0.historyKey == typedKey }
+                for entry in exact.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
+                    output.append(TabIndex.row(entry))
+                }
+                for entry in ranked.first.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
+                    output.append(TabIndex.row(entry))
+                }
+                // Now the typed page counts as listed, for history and suggestions.
+                _ = isNew(url, title: url.host() ?? url.absoluteString)
+            } else {
+                let firstTabs = ranked.first.filter { completedHost == nil || Self.plainHost($0.tab.url) == completedHost }
+                let laterFirst = ranked.first.filter { completedHost != nil && Self.plainHost($0.tab.url) != completedHost }
+                for entry in firstTabs.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
+                    output.append(TabIndex.row(entry))
+                }
+                if let completed, let inlineCompletion, !firstTabs.contains(where: { Self.plainHost($0.tab.url) == completedHost }),
+                   isNew(completed, title: inlineCompletion) {
+                    output.append(Result(
+                        id: "inline-\(inlineCompletion)",
+                        kind: .openURL,
+                        title: inlineCompletion,
+                        subtitle: completed.absoluteString,
+                        destinationURL: completed
+                    ))
+                }
+                for entry in laterFirst.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
+                    output.append(TabIndex.row(entry))
+                }
+                if let url = direct, url.host() != completed?.host(), isNew(url, title: url.host() ?? url.absoluteString) {
+                    output.append(openRow(url))
+                }
             }
             // A plain search for the typed text comes before pages (Arc's second row).
             if direct == nil, let searchURL = resolved {

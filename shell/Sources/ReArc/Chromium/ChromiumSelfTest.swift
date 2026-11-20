@@ -1879,7 +1879,7 @@ final class ChromiumSelfTest {
                 guard let live = model.commandBarLive, live.applies(to: address), case .url(let url) = live.classification else { return false }
                 return url.path == "/a"
             }
-            try check(model.commandBarResults.first { $0.kind != .openTab }?.kind == .openURL, "the typed address is not the first row")
+            try check(model.commandBarResults.first?.kind == .openURL, "the typed address is not the first row")
 
             var first: [ChromiumAutocompleteUpdate] = []
             var second: [ChromiumAutocompleteUpdate] = []

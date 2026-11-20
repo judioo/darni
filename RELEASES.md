@@ -25,6 +25,11 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **Fixes**
+- An address you type or edit in the command bar now opens. Before, if a tab was already open
+  on the same site, Darni offered only Switch to Tab, so Return went to that tab, sometimes on
+  another account or page. Now the first row opens exactly what you typed: in a new tab after
+  ⌘T, in the current tab after ⌘L. Switch to Tab is the next row, one ↓ away. Return on the
+  address ⌘L filled in, left as it is, still keeps you on the tab without reloading it.
 - A folder's menu has Move to Space. The folder moves to the other space whole, with its tabs
   and the folders inside it, in the same order.
 - Little Darni's Open in button and its list of spaces look like Arc's. The button shows the
