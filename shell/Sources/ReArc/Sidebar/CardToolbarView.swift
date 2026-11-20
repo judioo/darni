@@ -66,9 +66,9 @@ struct CardToolbarView: View {
 
             HStack(spacing: 0) {
                 let side = model.sidebarSide
-                if !model.isSidebarVisible, side == .left {
+                if !model.isSidebarVisible(in: window), side == .left {
                     // With the sidebar hidden its toggle moves here, before back (§3).
-                    navButton(side.toggleSymbol, help: "Show Sidebar (⌘S)", enabled: true) { model.toggleSidebar() }
+                    navButton(side.toggleSymbol, help: "Show Sidebar (⌘S)", enabled: true) { model.toggleSidebar(in: window) }
                 }
                 navButton("arrow.left", help: "Back (⌘[)", enabled: engine?.canGoBack == true) { model.goBack() }
                 navButton("arrow.right", help: "Forward (⌘])", enabled: engine?.canGoForward == true) { model.goForward() }
@@ -113,9 +113,9 @@ struct CardToolbarView: View {
                 .foregroundStyle(quietInk)
                 .help("Add Split View")
                 .accessibilityLabel("Add Split View")
-                if !model.isSidebarVisible, side == .right {
+                if !model.isSidebarVisible(in: window), side == .right {
                     // Mirrored: the toggle sits on the sidebar's side.
-                    navButton(side.toggleSymbol, help: "Show Sidebar (⌘S)", enabled: true) { model.toggleSidebar() }
+                    navButton(side.toggleSymbol, help: "Show Sidebar (⌘S)", enabled: true) { model.toggleSidebar(in: window) }
                 }
             }
             .padding(.horizontal, 2.5)

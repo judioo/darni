@@ -32,6 +32,10 @@ lines and this section starts empty again.
   first-run tour showed `rearc://welcome` there, and the window itself showed the long path
   of a file on your Mac. Command-L on the welcome page now starts with an empty field, as on
   a new tab.
+- Hiding the sidebar with ⌘S now hides it only in the window you are using. Until now every
+  open Darni window hid its sidebar too. The sidebar that floats in at the edge of a window
+  also shows only in that window. A new window opens with its sidebar as the window you
+  opened it from has it.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 

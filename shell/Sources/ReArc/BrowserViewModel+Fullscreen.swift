@@ -20,18 +20,21 @@ extension BrowserViewModel {
     /// private or Little Arc window, which only goes native fullscreen).
     /// `origin` (engine ABI 1.59) is the requesting frame's: every entry then
     /// names the site, since the hidden sidebar is where ReArc shows the URL.
+    /// `window` is the browser window the page is in (nil: the key window);
+    /// the session keeps that window's sidebar, not another's.
     func pageEnteredFullscreen(tabID: Tab.ID?, engineTabID: UInt64, windowIsFullscreen: Bool,
-                               origin: String? = nil) -> [HTMLFullscreenSession.Step] {
+                               origin: String? = nil, window: SidebarWindowID? = nil) -> [HTMLFullscreenSession.Step] {
         if let current = htmlFullscreen, current.engineTabID == engineTabID { return [] }
         if let origin { showFullscreenHint(site: Self.displaySite(origin)) }
+        let target = window ?? store.keyWindowID
         let session = HTMLFullscreenSession(
             tabID: tabID,
             engineTabID: engineTabID,
             windowWasFullscreen: windowIsFullscreen,
-            sidebarWasVisible: isSidebarVisible
+            sidebarWasVisible: isSidebarVisible(in: target)
         )
         htmlFullscreen = session
-        isSidebarPeeking = false
+        sidebarVisibility.setPeeking(false, in: target)
         return session.enterSteps
     }
 

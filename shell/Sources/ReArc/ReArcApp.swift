@@ -77,7 +77,7 @@ struct ReArcApp: App {
             }
             // Cmd+S — toggle the sidebar, replacing File > Save.
             CommandGroup(replacing: .saveItem) {
-                Button(model.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar") {
+                Button(model.sidebarMenuTitle) {
                     model.toggleSidebar()
                 }
                 .keyboardShortcut("s")

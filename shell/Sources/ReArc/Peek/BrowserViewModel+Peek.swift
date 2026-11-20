@@ -22,7 +22,7 @@ extension BrowserViewModel {
     func peekLayout(in window: SidebarWindowID?, windowSize: CGSize) -> PeekLayout {
         let bounds = CGRect(origin: .zero, size: windowSize)
         if isPeekPageFullscreen { return PeekLayout(region: bounds, isFullscreen: true) }
-        let besideSidebar = isSidebarVisible && isSidebarLaidOut && !isHTMLFullscreen(in: window)
+        let besideSidebar = isSidebarVisible(in: window) && isSidebarLaidOut(in: window) && !isHTMLFullscreen(in: window)
         return PeekLayout(region: PeekLayout.region(
             windowSize: windowSize,
             sidebarWidth: besideSidebar ? peekSidebarWidth(in: window) : 0,

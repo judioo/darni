@@ -24,7 +24,7 @@ struct SidebarToolbarView: View {
             HStack(spacing: 2) {
                 // Traffic lights, up to 12 pt past the zoom button; on the right they stay at the window's left.
                 Spacer().frame(width: placement.trafficLightsInSidebar ? 84 : 10)
-                Button { model.toggleSidebar() } label: {
+                Button { model.toggleSidebar(in: window) } label: {
                     Image(systemName: placement.side.toggleSymbol)
                         .font(.system(size: 14))
                         .foregroundStyle(chrome.glyph)
