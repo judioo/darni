@@ -24,6 +24,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1120.1105 — 2026-11-20
+
 **Fixes**
 - Spotlight finds Darni when you type "Darni" or "ReArc". After the update the app in your
   Applications folder is still called ReArc.app, and until now typing "Darni" found nothing. A new
