@@ -218,11 +218,9 @@ extension BrowserViewModel {
     func showLittleArcToast(_ message: String, systemImage: String = "", in id: LittleArcWindow.ID,
                             duration: TimeInterval = ShellToast.defaultDuration) {
         let toast = ShellToast(message: message, systemImage: systemImage, placement: .belowToolbar)
-        withAnimation(ShellToast.inAnimation) { littleArcToast = LittleArcToast(windowID: id, toast: toast) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-            guard let self, self.littleArcToast?.toast.id == toast.id else { return }
-            withAnimation(ShellToast.outAnimation) { self.littleArcToast = nil }
-        }
+        runToast(toast, for: duration,
+                 show: { [weak self] in self?.littleArcToast = $0.map { LittleArcToast(windowID: id, toast: $0) } },
+                 shown: { [weak self] in self?.littleArcToast?.toast })
     }
 
     func canSplitLittleArcWindow(_ id: LittleArcWindow.ID) -> Bool {
