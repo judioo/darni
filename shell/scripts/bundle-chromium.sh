@@ -198,11 +198,20 @@ fi
 # and Sparkle's User-Agent "Darni/<version> Sparkle/<version>") are Darni.
 plutil -replace CFBundleExecutable -string ReArc "$PLIST"
 plutil -replace CFBundleName -string Darni "$PLIST"
-plutil -replace CFBundleDisplayName -string Darni "$PLIST"
-# Spotlight finds the app by both names. An updated copy keeps its file name, ReArc.app, and
-# Spotlight shows and matches the file name, so "Darni" found nothing (owner, 2026-11-20); a
-# new download is Darni.app, and people still type "ReArc". MDItemKeywords is the Info.plist
-# key Spotlight reads for an app's extra search words (Ghostty: "Terminal").
+# Finder, the Dock, Launchpad and Spotlight show an app's localized CFBundleDisplayName only
+# when its file name equals the Info.plist's own CFBundleDisplayName; otherwise they take the
+# file to be renamed by its user and show the file name. Every copy updated from a ReArc build
+# is still ReArc.app, so the Info.plist value is ReArc and each <locale>.lproj/InfoPlist.strings
+# says Darni (rebrand-bundle.py). ReArc.app then shows and is found as Darni (owner,
+# 2026-11-20: Spotlight on 1105 found nothing for "Darni"); a new download, Darni.app, shows
+# its file name. Measured on test bundles with FileManager.displayName and Spotlight's index.
+plutil -replace CFBundleDisplayName -string ReArc "$PLIST"
+plutil -replace LSHasLocalizedDisplayName -bool true "$PLIST"
+# Sparkle names the app by SUBundleName first; its installer reads Info.plist unlocalized.
+plutil -replace SUBundleName -string Darni "$PLIST"
+# Spotlight's index also keeps the file name (kMDItemAlternateNames), and MDItemKeywords adds
+# both names as search words for a new Darni.app (Ghostty: "Terminal"). Keywords alone did not
+# make Spotlight's app results find an updated ReArc.app by "Darni" (1105).
 plutil -replace MDItemKeywords -string "Darni, ReArc" "$PLIST"
 # The app's version, not Chromium's (RELEASE.md, "Versioning"): YYYY.MMDD.<build> of the commit,
 # as for any build that is not a release; release.sh stamps a release's own afterwards.

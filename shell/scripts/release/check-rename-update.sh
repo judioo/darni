@@ -232,8 +232,11 @@ PY
     [[ -z $others ]] || fail "other items appeared beside the installed copy: $others"
     [[ "$(key "$app" CFBundleVersion)" == "$EXPECT_BUILD" ]] || fail "the installed copy is build $(key "$app" CFBundleVersion), expected $EXPECT_BUILD: the update did not install"
     [[ "$(key "$app" CFBundleIdentifier)" == com.rearc.browser ]] || fail "bundle id $(key "$app" CFBundleIdentifier)"
-    [[ "$(key "$app" CFBundleName)" == Darni && "$(key "$app" CFBundleDisplayName)" == Darni ]] \
-      || fail "the installed copy is named '$(key "$app" CFBundleName)' / '$(key "$app" CFBundleDisplayName)', expected Darni"
+    # Info.plist's own CFBundleDisplayName is ReArc, the copy's file name, so macOS shows the
+    # localized one, Darni (bundle-chromium.sh); the rest of the bundle is check-rename.sh's.
+    [[ "$(key "$app" CFBundleName)" == Darni && "$(key "$app" SUBundleName)" == Darni \
+       && "$(key "$app/Contents/Resources/en.lproj/InfoPlist.strings" CFBundleDisplayName)" == Darni ]] \
+      || fail "the installed copy is named '$(key "$app" CFBundleName)' / '$(key "$app" SUBundleName)' / '$(key "$app/Contents/Resources/en.lproj/InfoPlist.strings" CFBundleDisplayName)', expected Darni"
     [[ "$(key "$app" LSEnvironment.REARC_DATA_DIR)" == "$WORK/data" ]] || fail "the installed copy lost its throwaway data directory"
     codesign --verify --deep --strict "$app" 2>/dev/null || fail "the installed copy's signature does not verify"
     [[ -d "$WORK/data/Chromium" ]] || fail "no Chromium profile in $WORK/data: the copy did not run on the throwaway data"

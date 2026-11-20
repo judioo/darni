@@ -11,6 +11,8 @@ names), so Chromium's localized strings still name Chromium:
   2026-11-17). Chrome sets that name to "Google Chrome", so the helper reads as the browser.
 - The app's own <locale>.lproj/InfoPlist.strings override Info.plist's camera, microphone,
   location and Bluetooth reasons with "Once Chromium has access, ...".
+- The app's name as Finder, the Dock and Spotlight show it: each app InfoPlist.strings gets
+  CFBundleDisplayName = Darni, over the Info.plist's ReArc (bundle-chromium.sh says why).
 - Every helper's CFBundleName is "ReArc Helper ...": the engine build writes it from
   PRODUCT_SHORTNAME, which stays ReArc because the Safe Storage Keychain item is named from
   it too (check-safe-storage-name.py). The name is display only (the helpers are found by
@@ -78,6 +80,32 @@ def rebrand_strings_file(path: Path) -> bool:
     return True
 
 
+def set_display_name(path: Path) -> bool:
+    """The app's localized CFBundleDisplayName is Darni in this locale (bundle-chromium.sh: the
+    Info.plist's own is ReArc, the file name of every updated copy, so macOS shows this one)."""
+    raw = path.read_bytes()
+    if raw.startswith(b"bplist") or raw.lstrip().startswith(b"<?xml"):
+        fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
+        data = plistlib.loads(raw)
+        if data.get("CFBundleDisplayName") == NAME:
+            return False
+        data["CFBundleDisplayName"] = NAME
+        path.write_bytes(plistlib.dumps(data, fmt=fmt))
+        return True
+    encoding = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+    text = raw.decode(encoding)
+    lines = [line for line in text.splitlines(keepends=True)
+             if not ((m := LINE.match(line)) and m.group(2) == "CFBundleDisplayName")]
+    new = "".join(lines)
+    if new and not new.endswith("\n"):
+        new += "\n"
+    new += f'"CFBundleDisplayName" = "{NAME}";\n'
+    if new == text:
+        return False
+    path.write_bytes(new.encode(encoding))
+    return True
+
+
 def rebrand_alert_helper(helper: Path, icns: Path) -> None:
     resources = helper / "Contents/Resources"
     for strings in resources.glob("*.lproj/InfoPlist.strings"):
@@ -116,8 +144,14 @@ def main(argv: list[str]) -> int:
     if not icns.is_file():
         print(f"rebrand-bundle: no icon at {icns}", file=sys.stderr)
         return 1
-    for strings in (app / "Contents/Resources").glob("*.lproj/InfoPlist.strings"):
+    app_strings = sorted((app / "Contents/Resources").glob("*.lproj/InfoPlist.strings"))
+    if not app_strings:
+        print(f"rebrand-bundle: no <locale>.lproj/InfoPlist.strings in {app}: macOS would show ReArc",
+              file=sys.stderr)
+        return 1
+    for strings in app_strings:
         rebrand_strings_file(strings)
+        set_display_name(strings)
     for name in ALERT_HELPERS:
         helper = app / HELPERS / name
         if not helper.is_dir():

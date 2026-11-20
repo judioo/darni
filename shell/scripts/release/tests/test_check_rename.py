@@ -16,10 +16,17 @@ HELPERS = {
     "Chromium Helper (Alerts).app": "com.rearc.browser.framework.AlertNotificationService",
 }
 INFO = {
-    "CFBundleName": "Darni", "CFBundleDisplayName": "Darni", "MDItemKeywords": "Darni, ReArc",
+    "CFBundleName": "Darni", "SUBundleName": "Darni", "CFBundleDisplayName": "ReArc",
+    "LSHasLocalizedDisplayName": True, "MDItemKeywords": "Darni, ReArc",
     "CFBundleIdentifier": "com.rearc.browser",
     "CFBundleExecutable": "ReArc", "ReArcRelease": True, "SUPublicEDKey": KEY,
     "SUFeedURL": "https://rearc.imara.ae/updates/appcast.xml", "ReArcICloudContainer": "iCloud.com.rearc.browser",
+}
+# What rebrand-bundle.py leaves: Darni over the Info.plist's ReArc, in every locale.
+LOCALES = {
+    "en": 'NSCameraUsageDescription = "Once Darni has access, websites will be able to ask you for access.";\n'
+          '"CFBundleDisplayName" = "Darni";\n',
+    "ja": '"Chromium Shortcut" = "Chromium のショートカット";\n"CFBundleDisplayName" = "Darni";\n',
 }
 EXECUTABLE = b"\xcf\xfa\xed\xfe\x00https://rearc.imara.ae/blocklists/latest.json\x00"
 ENGINE = b"\xcf\xfa\xed\xfe\x00saltysaltReArc Safe Storage\x00ReArc\x00"
@@ -31,9 +38,13 @@ class CheckRenameTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def app(self, name="Darni.app", info=None, executable=EXECUTABLE, engine=ENGINE, helpers=None, framework_id="com.rearc.browser.framework"):
+    def app(self, name="Darni.app", info=None, executable=EXECUTABLE, engine=ENGINE, helpers=None, framework_id="com.rearc.browser.framework",
+            locales=None):
         app = self.root / name
         (app / "Contents/MacOS").mkdir(parents=True)
+        for locale, text in (LOCALES if locales is None else locales).items():
+            (app / f"Contents/Resources/{locale}.lproj").mkdir(parents=True)
+            (app / f"Contents/Resources/{locale}.lproj/InfoPlist.strings").write_text(text, encoding="utf-8")
         (app / "Contents/Info.plist").write_bytes(plistlib.dumps({**INFO, **(info or {})}))
         exe = app / "Contents/MacOS/ReArc"
         exe.write_bytes(executable)
@@ -61,7 +72,14 @@ class CheckRenameTests(unittest.TestCase):
         cases = {
             "the old visible name": (dict(name="ReArc.app"), "expected Darni.app"),
             "CFBundleName": (dict(info={"CFBundleName": "ReArc"}), "CFBundleName is 'ReArc'"),
-            "CFBundleDisplayName": (dict(info={"CFBundleDisplayName": "ReArc"}), "CFBundleDisplayName is 'ReArc'"),
+            "Info.plist's display name": (dict(info={"CFBundleDisplayName": "Darni"}), "CFBundleDisplayName is 'Darni', expected 'ReArc'"),
+            "no localized display name": (dict(info={"LSHasLocalizedDisplayName": False}), "LSHasLocalizedDisplayName is 'false'"),
+            "Sparkle's name": (dict(info={"SUBundleName": "ReArc"}), "SUBundleName is 'ReArc'"),
+            "a locale without Darni": (dict(locales={**LOCALES, "ja": '"Chromium Shortcut" = "x";\n'}),
+                                       "ja.lproj/InfoPlist.strings has CFBundleDisplayName ''"),
+            "a locale still ReArc": (dict(locales={"en": '"CFBundleDisplayName" = "ReArc";\n'}),
+                                     "en.lproj/InfoPlist.strings has CFBundleDisplayName 'ReArc'"),
+            "no locales": (dict(locales={}), "no <locale>.lproj/InfoPlist.strings"),
             "no Spotlight keywords": (dict(info={"MDItemKeywords": "Darni"}), "MDItemKeywords is 'Darni'"),
             "a new bundle id": (dict(info={"CFBundleIdentifier": "ae.imara.darni"}), "CFBundleIdentifier is 'ae.imara.darni'"),
             "a new executable": (dict(info={"CFBundleExecutable": "Darni"}), "CFBundleExecutable is 'Darni'"),

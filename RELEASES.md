@@ -38,6 +38,9 @@ lines and this section starts empty again.
   opened it from has it.
 - With more than one window open, a question such as "Rename" or "Delete Space" shows only
   in the window you are using.
+- Spotlight, Finder, the Dock and Launchpad show Darni for a copy updated from ReArc, which
+  keeps its file name ReArc.app. Until now they showed ReArc there, and Spotlight did not find
+  the app by "Darni". Typing "ReArc" still finds it.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 

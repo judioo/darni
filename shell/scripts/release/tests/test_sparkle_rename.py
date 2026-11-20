@@ -6,7 +6,8 @@ the same bundle id. Two things must hold for every installed copy to follow:
 1. Sparkle finds the new app inside the extracted update. Ported from Sparkle 2.10.1,
    Autoupdate/SUInstaller.m, +installSourcePathInUpdateFolder:forHost:isPackage:isGuided:
    it walks the update folder and takes the first entry whose file name is the host's file
-   name, or the host's name (CFBundleDisplayName, else CFBundleName; Sparkle/SUHost.m -name)
+   name, or the host's name (SUBundleName, else CFBundleDisplayName, else CFBundleName;
+   Sparkle/SUHost.m -name; Darni sets SUBundleName, since its Info.plist display name is ReArc)
    plus the host's extension, or else whose bundle id is the host's. Symbolic links are
    skipped. It then installs at the host's own path (SPARKLE_NORMALIZE_INSTALLED_APPLICATION_NAME
    is off in Sparkle's releases), so an updated copy keeps the file name ReArc.app.

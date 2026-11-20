@@ -3,7 +3,9 @@
 # changed. Every identifier an installed copy depends on must stay as it was, or existing
 # users lose their data or stop getting updates:
 #
-#   the name people see         CFBundleName, CFBundleDisplayName and the file name: Darni
+#   the name people see         CFBundleName, SUBundleName, each locale's CFBundleDisplayName
+#                               and the file name: Darni (Info.plist's own CFBundleDisplayName
+#                               is ReArc, the file name of updated copies, so macOS shows Darni)
 #   bundle id                   com.rearc.browser, and the helper and framework ids under it
 #                               (a new id is a new app to macOS, and Sparkle finds a renamed
 #                               app inside an update only by its bundle id)
@@ -27,6 +29,8 @@
 set -euo pipefail
 
 NAME="Darni"
+# The file name of every copy updated from a ReArc build; Sparkle never renames it.
+OLD_FILE_NAME="ReArc"
 BUNDLE_ID="com.rearc.browser"
 EXECUTABLE="ReArc"
 FEED_URL="https://rearc.imara.ae/updates/appcast.xml"
@@ -60,9 +64,21 @@ expect() { # KEY EXPECTED WHY
 
 # The names people see.
 [[ "$(basename "$APP")" == "$NAME.app" ]] || fail "the bundle is named $(basename "$APP"), expected $NAME.app"
-expect CFBundleName "$NAME" "the menu bar and Sparkle's User-Agent"
-expect CFBundleDisplayName "$NAME" "Finder, the Dock and macOS prompts"
-expect MDItemKeywords "Darni, ReArc" "Spotlight finds an updated ReArc.app by Darni, and Darni.app by ReArc"
+expect CFBundleName "$NAME" "the menu bar"
+expect SUBundleName "$NAME" "Sparkle's windows and User-Agent"
+# Finder, the Dock and Spotlight show the localized name only while the file name equals the
+# Info.plist's own CFBundleDisplayName: ReArc, the name of every updated copy (bundle-chromium.sh).
+expect CFBundleDisplayName "$OLD_FILE_NAME" "it must equal an updated copy's file name, ReArc.app, or macOS shows that file name"
+expect LSHasLocalizedDisplayName true "macOS reads the localized CFBundleDisplayName only with it"
+expect MDItemKeywords "Darni, ReArc" "Spotlight finds Darni.app by ReArc too"
+locales=0
+for strings in "$APP/Contents/Resources"/*.lproj/InfoPlist.strings; do
+  [[ -f $strings ]] || continue
+  locales=$((locales + 1))
+  shown="$(key "$strings" CFBundleDisplayName)"
+  [[ $shown == "$NAME" ]] || fail "$(basename "$(dirname "$strings")")/InfoPlist.strings has CFBundleDisplayName '$shown', expected '$NAME' (what an updated ReArc.app shows)"
+done
+[[ $locales -gt 0 ]] || fail "no <locale>.lproj/InfoPlist.strings: an updated ReArc.app would show and be found as ReArc"
 
 # What must not move.
 expect CFBundleIdentifier "$BUNDLE_ID" "a new id is a new app to macOS, and Sparkle could not find the update"

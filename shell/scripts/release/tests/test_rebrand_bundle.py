@@ -117,6 +117,34 @@ class RebrandBundleTests(unittest.TestCase):
         self.assertEqual(again.stdout.splitlines(), [str(self.app / HELPERS / name) for name in sorted(ALERTS)],
                          "a second run renames nothing more")
 
+    def test_every_locale_shows_darni_over_the_info_plist_name(self):
+        en = self.app / "Contents/Resources/en.lproj"
+        en.mkdir()
+        (en / "InfoPlist.strings").write_bytes(plistlib.dumps({"NSCameraUsageDescription": "Once Chromium has access"},
+                                                              fmt=plistlib.FMT_BINARY))
+        utf16 = self.app / "Contents/Resources/de.lproj"
+        utf16.mkdir()
+        (utf16 / "InfoPlist.strings").write_bytes('"CFBundleDisplayName" = "ReArc";\nNSCameraUsageDescription = "x";'.encode("utf-16"))
+        for _ in range(2):
+            self.assertEqual(self.run_script(str(self.app), str(self.icns)).returncode, 0)
+        for locale in ("ja", "hi", "en", "de"):
+            path = self.app / f"Contents/Resources/{locale}.lproj/InfoPlist.strings"
+            found = subprocess.run(["plutil", "-extract", "CFBundleDisplayName", "raw", str(path)],
+                                   capture_output=True, text=True)
+            self.assertEqual(found.stdout.strip(), "Darni", f"{locale}: {found.stderr}")
+        ja = (self.app / "Contents/Resources/ja.lproj/InfoPlist.strings").read_text(encoding="utf-8")
+        self.assertEqual(ja.count("CFBundleDisplayName"), 1, "a second run adds no second line")
+        self.assertIn('"Chromium Shortcut" = "Chromium のショートカット";', ja)
+        de = (utf16 / "InfoPlist.strings").read_bytes().decode("utf-16")
+        self.assertEqual(de.count("CFBundleDisplayName"), 1, "the old ReArc line is replaced")
+        self.assertTrue((self.app / "Contents/Resources/en.lproj/InfoPlist.strings").read_bytes().startswith(b"bplist"))
+
+    def test_no_app_locales_fails(self):
+        shutil.rmtree(self.app / "Contents/Resources")
+        result = self.run_script(str(self.app), str(self.icns))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("InfoPlist.strings", result.stderr)
+
     def test_a_missing_helper_fails(self):
         shutil.rmtree(self.app / HELPERS / ALERTS[0])
         result = self.run_script(str(self.app), str(self.icns))
