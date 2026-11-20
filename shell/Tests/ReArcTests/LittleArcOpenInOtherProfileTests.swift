@@ -87,7 +87,7 @@ struct LittleArcOpenInOtherProfileTests {
         #expect(f.store.content(for: destination.id).today.isEmpty)
         #expect(f.presenter.focused.isEmpty)
 
-        #expect(f.model.confirmLittleArcOpenIn())
+        #expect(f.model.confirmLittleArcOpenIn(for: little.id))
         #expect(f.model.pendingLittleArcOpenIn == nil)
 
         // A new tab with the address, in the chosen space, and the browser window shows it.
@@ -173,7 +173,7 @@ struct LittleArcOpenInOtherProfileTests {
 
         // Yes: the address opens afresh in the other profile's engine, and the window's engine stays behind.
         #expect(f.model.openLittleArcWindowInTarget(little.id) == .ask(question))
-        #expect(f.model.confirmLittleArcOpenIn())
+        #expect(f.model.confirmLittleArcOpenIn(for: little.id))
         let tab = try #require(f.store.selectedTab)
         #expect(tab.url == address)
         #expect(tab.title != "Signed in as someone")
@@ -317,7 +317,7 @@ struct LittleArcOpenInOtherProfileTests {
         f.model.handleLittleArcNavigationCommit(windowID: little.id, url: later, title: "Elsewhere")
         #expect(f.store.littleArcWindow(withID: little.id)?.url == later, "the window's record follows the page")
 
-        #expect(f.model.confirmLittleArcOpenIn())
+        #expect(f.model.confirmLittleArcOpenIn(for: little.id))
         let tab = try #require(f.store.selectedTab)
         #expect(tab.url == asked)
         #expect(tab.title == "asked.test")
@@ -382,7 +382,7 @@ struct LittleArcOpenInOtherProfileTests {
         f.model.cancelLittleArcOpenIn(for: little.id)
 
         #expect(f.model.pendingLittleArcOpenIn == nil)
-        #expect(!f.model.confirmLittleArcOpenIn(), "no question, nothing to confirm")
+        #expect(!f.model.confirmLittleArcOpenIn(for: little.id), "no question, nothing to confirm")
         let after = f.store.makeSnapshot()
         #expect(after.littleArcWindows == before.littleArcWindows)
         #expect(after.spaces.map(\.id) == before.spaces.map(\.id))
@@ -396,6 +396,77 @@ struct LittleArcOpenInOtherProfileTests {
         #expect(f.presenter.focused.isEmpty)
     }
 
+    /// LP-01: Yes answers only its own window's question. Another window's
+    /// Yes opens nothing, closes nothing, and leaves the question up.
+    @Test func yesFromAnotherWindowDoesNotAnswerThisWindowsQuestion() throws {
+        let f = fixture()
+        let asking = f.model.openLittleArc(url: URL(string: "https://asking.test/")!)
+        let other = f.model.openLittleArc(url: URL(string: "https://other.test/")!)
+        let destination = f.manySpaces[1]
+        let question = LittleArcOpenInMenu.Question(windowID: asking.id, spaceID: destination.id,
+                                                    url: URL(string: "https://asking.test/")!, host: "asking.test")
+        #expect(f.model.openLittleArcWindow(asking.id, in: destination.id) == .ask(question))
+
+        #expect(!f.model.confirmLittleArcOpenIn(for: other.id))
+        #expect(f.model.pendingLittleArcOpenIn == question, "the question is still the asking window's")
+        #expect(f.store.littleArcWindow(withID: asking.id) != nil)
+        #expect(f.store.littleArcWindow(withID: other.id) != nil)
+        #expect(f.store.spaces.allSatisfy { f.store.content(for: $0.id).today.isEmpty }, "no tab was made anywhere")
+        #expect(f.presenter.focused.isEmpty)
+
+        #expect(f.model.confirmLittleArcOpenIn(for: asking.id))
+        #expect(f.model.pendingLittleArcOpenIn == nil)
+        let tab = try #require(f.store.selectedTab)
+        #expect(tab.url == question.url)
+        #expect(f.store.spaceContaining(tabID: tab.id) == destination.id)
+        #expect(f.store.littleArcWindow(withID: asking.id) == nil)
+        #expect(f.store.littleArcWindow(withID: other.id) != nil)
+    }
+
+    /// LP-01: while a window's question is up, a second Open in from that
+    /// window (the main button, ⌘O, a row of the picker, its own space
+    /// included) does nothing: the question keeps its address and space.
+    @Test func aSecondOpenInWhileTheQuestionIsUpIsIgnored() {
+        let f = fixture()
+        let address = URL(string: "https://first.test/")!
+        let little = f.model.openLittleArc(url: address)
+        let littleEngine = f.model.littleArcEngine(for: little.id)
+        let destination = f.manySpaces[1]
+        let question = LittleArcOpenInMenu.Question(windowID: little.id, spaceID: destination.id, url: address, host: "first.test")
+        #expect(f.model.openLittleArcWindow(little.id, in: destination.id) == .ask(question))
+
+        // The page moves on, and the browser window to another of that profile's spaces.
+        littleEngine.load(URL(string: "https://second.test/")!)
+        f.store.selectSpace(f.manySpaces[2].id)
+        f.model.keyLittleArcID = little.id
+
+        #expect(f.model.openLittleArcWindowInTarget(little.id) == nil, "the main button")
+        #expect(f.model.pendingLittleArcOpenIn == question)
+        f.model.openLittleArcOrPeekInSpace()
+        #expect(f.model.pendingLittleArcOpenIn == question, "⌘O")
+        #expect(f.model.openLittleArcWindow(little.id, in: f.manySpaces[3].id) == nil, "a row of another session")
+        #expect(f.model.pendingLittleArcOpenIn == question)
+        #expect(f.model.openLittleArcWindow(little.id, in: f.soloSpace.id) == nil, "a row of its own session")
+        #expect(f.model.pendingLittleArcOpenIn == question)
+        #expect(f.store.littleArcWindow(withID: little.id) != nil, "the page did not move")
+        #expect(f.store.spaces.allSatisfy { f.store.content(for: $0.id).today.isEmpty })
+
+        // Once answered, Open in works again.
+        f.model.cancelLittleArcOpenIn(for: little.id)
+        #expect(f.model.openLittleArcWindow(little.id, in: f.manySpaces[3].id) != nil)
+        #expect(f.model.pendingLittleArcOpenIn?.spaceID == f.manySpaces[3].id)
+    }
+
+    /// Another window's question does not stop this window's Open in.
+    @Test func anotherWindowsQuestionDoesNotBlockThisWindow() {
+        let f = fixture()
+        let asking = f.model.openLittleArc(url: URL(string: "https://asking.test/")!)
+        let other = f.model.openLittleArc(url: URL(string: "https://other.test/")!)
+        #expect(f.model.openLittleArcWindow(asking.id, in: f.manySpaces[1].id) != nil)
+        #expect(f.model.openLittleArcWindow(other.id, in: f.soloSpace.id) == .move)
+        #expect(f.store.littleArcWindow(withID: other.id) == nil, "its page moved into its own session's space")
+    }
+
     /// The space went, or the window closed, while the question was up: Yes opens nothing.
     @Test func aQuestionAnsweredTooLateOpensNothing() {
         let f = fixture()
@@ -403,7 +474,7 @@ struct LittleArcOpenInOtherProfileTests {
         let gone = f.manySpaces[3]
         #expect(f.model.openLittleArcWindow(little.id, in: gone.id) != nil)
         #expect(f.store.archiveSpace(gone.id) == nil)
-        #expect(!f.model.confirmLittleArcOpenIn())
+        #expect(!f.model.confirmLittleArcOpenIn(for: little.id))
         #expect(f.model.pendingLittleArcOpenIn == nil)
         #expect(f.store.littleArcWindow(withID: little.id) != nil)
         #expect(f.model.engineHost.existingLittleArcEngine(little.id, profileID: f.solo.id) != nil)
@@ -412,7 +483,7 @@ struct LittleArcOpenInOtherProfileTests {
         #expect(f.model.openLittleArcWindow(little.id, in: f.manySpaces[0].id) != nil)
         f.model.closeLittleArcWindow(little.id)
         #expect(f.model.pendingLittleArcOpenIn == nil, "closing the window withdraws its question")
-        #expect(!f.model.confirmLittleArcOpenIn())
+        #expect(!f.model.confirmLittleArcOpenIn(for: little.id))
         #expect(f.store.spaces.allSatisfy { f.store.content(for: $0.id).today.isEmpty })
     }
 
