@@ -31,6 +31,14 @@ struct LittleArcWindowView: View {
         model.store.littleArcWindow(withID: windowID)
     }
 
+    /// The toolbar's height: 22 pt controls in 7 pt of padding above and below.
+    static let toolbarHeight: CGFloat = 36
+
+    /// This window's Open in question, while it waits for its answer.
+    private var openInQuestion: LittleArcOpenInMenu.Question? {
+        model.pendingLittleArcOpenIn.flatMap { $0.windowID == windowID ? $0 : nil }
+    }
+
     var body: some View {
         Group {
             if let record {
@@ -52,6 +60,23 @@ struct LittleArcWindowView: View {
         }
         .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         .overlay(alignment: .topLeading) { LittleArcProbeMarker(windowID: windowID) }
+        // Why a row of Open in did nothing, on this window and under its toolbar.
+        // A layer of its own: the toast takes the default theme in this window's
+        // appearance, as the page's cards do, and the rest of the window keeps its colours.
+        .overlay {
+            Color.clear
+                .shellToast(model.littleArcToast?.windowID == windowID ? model.littleArcToast?.toast : nil,
+                            toolbarHeight: Self.toolbarHeight)
+                .environment(\.themeChrome, .outsideSpaces(dark: colorScheme == .dark))
+                .allowsHitTesting(false)
+        }
+        // Open in ▸ a space of another session asks here, as Move to Profile asks on its window.
+        .modifier(SessionCrossingAlert(
+            text: openInQuestion.map(model.littleArcOpenInMessage),
+            isPresented: { openInQuestion != nil },
+            cancel: { model.cancelLittleArcOpenIn(for: windowID) },
+            confirm: { if model.confirmLittleArcOpenIn() { dismiss() } }
+        ))
         .background(
             WindowKeyObserver(
                 onBecameKey: { model.keyLittleArcID = windowID },
@@ -73,6 +98,7 @@ struct LittleArcWindowView: View {
             if model.focusedLittleArcID == windowID {
                 model.focusedLittleArcID = nil
             }
+            model.cancelLittleArcOpenIn(for: windowID)
             if model.store.littleArcWindow(withID: windowID) != nil {
                 model.closeLittleArcWindow(windowID)
             }
@@ -152,11 +178,13 @@ struct LittleArcWindowView: View {
     /// Arc's "Open in <Space> ⌘O ⌄": the space of the last focused browser
     /// window, with a dot in its theme colour, and a menu of every other space,
     /// grouped by profile (`LittleArcOpenInMenu`). The page moves only to a
-    /// space of its own session; in any other space its address opens afresh (S-01).
+    /// space of its own session; in any other space its address opens afresh
+    /// (S-01), after a question (OI-01), and only a web address (OI-02).
     @ViewBuilder
     private func openInButton(for record: LittleArcWindow) -> some View {
         let target = model.store.littleArcTargetSpace(for: windowID)
-        let sections = LittleArcOpenInMenu.sections(store: model.store, windowID: windowID)
+        // The address the window shows decides which rows can cross sessions.
+        let sections = LittleArcOpenInMenu.sections(store: model.store, windowID: windowID, url: model.littleArcAddress(windowID))
         HStack(spacing: 0) {
             Button {
                 open(into: target?.id)
@@ -198,6 +226,11 @@ struct LittleArcWindowView: View {
                             openInItems(section.entries)
                         }
                     }
+                    if let note = LittleArcOpenInMenu.note(for: sections) {
+                        // The reason for the disabled rows, in words, as the last line.
+                        Divider()
+                        Text(note)
+                    }
                 } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 9, weight: .semibold))
@@ -226,8 +259,10 @@ struct LittleArcWindowView: View {
     private func openInItems(_ entries: [LittleArcOpenInMenu.Entry]) -> some View {
         ForEach(entries) { entry in
             Button {
-                // The window stays when nothing opened: the space went while the menu was up.
-                if model.openLittleArcWindow(windowID, in: entry.spaceID) != nil { dismiss() }
+                // The window goes only when its page moved. A space of another session asks
+                // first, and the window stays on Cancel, on an address that cannot cross, and
+                // when the space went while the menu was up.
+                if model.openLittleArcWindow(windowID, in: entry.spaceID) == .move { dismiss() }
             } label: {
                 Label {
                     Text(entry.title)
@@ -235,6 +270,7 @@ struct LittleArcWindowView: View {
                     Image(nsImage: Self.menuDot(entry.theme))
                 }
             }
+            .disabled(!entry.isEnabled)
         }
     }
 

@@ -186,6 +186,35 @@ final class LittleArcOpenInMenuTests: XCTestCase {
         XCTAssertEqual(sections.map(\.profileID), [personal])
         XCTAssertEqual(sections[0].entries.map(\.spaceID), [store.spaces[0].id, plain.id])
         XCTAssertEqual(sections[0].entries.map(\.kind), [.reopen, .reopen])
+        XCTAssertEqual(sections[0].header, "Personal (outside this container)",
+                       "the one section is the window's own profile's, and still another session: it says so (OI-01)")
+    }
+
+    /// From a container's window every space of its profile is another
+    /// session. The section says so, with or without other profiles, and
+    /// another container there keeps its own mark.
+    func testFromAContainersWindowItsProfilesSpacesAreMarkedAsOutsideIt() throws {
+        let store = SidebarStore(spaces: [Space(name: "Home")])
+        let personal = store.activeProfileID
+        let client = store.addSpace(name: "Client")
+        let bank = store.addSpace(name: "Bank")
+        let container = try XCTUnwrap(store.createContainer(forSpace: client.id))
+        XCTAssertNotNil(store.createContainer(forSpace: bank.id))
+        let work = store.addProfile(name: "Work")
+        let inside = store.createLittleArcWindow(url: url("inside.test"), profileID: container.id)
+        XCTAssertEqual(store.littleArcTargetSpace(for: inside.id)?.id, client.id)
+
+        let sections = Menu.sections(store: store, windowID: inside.id)
+        XCTAssertEqual(sections.map(\.profileID), [personal, work.id])
+        XCTAssertEqual(sections.map(\.header), ["Personal (outside this container)", "Work"].map(Optional.some))
+        XCTAssertEqual(sections[0].entries.map(\.title), ["Home", "Bank (Container)"])
+        XCTAssertTrue(sections.flatMap(\.entries).allSatisfy { $0.kind == .reopen }, "nothing in the menu is the container's own session")
+        XCTAssertFalse(sections.flatMap(\.entries).contains { $0.spaceID == client.id })
+
+        // The same profile seen from its own window: its name, when it is named at all.
+        let outside = store.createLittleArcWindow(url: url("outside.test"), profileID: personal)
+        XCTAssertEqual(Menu.sections(store: store, windowID: outside.id).map(\.header), ["Personal", "Work"].map(Optional.some))
+        XCTAssertEqual(Menu.outsideContainerHeader("Personal"), "Personal (outside this container)")
     }
 
     // MARK: - What a choice does
@@ -249,5 +278,118 @@ final class LittleArcOpenInMenuTests: XCTestCase {
         let tab = try XCTUnwrap(o.store.promoteLittleArcToTab(id: little.id, into: o.akiluSpaces[5].id))
         XCTAssertEqual(o.store.spaceContaining(tabID: tab.id), o.cwcSpace.id)
         XCTAssertEqual(o.store.activeProfileID, o.cwc.id)
+    }
+
+    // MARK: - Only web addresses cross sessions (OI-02)
+
+    func testOnlyWebAddressesCrossSessions() throws {
+        for address in ["https://example.test/", "http://example.test/path?q=1#top", "HTTPS://EXAMPLE.TEST/", "https://example.test:8443/"] {
+            XCTAssertTrue(Menu.canCrossSessions(try XCTUnwrap(URL(string: address))), address)
+        }
+        for address in ["file:///Users/someone/secret.html", "data:text/html,<p>page</p>", "blob:https://example.test/0b5e-11",
+                        "chrome-extension://abcdefghijklmnopabcdefghijklmnop/popup.html", "rearc://settings", "chrome://settings",
+                        "about:blank", "view-source:https://example.test/", "javascript:alert(1)", "ftp://example.test/file",
+                        "https://user:secret@example.test/", "https:///no-host"] {
+            XCTAssertFalse(Menu.canCrossSessions(try XCTUnwrap(URL(string: address))), address)
+        }
+    }
+
+    /// A `.reopen` needs the question and a `.move` never does. The question
+    /// carries the address it was put with.
+    func testAReopenAsksAndAMoveDoesNot() {
+        let o = owner()
+        let second = o.store.addSpace(name: "CWC 2", profileID: o.cwc.id)
+        let little = o.store.createLittleArcWindow(url: url("record.test"), profileID: o.cwc.id)
+        let shown = URL(string: "https://mail.example.test/reset?token=1")!
+
+        XCTAssertEqual(Menu.choice(store: o.store, windowID: little.id, spaceID: second.id, url: shown), .move)
+        XCTAssertEqual(Menu.choice(store: o.store, windowID: little.id, spaceID: o.akiluSpaces[3].id, url: shown),
+                       .ask(Menu.Question(windowID: little.id, spaceID: o.akiluSpaces[3].id, url: shown, host: "mail.example.test")),
+                       "the address the window shows, not its record's")
+        XCTAssertNil(Menu.choice(store: o.store, windowID: little.id, spaceID: UUID(), url: shown))
+        XCTAssertNil(Menu.choice(store: o.store, windowID: UUID(), spaceID: second.id, url: shown))
+        XCTAssertNotNil(o.store.littleArcWindow(withID: little.id), "asking changes nothing")
+    }
+
+    /// A long host in the question keeps the site's own name, as other trusted UI shows it.
+    func testTheQuestionsHostKeepsTheSitesOwnName() throws {
+        let o = owner()
+        let little = o.store.createLittleArcWindow(url: url("record.test"), profileID: o.cwc.id)
+        let long = try XCTUnwrap(URL(string: "https://accounts.google.com.verify-session.evil.example/login"))
+        guard case .ask(let question)? = Menu.choice(store: o.store, windowID: little.id, spaceID: o.judiooSpace.id, url: long) else {
+            return XCTFail("a web address to another profile asks")
+        }
+        XCTAssertEqual(question.url, long)
+        XCTAssertEqual(question.host, PageOrigin.shortenedHost("accounts.google.com.verify-session.evil.example"))
+        XCTAssertTrue(question.host.hasSuffix("evil.example"))
+    }
+
+    /// Anything but a web address is refused across sessions, and still moves
+    /// within the window's own session: there the page itself goes.
+    func testOtherAddressesAreRefusedAcrossSessionsAndStillMoveWithinOne() throws {
+        let o = owner()
+        let second = o.store.addSpace(name: "CWC 2", profileID: o.cwc.id)
+        let little = o.store.createLittleArcWindow(url: url("record.test"), profileID: o.cwc.id)
+        for address in ["file:///tmp/page.html", "data:text/html,hello", "blob:https://example.test/1", "about:blank",
+                        "chrome-extension://abcdefghijklmnopabcdefghijklmnop/page.html", "rearc://settings"] {
+            let shown = try XCTUnwrap(URL(string: address))
+            XCTAssertEqual(Menu.choice(store: o.store, windowID: little.id, spaceID: o.akiluSpaces[0].id, url: shown), .refuse, address)
+            XCTAssertEqual(Menu.choice(store: o.store, windowID: little.id, spaceID: second.id, url: shown), .move, address)
+        }
+    }
+
+    /// The menu for a window that shows no web address: the rows that would
+    /// cross are disabled, the rows of its own session are not, and the menu
+    /// says why.
+    func testRowsThatCannotCrossAreDisabledWithAReason() throws {
+        let o = owner()
+        let second = o.store.addSpace(name: "CWC 2", profileID: o.cwc.id)
+        let little = o.store.createLittleArcWindow(url: url("record.test"), profileID: o.cwc.id)
+
+        // A web address: every row is enabled and there is nothing to explain.
+        var sections = Menu.sections(store: o.store, windowID: little.id)
+        XCTAssertTrue(sections.flatMap(\.entries).allSatisfy(\.isEnabled), "the record's address when none is handed in")
+        XCTAssertNil(Menu.note(for: sections))
+
+        let local = try XCTUnwrap(URL(string: "file:///tmp/page.html"))
+        sections = Menu.sections(store: o.store, windowID: little.id, url: local)
+        let entries = sections.flatMap(\.entries)
+        XCTAssertEqual(entries.count, 16, "the rows are all still listed")
+        XCTAssertEqual(entries.filter(\.isEnabled).map(\.spaceID), [second.id], "only the window's own session")
+        XCTAssertTrue(entries.filter { !$0.isEnabled }.allSatisfy { $0.kind == .reopen })
+        XCTAssertEqual(Menu.note(for: sections), "Only web pages can open in another profile or container")
+        XCTAssertEqual(Menu.note(for: sections), Menu.webOnlyMessage)
+
+        // The record's own address decides when none is handed in.
+        let blank = o.store.createLittleArcWindow(url: try XCTUnwrap(URL(string: "about:blank")), profileID: o.cwc.id)
+        XCTAssertFalse(Menu.sections(store: o.store, windowID: blank.id).flatMap(\.entries).contains { $0.kind == .reopen && $0.isEnabled })
+    }
+
+    /// The store opens the address it is handed (the one the person was asked
+    /// about), and refuses one that is not a web address whoever asks.
+    func testReopenOpensTheAddressItIsHandedAndOnlyAWebAddress() throws {
+        let o = owner()
+        o.store.selectSpace(o.cwcSpace.id)
+        let little = o.store.createLittleArcWindow(url: url("later.test"), title: "Later")
+        let asked = try XCTUnwrap(URL(string: "https://asked.test/page"))
+        let before = o.store.makeSnapshot()
+
+        for address in ["data:text/html,hello", "file:///tmp/page.html", "blob:https://asked.test/1"] {
+            XCTAssertNil(o.store.reopenLittleArcAsTab(id: little.id, in: o.akiluSpaces[1].id, url: try XCTUnwrap(URL(string: address))), address)
+        }
+        XCTAssertEqual(o.store.makeSnapshot().littleArcWindows, before.littleArcWindows, "the window is still open")
+        XCTAssertEqual(o.store.activeSpaceID, o.cwcSpace.id)
+        XCTAssertTrue(o.store.spaces.allSatisfy { o.store.content(for: $0.id).today.isEmpty }, "no tab was made anywhere")
+
+        let tab = try XCTUnwrap(o.store.reopenLittleArcAsTab(id: little.id, in: o.akiluSpaces[1].id, url: asked))
+        XCTAssertEqual(tab.url, asked, "not the record's address")
+        XCTAssertEqual(tab.title, "asked.test")
+        XCTAssertNil(o.store.littleArcWindow(withID: little.id))
+
+        // A record whose own address is not a web address stays where it is.
+        let local = o.store.createLittleArcWindow(url: try XCTUnwrap(URL(string: "file:///tmp/page.html")), profileID: o.cwc.id)
+        XCTAssertNil(o.store.reopenLittleArcAsTab(id: local.id, in: o.akiluSpaces[2].id))
+        XCTAssertNotNil(o.store.littleArcWindow(withID: local.id))
+        XCTAssertNotNil(o.store.promoteLittleArcToTab(id: local.id), "its own session still takes it")
     }
 }
