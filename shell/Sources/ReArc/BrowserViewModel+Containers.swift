@@ -103,7 +103,7 @@ extension BrowserViewModel {
     /// A space in Move to Space and Move to Profile: a container's says so, as
     /// a move there changes the tabs' session.
     func spaceMenuTitle(_ space: Space) -> String {
-        store.container(ofSpace: space.id) == nil ? space.name : "\(space.name) (Container)"
+        store.menuTitle(forSpace: space)
     }
 
     /// The profile whose settings `id` follows: a container's parent.

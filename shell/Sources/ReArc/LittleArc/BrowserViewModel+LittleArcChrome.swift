@@ -115,6 +115,43 @@ extension BrowserViewModel {
 }
 
 extension BrowserViewModel {
+    /// A space chosen in Open in's ⌄ menu. What the choice does is asked of the
+    /// store here, when it is made, and never taken from the menu as it was
+    /// drawn: a space of the window's own session takes the page as the main
+    /// button does, any other space gets the address opened afresh (S-01).
+    /// Nil, and nothing happens, when the window or the space is gone.
+    @discardableResult
+    func openLittleArcWindow(_ id: LittleArcWindow.ID, in spaceID: Space.ID) -> LittleArcOpenInMenu.Kind? {
+        guard let kind = LittleArcOpenInMenu.kind(store: store, windowID: id, spaceID: spaceID) else { return nil }
+        switch kind {
+        case .move: promoteLittleArcWindow(id, into: spaceID)
+        case .reopen: reopenLittleArcWindow(id, in: spaceID)
+        }
+        return kind
+    }
+
+    /// Open in ▸ a space of another profile or container. The address the
+    /// window shows opens as a new tab in that space, loaded by that space's
+    /// own engine, and the last focused browser window shows the space. The
+    /// window's engine is dropped, never handed over, so its page, cookies and
+    /// sign-ins stay in the session it was opened in.
+    private func reopenLittleArcWindow(_ id: LittleArcWindow.ID, in spaceID: Space.ID) {
+        guard let record = store.littleArcWindow(withID: id) else { return }
+        // The last focused browser window: Little Arc never becomes it.
+        let target = store.keyWindowID
+        // The address as the window shows it, as its profile menu and split button take it.
+        if let current = engineHost.existingLittleArcEngine(id, profileID: record.profileID)?.currentURL,
+           current.absoluteString != "about:blank" {
+            store.updateLittleArcWindow(id: id, title: nil, url: current)
+        }
+        guard store.reopenLittleArcAsTab(id: id, in: spaceID) != nil else { return }
+        engineHost.removeLittleArc(id, profileID: record.profileID)
+        if focusedLittleArcID == id { focusedLittleArcID = nil }
+        if keyLittleArcID == id { keyLittleArcID = nil }
+        loadSelectedIfNeeded()
+        if let target { windowPresenter?.focusBrowserWindow(target) }
+    }
+
     func canSplitLittleArcWindow(_ id: LittleArcWindow.ID) -> Bool {
         store.keyWindowID != nil && store.canSplitLittleArcToCurrentTab(id: id)
     }

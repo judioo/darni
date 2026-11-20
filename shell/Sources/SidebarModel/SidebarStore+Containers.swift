@@ -87,6 +87,13 @@ extension SidebarStore {
         return profile(withID: profileID)
     }
 
+    /// A space in a menu that can take a page or a tab across sessions (Move to
+    /// Space, Move to Profile, Little Darni's Open in): a container's says so.
+    /// The space as the store has it now decides, not the copy handed in.
+    public func menuTitle(forSpace space: Space) -> String {
+        container(ofSpace: space.id) == nil ? space.name : "\(space.name) (Container)"
+    }
+
     /// How Settings and menus name a container: by its space, as it has no
     /// profile of its own to the person.
     public func containerTitle(_ id: Profile.ID) -> String {
