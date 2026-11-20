@@ -199,13 +199,19 @@ struct BrowserView: View {
         )
         .navigationTitle(contentTitle)
         .modifier(ProfileMoveAlert(model: model, isOwner: isKeyWindowSheetOwner))
-        .sheet(isPresented: $model.isCapturePreviewPresented) {
+        // One model serves every window, so each shared sheet and alert is
+        // presented by the key window alone: otherwise every open window
+        // puts up its own copy of the same question.
+        .sheet(isPresented: Binding(
+            get: { model.isCapturePreviewPresented && isKeyWindowSheetOwner },
+            set: { model.isCapturePreviewPresented = $0 }
+        )) {
             if let record = model.lastCapturePreview {
                 CapturePreviewSheet(record: record, model: model)
             }
         }
         .alert("Capture failed", isPresented: Binding(
-            get: { model.captureErrorMessage != nil },
+            get: { model.captureErrorMessage != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.captureErrorMessage = nil } }
         )) {
             Button("OK", role: .cancel) {}
@@ -267,7 +273,7 @@ struct BrowserView: View {
             }
         }
         .sheet(isPresented: Binding(
-            get: { model.spaceEditorID != nil },
+            get: { model.spaceEditorID != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.spaceEditorID = nil } }
         )) {
             if let id = model.spaceEditorID {
@@ -284,7 +290,7 @@ struct BrowserView: View {
         }
         .modifier(SidebarPersonalizationSheets(model: model, isOwner: isKeyWindowSheetOwner))
         .alert(model.pendingRename?.alertTitle ?? "Rename", isPresented: Binding(
-            get: { model.pendingRename != nil },
+            get: { model.pendingRename != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingRename = nil } }
         )) {
             TextField("Name", text: $model.pendingRenameText)
@@ -296,7 +302,7 @@ struct BrowserView: View {
             }
         }
         .alert(model.pendingDeletionMessage.title, isPresented: Binding(
-            get: { model.pendingDeletion != nil },
+            get: { model.pendingDeletion != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingDeletion = nil } }
         )) {
             Button("Cancel", role: .cancel) { model.pendingDeletion = nil }
@@ -314,7 +320,7 @@ struct BrowserView: View {
             Text(spaceProfileChangeText.message)
         }
         .alert("Rename Profile", isPresented: Binding(
-            get: { model.pendingProfileRenameID != nil },
+            get: { model.pendingProfileRenameID != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingProfileRenameID = nil } }
         )) {
             TextField("Name", text: $model.pendingProfileRenameName)
@@ -428,7 +434,7 @@ struct BrowserView: View {
 
     @ViewBuilder
     private var boostEditorChrome: some View {
-        if let draft = model.boostEditorDraft {
+        if let draft = model.boostEditorDraft(in: windowID) {
             VStack {
                 if draft.pickerActive {
                     Text("Pick an element — Esc to cancel")

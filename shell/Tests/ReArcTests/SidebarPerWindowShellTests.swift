@@ -205,6 +205,34 @@ final class SidebarPerWindowShellTests: XCTestCase {
         XCTAssertEqual(model.htmlFullscreen?.sidebarWasVisible, true, "no window named: the key window's")
     }
 
+    /// Found by the same sweep: the Boost editor's drawer was the key
+    /// window's, drawn in every window.
+    func testTheBoostEditorIsDrawnInTheWindowShowingItsTab() {
+        var a: Tab!
+        var b: Tab!
+        let model = makeModel { store in
+            a = store.addTab(kind: .today, title: "A", url: URL(string: "https://a.test")!)
+            b = store.addTab(kind: .today, title: "B", url: URL(string: "https://b.test")!)
+            store.selectTab(a.id)
+        }
+        let left = openWindow(model)
+        let right = openWindow(model)
+        model.windowBecameKey(left)
+        model.store.selectTab(a.id)
+        model.windowBecameKey(right)
+        model.store.selectTab(b.id)
+        model.windowBecameKey(left)
+        XCTAssertEqual(model.selectedTab(in: left)?.id, a.id)
+        XCTAssertEqual(model.selectedTab(in: right)?.id, b.id)
+
+        model.boostEditorDraftByTab[a.id] = BoostEditorDraft(packageID: UUID(), baselineCSS: "p { color: blue; }\n")
+        XCTAssertNotNil(model.boostEditorDraft(in: left))
+        XCTAssertNil(model.boostEditorDraft(in: right), "the other window shows another tab: no drawer")
+        model.windowBecameKey(right)
+        XCTAssertNotNil(model.boostEditorDraft(in: left), "it stays with its tab's window when another becomes key")
+        XCTAssertNil(model.boostEditorDraft(in: right))
+    }
+
     func testTheInlineRenameAsksAboutTheKeyWindowsSidebar() {
         var tab: Tab!
         let model = makeModel { store in
