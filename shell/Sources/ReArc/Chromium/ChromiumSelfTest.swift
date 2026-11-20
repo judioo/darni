@@ -1180,9 +1180,12 @@ final class ChromiumSelfTest {
                   "open in: Cancel changed something (window \(shell.window(forLittleArc: record.id) != nil), "
                   + "record \(store.littleArcWindow(withID: record.id) != nil), tabs \(store.displayTabs(in: second.id).count))")
         // An address that is not a web address stays in its window (OI-02), whatever the menu showed.
+        // Only the window's own space (a move within its session) stays enabled; every row that
+        // crosses sessions is disabled (LittleArcOpenInOtherProfileTests, OI-02).
         let local = try XUnwrap(URL(string: "data:text/html,open-in"), "open-in data address")
         try check(LittleArcOpenInMenu.choice(store: store, windowID: record.id, spaceID: second.id, url: local) == .refuse
-                  && LittleArcOpenInMenu.sections(store: store, windowID: record.id, url: local).flatMap(\.entries).allSatisfy { !$0.isEnabled }
+                  && LittleArcOpenInMenu.sections(store: store, windowID: record.id, url: local).flatMap(\.entries)
+                      .filter(\.isEnabled).map(\.spaceID) == [soloSpace.id]
                   && store.reopenLittleArcAsTab(id: record.id, in: second.id, url: local) == nil
                   && store.littleArcWindow(withID: record.id) != nil,
                   "open in: an address that is not a web address was not refused across profiles")
