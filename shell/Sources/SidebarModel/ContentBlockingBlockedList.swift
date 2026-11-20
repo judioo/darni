@@ -117,6 +117,44 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
         return uncounted == 1 ? "and 1 more request" : "and \(uncounted) more requests"
     }
 
+    // MARK: Allowed here and still in the list
+
+    /// The lines of sites the person has already allowed on the page's site
+    /// (`allowed`: `ContentBlockingSettings.allowedHosts(onSite:)`). Such a
+    /// line has no Allow: there is nothing more to write for it.
+    public func stillBlocked(allowed: [String]) -> [Entry] {
+        entries.filter { entry in allowed.contains { ContentBlockingHost.covers($0, host: entry.host) } }
+    }
+
+    /// What the list says under its lines when a site is allowed here and
+    /// was blocked all the same (seen in Darni 2026.1120.1105: allowed, and
+    /// still listed with a count). nil when no line is one of those.
+    ///
+    /// An exception covers every request in a page of its site, a frame's
+    /// included (`ContentBlockingRuleConverter.pageRule`), so two things are
+    /// left that put an allowed site here:
+    /// - one of the person's own rules blocks it with `$important`, which
+    ///   comes before every exception of theirs. The line then carries the
+    ///   "Your rule" tag, and the note says so.
+    /// - the page asked before the engine had the new rule: Allow reloads the
+    ///   tab at once and the engine applies own rules a moment later
+    ///   (security CB-06). The page's next load does not have that, so the
+    ///   note says to reload. It names no cause it cannot know.
+    public func stillBlockedNote(allowed: [String], names: SiteNames? = .shared) -> String? {
+        let lines = stillBlocked(allowed: allowed)
+        guard let first = lines.first else { return nil }
+        let ownRule = lines.allSatisfy { $0.kinds.contains(.ownRule) }
+        guard lines.count == 1 else {
+            return ownRule
+                ? "\(lines.count) of the sites you allowed here are still blocked by your own rules. Your rules are in Settings › Profiles."
+                : "\(lines.count) of the sites you allowed here were still blocked on this page. Reload the page to try again."
+        }
+        let name = PageOrigin.shortenedHost(first.host, names: names)
+        return ownRule
+            ? "\(name) is allowed here, but one of your own rules still blocks it. Your rules are in Settings › Profiles."
+            : "\(name) is allowed here, but it was still blocked on this page. Reload the page to try again."
+    }
+
     // MARK: The engine's reply
 
     private struct Reply: Decodable {
@@ -273,7 +311,9 @@ extension ContentBlockingSettings {
     }
 
     /// Adds the own rule that lets `site` ask `host`: one line, which must
-    /// convert as a typed rule does, to one allow rule for that site.
+    /// convert as a typed rule does, to the two allow rules of an exception
+    /// for that site and nothing else (what a `site` document asks, and what
+    /// any frame asks in a page of `site`).
     /// `site` is the engine's name for the page the list was shown for,
     /// never one cut from an address here. Returns why nothing was written,
     /// nil when the line is there.
@@ -284,11 +324,14 @@ extension ContentBlockingSettings {
         if ContentBlockingSiteAllow.hosts(in: ownRules, site: site, names: names).contains(host) { return nil }
         // The same converter and limits as a rule typed in Settings (security BL-04).
         let converted = ContentBlockingRuleConverter.convert(line)
-        guard converted.dropped.isEmpty, converted.rules.count == 1, converted.rules[0].action.type == "allow",
-              converted.rules[0].condition.urlFilter == "||\(host)^", converted.rules[0].condition.initiatorDomains == [site] else { return .notOneSite }
+        typealias Condition = ContentBlockingDNRRule.Condition
+        guard converted.dropped.isEmpty, converted.filters == 1, converted.rules.allSatisfy({ $0.action.type == "allow" }),
+              converted.rules.map(\.condition) == [Condition(urlFilter: "||\(host)^", initiatorDomains: [site]),
+                                                   Condition(urlFilter: "||\(host)^", topDomains: [site])] else { return .notOneSite }
         let text = ownRules.isEmpty || ownRules.hasSuffix("\n") ? ownRules + line + "\n" : ownRules + "\n" + line + "\n"
+        // Room for both rules: an Allow that covered the page's own requests only would look like one that failed.
         guard text.utf8.count <= Self.maxOwnRulesBytes,
-              ContentBlockingRuleConverter.convert(ownRules).rules.count < ContentBlockingRuleConverter.maxRules else { return .full }
+              ContentBlockingRuleConverter.convert(ownRules).rules.count + converted.rules.count <= ContentBlockingRuleConverter.maxRules else { return .full }
         setOwnRules(text)
         return nil
     }

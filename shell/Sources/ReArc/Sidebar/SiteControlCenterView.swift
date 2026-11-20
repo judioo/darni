@@ -677,7 +677,9 @@ enum SiteControlsBlockedListMetrics {
 /// the sites whose requests were blocked in this tab's page, each with its
 /// tag and count, most blocked first. Under the pointer a line offers Allow,
 /// which adds one line to the person's own rules and reloads the tab; what
-/// was allowed that way on this site is listed below with Remove.
+/// was allowed that way on this site is listed below with Remove. A site that
+/// is allowed and was blocked all the same has no Allow, and a note under the
+/// lines says why.
 ///
 /// The list is the engine's, read while this view is on screen. Nothing of
 /// it is kept here once the panel closes.
@@ -700,8 +702,16 @@ struct SiteControlsBlockedListView: View {
             if (isOpen && !list.isEmpty) || !allowed.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     if isOpen, !list.isEmpty {
-                        SiteControlsBlockedLinesView(list: list, canAllow: canAllow) { host in
+                        SiteControlsBlockedLinesView(list: list, canAllow: canAllow, allowed: allowed) { host in
                             if let pageSite { model.setBlockedHost(host, allowed: true, on: pageSite, of: engine) }
+                        }
+                        if let note = list.stillBlockedNote(allowed: allowed) {
+                            Text(note)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.vertical, 3)
+                                .accessibilityIdentifier("site-controls-blocked-list-note")
                         }
                     }
                     if let pageSite, !allowed.isEmpty {
@@ -733,6 +743,8 @@ struct SiteControlsBlockedListView: View {
 private struct SiteControlsBlockedLinesView: View {
     let list: ContentBlockingBlockedList
     let canAllow: Bool
+    /// The hosts already allowed on this site: a line of one has no Allow.
+    let allowed: [String]
     /// With the name the line showed.
     let allow: (String) -> Void
     /// The hosts shown, top to bottom.
@@ -740,10 +752,12 @@ private struct SiteControlsBlockedLinesView: View {
 
     var body: some View {
         let entries = list.entries(keeping: order)
+        let stillBlocked = Set(list.stillBlocked(allowed: allowed).map(\.host))
         let lines = VStack(alignment: .leading, spacing: 0) {
             ForEach(entries) { entry in
                 SiteControlsBlockedLine(host: entry.host, tag: entry.tagText, count: entry.count, spoken: entry.spokenText,
-                                        action: canAllow && entry.canBeAllowed ? (title: "Allow", help: SiteControlCenter.allowHostTitle(entry.host)) : nil) {
+                                        action: canAllow && entry.canBeAllowed && !stillBlocked.contains(entry.host)
+                                            ? (title: "Allow", help: SiteControlCenter.allowHostTitle(entry.host)) : nil) {
                     allow(entry.host)
                 }
             }
@@ -768,7 +782,19 @@ private struct SiteControlsBlockedLinesView: View {
 }
 
 /// One line of the blocked list: the site, never cut on its right; then its
-/// tag and count, or under the pointer its button.
+/// tag and count, or under the pointer its button's title.
+///
+/// The button is in the line from the start, with one size, and only what it
+/// shows changes under the pointer. It used to be made when the hover event
+/// arrived: a click that came before that event, or between it and the
+/// release, found text where the button was about to be and did nothing,
+/// with no sign (Darni 2026.1120.1105: a click 250 ms after the pointer
+/// arrived did nothing, one after 700 ms worked).
+///
+/// A click acts only on a line that shows the button's title
+/// (`SiteControlCenter.blockedLineClick`, security BL-13). On a line that
+/// still shows its tag and count it makes the title show, and the next click
+/// acts.
 private struct SiteControlsBlockedLine: View {
     let host: String
     let tag: String
@@ -779,6 +805,17 @@ private struct SiteControlsBlockedLine: View {
     var actionAlwaysShows = false
     let perform: () -> Void
     @State private var isHovering = false
+    /// A click showed the title where no hover event had (BL-13). Until the pointer leaves the line.
+    @State private var titleShownByClick = false
+
+    private var showsTitle: Bool { actionAlwaysShows || isHovering || titleShownByClick }
+
+    private func click() {
+        switch SiteControlCenter.blockedLineClick(titleShows: showsTitle) {
+        case .perform: perform()
+        case .showTitle: titleShownByClick = true
+        }
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -788,34 +825,55 @@ private struct SiteControlsBlockedLine: View {
                 .lineLimit(1)
                 .fixedSize()
             Spacer(minLength: 0)
-            if let action, actionAlwaysShows || isHovering {
-                Button(action.title, action: perform)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .help(action.help)
-                    .accessibilityLabel(action.help)
-            } else {
-                Text(tag)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if let count {
-                    Text("\(count)")
-                        .font(.system(size: 12).monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
+            if let action {
+                Button(action: click) {
+                    // Both are laid out always, so the button is as wide as the wider one and
+                    // does not change size, or place, when the pointer comes.
+                    ZStack(alignment: .trailing) {
+                        Text(action.title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                            .opacity(showsTitle ? 1 : 0)
+                        report.opacity(showsTitle ? 0 : 1)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help(action.help)
+                .accessibilityLabel(action.help)
+            } else {
+                report
             }
         }
         .frame(height: SiteControlsBlockedListMetrics.lineHeight)
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
+        .onHover { inside in
+            isHovering = inside
+            if !inside { titleShownByClick = false }
+        }
         .contextMenu { if let action { Button(action.help, action: perform) } }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(spoken ?? host)
-        // The button shows under the pointer only: VoiceOver gets the action on the line.
+        // The button's title shows under the pointer only: VoiceOver gets the action on the line.
         .accessibilityActions { if let action { Button(action.help, action: perform) } }
+    }
+
+    /// What the line reports: its tag and its count.
+    private var report: some View {
+        HStack(spacing: 6) {
+            Text(tag)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+        }
     }
 }
 

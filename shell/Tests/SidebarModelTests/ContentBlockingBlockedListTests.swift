@@ -333,6 +333,87 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         XCTAssertEqual(rule.condition.urlFilter, "||doubleclick.net^")
         XCTAssertEqual(rule.condition.initiatorDomains, ["news.test"])
         XCTAssertNil(rule.condition.resourceTypes, "requests, never the page itself")
+        // And what a frame asks in a page of the site: without it the site stayed
+        // blocked when it asked its own host from its own frame.
+        XCTAssertEqual(conversion.rules.count, 2)
+        XCTAssertEqual(conversion.rules[1].action.type, "allow")
+        XCTAssertEqual(conversion.rules[1].priority, ContentBlockingRuleConverter.Priority.allow)
+        XCTAssertEqual(conversion.rules[1].condition, .init(urlFilter: "||doubleclick.net^", topDomains: ["news.test"]))
+        XCTAssertEqual(conversion.filters, 1)
+    }
+
+    /// The line Allow wrote in Darni 2026.1119.1080 and 2026.1120.1105 is
+    /// the line it writes now: nothing stored changes, and a site allowed
+    /// with those builds is covered in frames as well from this one.
+    func testALineWrittenByAnEarlierBuildIsReadAsBefore() {
+        let earlier = "@@||amazon-adsystem.com^$domain=timeanddate.com\n"
+        var settings = ContentBlockingSettings(isEnabled: true, ownRules: earlier)
+        XCTAssertEqual(settings.allowedHosts(onSite: "timeanddate.com"), ["amazon-adsystem.com"])
+        XCTAssertEqual(ContentBlockingSiteAllow.rule(host: "amazon-adsystem.com", site: "timeanddate.com").map { $0 + "\n" }, earlier)
+        XCTAssertNil(settings.allowHost("amazon-adsystem.com", onSite: "timeanddate.com"))
+        XCTAssertEqual(settings.ownRules, earlier)
+        XCTAssertEqual(ContentBlockingRuleConverter.convert(earlier).rules.map(\.condition.topDomains), [nil, ["timeanddate.com"]])
+        settings.removeAllowedHost("amazon-adsystem.com", onSite: "timeanddate.com")
+        XCTAssertEqual(settings.ownRules, "")
+    }
+
+    // MARK: Allowed here and still in the list
+
+    func testASiteThatIsAllowedAndStillListedHasNoAllowAndANote() {
+        typealias Entry = ContentBlockingBlockedList.Entry
+        let list = ContentBlockingBlockedList(entries: [Entry(host: "t.test", count: 3, kinds: [.tracker]),
+                                                        Entry(host: "amazon-adsystem.com", count: 1, kinds: [.ad])],
+                                              pageSite: "timeanddate.com", pageSiteIsOneSite: true)
+        XCTAssertEqual(list.stillBlocked(allowed: []), [])
+        XCTAssertNil(list.stillBlockedNote(allowed: [], names: nil))
+        XCTAssertNil(list.stillBlockedNote(allowed: ["elsewhere.test"], names: nil))
+        XCTAssertEqual(list.stillBlocked(allowed: ["amazon-adsystem.com"]).map(\.host), ["amazon-adsystem.com"])
+        XCTAssertEqual(list.stillBlockedNote(allowed: ["amazon-adsystem.com"], names: nil),
+                       "amazon-adsystem.com is allowed here, but it was still blocked on this page. Reload the page to try again.")
+        XCTAssertEqual(list.stillBlockedNote(allowed: ["amazon-adsystem.com", "t.test"], names: nil),
+                       "2 of the sites you allowed here were still blocked on this page. Reload the page to try again.")
+    }
+
+    /// A `$important` block of the person's own comes before every
+    /// exception of theirs: the line has the "Your rule" tag, and the note
+    /// names that, not a reload that would change nothing.
+    func testTheNoteNamesThePersonsOwnRuleWhenThatIsWhatBlocks() {
+        typealias Entry = ContentBlockingBlockedList.Entry
+        let own = ContentBlockingBlockedList(entries: [Entry(host: "ads.test", count: 2, kinds: [.ad, .ownRule]), Entry(host: "cdn.test", count: 1, kinds: [.ownRule])])
+        XCTAssertEqual(own.stillBlockedNote(allowed: ["ads.test"], names: nil),
+                       "ads.test is allowed here, but one of your own rules still blocks it. Your rules are in Settings › Profiles.")
+        XCTAssertEqual(own.stillBlockedNote(allowed: ["ads.test", "cdn.test"], names: nil),
+                       "2 of the sites you allowed here are still blocked by your own rules. Your rules are in Settings › Profiles.")
+        let mixed = ContentBlockingBlockedList(entries: [Entry(host: "ads.test", count: 2, kinds: [.ownRule]), Entry(host: "cdn.test", count: 1, kinds: [.tracker])])
+        XCTAssertEqual(mixed.stillBlockedNote(allowed: ["ads.test", "cdn.test"], names: nil),
+                       "2 of the sites you allowed here were still blocked on this page. Reload the page to try again.",
+                       "one of them may go with a reload: say that first")
+        // The priorities behind it: an important block is above an exception, a plain block below.
+        let rules = ContentBlockingRuleConverter.convert("||ads.test^$important\n||cdn.test^\n@@||ads.test^$domain=news.test").rules
+        XCTAssertEqual(rules.map(\.priority), [3, 1, 2, 2])
+    }
+
+    /// Security BL-13: the button is in a line before its title shows, and a
+    /// line can come under a pointer that does not move. A click acts only
+    /// where the title shows. Elsewhere it shows the title and no more.
+    func testAClickActsOnlyOnALineThatShowsItsButtonsTitle() {
+        XCTAssertEqual(SiteControlCenter.blockedLineClick(titleShows: false), .showTitle)
+        XCTAssertEqual(SiteControlCenter.blockedLineClick(titleShows: true), .perform)
+    }
+
+    /// An exception covers the names under its host, and no name that only ends alike.
+    func testAnAllowedHostCoversTheNamesUnderIt() {
+        typealias Entry = ContentBlockingBlockedList.Entry
+        let list = ContentBlockingBlockedList(entries: [Entry(host: "s.cdn.test", count: 1, kinds: [.ad]), Entry(host: "notcdn.test", count: 1, kinds: [.ad])])
+        XCTAssertEqual(list.stillBlocked(allowed: ["cdn.test"]).map(\.host), ["s.cdn.test"])
+        let long = String(repeating: "a.", count: 20) + "cdn.test"
+        let note = ContentBlockingBlockedList(entries: [Entry(host: long, count: 1, kinds: [.ad])]).stillBlockedNote(allowed: ["cdn.test"], names: nil)
+        XCTAssertEqual(note?.hasPrefix("…"), true, "a long name is cut from the left, as in the line")
+        XCTAssertEqual(note?.contains("cdn.test is allowed here"), true)
+        for text in [list.stillBlockedNote(allowed: ["cdn.test"], names: nil), note] {
+            XCTAssertEqual(text?.contains("—"), false)
+            XCTAssertEqual(text?.contains(";"), false)
+        }
     }
 
     func testAllowKeepsThePersonsOwnRulesAndRemoveDeletesOnlyItsLine() {
@@ -342,8 +423,9 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         XCTAssertNil(settings.allowHost("cdn.test", onSite: site))
         XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||adsterra.com^$domain=127.0.0.1\n@@||cdn.test^$domain=127.0.0.1\n")
         XCTAssertEqual(settings.allowedHosts(onSite: site), ["adsterra.com", "cdn.test"])
-        XCTAssertEqual(ContentBlockingRuleConverter.convert(settings.ownRules).rules.map(\.condition.initiatorDomains), [nil, ["127.0.0.1"], ["127.0.0.1"]],
-                       "an address is a site of its own")
+        let converted = ContentBlockingRuleConverter.convert(settings.ownRules).rules
+        XCTAssertEqual(converted.map(\.condition.initiatorDomains), [nil, ["127.0.0.1"], ["127.0.0.1"], nil, nil], "an address is a site of its own")
+        XCTAssertEqual(converted.map(\.condition.topDomains), [nil, nil, nil, ["127.0.0.1"], ["127.0.0.1"]], "and a page's")
 
         settings.removeAllowedHost("adsterra.com", onSite: site)
         XCTAssertEqual(settings.ownRules, "! mine\n||ads.test^\n@@||cdn.test^$domain=127.0.0.1\n")
@@ -382,6 +464,17 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         let before = rules.ownRules
         XCTAssertEqual(rules.allowHost("ok.test", onSite: "news.test"), .full)
         XCTAssertEqual(rules.ownRules, before)
+        // Allow is two rules. With room for one it would cover the page's own requests only,
+        // and look like an Allow that failed: it is refused instead.
+        var oneLeft = ContentBlockingSettings(isEnabled: true, ownRules: (0..<ContentBlockingRuleConverter.maxRules - 1).map { "||ad\($0).test^" }.joined(separator: "\n"))
+        XCTAssertEqual(oneLeft.allowHost("ok.test", onSite: "news.test"), .full)
+        var twoLeft = ContentBlockingSettings(isEnabled: true, ownRules: (0..<ContentBlockingRuleConverter.maxRules - 2).map { "||ad\($0).test^" }.joined(separator: "\n"))
+        XCTAssertNil(twoLeft.allowHost("ok.test", onSite: "news.test"))
+        let fitted = ContentBlockingRuleConverter.convert(twoLeft.ownRules)
+        XCTAssertEqual(fitted.dropped, [])
+        XCTAssertEqual(fitted.rules.count, ContentBlockingRuleConverter.maxRules)
+        XCTAssertEqual(fitted.rules.last?.condition, .init(urlFilter: "||ok.test^", topDomains: ["news.test"]))
+        XCTAssertEqual(twoLeft.allowHost("more.test", onSite: "news.test"), .full)
         // The limit of text.
         var text = ContentBlockingSettings(isEnabled: true, ownRules: "! " + String(repeating: "x", count: ContentBlockingSettings.maxOwnRulesBytes - 12))
         XCTAssertEqual(text.ownRules.utf8.count, ContentBlockingSettings.maxOwnRulesBytes - 10)

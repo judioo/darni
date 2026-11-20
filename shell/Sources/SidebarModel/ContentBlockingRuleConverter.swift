@@ -14,6 +14,10 @@ public struct ContentBlockingDNRRule: Equatable, Codable, Sendable {
         public var domainType: String?
         public var initiatorDomains: [String]?
         public var excludedInitiatorDomains: [String]?
+        /// The site of the page in the tab, whichever of its frames asks
+        /// (DNR: "the associated top-level frame's domain").
+        public var topDomains: [String]?
+        public var excludedTopDomains: [String]?
         public var resourceTypes: [String]?
         public var excludedResourceTypes: [String]?
     }
@@ -36,6 +40,17 @@ public struct ContentBlockingDNRRule: Equatable, Codable, Sendable {
 /// reported by line: cosmetic filters, regular expressions, `$csp`,
 /// `$redirect`, `$removeparam`, scriptlets and any option not named here.
 /// A filter is never half applied.
+///
+/// An exception for a site is two rules. `@@||ads.example^$domain=news.example`
+/// says "on news.example, let ads.example through". DNR's `initiatorDomains`
+/// alone is narrower than that: it matches what a news.example document asks
+/// for, and not what a frame inside the page asks for. A third party that is
+/// let in opens its own frame and asks its own host from there, and the lists
+/// block that host for every asker, so the exception left it blocked on the
+/// very page it was written for. The second rule has the same condition with
+/// the site as `topDomains`: any frame's request, in a page of that site.
+/// Only exceptions get one. A block with `$domain=` keeps the filter's own
+/// meaning, and so do the signed lists.
 public enum ContentBlockingRuleConverter {
     /// Spec §2: at most 5,000 own rules.
     public static let maxRules = 5000
@@ -84,8 +99,17 @@ public enum ContentBlockingRuleConverter {
     }
 
     public struct Conversion: Equatable, Sendable {
+        /// The DNR rules: one a filter, in the text's order, then the second
+        /// rule of each exception for a site (`pageRule`).
         public var rules: [ContentBlockingDNRRule]
         public var dropped: [Dropped]
+        /// The filters taken. The person counts lines, not DNR rules.
+        public var filters: Int
+        /// Exceptions for a site whose second rule found no room under the
+        /// limit: they cover what the site's own documents ask, as before,
+        /// and not the frames in its pages. The person is told (security
+        /// addendum 14, remark 4).
+        public var withoutPageRule = 0
 
         /// The DNR rule array the engine takes; `[]` for no rules.
         public var json: String {
@@ -96,15 +120,29 @@ public enum ContentBlockingRuleConverter {
 
         /// The line under the own-rules field.
         public var summary: String {
-            let rules = self.rules.count == 1 ? "1 rule" : "\(self.rules.count) rules"
-            guard !dropped.isEmpty else { return rules }
-            let lines = dropped.count == 1 ? "1 line is" : "\(dropped.count) lines are"
-            return "\(rules). \(lines) not supported and left out."
+            let rules = filters == 1 ? "1 rule" : "\(filters) rules"
+            var text = rules
+            if !dropped.isEmpty {
+                let lines = dropped.count == 1 ? "1 line is" : "\(dropped.count) lines are"
+                text += ". \(lines) not supported and left out."
+            }
+            if withoutPageRule > 0 {
+                let exceptions = withoutPageRule == 1 ? "1 exception does" : "\(withoutPageRule) exceptions do"
+                text += (dropped.isEmpty ? ". " : " ") + "\(exceptions) not cover frames, because the limit of "
+                    + "\(ContentBlockingRuleConverter.maxRules) rules is reached."
+            }
+            return text
         }
     }
 
+    /// `limit` is the engine's, on DNR rules. Every filter's own rule comes
+    /// first, so a text that fitted before exceptions had a second rule
+    /// still fits whole, and the second rules take the room that is left, in
+    /// the text's order. An exception past that room works as it did before:
+    /// for the site's own requests.
     public static func convert(_ text: String, limit: Int = maxRules) -> Conversion {
         var rules: [ContentBlockingDNRRule] = []
+        var pageRules: [ContentBlockingDNRRule] = []
         var dropped: [Dropped] = []
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
         for (index, raw) in lines.enumerated() {
@@ -121,9 +159,41 @@ public enum ContentBlockingRuleConverter {
                 }
                 rule.id = rules.count + 1
                 rules.append(rule)
+                if let second = pageRule(of: rule) { pageRules.append(second) }
             }
         }
-        return Conversion(rules: rules, dropped: dropped)
+        let filters = rules.count
+        let fitting = pageRules.prefix(max(limit - rules.count, 0))
+        for var rule in fitting {
+            rule.id = rules.count + 1
+            rules.append(rule)
+        }
+        return Conversion(rules: rules, dropped: dropped, filters: filters, withoutPageRule: pageRules.count - fitting.count)
+    }
+
+    /// The second rule of an exception for a site: `rule` with its sites as
+    /// the page's, so a frame's request in a page of that site is let
+    /// through too. nil for anything but an `allow` that names sites.
+    ///
+    /// It allows nothing outside pages of the named sites. What the filter
+    /// excludes stays excluded twice over: no page of an excluded site, and
+    /// no frame of one in any page. `$third-party` and the types stay as
+    /// written.
+    ///
+    /// None for a `$first-party` exception (security addendum 14, remark
+    /// 1). DNR counts the party against the frame that asks, not against
+    /// the page: `@@$first-party,domain=shop.example` means what
+    /// shop.example's documents ask of their own site, and with the site as
+    /// the page it would mean that every frame in a shop.example page may
+    /// ask its own site for anything.
+    static func pageRule(of rule: ContentBlockingDNRRule) -> ContentBlockingDNRRule? {
+        guard rule.action.type == "allow", rule.condition.domainType != "firstParty",
+              let sites = rule.condition.initiatorDomains, !sites.isEmpty else { return nil }
+        var second = rule
+        second.condition.initiatorDomains = nil
+        second.condition.topDomains = sites
+        second.condition.excludedTopDomains = rule.condition.excludedInitiatorDomains
+        return second
     }
 
     private struct Refusal: Error {

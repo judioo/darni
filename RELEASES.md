@@ -41,6 +41,22 @@ lines and this section starts empty again.
 - Spotlight, Finder, the Dock and Launchpad show Darni for a copy updated from ReArc, which
   keeps its file name ReArc.app. Until now they showed ReArc there, and Spotlight did not find
   the app by "Darni". Typing "ReArc" still finds it.
+- "Allow on This Site" in the list of what was blocked now lets the site through everywhere on
+  the page. Until now it covered what the page itself asked for, and not what the allowed site
+  asked for from a frame of its own. An ad or a video player you had allowed could then stay
+  blocked, and the site stood under "Allowed on this site" and in the blocked list at once.
+  Sites you allowed before are covered too. Nothing you have to do.
+- The same holds for an exception you typed into your own blocking rules with `$domain=`, such
+  as `@@||ads.example^$domain=news.example`, and for one that sync brought from another Mac: it
+  now also covers what frames ask for in pages of that site. That allows more than before. If
+  you wrote such a rule to allow less, look at it again in Settings › Profiles.
+- A click on Allow in that list is no longer lost. A click that came very soon after the pointer
+  reached the line could do nothing, with no sign. Now, if the line does not show "Allow" yet,
+  the click makes it show, and the next click allows the site.
+- When a site you allowed is still blocked on a page, the list says why: one of your own rules
+  blocks it, or the page has to be reloaded.
+- Settings counts your own blocking rules by the lines you wrote, and says when some
+  exceptions cannot cover frames because the limit of 5,000 rules is reached.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 
