@@ -62,18 +62,15 @@ struct SpaceEditorView: View {
         }
         .padding(20)
         .frame(width: 360)
-        .alert(profileChange.map(model.spaceProfileChangeMessage)?.title ?? "", isPresented: Binding(
-            get: { profileChange != nil },
-            set: { if !$0 { profileChange = nil } }
-        )) {
-            Button("Cancel", role: .cancel) { profileChange = nil }
-            Button("Move Space") {
+        .modifier(SessionCrossingAlert(
+            text: profileChange.map(model.spaceProfileChangeMessage),
+            isPresented: { profileChange != nil },
+            cancel: { profileChange = nil },
+            confirm: {
                 if let change = profileChange { model.changeSpaceProfile(change.spaceID, to: change.profileID) }
                 profileChange = nil
             }
-        } message: {
-            Text(profileChange.map(model.spaceProfileChangeMessage)?.message ?? "")
-        }
+        ))
         .onAppear {
             name = space?.name ?? ""
         }
