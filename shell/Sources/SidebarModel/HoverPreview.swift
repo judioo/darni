@@ -130,10 +130,10 @@ public struct HoverPreviewTimer<ID: Hashable>: Equatable {
     }
 }
 
-/// Snapshots for tab hover cards, one per tab. A tab is captured at most
-/// once per `maxAge` for the same page, failures included, so hovering
-/// back and forth never captures again; the least recently stored entries
-/// go first past `capacity`.
+/// Snapshots for tab hover cards and the ⌃Tab switcher's thumbnails, one
+/// per tab. A tab is captured at most once per `maxAge` for the same page,
+/// failures included, so hovering back and forth never captures again; the
+/// least recently stored entries go first past `capacity`.
 public struct TabSnapshotCache<Image> {
     public struct Entry {
         public var image: Image?
@@ -158,10 +158,12 @@ public struct TabSnapshotCache<Image> {
         return entry.image
     }
 
-    public func shouldCapture(_ id: UUID, url: URL, now: Date) -> Bool {
+    /// `olderThan` asks for a fresher snapshot than `maxAge` gives: the
+    /// switcher wants the page as it is being left.
+    public func shouldCapture(_ id: UUID, url: URL, now: Date, olderThan age: TimeInterval? = nil) -> Bool {
         guard !inFlight.contains(id) else { return false }
         guard let entry = entries[id], entry.url == url else { return true }
-        return now.timeIntervalSince(entry.capturedAt) >= maxAge
+        return now.timeIntervalSince(entry.capturedAt) >= min(age ?? maxAge, maxAge)
     }
 
     public mutating func beginCapture(_ id: UUID) {
@@ -184,5 +186,11 @@ public struct TabSnapshotCache<Image> {
         entries[id] = nil
         order.removeAll { $0 == id }
         inFlight.remove(id)
+    }
+
+    /// Drops the snapshots of tabs that are gone (`isLive` says which remain).
+    public mutating func removeAll(except isLive: (UUID) -> Bool) {
+        for id in order where !isLive(id) { entries[id] = nil }
+        order.removeAll { entries[$0] == nil }
     }
 }

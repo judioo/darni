@@ -25,7 +25,7 @@ final class SidebarHoverPreview: NSObject, NSPopoverDelegate {
         anchors = anchors.filter { $0.value.value != nil }
         anchors[id] = Weak(cell)
         timer.pointerEntered(id, kind: previewKind, now: Date())
-        if previewKind == .tab { TabHoverSnapshots.shared.captureSelectedTab(of: controller?.model) }
+        if previewKind == .tab { TabThumbnails.shared.captureSelectedTab(of: controller?.model) }
         reschedule()
     }
 
@@ -136,7 +136,7 @@ final class SidebarHoverPreview: NSObject, NSPopoverDelegate {
         let root: AnyView
         switch model.store.entry(withID: id) {
         case .tab(let tab)?:
-            let image = TabHoverSnapshots.shared.image(for: tab)
+            let image = TabThumbnails.shared.image(for: tab)
             let engine = model.engineHost.allTabEngines().first { $0.0 == tab.id }?.2
             root = AnyView(TabHoverCard(tab: tab, image: image, container: model.containerLabel(for: engine, tab: tab),
                                         onHover: { [weak self] in self?.previewHovered($0) }))
@@ -214,61 +214,6 @@ final class SidebarHoverPreview: NSObject, NSPopoverDelegate {
 private struct Weak<Value: AnyObject> {
     weak var value: Value?
     init(_ value: Value) { self.value = value }
-}
-
-// MARK: - Snapshots
-
-/// Hover-card snapshots for every window. Only the selected tab is
-/// captured: it is the one on screen, and a hidden page has no reliable
-/// pixels. Reaching another row to click it means hovering a tab row, which
-/// captures the tab being left, at most once per page per
-/// `TabSnapshotCache.maxAge`.
-final class TabHoverSnapshots {
-    static let shared = TabHoverSnapshots()
-
-    private var cache = TabSnapshotCache<NSImage>()
-
-    func image(for tab: Tab) -> NSImage? {
-        cache.image(for: tab.id, url: tab.url)
-    }
-
-    func captureSelectedTab(of model: BrowserViewModel?) {
-        guard let model, let tab = model.store.selectedTab else { return }
-        capture(tab, model: model)
-    }
-
-    private func capture(_ tab: Tab, model: BrowserViewModel) {
-        let now = Date()
-        guard cache.shouldCapture(tab.id, url: tab.url, now: now),
-              let engine = model.engineHost.engine(forTabID: tab.id, profileID: model.profileID(for: tab)) else { return }
-        cache.beginCapture(tab.id)
-        let id = tab.id, url = tab.url
-        Task { @MainActor [weak self] in
-            let png = try? await engine.captureSnapshot(scope: .visible)
-            let image = png.flatMap { Self.thumbnail(from: $0) }
-            self?.cache.store(image, for: id, url: url, now: Date())
-        }
-    }
-
-    /// Cards are 260 pt wide; keeping 2× that bounds the cache's memory.
-    private static func thumbnail(from png: Data) -> NSImage? {
-        guard let rep = NSBitmapImageRep(data: png), rep.pixelsWide > 0 else { return nil }
-        let width = min(CGFloat(rep.pixelsWide), 520)
-        let size = NSSize(width: width, height: (width * CGFloat(rep.pixelsHigh) / CGFloat(rep.pixelsWide)).rounded())
-        guard let scaled = NSBitmapImageRep(
-            bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ) else { return nil }
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: scaled)
-        NSGraphicsContext.current?.imageInterpolation = .high
-        rep.draw(in: NSRect(origin: .zero, size: size))
-        NSGraphicsContext.restoreGraphicsState()
-        let image = NSImage(size: size)
-        image.addRepresentation(scaled)
-        return image
-    }
 }
 
 // MARK: - Views

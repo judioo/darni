@@ -36,6 +36,12 @@ lines and this section starts empty again.
   window's sign-ins.
 - Open in and its arrow stay in the Little Darni toolbar when the window is narrow. The
   address field shrinks first.
+- The ⌃Tab switcher now looks like Arc's. Your recent tabs show as a row of cards, each with a
+  small picture of its page and the site's icon and title beneath. The tab you are on is
+  marked in your space's colour. A tab Darni has no picture of yet, such as one you have not
+  looked at since Darni started, shows its site's icon instead. With more than five recent tabs, the row
+  slides along as you press Tab, and arrows at its ends show there are more. The pictures stay in memory
+  only. Darni never saves them to disk and never takes them in a private window.
 
 ## Darni 2026.1120.1136 — 2026-11-20
 
