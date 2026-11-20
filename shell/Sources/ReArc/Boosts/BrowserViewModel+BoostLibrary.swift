@@ -44,6 +44,31 @@ extension BrowserViewModel {
         syncAllTabBoosts()
     }
 
+    /// A boost that came from a file with a script and a scope that is a
+    /// public suffix is switched off, and the person is told which
+    /// (security BO-01, `SidebarStore.switchOffFileScriptBoostsScopedToASuffix`).
+    /// Asked at launch, once the engine can name sites, and after every
+    /// change to the sidebar's state, so one that sync brings or the person
+    /// switches on does not show as on until the next launch. It reads a
+    /// few boosts and writes only when it finds one.
+    func switchOffFileScriptBoostsScopedToASuffix() {
+        let names = store.switchOffFileScriptBoostsScopedToASuffix()
+        guard let message = Self.switchedOffBoostsMessage(names) else { return }
+        syncAllTabBoosts()
+        showToast(message, systemImage: "wand.and.sparkles")
+    }
+
+    /// The toast for boosts switched off at launch. A boost's name comes
+    /// from its file: it is shown as one line of visible characters, cut.
+    static func switchedOffBoostsMessage(_ names: [String]) -> String? {
+        guard let first = names.first else { return nil }
+        guard names.count == 1 else {
+            return "Darni switched off \(names.count) boosts from files. Their scripts were set to run on many unrelated sites."
+        }
+        let name = TidyText.truncated(TidyText.singleLine(first), to: 40)
+        return "Darni switched off the boost “\(name)”. Its script was set to run on many unrelated sites."
+    }
+
     /// CSS that arrived through sync applies once approved here (security RC-0.1.0-544 N-02).
     func approveBoostStyle(_ packageID: UUID) {
         guard let package = store.boostLibrary().package(id: packageID), let css = BoostLibraryOps.combinedCSS(package) else { return }

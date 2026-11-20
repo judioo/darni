@@ -416,6 +416,7 @@ final class ContentBlockingShellTests: XCTestCase {
         // Remove is held to the same: not from another site's page, and not without the engine's word.
         page = "bank.test"
         model.setBlockedHost("doubleclick.net", allowed: false, on: drawn, of: engine)
+        XCTAssertEqual(model.toast?.message, "The page changed before the site was removed. Nothing was changed.", "Remove's own words")
         model.contentBlocking.blockedHosts = { _ in nil }
         model.setBlockedHost("doubleclick.net", allowed: false, on: drawn, of: engine)
         XCTAssertEqual(model.store.contentBlocking().ownRules, "@@||doubleclick.net^$domain=news.test\n")
@@ -482,13 +483,87 @@ final class ContentBlockingShellTests: XCTestCase {
         model.setContentBlocking(false, forSiteOf: engine, site: site)
         XCTAssertEqual(model.store.contentBlocking().exceptions, [], "the tab is on another site by now")
         XCTAssertEqual(recorder.take(), [])
-        XCTAssertEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.pageMoved.message)
+        // The switch's own words: nothing was being allowed, and there is no list to open again.
+        XCTAssertEqual(model.toast?.message, "The page changed before blocking was turned off. Nothing was changed.")
+        XCTAssertNotEqual(model.toast?.message, ContentBlockingSiteAllow.Refusal.pageMoved.message)
+        model.setContentBlocking(true, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.toast?.message, "The page changed before blocking was turned on. Nothing was changed.")
+        model.narrowContentBlockingException(forSiteOf: engine, site: site)
+        XCTAssertEqual(model.toast?.message, "The page changed before blocking was narrowed to this site. Nothing was changed.")
+        XCTAssertEqual(model.store.contentBlocking().exceptions, [])
+        XCTAssertEqual(recorder.take(), [])
+        // House style for copy: full stops and commas.
+        for message in [SiteControlCenter.blockingNotTurnedOffMessage, SiteControlCenter.blockingNotTurnedOnMessage,
+                        SiteControlCenter.blockingNotNarrowedMessage, SiteControlCenter.allowedHostNotRemovedMessage] {
+            XCTAssertFalse(message.contains("\u{2014}") || message.contains(";"), message)
+        }
 
         // The engine says the tab is still on news.test; the shell's address already says bank.test.
         page = "news.test"
         model.store.updateTab(tab.id, url: URL(string: "https://bank.test/login")!)
         model.setContentBlocking(false, forSiteOf: engine, site: site)
         XCTAssertEqual(model.store.contentBlocking().exceptions, ["news.test"], "for the site the panel drew")
+        XCTAssertEqual(recorder.take(), ["exceptions 4 news.test"])
+    }
+
+    /// One question, asked in one place: is the engine's answer still about
+    /// the page a view drew. The list draws only then, and each write asks
+    /// it again at the click.
+    func testTheEnginesAnswerIsUsedOnlyWhileTheTabIsOnThePageThatWasDrawn() async throws {
+        let model = launch()
+        try await attach(model, engine: RecordingEngine())
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        var reply: String? = Self.blockedReply(page: "news.test")
+        model.contentBlocking.blockedHosts = { _ in reply }
+
+        XCTAssertEqual(model.blockedList(for: engine, drawnFor: site)?.entries.count, 3, "the tab is on the page the panel drew")
+        XCTAssertNotNil(model.blockedList(for: engine, onPageOf: "news.test"))
+        XCTAssertNotNil(model.blockedList(for: engine, onPageOf: "m.news.test"), "another host of the same site")
+        XCTAssertNil(model.blockedList(for: engine, onPageOf: "othernews.test"), "a name that only ends the same")
+        XCTAssertNil(model.blockedList(for: engine, onPageOf: nil))
+
+        // The tab has moved to another site: the panel's list has nothing to draw, although the engine has an answer.
+        reply = Self.blockedReply(page: "bank.test")
+        XCTAssertEqual(model.blockedList(for: engine)?.entries.count, 3)
+        XCTAssertNil(model.blockedList(for: engine, drawnFor: site))
+        // A page that is no site, an answer that cannot be read, and no answer.
+        for other in [#"{"hosts":[],"more":0}"#, "not the list", nil] {
+            reply = other
+            XCTAssertNil(model.blockedList(for: engine, drawnFor: site), other ?? "nil")
+        }
+        // An engine that only counts has no list for any page.
+        model.contentBlocking.blockedHosts = nil
+        XCTAssertNil(model.blockedList(for: engine, drawnFor: site))
+    }
+
+    /// A page whose own request was blocked is an error page. Blocking can
+    /// be turned off for its site from there, which is the way in. Allow
+    /// writes nothing from it.
+    func testOnAnErrorPageTheSwitchWorksAndAllowDoesNot() async throws {
+        let model = launch()
+        let recorder = RecordingEngine()
+        try await attach(model, engine: recorder)
+        let url = URL(string: "https://www.news.test/story")!
+        let tab = model.store.addTab(kind: .today, title: "News", url: url)
+        let engine = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let site = try XCTUnwrap(SiteControlCenter.site(for: url))
+        model.contentBlockingProfileOpened(engineProfile: 4, profile: model.profileID(for: tab))
+        model.contentBlocking.blockedHosts = { _ in
+            #"{"page":{"host":"news.test","registrable":true,"error":true},"hosts":[{"host":"news.test","count":1,"registrable":true,"lists":["easylist"]}],"more":0}"#
+        }
+        _ = recorder.take()
+
+        let list = try XCTUnwrap(model.blockedList(for: engine, drawnFor: site), "the list is still the page's")
+        XCTAssertFalse(model.canAllowBlockedHosts(for: engine, on: list))
+        model.setBlockedHost("news.test", allowed: true, on: "news.test", of: engine)
+        XCTAssertEqual(model.store.contentBlocking().ownRules, "")
+        XCTAssertEqual(recorder.take(), [])
+
+        model.setContentBlocking(false, forSiteOf: engine, site: site)
+        XCTAssertEqual(model.store.contentBlocking().exceptions, ["news.test"])
         XCTAssertEqual(recorder.take(), ["exceptions 4 news.test"])
     }
 
@@ -544,6 +619,55 @@ final class ContentBlockingShellTests: XCTestCase {
                        "no list without blocking")
         XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 68, hasFeature: all).contentBlocking, "an engine that only counts still blocks")
         XCTAssertFalse(ChromiumCapabilities.none.contentBlockingHosts)
+    }
+
+    /// The toast for boosts switched off at launch (security BO-01). A
+    /// boost's name comes from its file.
+    func testTheSwitchedOffBoostsToastNamesOneBoostCleanedAndCountsSeveral() {
+        XCTAssertNil(BrowserViewModel.switchedOffBoostsMessage([]))
+        XCTAssertEqual(BrowserViewModel.switchedOffBoostsMessage(["Dark mode"]),
+                       "Darni switched off the boost “Dark mode”. Its script was set to run on many unrelated sites.")
+        XCTAssertEqual(BrowserViewModel.switchedOffBoostsMessage(["A", "B", "C"]),
+                       "Darni switched off 3 boosts from files. Their scripts were set to run on many unrelated sites.")
+        let odd = BrowserViewModel.switchedOffBoostsMessage(["Up\u{202E}date\nrequired " + String(repeating: "x", count: 80)]) ?? ""
+        XCTAssertFalse(odd.contains("\n") || odd.contains("\u{202E}"))
+        XCTAssertLessThan(odd.count, 130)
+        for message in [odd, BrowserViewModel.switchedOffBoostsMessage(["A", "B"]) ?? ""] {
+            XCTAssertFalse(message.contains("\u{2014}") || message.contains(";") || message.contains("ReArc"), message)
+        }
+    }
+
+    /// A file's script boost scoped to a public suffix goes off when the
+    /// sidebar's state next changes, not only at launch: a sync that brings
+    /// one, or the person switching it on, does not leave it showing as on.
+    func testAFilesScriptBoostScopedToASuffixGoesOffAfterAChangeOfTheSidebar() async throws {
+        let model = launch()
+        // As an older build stored it: its rule check took web.app for a site.
+        var package = BoostPackage.newScript(name: "From a file", hostScope: [BoostHostRule(host: "web.app")], js: "document.title = 'x';", css: "")
+        package.provenance = BoostProvenance(imported: true)
+        XCTAssertNil(model.store.addBoost(package, enabled: true))
+        func isOn() -> Bool { model.store.boostLibrary().installation(for: package.manifest.id)?.enabled == true }
+        @MainActor func settle() async throws {
+            for _ in 0..<3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        }
+        _ = model.store.addTab(kind: .today, title: "A", url: URL(string: "https://a.test/")!)
+        try await settle()
+        XCTAssertTrue(isOn(), "without the engine's list nothing is touched")
+
+        SiteNames.shared = SiteNames { $0 == "web.app" ? #"{"host":"web.app","registrable":false,"suffix":true}"# : nil }
+        addTeardownBlock { SiteNames.shared = nil }
+        model.toast = nil
+        _ = model.store.addTab(kind: .today, title: "B", url: URL(string: "https://b.test/")!)
+        try await settle()
+        XCTAssertFalse(isOn())
+        XCTAssertEqual(model.toast?.message, "Darni switched off the boost “From a file”. Its script was set to run on many unrelated sites.")
+
+        // Switched on again by the person: off again, at once.
+        model.toast = nil
+        model.store.setBoostInstallationEnabled(packageID: package.manifest.id, enabled: true)
+        try await settle()
+        XCTAssertFalse(isOn())
+        XCTAssertNotNil(model.toast)
     }
 
     /// ABI 1.69, feature `host_sites`: the engine's public suffix list. It

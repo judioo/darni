@@ -65,16 +65,25 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
     public var pageSite: String?
     /// `pageSite` is one site, by the engine and by `ContentBlockingSiteAllow.isOneSite`.
     public var pageSiteIsOneSite: Bool
+    /// The tab shows an error page, and `pageSite` is the site of the
+    /// address that failed, not of a document of that site (bridge 0.80.0,
+    /// patch `tab/099`). Chromium's rule for such an address is that it is
+    /// not for a permission decision. A setting for the site alone is still
+    /// the person's to make there (blocking off for it, which is the way in
+    /// when the page itself was blocked). A rule between two sites is not:
+    /// no document of that site asked for anything.
+    public var pageIsError: Bool
 
-    public init(entries: [Entry] = [], uncounted: Int = 0, pageSite: String? = nil, pageSiteIsOneSite: Bool = false) {
+    public init(entries: [Entry] = [], uncounted: Int = 0, pageSite: String? = nil, pageSiteIsOneSite: Bool = false, pageIsError: Bool = false) {
         self.entries = entries
         self.uncounted = uncounted
         self.pageSite = pageSite
         self.pageSiteIsOneSite = pageSite != nil && pageSiteIsOneSite
+        self.pageIsError = pageSite != nil && pageIsError
     }
 
-    /// The site Allow may write a rule for; nil when the page has none.
-    public var allowSite: String? { pageSiteIsOneSite ? pageSite : nil }
+    /// The site Allow may write a rule for; nil when the page has none, or is an error page.
+    public var allowSite: String? { pageSiteIsOneSite && !pageIsError ? pageSite : nil }
 
     public var isEmpty: Bool { entries.isEmpty && uncounted == 0 }
 
@@ -121,6 +130,8 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
         struct Page: Decodable {
             var host: String
             var registrable: Bool?
+            /// Absent from bridge 0.79.0, which did not say.
+            var error: Bool?
         }
 
         var page: Page?
@@ -136,7 +147,7 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
     /// stranger's: a name that is not a host is left out, a number is cut to
     /// what a page can reach, and what is past `maxEntries` is only counted.
     /// nil for a reply that is too long or is not this JSON.
-    public static func decode(_ json: String, lists: [ContentBlockingList]) -> ContentBlockingBlockedList? {
+    public static func decode(_ json: String, lists: [ContentBlockingList], names: SiteNames? = .shared) -> ContentBlockingBlockedList? {
         guard json.utf8.count <= maxReplyBytes,
               let reply = try? JSONDecoder().decode(Reply.self, from: Data(json.utf8)) else { return nil }
         var counts: [String: Int] = [:]
@@ -157,13 +168,14 @@ public struct ContentBlockingBlockedList: Equatable, Sendable {
         }
         var entries = counts.map { host, count in
             Entry(host: host, count: count, kinds: Kind.allCases.filter { kinds[host]?.contains($0) ?? false },
-                  canBeAllowed: !notOneSite.contains(host) && ContentBlockingSiteAllow.isOneSite(host))
+                  canBeAllowed: !notOneSite.contains(host) && ContentBlockingSiteAllow.isOneSite(host, names: names))
         }
         entries.sort { ($1.count, $0.host) < ($0.count, $1.host) }
         for cut in entries.dropFirst(maxEntries) { uncounted = min(uncounted + cut.count, maxCount) }
         let page = reply.page.flatMap { ContentBlockingHost.isHost($0.host) ? $0 : nil }
         return ContentBlockingBlockedList(entries: Array(entries.prefix(maxEntries)), uncounted: uncounted, pageSite: page?.host,
-                                          pageSiteIsOneSite: page?.registrable == true && ContentBlockingSiteAllow.isOneSite(page?.host ?? ""))
+                                          pageSiteIsOneSite: page?.registrable == true && ContentBlockingSiteAllow.isOneSite(page?.host ?? "", names: names),
+                                          pageIsError: page?.error == true)
     }
 
     /// The tag for a rule of list `id`: a list of the Trackers only level
@@ -213,13 +225,19 @@ public enum ContentBlockingSiteAllow {
     /// `host` names one site: a host of two labels or more that is not
     /// itself a suffix other sites hang under. A rule for a single label or
     /// for `co.uk` would allow every name under it (security BL-02, BL-04).
-    /// This build has no public suffix list: it asks the one
-    /// registrable-domain function whether it treats the name as a suffix,
-    /// and knows the shared-hosting domains. The engine's answer for a
-    /// blocked host (`Entry.canBeAllowed`) comes from Chromium's list.
-    public static func isOneSite(_ host: String) -> Bool {
+    ///
+    /// The engine's public suffix list decides where there is one
+    /// (`SiteNames`), as for every other user of a site's name: a name it
+    /// calls a suffix, or anything but one site, is refused. Without an
+    /// answer the shell's guess stands in (`BoostScopeMatcher.registrableDomain`,
+    /// asked whether it treats the name as a suffix), and by the guess alone
+    /// `web.app` and `edu.au` read as one site. The shared-hosting domains
+    /// this build knows are refused either way: this check may refuse more
+    /// than the engine, never less.
+    public static func isOneSite(_ host: String, names: SiteNames? = .shared) -> Bool {
         guard ContentBlockingHost.isHost(host), host.contains("."),
               !BoostPublicSuffixList.isSharedHostingRegistrableDomain(host) else { return false }
+        if let site = names?.site(of: host) { return site.isOneSite }
         let below = "a." + host
         return BoostScopeMatcher.registrableDomain(below) != below
     }
@@ -227,21 +245,21 @@ public enum ContentBlockingSiteAllow {
     /// The line. Both names come from pages (the page's own host, and a host
     /// it asked), so each must be a plain host that is one site before it is
     /// put into filter syntax; nil otherwise.
-    public static func rule(host: String, site: String) -> String? {
-        guard isOneSite(host), isOneSite(site) else { return nil }
+    public static func rule(host: String, site: String, names: SiteNames? = .shared) -> String? {
+        guard isOneSite(host, names: names), isOneSite(site, names: names) else { return nil }
         return "@@||\(host)^$domain=\(site)"
     }
 
     /// The hosts allowed on `site` by lines of exactly that form, in the text's order.
-    public static func hosts(in ownRules: String, site: String) -> [String] {
-        guard isOneSite(site) else { return [] }
+    public static func hosts(in ownRules: String, site: String, names: SiteNames? = .shared) -> [String] {
+        guard isOneSite(site, names: names) else { return [] }
         let prefix = "@@||", suffix = "^$domain=\(site)"
         var hosts: [String] = []
         for raw in ownRules.split(whereSeparator: \.isNewline) {
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard line.hasPrefix(prefix), line.hasSuffix(suffix), line.count > prefix.count + suffix.count else { continue }
             let host = String(line.dropFirst(prefix.count).dropLast(suffix.count))
-            if isOneSite(host), !hosts.contains(host) { hosts.append(host) }
+            if isOneSite(host, names: names), !hosts.contains(host) { hosts.append(host) }
         }
         return hosts
     }
@@ -250,8 +268,8 @@ public enum ContentBlockingSiteAllow {
 extension ContentBlockingSettings {
     /// The hosts the person allowed on `site` from the blocked list. `site`
     /// is the engine's name for the page (`ContentBlockingBlockedList.pageSite`).
-    public func allowedHosts(onSite site: String) -> [String] {
-        ContentBlockingSiteAllow.hosts(in: ownRules, site: site)
+    public func allowedHosts(onSite site: String, names: SiteNames? = .shared) -> [String] {
+        ContentBlockingSiteAllow.hosts(in: ownRules, site: site, names: names)
     }
 
     /// Adds the own rule that lets `site` ask `host`: one line, which must
@@ -260,10 +278,10 @@ extension ContentBlockingSettings {
     /// never one cut from an address here. Returns why nothing was written,
     /// nil when the line is there.
     @discardableResult
-    public mutating func allowHost(_ host: String, onSite site: String) -> ContentBlockingSiteAllow.Refusal? {
-        guard ContentBlockingSiteAllow.isOneSite(site) else { return .noSite }
-        guard let line = ContentBlockingSiteAllow.rule(host: host, site: site) else { return .notOneSite }
-        if ContentBlockingSiteAllow.hosts(in: ownRules, site: site).contains(host) { return nil }
+    public mutating func allowHost(_ host: String, onSite site: String, names: SiteNames? = .shared) -> ContentBlockingSiteAllow.Refusal? {
+        guard ContentBlockingSiteAllow.isOneSite(site, names: names) else { return .noSite }
+        guard let line = ContentBlockingSiteAllow.rule(host: host, site: site, names: names) else { return .notOneSite }
+        if ContentBlockingSiteAllow.hosts(in: ownRules, site: site, names: names).contains(host) { return nil }
         // The same converter and limits as a rule typed in Settings (security BL-04).
         let converted = ContentBlockingRuleConverter.convert(line)
         guard converted.dropped.isEmpty, converted.rules.count == 1, converted.rules[0].action.type == "allow",
@@ -276,8 +294,8 @@ extension ContentBlockingSettings {
     }
 
     /// Deletes the lines `allowHost` wrote for `host` on `site`, and no other.
-    public mutating func removeAllowedHost(_ host: String, onSite site: String) {
-        guard let line = ContentBlockingSiteAllow.rule(host: host, site: site), ownRules.contains(line) else { return }
+    public mutating func removeAllowedHost(_ host: String, onSite site: String, names: SiteNames? = .shared) {
+        guard let line = ContentBlockingSiteAllow.rule(host: host, site: site, names: names), ownRules.contains(line) else { return }
         let kept = ownRules.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
             .filter { $0.trimmingCharacters(in: .whitespaces) != line }
         setOwnRules(kept.joined(separator: "\n"))

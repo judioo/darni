@@ -690,9 +690,10 @@ struct SiteControlsBlockedListView: View {
     let isOpen: Bool
 
     var body: some View {
-        // One reading of the engine gives the lines and the site they are for:
-        // Allow and Remove carry the site this drew, not the tab's address at the click.
-        if let list = model.blockedList(for: engine) {
+        // One reading of the engine gives the lines and the site they are for, and only while
+        // the tab is on the page this panel was drawn for. Allow and Remove carry the site this
+        // drew, not the tab's address at the click.
+        if let list = model.blockedList(for: engine, drawnFor: site) {
             let canAllow = model.canAllowBlockedHosts(for: engine, on: list)
             let pageSite = list.pageSite
             let allowed = pageSite.map { model.allowedBlockedHosts(for: engine, pageSite: $0) } ?? []

@@ -170,9 +170,10 @@ enum ChromiumLaunchArguments {
     /// the run reaches no outside service (Google or otherwise). The leak
     /// check is also turned off by the test before any sign-in.
     ///
-    /// Two names resolve, to the loopback address: the tracker's and the ad
+    /// Three names resolve, to the loopback address: the tracker's and the ad
     /// server's of the blocking fixture (`SelfTestBlockingFixture`), which
-    /// the built-in lists block. Chromium takes the first rule that matches,
+    /// the built-in lists block, and the site under a private suffix that the
+    /// fixture's page is also loaded from. Chromium takes the first rule that matches,
     /// so they go before the rule for every other name.
     static let selfTestNoOutsideNetworkSwitches = [
         "--disable-background-networking",

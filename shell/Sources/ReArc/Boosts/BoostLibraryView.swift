@@ -198,6 +198,13 @@ private struct BoostLibraryRowView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .help(row.allSites)
+                // The boost is as the person left it and does not run (its scope is refused): say so.
+                if let note = row.scopeNote {
+                    Label(note, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
             if isHovering {

@@ -242,9 +242,18 @@ extension SiteControlCenter {
 
     public static let contentBlockingTitle = "Block ads and trackers"
 
-    /// The row's state, and the line in Settings, for an exception that is a
-    /// public suffix: blocking is off for far more than one site.
+    /// The row's state for an exception that reaches past the page's site,
+    /// and the line in Settings for one that is a public suffix: blocking is
+    /// off for far more than one site.
     public static func suffixExceptionText(_ suffix: String) -> String { "Off for every site under \(suffix)" }
+    /// The toasts when a command of the panel found the tab on another page
+    /// than the one the panel was drawn for, so nothing was written. Each
+    /// command has its own words.
+    public static let blockingNotTurnedOffMessage = "The page changed before blocking was turned off. Nothing was changed."
+    public static let blockingNotTurnedOnMessage = "The page changed before blocking was turned on. Nothing was changed."
+    public static let blockingNotNarrowedMessage = "The page changed before blocking was narrowed to this site. Nothing was changed."
+    public static let allowedHostNotRemovedMessage = "The page changed before the site was removed. Nothing was changed."
+
     /// Under the field in Settings when the typed name is a public suffix.
     public static func suffixExceptionRefusal(_ suffix: String) -> String {
         "\(suffix) is not one site: every site under it is someone else’s. Type one site, such as example.\(suffix)."
@@ -294,11 +303,12 @@ extension SiteControlCenter {
             row.symbol = "shield.slash"
             row.isBlocked = true
             row.actions = [.openBlockingSettings]
-        } else if let suffix = settings.suffixException(covering: pageURL, names: names) {
-            // An exception an older build stored under a public suffix
-            // (security CB-12): the row says how far it reaches, and offers
-            // this site alone as well as blocking back on.
-            row.state = suffixExceptionText(suffix)
+        } else if let wider = settings.widerException(covering: pageURL, names: names) {
+            // An exception that reaches past this page's site, as an older
+            // build stored them (`web.app`, `azure.com`; security CB-12):
+            // the row says how far it reaches, and offers this site alone
+            // as well as blocking back on.
+            row.state = suffixExceptionText(wider)
             row.symbol = "shield.slash"
             row.isBlocked = true
             row.actions = [.turnOffBlockingForSiteOnly, .turnOnBlockingForSite]

@@ -68,6 +68,21 @@ struct ChromiumBlockedHostsCall {
     static func resolve() -> ChromiumBlockedHostsCall? {
         ChromiumSymbols.address(symbol).map { ChromiumBlockedHostsCall(copy: unsafeBitCast($0, to: CopyBlockedHosts.self)) }
     }
+
+    /// The engine's status and its JSON for `tab`, read once and freed. The
+    /// JSON is nil when the call is refused, and when the reply is longer
+    /// than the shell reads: such a reply is not copied. The one place that
+    /// reads this reply: the adapter and the self-test both come here
+    /// (as `ChromiumHostSites.reply` is for the site of a host). The reply
+    /// names sites of the person's page and is never logged.
+    func reply(tab: UInt64) -> (status: ReArcStatus, json: String?) {
+        var json: UnsafeMutablePointer<CChar>?
+        let status = copy(tab, &json)
+        defer { if let json { ReArcBufferFree(json) } }
+        guard status == .rearcOK, let json,
+              strnlen(json, ContentBlockingBlockedList.maxReplyBytes + 1) <= ContentBlockingBlockedList.maxReplyBytes else { return (status, nil) }
+        return (status, String(cString: json))
+    }
 }
 
 private let blockedCountCallback: ChromiumContentBlockingCalls.BlockedCountCallback = { context, _, _ in
@@ -144,16 +159,9 @@ final class ChromiumContentBlockingEngine: ContentBlockingEngine {
     /// handed to the caller and never logged, here or by the caller.
     func blockedHosts(tab: UInt64) -> String? {
         guard isUsable, tab != 0, let call = blockedHostsCall else { return nil }
-        var json: UnsafeMutablePointer<CChar>?
-        let status = call.copy(tab, &json)
-        defer { if let json { ReArcBufferFree(json) } }
-        guard status == .rearcOK, let json else {
-            if status != .rearcOK { ChromiumLog.trace("content blocking: \(ChromiumBlockedHostsCall.symbol)(\(tab)) rejected: \(status.rearcName)") }
-            return nil
-        }
-        // A reply longer than the shell reads is not copied.
-        guard strnlen(json, ContentBlockingBlockedList.maxReplyBytes + 1) <= ContentBlockingBlockedList.maxReplyBytes else { return nil }
-        return String(cString: json)
+        let (status, json) = call.reply(tab: tab)
+        if status != .rearcOK { ChromiumLog.trace("content blocking: \(ChromiumBlockedHostsCall.symbol)(\(tab)) rejected: \(status.rearcName)") }
+        return json
     }
 
     private static func json(_ strings: [String]) -> String {

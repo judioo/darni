@@ -25,9 +25,22 @@ enum SelfTestBlockingFixture {
     static let trackerScriptPath = "/blocking/tracker.js"
     static let adScriptPath = "/blocking/ad.js"
 
-    /// `--host-resolver-rules` entries that answer the two names with the
-    /// loopback address. They go before the rule that fails every other name.
-    static let resolverRules = "MAP \(trackerHost) 127.0.0.1, MAP \(adHost) 127.0.0.1"
+    /// A site under a private suffix, for the engine's site names
+    /// (CONTENT-BLOCKING.md §9): `azurewebsites.net` is in the public suffix
+    /// list, so every name under it is a site of its own, and the shell's old
+    /// guess took all of `azurewebsites.net` for the site of this one
+    /// (security CB-12). The self-test loads the page above from it, through
+    /// the resolver rule and the fixture server.
+    ///
+    /// The label has an underscore, which Azure does not give out: nobody
+    /// can take this name. Should the resolver switches ever be lost, the
+    /// self-test would then find no page there, not a stranger's.
+    static let siteSuffix = "azurewebsites.net"
+    static let siteHost = "rearc_selftest.\(siteSuffix)"
+
+    /// `--host-resolver-rules` entries that answer the fixture's names with
+    /// the loopback address. They go before the rule that fails every other name.
+    static let resolverRules = "MAP \(trackerHost) 127.0.0.1, MAP \(adHost) 127.0.0.1, MAP \(siteHost) 127.0.0.1"
 
     /// The page of one load. `run` is in the address, in the page's title
     /// and in its two requests, so a verdict and the server's counts belong
