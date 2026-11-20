@@ -244,12 +244,12 @@ extension SidebarStore {
     }
 
     /// Every profile with the spaces its strip lists (its containers' too), in
-    /// picker order, without `excluded`. A profile left with no space is left
-    /// out. What a menu of spaces by profile is made from: Move to Profile,
-    /// and Little Darni's Open in (`LittleArcOpenInMenu`).
-    public func listedSpacesByProfile(without excluded: Space.ID? = nil) -> [(profile: Profile, spaces: [Space])] {
+    /// picker order. A profile with no space is left out. What a menu of
+    /// spaces by profile is made from: Move to Profile, and Little Darni's
+    /// Open in picker (`LittleArcOpenInMenu.sections`).
+    public func listedSpacesByProfile() -> [(profile: Profile, spaces: [Space])] {
         listedProfiles.compactMap { profile in
-            let spaces = spaces(listedIn: profile.id).filter { $0.id != excluded }
+            let spaces = spaces(listedIn: profile.id)
             return spaces.isEmpty ? nil : (profile, spaces)
         }
     }
