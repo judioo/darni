@@ -66,6 +66,9 @@ lines and this section starts empty again.
 - The red, yellow and green window buttons stay in their place. Until now they could jump up
   and to the left when you chose a tab or when a page changed its title, and they stayed there
   until you clicked another window and came back.
+- The site controls panel no longer stays cut off after you click Allow in the list of what
+  was blocked. Now and then the panel stayed too short, with its top buttons and bottom rows
+  out of view, until you closed and opened it again.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 
