@@ -215,21 +215,12 @@ final class BrowserViewModel {
     /// Settings › Profiles › Search engine, once the engine can read and set it.
     @ObservationIgnored var searchEngineSettings: (any SearchEngineSettings)?
 
-    var isSidebarVisible = true
-    /// The page is laid out beside the sidebar. It goes wide at the start of
-    /// a hide and narrow at the end of a show, so Chromium resizes once per
-    /// toggle and never per frame (ARC-RECORDING-ANALYSIS.md §3).
-    var isSidebarLaidOut = true
-    /// 1 shown, 0 hidden; animated by ⌘S. The sidebar's right edge sits at
-    /// `sidebarReveal × sidebarWidth`.
-    var sidebarReveal: Double = 1
-    /// ⌘S is mid-slide; `isSidebarVisible` says which way.
-    var isSidebarSliding = false
+    /// Each window's sidebar, shown or hidden (⌘S), its slide and its
+    /// floating state (`BrowserViewModel+SidebarVisibility`). One value for
+    /// every window made ⌘S in one window hide the sidebar in all of them.
+    var sidebarVisibility = SidebarVisibility()
     /// Points; dragged from the sidebar's trailing edge, saved when the drag ends.
     var sidebarWidth: CGFloat = SidebarWidth.load()
-    /// The hidden sidebar shown floating while the pointer is at the window's
-    /// leading edge (Arc `SidebarHovering` / floating sidebar).
-    var isSidebarPeeking = false
     /// Each window's sidebar, full or the mini column (⇧⌘S).
     var sidebarModes = SidebarModes()
     /// Windows whose sidebar is moving between full and mini width (animated).
@@ -539,7 +530,7 @@ final class BrowserViewModel {
         return CommandBarSearch.results(
             for: commandBarText,
             in: store,
-            isSidebarVisible: isSidebarVisible,
+            isSidebarVisible: isSidebarVisible(in: store.keyWindowID),
             peekURL: peekSession?.url,
             focusedLittleArcID: focusedLittleArcID,
             mediaByTab: mediaStateByTab,
@@ -567,7 +558,7 @@ final class BrowserViewModel {
         commandBarCommandIndexCache.value {
             CommandBarSearch.CommandIndex(catalog: commandBarCatalogCache.value {
                 AppCommandRegistry.all(in: CommandBarContext(
-                    store: store, isSidebarVisible: isSidebarVisible, isMiniSidebar: isMiniSidebar(in: store.keyWindowID),
+                    store: store, isSidebarVisible: isSidebarVisible(in: store.keyWindowID), isMiniSidebar: isMiniSidebar(in: store.keyWindowID),
                     closedTabStack: store.closedTabStack,
                     peekURL: peekSession?.url, focusedLittleArcID: focusedLittleArcID,
                     mediaByTab: mediaStateByTab, tabMuteModel: tabMuteModel,
@@ -1253,33 +1244,6 @@ final class BrowserViewModel {
         reconcileEngineOwnership()
         loadSelectedIfNeeded()
         return space
-    }
-
-    /// ⌘S (Arc's Show/Hide Sidebar), as the user's recording shows it
-    /// (ARC-RECORDING-ANALYSIS.md §3): one quick push with no overshoot. The
-    /// sidebar slides with the page's leading edge. A hide lays the page out
-    /// wide at once and the receding sidebar uncovers it; a show slides the
-    /// wide page right with the sidebar and lays it out narrow at the end.
-    /// The page keeps keyboard focus. While hidden, the window's leading edge
-    /// floats the sidebar.
-    func toggleSidebar() {
-        PerfSignposts.interaction(.sidebarToggle, isSidebarVisible ? "hide" : "show")
-        let showing = !isSidebarVisible
-        isSidebarVisible = showing
-        isSidebarPeeking = false
-        isSidebarSliding = true
-        if !showing { isSidebarLaidOut = false }
-        withAnimation(Self.sidebarAnimation, completionCriteria: .logicallyComplete) {
-            sidebarReveal = showing ? 1 : 0
-        } completion: { [weak self] in
-            guard let self else { return }
-            // A newer toggle owns the state now.
-            if self.isSidebarVisible == showing {
-                self.isSidebarSliding = false
-                if showing { self.isSidebarLaidOut = true }
-            }
-            self.onShellAnimationComplete?(.sidebarToggle)
-        }
     }
 
     /// The bench's end event for shell animations (`--rearc-bench`).

@@ -33,14 +33,17 @@ extension BrowserViewModel {
     }
 
     /// A browser window comes up: its saved mode, or the mode of the window
-    /// it was opened from (the key window). Registered before its first frame.
+    /// it was opened from (the key window), and that window's sidebar shown
+    /// or hidden (`openSidebarVisibility`). Registered before its first frame.
     func openSidebarMode(for window: SidebarWindowID, restoring saved: SidebarMode? = nil) {
         sidebarModes.open(window, restoring: saved, openedFrom: store.keyWindowID == window ? nil : store.keyWindowID)
+        openSidebarVisibility(for: window)
     }
 
     func forgetSidebarMode(for window: SidebarWindowID) {
         sidebarModes.forget(window)
         sidebarMorphs[window] = nil
+        forgetSidebarVisibility(for: window)
     }
 
     /// The View menu's and command bar's title for ⇧⌘S in the key window.
@@ -56,7 +59,7 @@ extension BrowserViewModel {
         guard let target = window ?? store.keyWindowID else { return }
         let before = Double(sidebarWidth(in: target))
         let current = sidebarMorphs[target]
-        let result = sidebarModes.toggle(in: target, sidebarVisible: isSidebarVisible || isSidebarPeeking)
+        let result = sidebarModes.toggle(in: target, sidebarVisible: isSidebarVisible(in: target) || isSidebarPeeking(in: target))
         PerfSignposts.interaction(.sidebarToggle, result.mode == .mini ? "mini" : "full")
         onSidebarModeChange?()
         if result.mode == .mini, MiniSidebarAddressBarTip.takeIfDue(in: externalLinkDefaults) {
@@ -66,11 +69,11 @@ extension BrowserViewModel {
         if inlineRename != nil { _ = endInlineRename(.commit) }
         if result.showsSidebar {
             sidebarMorphs[target] = nil
-            toggleSidebar()
+            toggleSidebar(in: target)
             return
         }
         let after = Double(sidebarWidth(in: target))
-        guard isSidebarVisible, !isSidebarSliding, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+        guard isSidebarVisible(in: target), !isSidebarSliding(in: target), !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
               let morph = SidebarWidthMorph(from: before, to: after, current: current) else {
             sidebarMorphs[target] = nil
             return

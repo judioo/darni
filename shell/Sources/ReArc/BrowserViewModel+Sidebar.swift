@@ -812,17 +812,6 @@ extension BrowserViewModel {
         autoArchiveTimer = timer
     }
 
-    // MARK: - Floating sidebar
-
-    func setSidebarPeeking(_ peeking: Bool) {
-        guard !isSidebarVisible || !peeking, isSidebarPeeking != peeking else { return }
-        PerfSignposts.interaction(.sidebarPeek, peeking ? "reveal" : "dismiss")
-        withAnimation(.easeOut(duration: 0.16), completionCriteria: .logicallyComplete) {
-            isSidebarPeeking = peeking
-        } completion: { [weak self] in
-            self?.onShellAnimationComplete?(.sidebarPeek)
-        }
-    }
 }
 
 extension BrowserViewModel {

@@ -29,7 +29,7 @@ extension BrowserViewModel {
         changeLibrary(in: target) {
             library.open(section ?? library.lastSection, in: target, selection: selectedItemID(in: target))
         }
-        if !isSidebarVisible, !isSidebarPeeking { toggleSidebar() }
+        if !isSidebarVisible(in: target), !isSidebarPeeking(in: target) { toggleSidebar(in: target) }
     }
 
     func toggleLibrary(in window: SidebarWindowID?) {
@@ -50,7 +50,7 @@ extension BrowserViewModel {
         let before = Double(sidebarWidth(in: window))
         change()
         let after = Double(sidebarWidth(in: window))
-        guard isSidebarVisible, !isSidebarSliding, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+        guard isSidebarVisible(in: window), !isSidebarSliding(in: window), !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
               let growth = LibrarySidebarGrowth.start(from: before, to: after, current: libraryGrowth[window]) else {
             libraryGrowth[window] = nil
             return

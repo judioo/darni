@@ -9,6 +9,12 @@ extension BrowserViewModel {
 
     var isBoostEditorOpen: Bool { boostEditorDraft != nil }
 
+    /// The editor open on the tab `window` shows. A window draws this one:
+    /// `boostEditorDraft` is the key window's, and drew its drawer in every window.
+    func boostEditorDraft(in window: SidebarWindowID?) -> BoostEditorDraft? {
+        selectedTab(in: window).flatMap { boostEditorDraftByTab[$0.id] }
+    }
+
     func openBoostEditor(packageID: UUID, startPicker: Bool = false) {
         guard let tab = store.selectedTab else { return }
         guard let package = store.boostLibrary().package(id: packageID),

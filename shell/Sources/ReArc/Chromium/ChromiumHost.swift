@@ -587,7 +587,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         let spaceID = saved.flatMap { model.store.restoredSpaceID(saved: $0.spaceID, profileID: $0.profileID) }
         // Registered before the view exists, so its first frame shows its own space.
         if let spaceID { model.store.registerWindow(windowID, spaceID: spaceID) }
-        // A restored window keeps its sidebar mode; a new one takes the key window's.
+        // A restored window keeps its sidebar mode; a new one takes the key window's,
+        // and its sidebar shown or hidden as that window has it (⌘S is not saved).
         model.openSidebarMode(for: windowID, restoring: saved.map { $0.sidebarMode ?? .full })
         let hosting = NSHostingView(rootView: BrowserView(model: model, windowID: windowID, initialSpaceID: spaceID))
         // The window's limits are fixed: with the default sizing options every
@@ -1063,7 +1064,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                 tabID: tabID,
                 engineTabID: event.tabID,
                 windowIsFullscreen: window.styleMask.contains(.fullScreen) && wantsNativeFullscreen == nil,
-                origin: event.origin
+                origin: event.origin,
+                window: sidebarWindowID(of: window)
             )
             fullscreenWindow = window
             apply(steps, window: window, engine: engine)
@@ -1291,7 +1293,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
 
         let view = NSMenu(title: "View")
         // Arc's title flips with the sidebar; ReArc's mini sidebar sits beside it.
-        target.add([[ShellMenuItem("Hide Sidebar", "s", liveTitle: { model.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar" }) {
+        target.add([[ShellMenuItem("Hide Sidebar", "s", liveTitle: { model.sidebarMenuTitle }) {
             model.toggleSidebar()
         }] + ShellMenus.miniSidebar(model)], to: view)
         view.addItem(.separator())
