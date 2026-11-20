@@ -297,10 +297,10 @@ final class Wave30ShellTests: XCTestCase {
         model.windowBecameKey(second)
         model.focusLocation()
         XCTAssertTrue(model.showsCommandBar(in: second))
-        XCTAssertFalse(model.closeCommandBar(forClickIn: second))
-        XCTAssertTrue(model.closeCommandBar(forClickIn: first))
+        XCTAssertFalse(model.closeCommandBar(openedOutside: second))
+        XCTAssertTrue(model.closeCommandBar(openedOutside: first))
         XCTAssertFalse(model.isCommandBarPresented)
-        XCTAssertFalse(model.closeCommandBar(forClickIn: first), "no bar: a click is only a click")
+        XCTAssertFalse(model.closeCommandBar(openedOutside: first), "no bar: a click is only a click")
 
         // A window that closed is forgotten, and one that moved is found again.
         model.noteBrowserWindow(nil, id: second)

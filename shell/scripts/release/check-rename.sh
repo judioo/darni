@@ -6,6 +6,8 @@
 #   the name people see         CFBundleName, SUBundleName, each locale's CFBundleDisplayName
 #                               and the file name: Darni (Info.plist's own CFBundleDisplayName
 #                               is ReArc, the file name of updated copies, so macOS shows Darni)
+#   Spotlight's search words    MDItemKeywords "Darni, ReArc": a new download, Darni.app, is
+#                               found by ReArc too
 #   bundle id                   com.rearc.browser, and the helper and framework ids under it
 #                               (a new id is a new app to macOS, and Sparkle finds a renamed
 #                               app inside an update only by its bundle id)

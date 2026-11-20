@@ -158,14 +158,7 @@ final class ContentBlockingBlockedListTests: XCTestCase {
     // MARK: One site by the engine's list (security BL-02, consistency review 7)
 
     /// Chromium's answers for the names of these tests.
-    private let engineNames = SiteNames { host in
-        let suffixes = ["web.app", "edu.au", "co.uk", "com"]
-        if suffixes.contains(host) { return #"{"host":"\#(host)","registrable":false,"suffix":true}"# }
-        if host == "amazonaws.com" || host == "gov.example" { return #"{"host":"\#(host)","registrable":true,"suffix":false}"# }
-        guard let suffix = suffixes.first(where: { host.hasSuffix("." + $0) }) else { return nil }
-        let label = host.dropLast(suffix.count + 1).split(separator: ".").last ?? ""
-        return #"{"host":"\#(label).\#(suffix)","registrable":true,"suffix":false}"#
-    }
+    private let engineNames = SiteNames.standIn(suffixes: ["web.app", "edu.au", "co.uk", "com"], sites: ["amazonaws.com", "gov.example"])
 
     /// `isOneSite` wrapped the shell's guess, by which `web.app` and
     /// `edu.au` are one site each. It now asks the engine's list, as every

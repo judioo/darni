@@ -173,16 +173,7 @@ struct BrowserView: View {
         .background(
             WindowKeyObserver(
                 onBecameKey: { model.windowBecameKey(windowID) },
-                onClose: {
-                    if model.peekSession?.windowID == windowID { model.dismissPeek(animated: false) }
-                    model.store.unregisterWindow(windowID)
-                    model.pinnedSectionCollapse.forgetWindow(windowID)
-                    model.splitMaximize.forgetWindow(windowID)
-                    model.library.forgetWindow(windowID)
-                    model.libraryGrowth[windowID] = nil
-                    model.forgetSidebarMode(for: windowID)
-                    model.noteBrowserWindow(nil, id: windowID)
-                },
+                onClose: { model.forgetBrowserWindow(windowID) },
                 onWindow: { model.noteBrowserWindow($0, id: windowID) }
             )
             .frame(width: 0, height: 0)
