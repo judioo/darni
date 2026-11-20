@@ -258,6 +258,75 @@ final class Wave30ShellTests: XCTestCase {
         XCTAssertFalse(model.showsCommandBar(in: first))
     }
 
+    func testAClickInAnotherBrowserWindowClosesTheCommandBar() {
+        // Recording of build 1105: an empty ⌘T bar stayed open when the other
+        // window's page was clicked. The bar closed only when AppKit made the
+        // clicked window key, which it does not do for a click with ⌘ held.
+        let model = makeModel()
+        let first = SidebarWindowID(), second = SidebarWindowID()
+        model.store.registerWindow(first)
+        model.store.registerWindow(second)
+        model.windowBecameKey(second)
+        model.windowBecameKey(first)
+        let rect = NSRect(x: -30000, y: -30000, width: 400, height: 300)
+        let firstWindow = NSWindow(contentRect: rect, styleMask: .titled, backing: .buffered, defer: true)
+        let secondWindow = NSWindow(contentRect: rect, styleMask: .titled, backing: .buffered, defer: true)
+        let other = NSWindow(contentRect: rect, styleMask: .titled, backing: .buffered, defer: true)
+        for window in [firstWindow, secondWindow, other] { window.isReleasedWhenClosed = false }
+        model.noteBrowserWindow(firstWindow, id: first)
+        model.noteBrowserWindow(secondWindow, id: second)
+        XCTAssertEqual(model.sidebarWindowID(of: secondWindow), second)
+        XCTAssertNil(model.sidebarWindowID(of: other))
+
+        // Nothing typed, then some text: the click closes the bar either way.
+        for typed in ["", "darni"] {
+            model.newTab()
+            model.commandBarText = typed
+            model.handleCommandBarMouseDown(in: firstWindow)
+            XCTAssertTrue(model.showsCommandBar(in: first), "a click in the bar's own window is the bar's")
+            model.handleCommandBarMouseDown(in: other)
+            model.handleCommandBarMouseDown(in: nil)
+            XCTAssertTrue(model.isCommandBarPresented, "a window that is no browser window leaves it")
+            model.handleCommandBarMouseDown(in: secondWindow)
+            XCTAssertFalse(model.isCommandBarPresented, "typed '\(typed)': a click in the other window closes it")
+            XCTAssertEqual(model.commandBarText, "")
+            XCTAssertNil(model.commandBarWindowID)
+        }
+
+        // The other way round, with ⌘L.
+        model.windowBecameKey(second)
+        model.focusLocation()
+        XCTAssertTrue(model.showsCommandBar(in: second))
+        XCTAssertFalse(model.closeCommandBar(forClickIn: second))
+        XCTAssertTrue(model.closeCommandBar(forClickIn: first))
+        XCTAssertFalse(model.isCommandBarPresented)
+        XCTAssertFalse(model.closeCommandBar(forClickIn: first), "no bar: a click is only a click")
+
+        // A window that closed is forgotten, and one that moved is found again.
+        model.noteBrowserWindow(nil, id: second)
+        XCTAssertNil(model.sidebarWindowID(of: secondWindow))
+        model.noteBrowserWindow(other, id: first)
+        XCTAssertNil(model.sidebarWindowID(of: firstWindow))
+        XCTAssertEqual(model.sidebarWindowID(of: other), first)
+    }
+
+    func testCommandLOnTheWelcomePageStartsEmpty() throws {
+        // The welcome page is a file in the data folder: ⌘L starts as on a new tab.
+        let model = makeModel()
+        let welcome = model.store.addTab(kind: .today, title: WelcomePageAddress.title, url: WelcomePageAddress.fileURL())
+        model.store.selectTab(welcome.id)
+        model.focusLocation()
+        XCTAssertTrue(model.isCommandBarPresented)
+        XCTAssertEqual(model.commandBarText, "")
+        XCTAssertEqual(model.commandBarTargetID, welcome.id)
+        model.dismissCommandBar()
+
+        let file = model.store.addTab(kind: .today, title: "Notes", url: URL(fileURLWithPath: "/tmp/notes.html"))
+        model.store.selectTab(file.id)
+        model.focusLocation()
+        XCTAssertEqual(model.commandBarText, "file:///tmp/notes.html", "any other file keeps its address")
+    }
+
     func testCommandTThenEscapeLeavesNoTabAndCommandLToggles() {
         let model = makeModel()
         let page = model.store.addTab(kind: .today, title: "Page", url: URL(string: "https://page.test/")!)

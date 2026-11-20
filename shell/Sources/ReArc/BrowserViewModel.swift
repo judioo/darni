@@ -434,6 +434,9 @@ final class BrowserViewModel {
     /// the bar and mirrored its typing (owner's recording, 2026-11-19).
     /// nil when no browser window was key: the key one shows it then.
     var commandBarWindowID: SidebarWindowID?
+    /// Each browser window's NSWindow, as its `BrowserView` reports it, so a
+    /// click's window can be read as a sidebar window (`handleCommandBarMouseDown`).
+    @ObservationIgnored var browserWindowRefs: [BrowserWindowRef] = []
 
     /// Whether `window` draws the command bar: only the window it opened in.
     func showsCommandBar(in window: SidebarWindowID?) -> Bool {
@@ -1921,8 +1924,7 @@ final class BrowserViewModel {
             newTab()
             return
         }
-        let text = selected.url.absoluteString == "about:blank" ? "" : selected.url.absoluteString
-        openCommandBar(target: selected.id, text: text)
+        openCommandBar(target: selected.id, text: WelcomePageAddress.commandBarPrefill(for: selected.url))
     }
 
     func dismissCommandBar() {

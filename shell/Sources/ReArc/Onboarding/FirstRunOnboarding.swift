@@ -234,7 +234,7 @@ final class FirstRunOnboarding: OnboardingHost {
         // and the spaces past those stay as they came.
         model.openPageInNewTab(WelcomePage.write(name: result.name, colour: result.colour,
                                                  spaces: model.store.spaces.count, imported: outcome?.totals),
-                               title: "Welcome to Darni")
+                               title: WelcomePageAddress.title)
     }
 
     func revealBrowser(in frame: NSRect, below overlay: NSWindow) {

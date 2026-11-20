@@ -29,6 +29,42 @@ extension BrowserViewModel {
         loadSelectedIfNeeded()
     }
 
+    /// `BrowserView` tells which NSWindow it sits in (nil: it left it).
+    func noteBrowserWindow(_ window: NSWindow?, id: SidebarWindowID) {
+        browserWindowRefs.removeAll { $0.window == nil || $0.id == id }
+        if let window { browserWindowRefs.append(BrowserWindowRef(window: window, id: id)) }
+    }
+
+    /// The browser window an NSWindow is, if it is one.
+    func sidebarWindowID(of window: NSWindow?) -> SidebarWindowID? {
+        guard let window else { return nil }
+        return browserWindowRefs.first { $0.window === window }?.id
+    }
+
+    /// A click in browser window `window` while another one shows the bar
+    /// closes the bar. True when it did.
+    @discardableResult
+    func closeCommandBar(forClickIn window: SidebarWindowID) -> Bool {
+        guard isCommandBarPresented, let opened = commandBarWindowID, opened != window else { return false }
+        dismissCommandBar()
+        return true
+    }
+
+    /// The key monitor's part for a mouse-down (`installTabSwitcherMonitor`).
+    /// The bar used to close only when AppKit made the clicked window key
+    /// (`windowBecameKey`), and AppKit leaves a window where it is for a click
+    /// with ⌘ held: the bar stayed open over a window that was being used.
+    /// So the click itself closes the bar, and once it has been handled a
+    /// window AppKit did not bring forward is brought forward here.
+    func handleCommandBarMouseDown(in window: NSWindow?) {
+        guard isCommandBarPresented, let window, let id = sidebarWindowID(of: window),
+              closeCommandBar(forClickIn: id) else { return }
+        DispatchQueue.main.async { [weak window] in
+            guard let window, let app = NSApp, app.isActive, window.isVisible, !window.isKeyWindow else { return }
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
     func space(in window: SidebarWindowID?) -> Space {
         store.focusedSpace(in: window)
     }
@@ -66,18 +102,27 @@ extension BrowserViewModel {
     }
 }
 
+/// A browser window's NSWindow with its sidebar identity (`BrowserViewModel.browserWindowRefs`).
+struct BrowserWindowRef {
+    weak var window: NSWindow?
+    let id: SidebarWindowID
+}
+
 /// Reports when its window becomes key, stops being key, and closes.
 struct WindowKeyObserver: NSViewRepresentable {
     var onBecameKey: () -> Void
     var onClose: () -> Void
     /// Focus left the window (it stays open).
     var onResignKey: () -> Void = {}
+    /// The window the view is in now (nil: it left it).
+    var onWindow: (NSWindow?) -> Void = { _ in }
 
     func makeNSView(context: Context) -> ObservingView {
         let view = ObservingView()
         view.onBecameKey = onBecameKey
         view.onClose = onClose
         view.onResignKey = onResignKey
+        view.onWindow = onWindow
         return view
     }
 
@@ -85,18 +130,21 @@ struct WindowKeyObserver: NSViewRepresentable {
         nsView.onBecameKey = onBecameKey
         nsView.onClose = onClose
         nsView.onResignKey = onResignKey
+        nsView.onWindow = onWindow
     }
 
     final class ObservingView: NSView {
         var onBecameKey: (() -> Void)?
         var onClose: (() -> Void)?
         var onResignKey: (() -> Void)?
+        var onWindow: ((NSWindow?) -> Void)?
         private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
+            onWindow?(window)
             guard let window else { return }
             let center = NotificationCenter.default
             observers.append(center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak self] _ in

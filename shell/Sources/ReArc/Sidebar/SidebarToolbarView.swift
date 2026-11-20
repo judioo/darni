@@ -201,6 +201,7 @@ struct SidebarURLField: View {
     /// trusted-looking start in view.
     static func displayHost(_ url: URL) -> String? {
         if url.absoluteString == "about:blank" { return nil }
+        if WelcomePageAddress.matches(url) { return WelcomePageAddress.title }
         guard let host = url.host(), !host.isEmpty else { return url.absoluteString }
         return PageOrigin.shortenedHost(host.hasPrefix("www.") ? String(host.dropFirst(4)) : host)
     }

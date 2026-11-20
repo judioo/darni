@@ -131,6 +131,7 @@ extension BrowserViewModel {
 
     /// One app-wide monitor sees Ctrl+Tab before the page or a menu does,
     /// and Control's release ends the switcher. It also notes each click's keys,
+    /// closes the command bar for a click in another browser window,
     /// takes Esc for the downloads tray and the Library and routes shortcuts
     /// pressed while a page has focus (`ShortcutRouter`).
     func installTabSwitcherMonitor() {
@@ -143,6 +144,8 @@ extension BrowserViewModel {
             if event.type == .leftMouseDown {
                 // ⌥⌘-click routing on Chromium reads this (BrowserViewModel+LittleArcChrome).
                 self.noteMouseDown(modifiers: event.modifierFlags)
+                // A click in another browser window closes the bar and brings that window forward.
+                self.handleCommandBarMouseDown(in: event.window)
                 return event
             }
             if self.handleFullscreenEscape(event) { return nil }
