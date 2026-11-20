@@ -240,8 +240,16 @@ extension SidebarStore {
     public func profileMoveDestinations(from spaceID: Space.ID) -> [(profile: Profile, spaces: [Space])] {
         guard let source = space(withID: spaceID)?.profileID else { return [] }
         let owner = owningProfileID(of: source)
-        return listedProfiles.filter { $0.id != owner }.compactMap { profile in
-            let spaces = spaces(listedIn: profile.id)
+        return listedSpacesByProfile().filter { $0.profile.id != owner }
+    }
+
+    /// Every profile with the spaces its strip lists (its containers' too), in
+    /// picker order, without `excluded`. A profile left with no space is left
+    /// out. What a menu of spaces by profile is made from: Move to Profile,
+    /// and Little Darni's Open in (`LittleArcOpenInMenu`).
+    public func listedSpacesByProfile(without excluded: Space.ID? = nil) -> [(profile: Profile, spaces: [Space])] {
+        listedProfiles.compactMap { profile in
+            let spaces = spaces(listedIn: profile.id).filter { $0.id != excluded }
             return spaces.isEmpty ? nil : (profile, spaces)
         }
     }

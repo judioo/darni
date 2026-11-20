@@ -60,14 +60,14 @@ public enum LittleArcOpenInMenu {
         guard let window = store.littleArcWindow(withID: windowID) else { return [] }
         let target = store.littleArcTargetSpace(for: windowID)?.id
         let own = store.owningProfileID(of: window.profileID)
-        let listed = store.listedProfiles
-        let sections: [(profile: Profile, entries: [Entry])] = (listed.filter { $0.id == own } + listed.filter { $0.id != own })
-            .compactMap { profile in
-                let entries = store.spaces(listedIn: profile.id).filter { $0.id != target }.map { space in
+        // The list Move to Profile is made from, with the window's own profile first.
+        let listed = store.listedSpacesByProfile(without: target)
+        let sections: [(profile: Profile, entries: [Entry])] = (listed.filter { $0.profile.id == own } + listed.filter { $0.profile.id != own })
+            .map { group in
+                (group.profile, group.spaces.map { space in
                     Entry(spaceID: space.id, title: store.menuTitle(forSpace: space), theme: space.theme,
                           kind: kind(of: space, for: window))
-                }
-                return entries.isEmpty ? nil : (profile, entries)
+                })
             }
         let named = sections.count > 1 || sections.first.map { $0.profile.id != own } ?? false
         return sections.map {
