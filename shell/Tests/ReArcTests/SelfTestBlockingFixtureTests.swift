@@ -190,6 +190,44 @@ final class SelfTestBlockingFixtureTests: XCTestCase {
         XCTAssertNil(SelfTestBlockingFixture.scriptRequest("/1pixel.php?run=4"), "and the first fixture's counts are its own")
     }
 
+    // MARK: The frame's page
+
+    /// The lists in the repository block the tracker's host for every asker,
+    /// the host itself included: that is what left an allowed site blocked
+    /// in its own frame. A list update that narrows the rule to third
+    /// parties fails here, before the self-test's frame step does.
+    func testTheFramePagesHostIsBlockedEvenWhenItAsksItself() throws {
+        XCTAssertEqual(SelfTestBlockingFixture.frameProblems(in: try builtInBundle()), [])
+        let tracker = SelfTestBlockingFixture.trackerHost
+        let thirdPartyOnly = try bundle([("privacy", 1, "[\(hostRule(tracker, extra: #","domainType":"thirdParty""#))]"), ("ads", 2, "[\(hostRule(tracker))]")])
+        XCTAssertEqual(SelfTestBlockingFixture.frameProblems(in: thirdPartyOnly),
+                       ["no list of level 1 in bundle 202611180900 blocks \(tracker) for every asker, the host itself included"])
+        XCTAssertEqual(SelfTestBlockingFixture.frameProblems(in: try bundle([("privacy", 1, "[\(hostRule(tracker))]")])), [])
+    }
+
+    func testTheFramePageEmbedsTheHostAndTheFrameAsksItsOwnHost() {
+        typealias Verdict = SelfTestBlockingFixture.FrameVerdict
+        let page = SelfTestBlockingFixture.framePageHTML, inner = SelfTestBlockingFixture.frameInnerHTML
+        XCTAssertTrue(page.contains("frame.src = 'http://\(SelfTestBlockingFixture.trackerHost):' + location.port + '/blocking/frame/inner?run=' + run;"))
+        XCTAssertTrue(inner.contains("script.src = '/blocking/tracker.js?run=' + run;"), "a path alone: the frame's own host")
+        XCTAssertFalse(inner.contains("http://"), "the frame names no other host")
+        XCTAssertEqual(SelfTestBlockingFixture.framePageURL(base: "http://127.0.0.1:5123", run: 7).absoluteString, "http://127.0.0.1:5123/blocking/frame?run=7")
+        // The server counts the frame's script as the tracker's request of that load, and neither page as a request.
+        XCTAssertTrue(SelfTestBlockingFixture.scriptRequest("/blocking/tracker.js?run=7").map { $0.isTracker && $0.run == 7 } ?? false)
+        XCTAssertNil(SelfTestBlockingFixture.scriptRequest("/blocking/frame?run=7"))
+        XCTAssertNil(SelfTestBlockingFixture.scriptRequest("/blocking/frame/inner?run=7"))
+        XCTAssertEqual(Verdict(title: "blocked-frame:run=7:frame=blocked", run: 7), .frameBlocked)
+        XCTAssertEqual(Verdict(title: "blocked-frame:run=7:inner=blocked", run: 7), .innerBlocked)
+        XCTAssertEqual(Verdict(title: "blocked-frame:run=7:inner=loaded", run: 7), .innerLoaded)
+        for title in [nil, "", "blocked-frame-pending", "blocked-frame:run=6:inner=loaded", "blocked-frame:run=7:inner=maybe",
+                      "blocked-frame:run=7", "blocked-list:run=7:quiet", "blocked-frame:run=77:inner=loaded"] {
+            XCTAssertNil(Verdict(title: title, run: 7), title ?? "nil")
+        }
+        for message in ["rearc-frame-script-loaded", "rearc-frame-script-blocked"] {
+            XCTAssertTrue(page.contains("'\(message)'") && inner.contains("'\(message)'"), message)
+        }
+    }
+
     /// More sites than a list holds, each a site of its own to the engine,
     /// under a name that is whole in no file: the page joins it from two
     /// pieces, and the self-test looks for it on disk afterwards.

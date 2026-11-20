@@ -391,6 +391,9 @@ final class LoopbackFixtureServer {
         SelfTestBlockingFixture.pagePath: SelfTestBlockingFixture.pageHTML,
         // The blocked list: asks names that are not one site, or more sites than a list holds, for blocked paths.
         SelfTestBlockingFixture.listPagePath: SelfTestBlockingFixture.listPageHTML,
+        // A frame on a blocked host that asks its own host: what Allow must cover.
+        SelfTestBlockingFixture.framePagePath: SelfTestBlockingFixture.framePageHTML,
+        SelfTestBlockingFixture.frameInnerPath: SelfTestBlockingFixture.frameInnerHTML,
     ]
 
     // MARK: The blocking fixture's two scripts

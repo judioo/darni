@@ -314,6 +314,99 @@ enum SelfTestBlockingFixture {
         return problems
     }
 
+    // MARK: The frame's page
+
+    /// A third page, for a site that is allowed and asks from a frame of its
+    /// own (seen in Darni 2026.1120.1105 on a real page: allowed, and still
+    /// listed as blocked).
+    ///
+    /// From 127.0.0.1 the page embeds a frame whose document is on the
+    /// tracker's host, and that document asks its own host for the tracker's
+    /// script. Peter Lowe's list blocks the host for every asker, the host
+    /// itself included (`frameProblems`), so:
+    ///
+    /// - with nothing allowed, the frame itself is blocked (`frame=blocked`).
+    /// - with the host allowed on 127.0.0.1 by a rule that covers only what
+    ///   the page's own document asks, the frame loads and its script is
+    ///   blocked (`inner=blocked`): the host is allowed and still in the list.
+    /// - with the rule Allow writes now, the script loads (`inner=loaded`)
+    ///   and the fixture server is asked for it.
+    static let framePagePath = "/blocking/frame"
+    static let frameInnerPath = "/blocking/frame/inner"
+
+    static func framePageURL(base: String, run: Int) -> URL {
+        URL(string: "\(base)\(framePagePath)?run=\(run)")!
+    }
+
+    /// Its title becomes `blocked-frame:run=<n>:<how>`. A blocked frame
+    /// holds an error page, which says nothing, so the page takes silence
+    /// for it: no word from the frame a while after it loaded.
+    static let framePageHTML = """
+    <!doctype html><html><head><title>blocked-frame-pending</title></head>
+    <body style="font:24px -apple-system"><h1>ReArc selftest blocked frame page</h1>
+    <iframe id="frame" width="300" height="60"></iframe><script>
+    var run = new URLSearchParams(location.search).get('run') || '0', settled = false;
+    function settle(how) {
+      if (settled) return;
+      settled = true;
+      document.title = 'blocked-frame:run=' + run + ':' + how;
+    }
+    addEventListener('message', function (event) {
+      if (event.data === 'rearc-frame-script-loaded') settle('inner=loaded');
+      if (event.data === 'rearc-frame-script-blocked') settle('inner=blocked');
+    });
+    var frame = document.getElementById('frame');
+    frame.onload = function () { setTimeout(function () { settle('frame=blocked'); }, 1500); };
+    setTimeout(function () { settle('frame=blocked'); }, 6000);
+    frame.src = 'http://\(trackerHost):' + location.port + '\(frameInnerPath)?run=' + run;
+    </script></body></html>
+    """
+
+    /// The frame's document, on the tracker's host: it asks its own host.
+    static let frameInnerHTML = """
+    <!doctype html><html><head><title>blocked-frame-inner</title></head><body><script>
+    var run = new URLSearchParams(location.search).get('run') || '0';
+    var script = document.createElement('script');
+    script.onload = function () { parent.postMessage('rearc-frame-script-loaded', '*'); };
+    script.onerror = function () { parent.postMessage('rearc-frame-script-blocked', '*'); };
+    script.src = '\(trackerScriptPath)?run=' + run;
+    document.head.appendChild(script);
+    </script></body></html>
+    """
+
+    /// What the frame's page saw in one load.
+    enum FrameVerdict: String, Equatable {
+        /// The frame's document never spoke: its own load was blocked.
+        case frameBlocked = "frame=blocked"
+        /// The frame loaded and its request to its own host was blocked.
+        case innerBlocked = "inner=blocked"
+        /// The frame loaded and so did its script.
+        case innerLoaded = "inner=loaded"
+
+        /// From the page's title, for load `run`; nil while the page is still waiting.
+        init?(title: String?, run: Int) {
+            guard let parts = title?.split(separator: ":"), parts.count == 3, parts[0] == "blocked-frame",
+                  parts[1] == "run=\(run)" else { return nil }
+            self.init(rawValue: String(parts[2]))
+        }
+    }
+
+    /// Why the frame's page does not fit `bundle`; empty when it does: a
+    /// list of Trackers only must block the tracker's host with no other
+    /// condition at all, so also when the host asks itself. (EasyPrivacy's
+    /// rule for it is for third parties only.)
+    static func frameProblems(in bundle: VerifiedBlocklist) -> [String] {
+        let blocksItself = bundle.manifest.lists.contains { list in
+            list.level == 1 && rules(of: list, in: bundle).contains { rule in
+                guard (rule["action"] as? [String: Any])?["type"] as? String == "block",
+                      let condition = rule["condition"] as? [String: Any], condition.count == 1,
+                      let domains = condition["requestDomains"] as? [String] else { return false }
+                return domains.contains { covers($0, trackerHost) }
+            }
+        }
+        return blocksItself ? [] : ["no list of level 1 in bundle \(bundle.version) blocks \(trackerHost) for every asker, the host itself included"]
+    }
+
     // MARK: The cold launch
 
     /// `--rearc-selftest` with this flag is the self-test's cold launch for

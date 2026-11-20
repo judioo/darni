@@ -3800,6 +3800,7 @@ extension ChromiumSelfTest {
             throw Failure(description: "blocked list: no blocklist bundle verified")
         }
         let unfit = SelfTestBlockingFixture.problems(in: bundle) + SelfTestBlockingFixture.listProblems(in: bundle)
+            + SelfTestBlockingFixture.frameProblems(in: bundle)
         try check(unfit.isEmpty, "the blocked list's pages do not fit the lists (\(unfit.joined(separator: "; "))): "
             + "choose other hosts or paths in SelfTestBlockingFixture")
         typealias Entry = ContentBlockingBlockedList.Entry
@@ -3900,6 +3901,63 @@ extension ChromiumSelfTest {
                 + "the page's own site (it is the own rules' text in Settings); the ad's request "
                 + "then reached the fixture server (load \(allowedLoads)) and only \(tracker) was counted and listed; removed, both are "
                 + "blocked and listed again (load \(againLoads))")
+
+            // 3b. An allowed site also gets what its own frame asks for (Darni 2026.1120.1105:
+            // a site allowed on a real page stayed in the list with a count).
+            typealias FrameVerdict = SelfTestBlockingFixture.FrameVerdict
+            /// Loads the frame's page until it shows `wanted`; returns the loads it took and the last load's number.
+            @MainActor func frameLoads(until wanted: FrameVerdict, _ what: String, timeout: TimeInterval = 40) async throws -> (loads: Int, run: Int) {
+                let deadline = Date().addingTimeInterval(timeout)
+                var loads = 0
+                while true {
+                    blockingRun += 1
+                    let run = blockingRun
+                    loadShellTab(model, tab, engine, SelfTestBlockingFixture.framePageURL(base: serverBase, run: run))
+                    try await wait("the frame page's load \(run) (title '\(engine.pageTitle ?? "nil")')", timeout: 20) {
+                        FrameVerdict(title: engine.pageTitle, run: run) != nil
+                    }
+                    loads += 1
+                    let verdict = FrameVerdict(title: engine.pageTitle, run: run)
+                    // The server's word against the page's: the frame's script arrives there only when it loaded.
+                    let fetched = LoopbackFixtureServer.blockingFetches(run: run).tracker
+                    try check((verdict == .innerLoaded) == (fetched > 0),
+                              "frame page load \(run): the page saw \(verdict?.rawValue ?? "nothing"), and the server was asked for the frame's script \(fetched) time(s)")
+                    if verdict == wanted { return (loads, run) }
+                    guard Date() < deadline else {
+                        throw Failure(description: "blocked list frame \(what): after \(loads) load(s) in \(Int(timeout)) s the page still has "
+                            + "\(verdict?.rawValue ?? "nothing"), not \(wanted.rawValue); the list is \(describe(list()))")
+                    }
+                    try await Task.sleep(for: .milliseconds(250))
+                }
+            }
+            let trackerLine = [both[0]]
+            _ = try await frameLoads(until: .frameBlocked, "with nothing allowed")
+            try await expectList(trackerLine, "the frame's page with nothing allowed")
+            // The state that was seen: the frame is let in, and what it asks of its own host is not. An exception
+            // for third-party requests alone leaves exactly that, by either of its two rules.
+            model.setContentBlockingOwnRules("@@||\(tracker)^$domain=\(pageSite),third-party\n", for: profileID)
+            _ = try await frameLoads(until: .innerBlocked, "with the frame let in and its own requests not")
+            try await expectList(trackerLine, "the frame's page with the frame let in and its own requests not")
+            model.setContentBlockingOwnRules("", for: profileID)
+            _ = try await frameLoads(until: .frameBlocked, "with that rule gone")
+            // Allow, as the list's command writes it.
+            model.setBlockedHost(tracker, allowed: true, on: pageSite, of: engine)
+            guard let trackerRule = ContentBlockingSiteAllow.rule(host: tracker, site: pageSite) else {
+                throw Failure(description: "no Allow rule can be written for \(tracker) on \(pageSite)")
+            }
+            try check(settings().ownRules == trackerRule + "\n", "Allow wrote '\(settings().ownRules)' into the own rules, not the one line '\(trackerRule)'")
+            let frameAllowed = try await frameLoads(until: .innerLoaded, "with \(tracker) allowed")
+            try await expectList([], "the frame's page with \(tracker) allowed")
+            try check(list()?.stillBlockedNote(allowed: model.allowedBlockedHosts(for: engine, pageSite: pageSite)) == nil,
+                      "with \(tracker) allowed and nothing blocked the list has a note")
+            model.setBlockedHost(tracker, allowed: false, on: pageSite, of: engine)
+            try check(settings().ownRules.isEmpty, "Remove left '\(settings().ownRules)' in the own rules")
+            _ = try await frameLoads(until: .frameBlocked, "with the allow removed")
+            try await expectList(trackerLine, "the frame's page with the allow removed")
+            log("PASS blocked list allow in a frame: a frame on \(tracker) that asks its own host is blocked with nothing allowed; with an "
+                + "exception for third-party requests alone the frame loads and its own request stays blocked and listed; with '\(trackerRule)', "
+                + "the line Allow writes, the frame's request reached the fixture server (load \(frameAllowed.loads)) and nothing was counted "
+                + "or listed; removed, the frame is blocked and listed again")
 
             // 4. Names that are not one site: listed, and never allowed.
             _ = try await loadList(.sites)

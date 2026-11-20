@@ -24,6 +24,18 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- "Allow on This Site" in the list of what was blocked now lets the site through everywhere on
+  the page. Until now it covered what the page itself asked for, and not what the allowed site
+  asked for from a frame of its own. An ad or a video player you had allowed could then stay
+  blocked, and the site stood under "Allowed on this site" and in the blocked list at once.
+  Sites you allowed before are covered too. Nothing you have to do.
+- A click on Allow in that list works at once. A click that came very soon after the pointer
+  reached the line could do nothing.
+- When a site you allowed is still blocked on a page, the list says why: one of your own rules
+  blocks it, or the page has to be reloaded.
+- Settings counts your own blocking rules by the lines you wrote.
+
 ## Darni 2026.1120.1105 — 2026-11-20
 
 **Fixes**

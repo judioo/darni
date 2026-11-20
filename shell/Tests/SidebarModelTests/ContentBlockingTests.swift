@@ -534,6 +534,99 @@ final class ContentBlockingRuleConverterTests: XCTestCase {
         XCTAssertEqual(try one("@@||good.test^$important").priority, 2, "important means nothing on an exception")
     }
 
+    // MARK: An exception for a site
+
+    /// "On news.test, let ads.test through" is two rules: what a news.test
+    /// document asks, and what any frame asks in a page of news.test. With
+    /// the first alone a third party that was let in stayed blocked when it
+    /// asked its own host from its own frame (Darni 2026.1120.1105).
+    func testAnExceptionForASiteAlsoCoversWhatAFrameAsksInThatSitesPage() {
+        let conversion = ContentBlockingRuleConverter.convert("@@||ads.test^$domain=news.test")
+        XCTAssertEqual(conversion.dropped, [])
+        XCTAssertEqual(conversion.rules, [
+            ContentBlockingDNRRule(id: 1, priority: 2, action: .init(type: "allow"),
+                                   condition: .init(urlFilter: "||ads.test^", initiatorDomains: ["news.test"])),
+            ContentBlockingDNRRule(id: 2, priority: 2, action: .init(type: "allow"),
+                                   condition: .init(urlFilter: "||ads.test^", topDomains: ["news.test"])),
+        ])
+        XCTAssertEqual(conversion.json,
+                       #"[{"action":{"type":"allow"},"condition":{"initiatorDomains":["news.test"],"urlFilter":"||ads.test^"},"id":1,"priority":2},"#
+                        + #"{"action":{"type":"allow"},"condition":{"topDomains":["news.test"],"urlFilter":"||ads.test^"},"id":2,"priority":2}]"#)
+        XCTAssertEqual(conversion.filters, 1)
+        XCTAssertEqual(conversion.summary, "1 rule", "the person typed one line")
+    }
+
+    /// The second rule is never wider than the filter: what it excludes
+    /// stays out as a page and as a frame, and its party and types stay.
+    func testThePageRuleKeepsWhatTheFilterExcludesAndItsOtherConditions() throws {
+        let conversion = ContentBlockingRuleConverter.convert("@@||ads.test^$domain=news.test|~sport.news.test|blog.test,third-party,script,match-case")
+        XCTAssertEqual(conversion.dropped, [])
+        XCTAssertEqual(conversion.rules.count, 2)
+        let first = conversion.rules[0].condition, second = conversion.rules[1].condition
+        XCTAssertEqual(first, .init(urlFilter: "||ads.test^", isUrlFilterCaseSensitive: true, domainType: "thirdParty",
+                                    initiatorDomains: ["news.test", "blog.test"], excludedInitiatorDomains: ["sport.news.test"],
+                                    resourceTypes: ["script"]))
+        XCTAssertEqual(second, .init(urlFilter: "||ads.test^", isUrlFilterCaseSensitive: true, domainType: "thirdParty",
+                                     excludedInitiatorDomains: ["sport.news.test"], topDomains: ["news.test", "blog.test"],
+                                     excludedTopDomains: ["sport.news.test"], resourceTypes: ["script"]))
+        XCTAssertEqual(conversion.rules.map(\.action.type), ["allow", "allow"])
+        XCTAssertEqual(conversion.rules.map(\.priority), [2, 2])
+    }
+
+    /// Only an exception that names sites gets one. A block keeps the
+    /// filter's own meaning: widening it would block more than was typed.
+    func testOnlyAnExceptionThatNamesSitesGetsAPageRule() {
+        for filter in ["||ads.test^$domain=news.test", "||ads.test^$important,domain=news.test", "@@||good.test^", "@@||good.test^$script",
+                       "@@||good.test^$domain=~news.test", "@@||news.test^$document,domain=news.test", "0.0.0.0 ads.test"] {
+            let conversion = ContentBlockingRuleConverter.convert(filter)
+            XCTAssertEqual(conversion.dropped, [], filter)
+            XCTAssertEqual(conversion.rules.count, 1, filter)
+            XCTAssertNil(conversion.rules.first?.condition.topDomains, filter)
+            XCTAssertNil(conversion.rules.first?.condition.excludedTopDomains, filter)
+        }
+        let rule = ContentBlockingDNRRule(id: 7, priority: 2, action: .init(type: "allow"), condition: .init(urlFilter: "||a.test^", initiatorDomains: []))
+        XCTAssertNil(ContentBlockingRuleConverter.pageRule(of: rule), "DNR refuses an empty list")
+    }
+
+    /// Every filter's own rule comes first, so the rules of a text that
+    /// fitted before are all still there, in the same places. The page
+    /// rules take the room that is left, in the text's order.
+    func testPageRulesComeLastAndNeverPushAFilterOut() {
+        func text(blocks: Int) -> String {
+            (["@@||a.test^$domain=n.test"] + (0..<blocks).map { "||h\($0).test^" } + ["@@||b.test^$domain=n.test"]).joined(separator: "\n")
+        }
+        let full = ContentBlockingRuleConverter.convert(text(blocks: 4998))
+        XCTAssertEqual(full.dropped, [])
+        XCTAssertEqual(full.rules.count, 5000)
+        XCTAssertEqual(full.filters, 5000)
+        XCTAssertTrue(full.rules.allSatisfy { $0.condition.topDomains == nil }, "no room: each exception works as it did before")
+        XCTAssertEqual(full.rules.map(\.id), Array(1...5000))
+        XCTAssertEqual(full.summary, "5000 rules")
+
+        let oneLeft = ContentBlockingRuleConverter.convert(text(blocks: 4997))
+        XCTAssertEqual(oneLeft.dropped, [])
+        XCTAssertEqual(oneLeft.filters, 4999)
+        XCTAssertEqual(oneLeft.rules.count, 5000)
+        XCTAssertEqual(Array(oneLeft.rules.prefix(4999)), Array(full.rules.prefix(4998)) + [full.rules[4999]].map {
+            var rule = $0
+            rule.id = 4999
+            return rule
+        }, "the filters' own rules, as without page rules")
+        XCTAssertEqual(oneLeft.rules.last, ContentBlockingDNRRule(id: 5000, priority: 2, action: .init(type: "allow"),
+                                                                 condition: .init(urlFilter: "||a.test^", topDomains: ["n.test"])),
+                       "the first exception's, in the text's order")
+
+        let small = ContentBlockingRuleConverter.convert(text(blocks: 2))
+        XCTAssertEqual(small.rules.map(\.condition.urlFilter), ["||a.test^", "||h0.test^", "||h1.test^", "||b.test^", "||a.test^", "||b.test^"])
+        XCTAssertEqual(small.rules.map(\.id), Array(1...6))
+        XCTAssertEqual(small.summary, "4 rules")
+        // A filter past the limit is dropped whole, with no page rule left behind.
+        let over = ContentBlockingRuleConverter.convert((0..<5000).map { "||h\($0).test^" }.joined(separator: "\n") + "\n@@||a.test^$domain=n.test")
+        XCTAssertEqual(over.dropped.map(\.reason), [.overLimit])
+        XCTAssertEqual(over.rules.count, 5000)
+        XCTAssertTrue(over.rules.allSatisfy { $0.action.type == "block" })
+    }
+
     func testWhatDNRCannotExpressIsDroppedByLineAndCounted() {
         let text = """
         ! a comment
