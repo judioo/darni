@@ -310,16 +310,12 @@ struct CommandBarOverlay: View {
         return window.contentView.flatMap(search)
     }
 
-    /// On appear the field can be outside the window still, and a focused page
-    /// (⌘L, ⌘T over web content) then keeps the keyboard: ask again while the
-    /// page holds it. It never runs while the field has the keyboard, so typing
-    /// in the field is never interrupted.
-    private func reclaimFocusFromPage(attempts: Int = 5) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-            guard attempts > 0, ShortcutRouter.isWebContent(NSApp.keyWindow?.firstResponder) else { return }
+    /// A focused page (⌘L, ⌘T over web content) can keep the keyboard from
+    /// the field as it appears: ask again while the page holds it.
+    private func reclaimFocusFromPage() {
+        ShortcutRouter.reclaimFocusFromPage {
             isFieldFocused = false
             DispatchQueue.main.async { isFieldFocused = true }
-            reclaimFocusFromPage(attempts: attempts - 1)
         }
     }
 
