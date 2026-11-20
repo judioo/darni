@@ -40,12 +40,31 @@ extension BrowserViewModel {
     /// The Little Arc's profile menu: the page reloads with that profile's storage.
     func changeLittleArcProfile(_ id: LittleArcWindow.ID, to profileID: Profile.ID) {
         guard let record = store.littleArcWindow(withID: id), store.setLittleArcProfile(id, to: profileID) else { return }
-        let current = engineHost.existingLittleArcEngine(id, profileID: record.profileID)?.currentURL
+        let current = liveLittleArcURL(id, profileID: record.profileID)
         engineHost.removeLittleArc(id, profileID: record.profileID)
-        if let current, current.absoluteString != "about:blank" {
-            store.updateLittleArcWindow(id: id, title: nil, url: current)
-        }
+        if let current { store.updateLittleArcWindow(id: id, title: nil, url: current) }
         loadLittleArcIfNeeded(id)
+    }
+
+    /// The address the window shows now, when it shows a page: its record can
+    /// be a navigation behind. Nil for a blank window and for one with no engine.
+    private func liveLittleArcURL(_ id: LittleArcWindow.ID, profileID: Profile.ID) -> URL? {
+        guard let url = engineHost.existingLittleArcEngine(id, profileID: profileID)?.currentURL,
+              url.absoluteString != "about:blank" else { return nil }
+        return url
+    }
+
+    /// The window's page lives on in a browser window, as a tab or a split's
+    /// pane: the window's engine goes, the window is no longer the focused or
+    /// key Little Darni, the browser window loads what it now shows and comes
+    /// forward. Without that last step AppKit keys whichever window is next
+    /// when the Little Darni closes.
+    private func littleArcWindowHandedOver(_ id: LittleArcWindow.ID, profileID: Profile.ID, to target: SidebarWindowID?) {
+        engineHost.removeLittleArc(id, profileID: profileID)
+        if focusedLittleArcID == id { focusedLittleArcID = nil }
+        if keyLittleArcID == id { keyLittleArcID = nil }
+        loadSelectedIfNeeded()
+        if let target { windowPresenter?.focusBrowserWindow(target) }
     }
 
     /// The opt-in system-wide ⌥⌘N.
@@ -139,17 +158,12 @@ extension BrowserViewModel {
         guard let record = store.littleArcWindow(withID: id) else { return }
         // The last focused browser window: Little Arc never becomes it.
         let target = store.keyWindowID
-        // The address as the window shows it, as its profile menu and split button take it.
-        if let current = engineHost.existingLittleArcEngine(id, profileID: record.profileID)?.currentURL,
-           current.absoluteString != "about:blank" {
+        // The address as the window shows it, as its profile menu takes it.
+        if let current = liveLittleArcURL(id, profileID: record.profileID) {
             store.updateLittleArcWindow(id: id, title: nil, url: current)
         }
         guard store.reopenLittleArcAsTab(id: id, in: spaceID) != nil else { return }
-        engineHost.removeLittleArc(id, profileID: record.profileID)
-        if focusedLittleArcID == id { focusedLittleArcID = nil }
-        if keyLittleArcID == id { keyLittleArcID = nil }
-        loadSelectedIfNeeded()
-        if let target { windowPresenter?.focusBrowserWindow(target) }
+        littleArcWindowHandedOver(id, profileID: record.profileID, to: target)
     }
 
     func canSplitLittleArcWindow(_ id: LittleArcWindow.ID) -> Bool {
@@ -170,12 +184,8 @@ extension BrowserViewModel {
             store.updateLittleArcWindow(id: id, title: engine.pageTitle.flatMap { $0.isEmpty ? nil : $0 }, url: engine.currentURL)
         }
         guard store.splitLittleArcToCurrentTab(id: id) != nil else { return false }
-        engineHost.removeLittleArc(id, profileID: record.profileID)
-        if focusedLittleArcID == id { focusedLittleArcID = nil }
-        if keyLittleArcID == id { keyLittleArcID = nil }
         closeLibrary(in: target)
-        loadSelectedIfNeeded()
-        windowPresenter?.focusBrowserWindow(target)
+        littleArcWindowHandedOver(id, profileID: record.profileID, to: target)
         windowPresenter?.dismissLittleArcWindow(id)
         return true
     }
