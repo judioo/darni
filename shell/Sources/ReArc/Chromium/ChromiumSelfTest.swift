@@ -1089,15 +1089,17 @@ final class ChromiumSelfTest {
         try check(leases == 1, "\(label): tab \(engine.tabID) holds \(leases) live attachments")
     }
 
-    /// Little Darni's Open in ⌄ across profiles (owner report 2026-11-20): a
-    /// window in a profile with one space, while another profile has several.
-    /// The menu offers the other profile's spaces, and choosing one asks
-    /// first (OI-01): Cancel keeps the window, an address that is not a web
-    /// address is refused (OI-02), and Yes loads the address afresh in a new
-    /// tab of that profile. The window's page is not moved: another engine
-    /// tab, another engine profile, and a cookie set in the window is not
-    /// there (S-01). The question is answered through the model, as the
-    /// alert's buttons answer it.
+    /// Little Darni's Open in across profiles (owner reports 2026-11-20): a
+    /// window in a profile with one space, while the browser window is on a
+    /// profile with several. The main button names the browser window's
+    /// space, in the other profile, and follows it when it changes space. The
+    /// picker lists every space, the window's own first. The main button, ⌘O
+    /// and a row of another profile all ask first (OI-01): Cancel keeps the
+    /// window, an address that is not a web address is refused (OI-02), and
+    /// Yes loads the address afresh in a new tab of that profile. The
+    /// window's page is not moved: another engine tab, another engine
+    /// profile, and a cookie set in the window is not there (S-01). The
+    /// question is answered through the model, as the alert's buttons answer it.
     @MainActor
     private func littleArcOpenInOtherProfileChecks(model: BrowserViewModel, shell: ChromiumShell, store: SidebarStore,
                                                    base: String) async throws {
@@ -1118,18 +1120,48 @@ final class ChromiumSelfTest {
             little.attachmentID != nil && little.pageTitle == Self.titleA && !little.isLoading
         }
         let littleTab = little.tabID, littleProfile = little.engineProfileID
+        let homeTabs = store.displayTabs(in: home.id).map(\.id)
         _ = try await little.evaluate("(document.cookie = 'rearc_open_in=solo; path=/; max-age=600', document.cookie)", in: .page)
 
-        // The menu: the window's profile has only the target, so every entry is another profile's.
-        try check(store.littleArcTargetSpace(for: record.id)?.id == soloSpace.id,
-                  "open in: target \(store.littleArcTargetSpace(for: record.id)?.name ?? "nil"), expected the window's own space")
+        // The target is the browser window's space, in the other profile, and it follows that
+        // window when it changes space, into the window's own profile and back.
+        try check(store.littleArcTargetSpace(for: record.id)?.id == home.id,
+                  "open in: target \(store.littleArcTargetSpace(for: record.id)?.name ?? "nil"), expected the browser window's space")
+        store.selectSpace(soloSpace.id)
+        try check(store.littleArcTargetSpace(for: record.id)?.id == soloSpace.id
+                  && LittleArcOpenInMenu.choice(store: store, windowID: record.id, spaceID: soloSpace.id, url: address) == .move,
+                  "open in: the target did not follow the browser window to the window's own profile")
+        store.selectSpace(second.id)
+        try check(store.littleArcTargetSpace(for: record.id)?.id == second.id, "open in: the target did not follow the browser window's space")
+        store.selectSpace(home.id)
+        try check(store.littleArcTargetSpace(for: record.id)?.id == home.id, "open in: the target did not come back with the browser window")
+
+        // The picker: the window's own space first, then every space of the other profile.
         let sections = LittleArcOpenInMenu.sections(store: store, windowID: record.id)
         let entries = sections.flatMap(\.entries)
         let homeOwner = store.owningProfileID(of: home.profileID)
-        try check(sections.map(\.profileID) == [homeOwner] && sections.first?.header != nil
+        try check(sections.map(\.profileID) == [solo.id, homeOwner] && sections.allSatisfy { $0.header != nil }
+                  && sections.first?.entries.map(\.spaceID) == [soloSpace.id] && sections.first?.entries.first?.kind == .move
                   && entries.contains { $0.spaceID == home.id } && entries.contains { $0.spaceID == second.id }
-                  && !entries.contains { $0.spaceID == soloSpace.id } && entries.allSatisfy { $0.kind == .reopen },
-                  "open in: menu \(sections.map { "\($0.header ?? "-"): \($0.entries.map { "\($0.title) \($0.kind)" })" })")
+                  && entries.filter(\.isTarget).map(\.spaceID) == [home.id]
+                  && entries.filter { $0.spaceID != soloSpace.id }.allSatisfy { $0.kind == .reopen },
+                  "open in: picker \(sections.map { "\($0.header ?? "-"): \($0.entries.map { "\($0.title) \($0.kind)" })" })")
+        let rows = LittleArcSpacePicker.rows(for: sections, query: second.name)
+        try check(LittleArcSpacePicker.choosable(rows) == [second.id] && LittleArcSpacePicker.highlight(nil, in: rows) == second.id,
+                  "open in: typing the space's name did not leave it as the row Return chooses (\(rows.map(\.id)))")
+
+        // The main button and ⌘O: the target is another profile's, so both ask, and Cancel keeps everything.
+        let main = LittleArcOpenInMenu.Question(windowID: record.id, spaceID: home.id, url: address, host: address.host() ?? "")
+        try check(model.openLittleArcWindowInTarget(record.id) == .ask(main) && model.pendingLittleArcOpenIn == main,
+                  "open in: the main button did not ask (question \(String(describing: model.pendingLittleArcOpenIn)))")
+        model.cancelLittleArcOpenIn(for: record.id)
+        model.keyLittleArcID = record.id
+        model.openLittleArcOrPeekInSpace()
+        try check(model.pendingLittleArcOpenIn == main, "open in: ⌘O did not ask (question \(String(describing: model.pendingLittleArcOpenIn)))")
+        model.cancelLittleArcOpenIn(for: record.id)
+        try check(store.littleArcWindow(withID: record.id) != nil && shell.window(forLittleArc: record.id) != nil
+                  && store.displayTabs(in: home.id).map(\.id) == homeTabs && little.tabID == littleTab && little.attachmentID != nil,
+                  "open in: the main button or ⌘O changed something before an answer")
 
         // Another profile's space asks first (OI-01), with the address taken then (OI-03).
         let asked = LittleArcOpenInMenu.Question(windowID: record.id, spaceID: second.id, url: address, host: address.host() ?? "")
@@ -1178,7 +1210,8 @@ final class ChromiumSelfTest {
                   && !store.littleArcArchivedWindows.contains { $0.id == record.id }
                   && store.displayTabs(in: second.id).map(\.id) == [tab.id] && store.displayTabs(in: soloSpace.id).isEmpty,
                   "open in: the window's engine or record was kept, or more than one tab was made")
-        log("PASS Little Darni Open in another profile: menu \(entries.count) space(s), all reopen; asked \"\(question.title)\", "
+        log("PASS Little Darni Open in another profile: the target followed the browser window; picker \(entries.count) space(s), "
+            + "the window's own a move and the rest reopen; the main button and ⌘O asked; asked \"\(question.title)\", "
             + "Cancel kept the window, a data: address was refused, Yes opened it; the address loaded afresh in "
             + "engine tab \(engine.tabID) of engine profile \(engine.engineProfileID) (the window was tab \(littleTab) of profile "
             + "\(littleProfile)); the window's cookie is not there ('\(seen)'); window closed, record removed")

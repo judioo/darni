@@ -66,13 +66,22 @@ extension SidebarStore {
         return archived
     }
 
-    /// Where Open in <Space> puts a Little Arc's page (Arc's toolbar names it):
-    /// the active space, which follows the last focused browser window, when it
-    /// shares the Little Arc's profile; otherwise that profile's last space.
+    /// Where Open in <Space> puts a Little Arc's page (Arc's toolbar names it
+    /// and takes its tint): the space of the last focused browser window,
+    /// whatever its profile, as in Arc. A Little Arc never becomes the key
+    /// browser window, so this is the active space, and it changes as soon as
+    /// another browser window takes focus or the focused one changes space.
+    /// The space may be another session than the window's: what Open in does
+    /// with it is `LittleArcOpenInMenu.choice`'s to say, never this.
     public func littleArcTargetSpace(for id: LittleArcWindow.ID) -> Space? {
         guard let profileID = littleArcWindows.first(where: { $0.id == id })?.profileID
             ?? archivedLittleArcWindows.first(where: { $0.window.id == id })?.window.profileID else { return nil }
-        if activeSpace.profileID == profileID { return activeSpace }
+        return listedSpace(withID: activeSpaceID) ?? littleArcOwnSpace(usingStorageOf: profileID)
+    }
+
+    /// A space of the window's own session, for when the active space cannot
+    /// be shown: that profile's last active one, else its first.
+    private func littleArcOwnSpace(usingStorageOf profileID: Profile.ID) -> Space? {
         let candidates = spaces(in: profileID)
         if let remembered = lastActiveSpaceByProfile[profileID],
            let space = candidates.first(where: { $0.id == remembered }) {
@@ -82,8 +91,10 @@ extension SidebarStore {
     }
 
     /// Promotes a live or archived Little Arc into a today tab in `spaceID`
-    /// (a space of the window's profile), or in the target space above. A space
-    /// of another session is `reopenLittleArcAsTab`'s.
+    /// (a space of the window's profile). With none, or with a space of
+    /// another session, the page stays in its own session: the active space
+    /// when it shares the window's profile, else that profile's last space.
+    /// A space of another session is `reopenLittleArcAsTab`'s.
     @discardableResult
     public func promoteLittleArcToTab(id: LittleArcWindow.ID, into spaceID: Space.ID? = nil) -> Tab? {
         let window: LittleArcWindow

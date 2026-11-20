@@ -3,11 +3,13 @@ import Testing
 import SidebarModel
 @testable import ReArc
 
-/// Little Darni's Open in ⌄ across profiles (owner report 2026-11-20). A space
+/// Little Darni's Open in across profiles (owner reports 2026-11-20). A space
 /// of another profile gets the address opened afresh, by that profile's own
 /// engine. The window's engine, and with it the page, cookies and sign-ins,
 /// never moves there (S-01). It asks first, with the address taken when it
-/// asks (OI-01, OI-03), and only a web address goes (OI-02).
+/// asks (OI-01, OI-03), and only a web address goes (OI-02). The main button
+/// and ⌘O name the last focused browser window's space, whatever its profile,
+/// and go the same way as a row of the picker.
 @MainActor
 struct LittleArcOpenInOtherProfileTests {
     private final class Presenter: BrowserWindowPresenting {
@@ -56,10 +58,12 @@ struct LittleArcOpenInOtherProfileTests {
         #expect(little.profileID == f.solo.id)
         #expect(f.store.littleArcTargetSpace(for: little.id)?.id == f.soloSpace.id)
         let sections = LittleArcOpenInMenu.sections(store: f.store, windowID: little.id)
-        #expect(sections.map(\.profileID) == [f.many])
-        #expect(sections.first?.header == "Personal")
-        #expect(sections.first?.entries.map(\.spaceID) == f.manySpaces.map(\.id))
-        #expect(sections.first?.entries.allSatisfy { $0.kind == .reopen && $0.isEnabled } == true)
+        #expect(sections.map(\.profileID) == [f.solo.id, f.many])
+        #expect(sections.map(\.header) == ["Solo", "Personal"])
+        #expect(sections.first?.entries.map(\.spaceID) == [f.soloSpace.id])
+        #expect(sections.first?.entries.map(\.kind) == [.move])
+        #expect(sections.last?.entries.map(\.spaceID) == f.manySpaces.map(\.id))
+        #expect(sections.last?.entries.allSatisfy { $0.kind == .reopen && $0.isEnabled } == true)
     }
 
     @Test func anotherProfilesSpaceGetsTheAddressAfreshAndTheWindowsEngineStaysBehind() throws {
@@ -140,15 +144,138 @@ struct LittleArcOpenInOtherProfileTests {
         #expect(f.presenter.focused == [f.window])
     }
 
-    /// The main button and ⌘O: unchanged, into the window's own profile.
-    @Test func theMainButtonStaysInTheWindowsOwnProfile() throws {
+    // MARK: - The main button and ⌘O follow the focused browser window
+
+    /// The browser window moves on to a space of another profile: Open in
+    /// names that space, and the main button asks before the address goes there.
+    @Test func theMainButtonFollowsTheBrowserWindowIntoAnotherProfileAndAsks() throws {
+        let f = fixture()
+        let address = URL(string: "https://main.test/page")!
+        let little = f.model.openLittleArc(url: address, title: "Signed in as someone")
+        let littleEngine = f.model.littleArcEngine(for: little.id)
+        #expect(f.store.littleArcTargetSpace(for: little.id)?.id == f.soloSpace.id)
+
+        let destination = f.manySpaces[1]
+        f.store.selectSpace(destination.id)
+        #expect(f.store.littleArcTargetSpace(for: little.id)?.id == destination.id, "the label and the tint are this space's now")
+
+        let question = LittleArcOpenInMenu.Question(windowID: little.id, spaceID: destination.id, url: address, host: "main.test")
+        #expect(f.model.openLittleArcWindowInTarget(little.id) == .ask(question))
+        #expect(f.model.pendingLittleArcOpenIn == question)
+        #expect(f.store.littleArcWindow(withID: little.id) != nil, "nothing has happened yet")
+        #expect(f.store.content(for: destination.id).today.isEmpty)
+        #expect(f.model.engineHost.existingLittleArcEngine(little.id, profileID: f.solo.id) === littleEngine)
+
+        // Cancel leaves everything as it was.
+        f.model.cancelLittleArcOpenIn(for: little.id)
+        #expect(f.store.littleArcWindow(withID: little.id) != nil)
+        #expect(f.store.spaces.allSatisfy { f.store.content(for: $0.id).today.isEmpty })
+
+        // Yes: the address opens afresh in the other profile's engine, and the window's engine stays behind.
+        #expect(f.model.openLittleArcWindowInTarget(little.id) == .ask(question))
+        #expect(f.model.confirmLittleArcOpenIn())
+        let tab = try #require(f.store.selectedTab)
+        #expect(tab.url == address)
+        #expect(tab.title != "Signed in as someone")
+        #expect(f.store.spaceContaining(tabID: tab.id) == destination.id)
+        #expect(f.model.profileID(for: tab) == f.many)
+        let tabEngine = try #require(f.model.engineHost.engine(forTabID: tab.id, profileID: f.many))
+        #expect(tabEngine !== littleEngine)
+        #expect(f.model.engineHost.existingLittleArcEngine(little.id, profileID: f.solo.id) == nil)
+        #expect(f.model.engineHost.existingLittleArcEngine(little.id, profileID: f.many) == nil)
+        #expect(f.store.content(for: f.soloSpace.id).today.isEmpty, "nothing lands in the window's own profile")
+    }
+
+    /// ⌘O is the main button: the same target, the same question.
+    @Test func commandOAsksBeforeCrossingToTheBrowserWindowsProfile() throws {
+        let f = fixture()
+        let address = URL(string: "https://shortcut.test/")!
+        let little = f.model.openLittleArc(url: address)
+        let destination = f.manySpaces[2]
+        f.store.selectSpace(destination.id)
+        f.model.keyLittleArcID = little.id
+
+        f.model.openLittleArcOrPeekInSpace()
+        #expect(f.model.pendingLittleArcOpenIn
+            == LittleArcOpenInMenu.Question(windowID: little.id, spaceID: destination.id, url: address, host: "shortcut.test"))
+        #expect(f.store.littleArcWindow(withID: little.id) != nil, "⌘O alone moves nothing across profiles")
+        #expect(f.store.spaces.allSatisfy { f.store.content(for: $0.id).today.isEmpty })
+        #expect(f.presenter.focused.isEmpty)
+    }
+
+    /// The browser window is on a space of the window's own profile: the main
+    /// button and ⌘O move the page there at once, unasked, as they always did.
+    @Test func theMainButtonAndCommandOStillMoveThePageWithinItsOwnProfile() throws {
+        let f = fixture()
+        let second = f.store.addSpace(name: "Solo 2", profileID: f.solo.id)
+        let little = f.model.openLittleArc(url: URL(string: "about:blank#main")!, title: "Main")
+        f.store.selectSpace(second.id)
+        #expect(f.store.littleArcTargetSpace(for: little.id)?.id == second.id)
+
+        #expect(f.model.openLittleArcWindowInTarget(little.id) == .move)
+        #expect(f.model.pendingLittleArcOpenIn == nil, "its own session never asks")
+        #expect(f.model.littleArcToast == nil)
+        var tab = try #require(f.store.selectedTab)
+        #expect(tab.title == "Main")
+        #expect(f.store.spaceContaining(tabID: tab.id) == second.id)
+        #expect(f.model.profileID(for: tab) == f.solo.id, "still its own session")
+
+        let other = f.model.openLittleArc(url: URL(string: "https://again.test/")!)
+        f.model.keyLittleArcID = other.id
+        f.model.openLittleArcOrPeekInSpace()
+        #expect(f.model.pendingLittleArcOpenIn == nil)
+        tab = try #require(f.store.selectedTab)
+        #expect(tab.url.absoluteString == "https://again.test/")
+        #expect(f.store.spaceContaining(tabID: tab.id) == second.id)
+        #expect(f.store.littleArcWindow(withID: other.id) == nil)
+    }
+
+    /// A blank window, or any page that is not a web page, cannot follow the
+    /// browser window into another profile: the main button says why, on the
+    /// window, and the page stays. Back on its own profile it moves.
+    @Test func theMainButtonRefusesAPageThatCannotCrossAndSaysWhy() throws {
         let f = fixture()
         let little = f.model.openLittleArc(url: URL(string: "about:blank#main")!)
-        // The browser window moves on to the other profile before ⌘O.
         f.store.selectSpace(f.manySpaces[1].id)
+        #expect(f.model.openLittleArcWindowInTarget(little.id) == .refuse)
+        #expect(f.model.pendingLittleArcOpenIn == nil)
+        #expect(f.model.littleArcToast?.windowID == little.id)
+        #expect(f.model.littleArcToast?.toast.message == "Only web pages can open in another profile or container")
+        #expect(f.store.littleArcWindow(withID: little.id) != nil)
+        #expect(f.store.spaces.allSatisfy { f.store.content(for: $0.id).today.isEmpty })
+
+        f.store.selectSpace(f.soloSpace.id)
+        #expect(f.model.openLittleArcWindowInTarget(little.id) == .move)
+        #expect(f.store.spaceContaining(tabID: try #require(f.store.selectedTab).id) == f.soloSpace.id)
+    }
+
+    /// The target is read when the button is pressed: another browser window
+    /// took focus since the label was drawn, and its space is the one asked about.
+    @Test func theTargetIsReadWhenTheButtonIsPressed() throws {
+        let f = fixture()
+        let other = SidebarWindowID()
+        f.store.registerWindow(other, spaceID: f.manySpaces[3].id)
+        let little = f.model.openLittleArc(url: URL(string: "https://late.test/")!)
         #expect(f.store.littleArcTargetSpace(for: little.id)?.id == f.soloSpace.id)
+        f.model.windowBecameKey(other)
+        #expect(f.store.littleArcTargetSpace(for: little.id)?.id == f.manySpaces[3].id)
+        guard case .ask(let question)? = f.model.openLittleArcWindowInTarget(little.id) else {
+            Issue.record("another profile's space asks")
+            return
+        }
+        #expect(question.spaceID == f.manySpaces[3].id)
+        #expect(f.model.openLittleArcWindowInTarget(UUID()) == nil, "no such window: nothing happens")
+    }
+
+    /// The model's own promote, which the command bar's "Promote Little Darni
+    /// to tab" uses, never crosses: with no space named it stays in the
+    /// window's profile wherever the browser window is.
+    @Test func aPromoteWithNoSpaceNamedStaysInTheWindowsOwnProfile() throws {
+        let f = fixture()
+        let little = f.model.openLittleArc(url: URL(string: "about:blank#main")!)
+        f.store.selectSpace(f.manySpaces[1].id)
         f.model.promoteLittleArcWindow(little.id)
-        #expect(f.model.pendingLittleArcOpenIn == nil, "the main button and ⌘O never ask")
+        #expect(f.model.pendingLittleArcOpenIn == nil)
         let tab = try #require(f.store.selectedTab)
         #expect(f.store.spaceContaining(tabID: tab.id) == f.soloSpace.id)
         #expect(f.model.profileID(for: tab) == f.solo.id)
@@ -230,7 +357,8 @@ struct LittleArcOpenInOtherProfileTests {
         f.model.cancelLittleArcOpenIn()
 
         let inside = f.model.openLittleArc(url: URL(string: "https://outof.test/")!, profileID: container.id)
-        #expect(LittleArcOpenInMenu.sections(store: f.store, windowID: inside.id).first?.header == "Solo (outside this container)")
+        #expect(LittleArcOpenInMenu.sections(store: f.store, windowID: inside.id).map(\.header)
+            == ["This container", "Solo (outside this container)", "Personal"])
         #expect(f.model.openLittleArcWindow(inside.id, in: f.soloSpace.id) != nil, "the parent's space is another session: it asks")
         text = f.model.littleArcOpenInMessage(try #require(f.model.pendingLittleArcOpenIn))
         #expect(text.message.hasPrefix("The page at outof.test will open as a new tab in “\(f.soloSpace.name)” (Solo), without this window's sign-ins. "
@@ -298,7 +426,8 @@ struct LittleArcOpenInOtherProfileTests {
             let little = f.model.openLittleArc(url: URL(string: address)!)
             f.model.littleArcToast = nil
             let sections = LittleArcOpenInMenu.sections(store: f.store, windowID: little.id, url: f.model.littleArcAddress(little.id))
-            #expect(sections.flatMap(\.entries).allSatisfy { !$0.isEnabled }, "\(address): every row crosses, so every row is disabled")
+            #expect(sections.flatMap(\.entries).filter(\.isEnabled).map(\.spaceID) == [f.soloSpace.id],
+                    "\(address): every row but the window's own space crosses, so it is disabled")
             #expect(LittleArcOpenInMenu.note(for: sections) == "Only web pages can open in another profile or container")
 
             #expect(f.model.openLittleArcWindow(little.id, in: f.manySpaces[0].id) == .refuse, "\(address)")

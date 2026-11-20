@@ -133,10 +133,23 @@ extension BrowserViewModel {
         return record.url
     }
 
-    /// A space chosen in Open in's ⌄ menu. What the choice does is asked of the
-    /// store here, when it is made, and never taken from the menu as it was
-    /// drawn. A space of the window's own session takes the page as the main
-    /// button does, unasked. Any other space is another session (S-01): a web
+    /// The main button and ⌘O: Open in the target space, which is the last
+    /// focused browser window's, whatever its profile (`littleArcTargetSpace`).
+    /// It goes the way a row of the picker goes, through the same `choice`:
+    /// the page moves when the space is of the window's own session, and
+    /// another session asks first (OI-01) and takes only a web address
+    /// (OI-02). The target is read here, when the button is pressed, never
+    /// from the label as it was drawn.
+    @discardableResult
+    func openLittleArcWindowInTarget(_ id: LittleArcWindow.ID) -> LittleArcOpenInMenu.Choice? {
+        guard let target = store.littleArcTargetSpace(for: id) else { return nil }
+        return openLittleArcWindow(id, in: target.id)
+    }
+
+    /// A space chosen in Open in's ⌄ picker. What the choice does is asked of
+    /// the store here, when it is made, and never taken from the picker as it
+    /// was drawn. A space of the window's own session takes the page, unasked.
+    /// Any other space is another session (S-01): a web
     /// address waits for the person's answer (`pendingLittleArcOpenIn`, OI-01),
     /// with the address taken now (OI-03), and any other address stays where it
     /// is, with a toast on the window (OI-02). Nil, and nothing happens, when

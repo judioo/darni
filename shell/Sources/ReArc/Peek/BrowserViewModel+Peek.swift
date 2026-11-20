@@ -115,12 +115,13 @@ extension BrowserViewModel {
         return performPeekAction(PeekDismissal.action(for: input))
     }
 
-    /// ⌘O, Arc's "Open Little Arc or Peek in…": the Peek, else the key Little ReArc, moves into a tab.
+    /// ⌘O, Arc's "Open Little Arc or Peek in…": the Peek moves into a tab, else the key Little
+    /// Darni opens in its target space as its main button does (`openLittleArcWindowInTarget`).
     func openLittleArcOrPeekInSpace() {
         if showsPeek(in: store.keyWindowID) {
             performPeekAction(PeekDismissal.action(for: .expandShortcut))
         } else if let id = keyLittleArcID {
-            promoteLittleArcWindow(id)
+            openLittleArcWindowInTarget(id)
         }
     }
 }

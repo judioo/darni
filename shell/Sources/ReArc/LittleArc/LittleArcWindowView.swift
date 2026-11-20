@@ -3,7 +3,8 @@ import SidebarModel
 
 /// Minimal standalone window (PEEK-LITTLE-BROWSER §2): a compact toolbar
 /// with back, forward and reload, the address placeholder that opens its
-/// mini command bar, the profile indicator and Open in <Space> (⌘O) with a menu of every other space; then the page.
+/// mini command bar, the profile indicator and Open in <Space> (⌘O) with its
+/// picker of every space (`LittleArcSpacePickerView`); then the page.
 struct LittleArcWindowView: View {
     @Bindable var model: BrowserViewModel
     @Environment(\.dismissWindow) private var dismissWindow
@@ -26,6 +27,15 @@ struct LittleArcWindowView: View {
     @State private var isEditingAddress = false
     @State private var addressText = ""
     @FocusState private var addressFocused: Bool
+    /// Open in ⌄: the space picker is up.
+    @State private var showsSpacePicker: Bool
+
+    /// `showsSpacePicker` starts the window with its picker up, for pictures of it.
+    init(model: BrowserViewModel, windowID: LittleArcWindow.ID, showsSpacePicker: Bool = false) {
+        self.model = model
+        self.windowID = windowID
+        _showsSpacePicker = State(initialValue: showsSpacePicker)
+    }
 
     private var record: LittleArcWindow? {
         model.store.littleArcWindow(withID: windowID)
@@ -33,6 +43,8 @@ struct LittleArcWindowView: View {
 
     /// The toolbar's height: 22 pt controls in 7 pt of padding above and below.
     static let toolbarHeight: CGFloat = 36
+    /// The least the address field keeps when the toolbar is tight.
+    static let minimumAddressWidth: CGFloat = 64
 
     /// This window's Open in question, while it waits for its answer.
     private var openInQuestion: LittleArcOpenInMenu.Question? {
@@ -60,6 +72,8 @@ struct LittleArcWindowView: View {
         }
         .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         .overlay(alignment: .topLeading) { LittleArcProbeMarker(windowID: windowID) }
+        .overlay { spacePicker }
+        .coordinateSpace(name: LittleArcLayout.space)
         // Why a row of Open in did nothing, on this window and under its toolbar.
         // A layer of its own: the toast takes the default theme in this window's
         // appearance, as the page's cards do, and the rest of the window keeps its colours.
@@ -81,7 +95,11 @@ struct LittleArcWindowView: View {
             WindowKeyObserver(
                 onBecameKey: { model.keyLittleArcID = windowID },
                 onClose: { if model.keyLittleArcID == windowID { model.keyLittleArcID = nil } },
-                onResignKey: { if model.keyLittleArcID == windowID { model.keyLittleArcID = nil } }
+                onResignKey: {
+                    if model.keyLittleArcID == windowID { model.keyLittleArcID = nil }
+                    // A dropdown does not outlive its window's focus.
+                    showsSpacePicker = false
+                }
             )
             .frame(width: 0, height: 0)
         )
@@ -92,6 +110,8 @@ struct LittleArcWindowView: View {
             consumeFocusRequest()
         }
         .onChange(of: model.littleArcFocusRequest) { _, _ in consumeFocusRequest() }
+        // ⌘O while the picker is up puts its question: the picker gives way to it.
+        .onChange(of: openInQuestion != nil) { _, asking in if asking { showsSpacePicker = false } }
         // Archived elsewhere (Settings › Links › Archive Little Arcs after): the window goes too.
         .onChange(of: record == nil) { _, gone in if gone { dismiss() } }
         .onDisappear {
@@ -121,6 +141,7 @@ struct LittleArcWindowView: View {
     }
 
     private func beginEditing() {
+        showsSpacePicker = false
         addressText = LittleArcChrome.editingText(for: model.littleArcEngine(for: windowID).currentURL ?? record?.url)
         isEditingAddress = true
         DispatchQueue.main.async { addressFocused = true }
@@ -134,7 +155,15 @@ struct LittleArcWindowView: View {
                 engine.isLoading ? engine.stopLoading() : engine.reload()
             }
             address(for: record, engine: engine)
-            if let container = model.containerLabel(for: engine, tab: nil) { ContainerChip(label: container) }
+            if let container = model.containerLabel(for: engine, tab: nil) {
+                // In a tight toolbar the chip shortens, then is its badge alone, before Open in
+                // loses its name. The avatar beside it keeps the container's ring and badge.
+                ViewThatFits(in: .horizontal) {
+                    ContainerChip(label: container)
+                    ContainerChip(label: container, style: .compact, maxWidth: 72)
+                    ContainerChip(label: container, style: .badge)
+                }
+            }
             navButton("square.split.2x1", "Open in Split View", enabled: model.canSplitLittleArcWindow(windowID)) {
                 if model.splitLittleArcWindow(windowID) { dismiss() }
             }
@@ -143,7 +172,9 @@ struct LittleArcWindowView: View {
                 NSPasteboard.general.setString((engine.currentURL ?? record.url).absoluteString, forType: .string)
             }
             profileMenu(for: record)
+            // Asked first what it needs: the address field gives way before a word of it does.
             openInButton(for: record)
+                .layoutPriority(1)
             Button {
                 model.closeLittleArcWindow(windowID)
                 dismiss()
@@ -152,6 +183,7 @@ struct LittleArcWindowView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .littleArcPart(.close)
             .help("Close")
         }
         .padding(.horizontal, 10)
@@ -169,121 +201,87 @@ struct LittleArcWindowView: View {
         }
     }
 
-    /// The words on Open in: full text colour, which keeps 4.5:1 on the tinted
-    /// bar for any space. The space's name was once drawn in its theme colour,
-    /// unreadable on the default lavender (QA 2026-11-08 #19); the colour is
-    /// now a dot beside the name.
-    static let labelColor = NSColor.textColor
-
-    /// Arc's "Open in <Space> ⌘O ⌄": the space of the last focused browser
-    /// window, with a dot in its theme colour, and a menu of every other space,
-    /// grouped by profile (`LittleArcOpenInMenu`). The page moves only to a
-    /// space of its own session; in any other space its address opens afresh
-    /// (S-01), after a question (OI-01), and only a web address (OI-02).
-    @ViewBuilder
+    /// Arc's "Open in <Space> ⌘O | ⌄" (`LittleArcOpenInButton`): it names the
+    /// space of the last focused browser window, whatever its profile, in that
+    /// space's colour, and the ⌄ opens the picker of every space. The main
+    /// button and ⌘O go the way a row of the picker goes
+    /// (`openLittleArcWindowInTarget`): the page moves only to a space of its
+    /// own session; in any other its address opens afresh (S-01), after a
+    /// question (OI-01), and only a web address (OI-02).
     private func openInButton(for record: LittleArcWindow) -> some View {
         let target = model.store.littleArcTargetSpace(for: windowID)
-        // The address the window shows decides which rows can cross sessions.
-        let sections = LittleArcOpenInMenu.sections(store: model.store, windowID: windowID, url: model.littleArcAddress(windowID))
-        HStack(spacing: 0) {
-            Button {
-                open(into: target?.id)
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Open in").foregroundStyle(Color(nsColor: Self.labelColor))
-                    if let theme = target?.theme {
-                        Circle()
-                            .fill(Color(red: theme.red, green: theme.green, blue: theme.blue))
-                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 0.5))
-                            .frame(width: 8, height: 8)
-                            .accessibilityHidden(true)
-                    }
-                    Text(target?.name ?? "Darni")
-                        .fontWeight(.medium)
-                        .foregroundStyle(Color(nsColor: Self.labelColor))
-                    Text("⌘O")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(RoundedRectangle(cornerRadius: 3).fill(Color.primary.opacity(0.08)))
-                }
-                .font(.system(size: 12))
-                .padding(.horizontal, 8)
-                .frame(height: 22)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Move this page into a tab in \(target?.name ?? "your current space")")
-            .accessibilityLabel("Open in \(target?.name ?? "Darni")")
-            if !sections.isEmpty {
-                Divider().frame(height: 14)
-                Menu {
-                    ForEach(sections) { section in
-                        if let header = section.header {
-                            Section(header) { openInItems(section.entries) }
-                        } else {
-                            openInItems(section.entries)
-                        }
-                    }
-                    if let note = LittleArcOpenInMenu.note(for: sections) {
-                        // The reason for the disabled rows, in words, as the last line.
-                        Divider()
-                        Text(note)
-                    }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .padding(.horizontal, 6)
-                .help("Open in another space")
-                .accessibilityLabel("Open in another space")
-            }
-        }
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.1)))
-        // The address field gives way: at the default 520 pt the label read "Open… Pers…".
-        .fixedSize()
+        return LittleArcOpenInButton(
+            targetName: target?.name,
+            theme: target?.theme,
+            help: openInHelp(target: target),
+            isPickerOpen: showsSpacePicker,
+            // The target is read again when the button is pressed, not taken from this drawing.
+            open: { choose(nil) },
+            togglePicker: { showsSpacePicker.toggle() }
+        )
     }
 
-    /// The main button: the page becomes a tab in the target space.
-    private func open(into spaceID: Space.ID?) {
-        model.promoteLittleArcWindow(windowID, into: spaceID)
-        dismiss()
+    /// What the main button will do, in its tooltip: said from the address
+    /// the window shows now, as the picker's rows are drawn.
+    private func openInHelp(target: Space?) -> String {
+        guard let target else { return "Open this page as a tab" }
+        guard LittleArcOpenInMenu.kind(store: model.store, windowID: windowID, spaceID: target.id) == .reopen else {
+            return "Move this page into a tab in \(target.name)"
+        }
+        guard let url = model.littleArcAddress(windowID), LittleArcOpenInMenu.canCrossSessions(url) else {
+            return LittleArcOpenInMenu.webOnlyMessage
+        }
+        return "Open this page's address as a new tab in \(target.name), in another profile or container"
     }
 
-    /// One profile's spaces in the ⌄ menu, each with a dot in its theme colour.
-    private func openInItems(_ entries: [LittleArcOpenInMenu.Entry]) -> some View {
-        ForEach(entries) { entry in
-            Button {
-                // The window goes only when its page moved. A space of another session asks
-                // first, and the window stays on Cancel, on an address that cannot cross, and
-                // when the space went while the menu was up.
-                if model.openLittleArcWindow(windowID, in: entry.spaceID) == .move { dismiss() }
-            } label: {
-                Label {
-                    Text(entry.title)
-                } icon: {
-                    Image(nsImage: Self.menuDot(entry.theme))
+    /// The main button (the target space), a row of the picker, or ⌘O from
+    /// the menu bar: all three ask the model, which asks the store what the
+    /// choice does. The window goes only when its page moved. A space of
+    /// another session asks first, and the window stays on Cancel, on an
+    /// address that cannot cross, and when the space went while the picker
+    /// was up.
+    private func choose(_ spaceID: Space.ID?) {
+        showsSpacePicker = false
+        let choice = spaceID.map { model.openLittleArcWindow(windowID, in: $0) } ?? model.openLittleArcWindowInTarget(windowID)
+        if choice == .move { dismiss() }
+    }
+
+    /// The picker, at the window's top trailing corner over the button it
+    /// came from, as Arc's is. A clear layer under it takes the click that
+    /// closes it, as under the command bar.
+    private var spacePicker: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topTrailing) {
+                if showsSpacePicker, record != nil {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { closeSpacePicker() }
+                    LittleArcSpacePickerView(
+                        // The address the window shows decides which rows can cross sessions.
+                        sections: LittleArcOpenInMenu.sections(store: model.store, windowID: windowID, url: model.littleArcAddress(windowID)),
+                        space: { model.store.listedSpace(withID: $0) },
+                        maxHeight: min(LittleArcSpacePickerView.arcHeight, geometry.size.height - 2 * Self.pickerInset),
+                        choose: { choose($0) },
+                        close: closeSpacePicker
+                    )
+                    .padding(Self.pickerInset)
+                    .transition(.scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity))
                 }
             }
-            .disabled(!entry.isEnabled)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .animation(.easeOut(duration: 0.12), value: showsSpacePicker)
         }
+        // Nothing of it is in the page's way while the picker is away.
+        .allowsHitTesting(showsSpacePicker)
     }
 
-    /// A menu draws a template symbol in the text colour, so the space's
-    /// colour is a small picture of its own, as the dot on the main button.
-    static func menuDot(_ theme: SpaceTheme) -> NSImage {
-        let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
-            NSColor(srgbRed: theme.red, green: theme.green, blue: theme.blue, alpha: 1).setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
-            return true
-        }
-        image.isTemplate = false
-        return image
+    /// Arc's panel sits 4 pt inside the window's top and trailing edges.
+    static let pickerInset: CGFloat = 4
+
+    /// Esc, the ⌃ or a click elsewhere: the picker goes and the page has the keyboard again.
+    private func closeSpacePicker() {
+        showsSpacePicker = false
+        (model.littleArcEngine(for: windowID) as? PageFocusing)?.focusPage()
     }
 
     private func navButton(_ symbol: String, _ help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
@@ -355,8 +353,10 @@ struct LittleArcWindowView: View {
         .font(.callout)
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .frame(maxWidth: .infinity)
+        // It gives way to Open in, down to this: room for its icon and a few letters.
+        .frame(minWidth: Self.minimumAddressWidth, maxWidth: .infinity)
         .background(Color.primary.opacity(isEditingAddress ? 0.08 : 0.05), in: RoundedRectangle(cornerRadius: 7))
+        .littleArcPart(.address)
     }
 
     private func securityIcon(_ state: WebSecurityState) -> String {

@@ -24,6 +24,19 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- Little Darni's Open in button and its list of spaces look like Arc's. The button shows the
+  space's name in the space's colour, adjusted so it is always easy to read, with ⌘O beside
+  it. The arrow next to it opens a list of all your spaces with their icons. Type to search,
+  use the arrow keys to move, press Return to choose and Esc to close.
+- Open in on a Little Darni window now names the space of the Darni window you used last,
+  also when that space is in another profile. The name and the toolbar colour change as soon
+  as you click another Darni window or switch its space. If the space is in another profile
+  or a container, the button and ⌘O ask first, because the page opens there without this
+  window's sign-ins.
+- Open in and its arrow stay in the Little Darni toolbar when the window is narrow. The
+  address field shrinks first.
+
 ## Darni 2026.1120.1136 — 2026-11-20
 
 **Fixes**

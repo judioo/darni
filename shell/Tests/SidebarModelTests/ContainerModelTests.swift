@@ -220,8 +220,11 @@ final class ContainerModelTests: XCTestCase {
         XCTAssertEqual(f.store.space(forNewTabIn: f.container.id), f.bank.id)
 
         let window = f.store.createLittleArcWindow(url: url("personal.test"), profileID: f.personal)
-        XCTAssertEqual(f.store.littleArcTargetSpace(for: window.id)?.profileID, f.personal)
-        let promoted = try XCTUnwrap(f.store.promoteLittleArcToTab(id: window.id))
+        // Open in names the browser window's space, the container's here. Only the question
+        // (`LittleArcOpenInMenu.choice`) takes an address there; the page itself never goes.
+        XCTAssertEqual(f.store.littleArcTargetSpace(for: window.id)?.id, f.bank.id)
+        XCTAssertEqual(LittleArcOpenInMenu.kind(store: f.store, windowID: window.id, spaceID: f.bank.id), .reopen)
+        let promoted = try XCTUnwrap(f.store.promoteLittleArcToTab(id: window.id, into: f.bank.id))
         let landed = try XCTUnwrap(f.store.spaceContaining(tabID: promoted.id))
         XCTAssertEqual(f.store.space(withID: landed)?.profileID, f.personal, "not the active container's space")
 
