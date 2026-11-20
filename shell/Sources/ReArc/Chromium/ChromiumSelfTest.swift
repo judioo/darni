@@ -1091,10 +1091,13 @@ final class ChromiumSelfTest {
 
     /// Little Darni's Open in ⌄ across profiles (owner report 2026-11-20): a
     /// window in a profile with one space, while another profile has several.
-    /// The menu offers the other profile's spaces, and choosing one loads the
-    /// address afresh in a new tab of that profile. The window's page is not
-    /// moved: another engine tab, another engine profile, and a cookie set in
-    /// the window is not there (S-01).
+    /// The menu offers the other profile's spaces, and choosing one asks
+    /// first (OI-01): Cancel keeps the window, an address that is not a web
+    /// address is refused (OI-02), and Yes loads the address afresh in a new
+    /// tab of that profile. The window's page is not moved: another engine
+    /// tab, another engine profile, and a cookie set in the window is not
+    /// there (S-01). The question is answered through the model, as the
+    /// alert's buttons answer it.
     @MainActor
     private func littleArcOpenInOtherProfileChecks(model: BrowserViewModel, shell: ChromiumShell, store: SidebarStore,
                                                    base: String) async throws {
@@ -1128,7 +1131,32 @@ final class ChromiumSelfTest {
                   && !entries.contains { $0.spaceID == soloSpace.id } && entries.allSatisfy { $0.kind == .reopen },
                   "open in: menu \(sections.map { "\($0.header ?? "-"): \($0.entries.map { "\($0.title) \($0.kind)" })" })")
 
-        try check(model.openLittleArcWindow(record.id, in: second.id) == .reopen, "open in: the other profile's space was not a reopen")
+        // Another profile's space asks first (OI-01), with the address taken then (OI-03).
+        let asked = LittleArcOpenInMenu.Question(windowID: record.id, spaceID: second.id, url: address, host: address.host() ?? "")
+        try check(entries.allSatisfy(\.isEnabled) && LittleArcOpenInMenu.note(for: sections) == nil,
+                  "open in: a web address left rows disabled (\(entries.filter { !$0.isEnabled }.map(\.title)))")
+        try check(model.openLittleArcWindow(record.id, in: second.id) == .ask(asked) && model.pendingLittleArcOpenIn == asked,
+                  "open in: the other profile's space did not ask (question \(String(describing: model.pendingLittleArcOpenIn)))")
+        let question = model.littleArcOpenInMessage(asked)
+        try check(question.message.contains(asked.host) && question.message.contains("“\(second.name)”"),
+                  "open in: the question names neither the host nor the space: '\(question.message)'")
+        // Cancel: nothing opened and the window, its page and its cookie are as they were.
+        model.cancelLittleArcOpenIn(for: record.id)
+        try check(model.pendingLittleArcOpenIn == nil && shell.window(forLittleArc: record.id) != nil
+                  && store.littleArcWindow(withID: record.id) != nil && store.activeSpaceID == home.id
+                  && store.displayTabs(in: second.id).isEmpty && little.tabID == littleTab && little.attachmentID != nil,
+                  "open in: Cancel changed something (window \(shell.window(forLittleArc: record.id) != nil), "
+                  + "record \(store.littleArcWindow(withID: record.id) != nil), tabs \(store.displayTabs(in: second.id).count))")
+        // An address that is not a web address stays in its window (OI-02), whatever the menu showed.
+        let local = try XUnwrap(URL(string: "data:text/html,open-in"), "open-in data address")
+        try check(LittleArcOpenInMenu.choice(store: store, windowID: record.id, spaceID: second.id, url: local) == .refuse
+                  && LittleArcOpenInMenu.sections(store: store, windowID: record.id, url: local).flatMap(\.entries).allSatisfy { !$0.isEnabled }
+                  && store.reopenLittleArcAsTab(id: record.id, in: second.id, url: local) == nil
+                  && store.littleArcWindow(withID: record.id) != nil,
+                  "open in: an address that is not a web address was not refused across profiles")
+        // Asked again and answered Yes, as the alert's button answers it.
+        try check(model.openLittleArcWindow(record.id, in: second.id) == .ask(asked), "open in: the second question was not put")
+        try check(model.confirmLittleArcOpenIn(), "open in: Yes opened nothing")
         try await wait("open in: the Little Darni window closed") {
             shell.window(forLittleArc: record.id) == nil && store.littleArcWindow(withID: record.id) == nil
         }
@@ -1150,7 +1178,8 @@ final class ChromiumSelfTest {
                   && !store.littleArcArchivedWindows.contains { $0.id == record.id }
                   && store.displayTabs(in: second.id).map(\.id) == [tab.id] && store.displayTabs(in: soloSpace.id).isEmpty,
                   "open in: the window's engine or record was kept, or more than one tab was made")
-        log("PASS Little Darni Open in another profile: menu \(entries.count) space(s), all reopen; the address loaded afresh in "
+        log("PASS Little Darni Open in another profile: menu \(entries.count) space(s), all reopen; asked \"\(question.title)\", "
+            + "Cancel kept the window, a data: address was refused, Yes opened it; the address loaded afresh in "
             + "engine tab \(engine.tabID) of engine profile \(engine.engineProfileID) (the window was tab \(littleTab) of profile "
             + "\(littleProfile)); the window's cookie is not there ('\(seen)'); window closed, record removed")
 

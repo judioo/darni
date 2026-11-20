@@ -796,15 +796,34 @@ private struct ProfileMoveAlert: ViewModifier {
     let isOwner: Bool
 
     func body(content: Content) -> some View {
-        let text: (title: String, message: String, action: String) = model.pendingProfileMove.map(model.profileMoveMessage) ?? ("", "", "")
-        content.alert(text.title, isPresented: Binding(
-            get: { model.pendingProfileMove != nil && isOwner },
-            set: { if !$0 { model.pendingProfileMove = nil } }
+        content.modifier(SessionCrossingAlert(
+            text: model.pendingProfileMove.map(model.profileMoveMessage),
+            isPresented: { model.pendingProfileMove != nil && isOwner },
+            cancel: { model.pendingProfileMove = nil },
+            confirm: { model.confirmProfileMove() }
+        ))
+    }
+}
+
+/// The one question asked before a page changes session, on the window it is
+/// asked of: Move to Profile for tabs, and Little Darni's Open in for a space
+/// of another profile or container. `isPresented` is read from the model each
+/// time it is asked, so an answer given elsewhere takes the alert down.
+struct SessionCrossingAlert: ViewModifier {
+    let text: (title: String, message: String, action: String)?
+    let isPresented: () -> Bool
+    let cancel: () -> Void
+    let confirm: () -> Void
+
+    func body(content: Content) -> some View {
+        content.alert(text?.title ?? "", isPresented: Binding(
+            get: { isPresented() },
+            set: { if !$0 { cancel() } }
         )) {
-            Button("Cancel", role: .cancel) { model.pendingProfileMove = nil }
-            Button(text.action) { model.confirmProfileMove() }
+            Button("Cancel", role: .cancel) { cancel() }
+            Button(text?.action ?? "") { confirm() }
         } message: {
-            Text(text.message)
+            Text(text?.message ?? "")
         }
     }
 }

@@ -401,6 +401,11 @@ final class BrowserViewModel {
     }
     /// A Little Arc whose address field should start editing (⌘L, New Little Arc Window).
     var littleArcFocusRequest: LittleArcWindow.ID?
+    /// Open in ▸ a space of another session, waiting for its answer on that
+    /// Little Darni window (`openLittleArcWindow(_:in:)`).
+    var pendingLittleArcOpenIn: LittleArcOpenInMenu.Question?
+    /// A toast on one Little Darni window.
+    var littleArcToast: LittleArcToast?
     var littleArcHotkeyPreference = LittleArcHotkeyPreference()
     @ObservationIgnored var littleArcHotkeyDefaults: UserDefaults = .standard
     @ObservationIgnored var littleArcHotkey: GlobalHotkey?
@@ -1796,6 +1801,7 @@ final class BrowserViewModel {
         store.archiveLittleArcWindow(id: id, reason: .manual)
         engineHost.removeLittleArc(id, profileID: profileID)
         if focusedLittleArcID == id { focusedLittleArcID = nil }
+        cancelLittleArcOpenIn(for: id)
     }
 
     func promoteLittleArcWindow(_ id: LittleArcWindow.ID, into spaceID: Space.ID? = nil) {

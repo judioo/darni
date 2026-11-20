@@ -1,5 +1,6 @@
 import AppKit
 import SidebarModel
+import SwiftUI
 
 /// Engines that report a ⌥⌘-click on a link instead of following it.
 protocol LittleArcLinkOpening: AnyObject {
@@ -9,6 +10,12 @@ protocol LittleArcLinkOpening: AnyObject {
 /// Wave 26 Little Arc: its toolbar (address field, back, forward, reload,
 /// profile), New Little Arc Window, the global hotkey and ⌥⌘-click
 /// (PEEK-LITTLE-BROWSER §2–§2.2).
+/// A toast shown on one Little Darni window (`showLittleArcToast`).
+struct LittleArcToast: Equatable {
+    var windowID: LittleArcWindow.ID
+    var toast: ShellToast
+}
+
 extension BrowserViewModel {
 
     /// The key window's Little Arc engine, for navigation commands.
@@ -115,41 +122,96 @@ extension BrowserViewModel {
 }
 
 extension BrowserViewModel {
-    /// A space chosen in Open in's ⌄ menu. What the choice does is asked of the
-    /// store here, when it is made, and never taken from the menu as it was
-    /// drawn: a space of the window's own session takes the page as the main
-    /// button does, any other space gets the address opened afresh (S-01).
-    /// Nil, and nothing happens, when the window or the space is gone.
-    @discardableResult
-    func openLittleArcWindow(_ id: LittleArcWindow.ID, in spaceID: Space.ID) -> LittleArcOpenInMenu.Kind? {
-        guard let kind = LittleArcOpenInMenu.kind(store: store, windowID: id, spaceID: spaceID) else { return nil }
-        switch kind {
-        case .move: promoteLittleArcWindow(id, into: spaceID)
-        case .reopen: reopenLittleArcWindow(id, in: spaceID)
-        }
-        return kind
-    }
-
-    /// Open in ▸ a space of another profile or container. The address the
-    /// window shows opens as a new tab in that space, loaded by that space's
-    /// own engine, and the last focused browser window shows the space. The
-    /// window's engine is dropped, never handed over, so its page, cookies and
-    /// sign-ins stay in the session it was opened in.
-    private func reopenLittleArcWindow(_ id: LittleArcWindow.ID, in spaceID: Space.ID) {
-        guard let record = store.littleArcWindow(withID: id) else { return }
-        // The last focused browser window: Little Arc never becomes it.
-        let target = store.keyWindowID
-        // The address as the window shows it, as its profile menu and split button take it.
+    /// The address a Little Darni window shows, as its profile menu and split
+    /// button take it: its engine's, or its record's until the engine has one.
+    func littleArcAddress(_ id: LittleArcWindow.ID) -> URL? {
+        guard let record = store.littleArcWindow(withID: id) else { return nil }
         if let current = engineHost.existingLittleArcEngine(id, profileID: record.profileID)?.currentURL,
            current.absoluteString != "about:blank" {
-            store.updateLittleArcWindow(id: id, title: nil, url: current)
+            return current
         }
-        guard store.reopenLittleArcAsTab(id: id, in: spaceID) != nil else { return }
+        return record.url
+    }
+
+    /// A space chosen in Open in's ⌄ menu. What the choice does is asked of the
+    /// store here, when it is made, and never taken from the menu as it was
+    /// drawn. A space of the window's own session takes the page as the main
+    /// button does, unasked. Any other space is another session (S-01): a web
+    /// address waits for the person's answer (`pendingLittleArcOpenIn`, OI-01),
+    /// with the address taken now (OI-03), and any other address stays where it
+    /// is, with a toast on the window (OI-02). Nil, and nothing happens, when
+    /// the window or the space is gone.
+    @discardableResult
+    func openLittleArcWindow(_ id: LittleArcWindow.ID, in spaceID: Space.ID) -> LittleArcOpenInMenu.Choice? {
+        guard let url = littleArcAddress(id),
+              let choice = LittleArcOpenInMenu.choice(store: store, windowID: id, spaceID: spaceID, url: url) else { return nil }
+        switch choice {
+        case .move: promoteLittleArcWindow(id, into: spaceID)
+        case .ask(let question): pendingLittleArcOpenIn = question
+        case .refuse: showLittleArcToast(LittleArcOpenInMenu.webOnlyMessage, in: id)
+        }
+        return choice
+    }
+
+    /// The question's words, in Move to Profile's style (`profileMoveMessage`).
+    func littleArcOpenInMessage(_ question: LittleArcOpenInMenu.Question) -> (title: String, message: String, action: String) {
+        let target = store.space(withID: question.spaceID)
+        let name = "“\(target?.name ?? "Space")”"
+        // Whose space it is: a container's is named as the menu marks it.
+        let owner = target.map { store.isContainer($0.profileID) ? "Container" : sessionName(of: $0.profileID) }
+        let source = store.littleArcWindow(withID: question.windowID).map { sessionName(of: $0.profileID) } ?? "this profile"
+        return ("Open in \(name)?",
+                "The page at \(question.host) will open as a new tab in \(name)\(owner.map { " (\($0))" } ?? ""), without this window's sign-ins. "
+                    + "Cookies, sign-ins and site data stay in \(source), so you may need to sign in again. "
+                    + "This window closes, and its back and forward history is lost.",
+                "Open")
+    }
+
+    /// Yes to the question: the address it named opens in the space it named.
+    /// False, and the window stays, when nothing opened: the window or the
+    /// space went, or the space joined the window's session, while it was up.
+    @discardableResult
+    func confirmLittleArcOpenIn() -> Bool {
+        defer { pendingLittleArcOpenIn = nil }
+        guard let question = pendingLittleArcOpenIn else { return false }
+        return reopenLittleArcWindow(question)
+    }
+
+    /// Cancel: nothing opens and the window stays as it is.
+    func cancelLittleArcOpenIn(for id: LittleArcWindow.ID? = nil) {
+        guard id == nil || pendingLittleArcOpenIn?.windowID == id else { return }
+        pendingLittleArcOpenIn = nil
+    }
+
+    /// Open in ▸ a space of another profile or container, once confirmed. The
+    /// address the person was asked about opens as a new tab in that space,
+    /// loaded by that space's own engine, and the last focused browser window
+    /// shows the space. The window's engine is dropped, never handed over, so
+    /// its page, cookies and sign-ins stay in the session it was opened in.
+    private func reopenLittleArcWindow(_ question: LittleArcOpenInMenu.Question) -> Bool {
+        let id = question.windowID
+        guard let record = store.littleArcWindow(withID: id) else { return false }
+        // The last focused browser window: Little Arc never becomes it.
+        let target = store.keyWindowID
+        guard store.reopenLittleArcAsTab(id: id, in: question.spaceID, url: question.url) != nil else { return false }
         engineHost.removeLittleArc(id, profileID: record.profileID)
         if focusedLittleArcID == id { focusedLittleArcID = nil }
         if keyLittleArcID == id { keyLittleArcID = nil }
         loadSelectedIfNeeded()
         if let target { windowPresenter?.focusBrowserWindow(target) }
+        return true
+    }
+
+    /// A toast on one Little Darni window: the shell's toast, drawn there and
+    /// not on the browser window behind it.
+    func showLittleArcToast(_ message: String, systemImage: String = "", in id: LittleArcWindow.ID,
+                            duration: TimeInterval = ShellToast.defaultDuration) {
+        let toast = ShellToast(message: message, systemImage: systemImage, placement: .belowToolbar)
+        withAnimation(ShellToast.inAnimation) { littleArcToast = LittleArcToast(windowID: id, toast: toast) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.littleArcToast?.toast.id == toast.id else { return }
+            withAnimation(ShellToast.outAnimation) { self.littleArcToast = nil }
+        }
     }
 
     func canSplitLittleArcWindow(_ id: LittleArcWindow.ID) -> Bool {
