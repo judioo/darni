@@ -25,6 +25,27 @@ Merged since the last release and not yet in a build. The next release's entry t
 lines and this section starts empty again.
 
 **Fixes**
+- Little Darni's Open in button and its list of spaces look like Arc's. The button shows the
+  space's name in the space's colour, adjusted so it is always easy to read, with ⌘O beside
+  it. The arrow next to it opens a list of all your spaces with their icons. Type to search,
+  use the arrow keys to move, press Return to choose and Esc to close.
+- Open in on a Little Darni window now names the space of the Darni window you used last,
+  also when that space is in another profile. The name and the toolbar colour change as soon
+  as you click another Darni window or switch its space. If the space is in another profile
+  or a container, the button and ⌘O ask first, because the page opens there without this
+  window's sign-ins.
+- Open in and its arrow stay in the Little Darni toolbar when the window is narrow. The
+  address field shrinks first.
+- The ⌃Tab switcher now looks like Arc's. Your recent tabs show as a row of cards, each with a
+  small picture of its page and the site's icon and title beneath. The tab you are on is
+  marked in your space's colour. A tab Darni has no picture of yet, such as one you have not
+  looked at since Darni started, shows its site's icon instead. With more than five recent tabs, the row
+  slides along as you press Tab, and arrows at its ends show there are more. The pictures stay in memory
+  only. Darni never saves them to disk and never takes them in a private window.
+
+## Darni 2026.1120.1136 — 2026-11-20
+
+**Fixes**
 - With the command bar open in one window, a click in another Darni window always closes the
   bar and brings that window forward. Until now the bar could stay open and the other window
   stay behind.
@@ -67,6 +88,12 @@ lines and this section starts empty again.
   it is. The visit is then kept in that profile's history. Only web pages can open in another
   profile or container. For any other page those spaces are greyed out and the menu says why.
   From a container's window, the spaces of its profile are marked as outside the container.
+- The red, yellow and green window buttons stay in their place. Until now they could jump up
+  and to the left when you chose a tab or when a page changed its title, and they stayed there
+  until you clicked another window and came back.
+- The site controls panel no longer stays cut off after you click Allow in the list of what
+  was blocked. Now and then the panel stayed too short, with its top buttons and bottom rows
+  out of view, until you closed and opened it again.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 

@@ -219,7 +219,7 @@ private struct SplitPaneChip: View {
         .gesture(TapGesture().onEnded { onSelect() }, including: rename == nil ? .all : .subviews)
         .simultaneousGesture(TapGesture(count: 2).onEnded { if rename == nil { onRename() } })
         .onHover { isHovering = $0 }
-        .help("\(tab.displayTitle)\n\(tab.url.absoluteString)")
+        .help(WelcomePageAddress.tooltip(title: tab.displayTitle, url: tab.url))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tab.displayTitle)
         .accessibilityAddTraits(isFocused ? [.isButton, .isSelected] : .isButton)

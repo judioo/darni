@@ -29,6 +29,20 @@ public enum WelcomePageAddress {
         return url.standardizedFileURL.path(percentEncoded: false) == fileURL(in: root).standardizedFileURL.path(percentEncoded: false)
     }
 
+    /// What a tooltip, an accessibility help text or a list shows for a
+    /// page's address: the address in full, or the welcome page's name.
+    /// Copy URL still copies the file's address.
+    public static func displayAddress(for url: URL, root: URL = ShellDataLocation.root) -> String {
+        matches(url, root: root) ? title : url.absoluteString
+    }
+
+    /// A row's tooltip: its title, and its address under it unless that
+    /// would say the same again (the welcome page under its own title).
+    public static func tooltip(title: String, url: URL, root: URL = ShellDataLocation.root) -> String {
+        let address = displayAddress(for: url, root: root)
+        return address == title ? title : "\(title)\n\(address)"
+    }
+
     /// What ⌘L fills the command bar with for a page: its address, or
     /// nothing for a blank page and for the welcome page.
     public static func commandBarPrefill(for url: URL, root: URL = ShellDataLocation.root) -> String {

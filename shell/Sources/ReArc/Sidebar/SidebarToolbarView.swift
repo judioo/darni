@@ -192,7 +192,7 @@ struct SidebarURLField: View {
             Divider()
             Button("Show URL in Toolbar") { UserDefaults.standard.set(true, forKey: ToolbarURLPreference.key) }
         }
-        .help(url?.absoluteString ?? "Open the command bar (⌘L)")
+        .help(url.map { WelcomePageAddress.displayAddress(for: $0) } ?? "Open the command bar (⌘L)")
     }
 
     /// The domain, without `www.`; nil for blank pages. A long host is cut from the left, so

@@ -84,7 +84,7 @@ struct ArchiveView: View {
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(record.tab.displayTitle).lineLimit(1)
-                Text(record.tab.url.host() ?? record.tab.url.absoluteString)
+                Text(record.tab.url.host() ?? WelcomePageAddress.displayAddress(for: record.tab.url))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
