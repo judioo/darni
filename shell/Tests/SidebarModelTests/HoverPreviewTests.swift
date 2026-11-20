@@ -213,6 +213,73 @@ final class HoverPreviewTests: XCTestCase {
         XCTAssertFalse(cache.shouldCapture(fresh, url: page, now: at(10)))
     }
 
+    /// TT-01: a tab changes profile while its capture is under way. The
+    /// capture in the new profile starts and ends first; the old one ends
+    /// last and must not take its place.
+    func testALateCaptureFromBeforeARemoveIsThrownAwayAfterTheNewOne() {
+        var cache = TabSnapshotCache<String>(capacity: 4, maxAge: 60)
+        let id = UUID()
+        XCTAssertEqual(cache.generation(of: id), 0)
+        let old = cache.beginCapture(id)
+        cache.remove(id) // the tab moved to another profile or container
+        XCTAssertGreaterThan(cache.generation(of: id), old)
+        XCTAssertTrue(cache.shouldCapture(id, url: page, now: at(2)), "the new profile's page can be captured at once")
+
+        let new = cache.beginCapture(id)
+        XCTAssertTrue(cache.finishCapture("new profile", for: id, url: page, now: at(3), generation: new))
+        XCTAssertFalse(cache.finishCapture("old profile", for: id, url: page, now: at(4), generation: old))
+        XCTAssertEqual(cache.image(for: id, url: page), "new profile", "the old session's picture is never kept")
+        XCTAssertFalse(cache.shouldCapture(id, url: page, now: at(5)), "the new capture's time stands")
+    }
+
+    /// The old capture ends while the new one is still under way: it is
+    /// thrown away, and the new one is still in flight and still stored.
+    func testALateCaptureEndingDuringTheNewOneLeavesTheNewOneInFlight() {
+        var cache = TabSnapshotCache<String>(capacity: 4, maxAge: 60)
+        let id = UUID()
+        let old = cache.beginCapture(id)
+        cache.remove(id)
+        let new = cache.beginCapture(id)
+        XCTAssertFalse(cache.finishCapture("old profile", for: id, url: page, now: at(1), generation: old))
+        XCTAssertNil(cache.image(for: id, url: page))
+        XCTAssertFalse(cache.shouldCapture(id, url: page, now: at(1)), "the new capture is still the one in flight")
+        XCTAssertTrue(cache.finishCapture("new profile", for: id, url: page, now: at(2), generation: new))
+        XCTAssertEqual(cache.image(for: id, url: page), "new profile")
+    }
+
+    /// Removed twice (moved, then moved again) while the first capture ran:
+    /// a capture of either earlier session is thrown away, and a failure of
+    /// the old one leaves nothing behind either.
+    func testEveryRemoveWithACaptureUnderWayRaisesTheGeneration() {
+        var cache = TabSnapshotCache<String>(capacity: 4, maxAge: 60)
+        let id = UUID()
+        let first = cache.beginCapture(id)
+        cache.remove(id)
+        let second = cache.beginCapture(id)
+        cache.remove(id)
+        cache.remove(id) // nothing under way: no capture can end with the number now
+        let third = cache.beginCapture(id)
+        XCTAssertEqual(Set([first, second, third]).count, 3)
+        XCTAssertFalse(cache.finishCapture(nil, for: id, url: page, now: at(1), generation: first))
+        XCTAssertFalse(cache.finishCapture("second", for: id, url: page, now: at(2), generation: second))
+        XCTAssertNil(cache.image(for: id, url: page))
+        XCTAssertTrue(cache.finishCapture("third", for: id, url: page, now: at(3), generation: third))
+        XCTAssertEqual(cache.image(for: id, url: page), "third")
+    }
+
+    /// With no remove, a capture is stored as before, and a tab with no
+    /// capture under way keeps its number when removed.
+    func testACaptureWithNoRemoveIsStoredAndAnIdleRemoveKeepsTheNumber() {
+        var cache = TabSnapshotCache<String>(capacity: 4, maxAge: 60)
+        let id = UUID()
+        let generation = cache.beginCapture(id)
+        XCTAssertTrue(cache.finishCapture("shot", for: id, url: page, now: t0, generation: generation))
+        XCTAssertEqual(cache.image(for: id, url: page), "shot")
+        cache.remove(id)
+        XCTAssertNil(cache.image(for: id, url: page))
+        XCTAssertEqual(cache.generation(of: id), generation)
+    }
+
     func testOldestEntriesGoPastCapacity() {
         var cache = TabSnapshotCache<String>(capacity: 2, maxAge: 60)
         let ids = [UUID(), UUID(), UUID()]

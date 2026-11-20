@@ -459,6 +459,11 @@ final class BrowserViewModel {
         }
     }
     var commandBarHighlightedIndex = 0
+    /// The text ⌘L filled in (the tab's address). While the field still holds
+    /// exactly that, the rows rank as they always did: Return on an untouched
+    /// address picks the tab's own Switch to Tab row, so nothing reloads. Any
+    /// other typed address puts its Open row first.
+    var commandBarPrefill: String?
     /// The tab the command bar will navigate on submit.
     var commandBarTargetID: Tab.ID?
     /// The tab shown before ⌘T: a ⌥↩ split pairs with it.
@@ -549,7 +554,8 @@ final class BrowserViewModel {
             externalLinkDestination: externalLinkDestination,
             live: commandBarLive ?? commandBarCarriedLive,
             searchProvider: searchProvider,
-            inlineCompletion: commandBarInlineCompletion
+            inlineCompletion: commandBarInlineCompletion,
+            typedAddressFirst: commandBarText != commandBarPrefill
         )
     }
 
@@ -1911,6 +1917,7 @@ final class BrowserViewModel {
         cancelCommandBarLive()
         resetCommandBarSiteSearch()
         commandBarTargetID = nil
+        commandBarPrefill = nil
         commandBarText = ""
         commandBarHighlightedIndex = 0
         commandBarError = nil
@@ -2064,6 +2071,7 @@ final class BrowserViewModel {
         resetCommandBarSiteSearch()
         commandBarSplitAnchorID = nil
         commandBarTargetID = target
+        commandBarPrefill = text.isEmpty ? nil : text
         commandBarText = text
         commandBarHighlightedIndex = 0
         commandBarError = nil

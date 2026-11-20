@@ -168,10 +168,14 @@ extension BrowserViewModel {
     /// address waits for the person's answer (`pendingLittleArcOpenIn`, OI-01),
     /// with the address taken now (OI-03), and any other address stays where it
     /// is, with a toast on the window (OI-02). Nil, and nothing happens, when
-    /// the window or the space is gone.
+    /// the window or the space is gone, and while this window's question is
+    /// up: a second Open in (the main button, ⌘O from the menu bar or a row)
+    /// never replaces the address or the space the person is being asked
+    /// about (LP-01).
     @discardableResult
     func openLittleArcWindow(_ id: LittleArcWindow.ID, in spaceID: Space.ID) -> LittleArcOpenInMenu.Choice? {
-        guard let url = littleArcAddress(id),
+        guard pendingLittleArcOpenIn?.windowID != id,
+              let url = littleArcAddress(id),
               let choice = LittleArcOpenInMenu.choice(store: store, windowID: id, spaceID: spaceID, url: url) else { return nil }
         switch choice {
         case .move: promoteLittleArcWindow(id, into: spaceID)
@@ -195,13 +199,16 @@ extension BrowserViewModel {
                 "Open")
     }
 
-    /// Yes to the question: the address it named opens in the space it named.
-    /// False, and the window stays, when nothing opened: the window or the
-    /// space went, or the space joined the window's session, while it was up.
+    /// Yes to the question of the window `id`: the address it named opens in
+    /// the space it named. Another window's question is not this one's to
+    /// answer, as with Cancel (LP-01): it stays, and nothing opens. False,
+    /// and the window stays, when nothing opened: no question of this window,
+    /// or the window or the space went, or the space joined the window's
+    /// session, while it was up.
     @discardableResult
-    func confirmLittleArcOpenIn() -> Bool {
-        defer { pendingLittleArcOpenIn = nil }
-        guard let question = pendingLittleArcOpenIn else { return false }
+    func confirmLittleArcOpenIn(for id: LittleArcWindow.ID) -> Bool {
+        guard let question = pendingLittleArcOpenIn, question.windowID == id else { return false }
+        pendingLittleArcOpenIn = nil
         return reopenLittleArcWindow(question)
     }
 
