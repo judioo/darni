@@ -89,7 +89,7 @@ struct LittleArcWindowView: View {
             text: openInQuestion.map(model.littleArcOpenInMessage),
             isPresented: { openInQuestion != nil },
             cancel: { model.cancelLittleArcOpenIn(for: windowID) },
-            confirm: { if model.confirmLittleArcOpenIn() { dismiss() } }
+            confirm: { if model.confirmLittleArcOpenIn(for: windowID) { dismiss() } }
         ))
         .background(
             WindowKeyObserver(

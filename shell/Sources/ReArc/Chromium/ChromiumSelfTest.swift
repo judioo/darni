@@ -1188,7 +1188,7 @@ final class ChromiumSelfTest {
                   "open in: an address that is not a web address was not refused across profiles")
         // Asked again and answered Yes, as the alert's button answers it.
         try check(model.openLittleArcWindow(record.id, in: second.id) == .ask(asked), "open in: the second question was not put")
-        try check(model.confirmLittleArcOpenIn(), "open in: Yes opened nothing")
+        try check(model.confirmLittleArcOpenIn(for: record.id), "open in: Yes opened nothing")
         try await wait("open in: the Little Darni window closed") {
             shell.window(forLittleArc: record.id) == nil && store.littleArcWindow(withID: record.id) == nil
         }

@@ -134,6 +134,13 @@ public struct HoverPreviewTimer<ID: Hashable>: Equatable {
 /// per tab. A tab is captured at most once per `maxAge` for the same page,
 /// failures included, so hovering back and forth never captures again; the
 /// least recently stored entries go first past `capacity`.
+///
+/// Each tab has a generation number that `remove` raises. A capture takes
+/// the number when it starts (`beginCapture`) and is kept only if the number
+/// is unchanged when it ends (`finishCapture`), so a capture of a page the
+/// tab no longer shows in that session (it closed, or moved to another
+/// profile or container) is thrown away whenever it ends, and never takes the
+/// place of a later capture (TT-01).
 public struct TabSnapshotCache<Image> {
     public struct Entry {
         public var image: Image?
@@ -146,6 +153,8 @@ public struct TabSnapshotCache<Image> {
     public private(set) var entries: [UUID: Entry] = [:]
     private var order: [UUID] = []
     private var inFlight: Set<UUID> = []
+    /// Only tabs removed while a capture was under way have one; the rest are 0.
+    private var generations: [UUID: Int] = [:]
 
     public init(capacity: Int = 24, maxAge: TimeInterval = 120) {
         self.capacity = capacity
@@ -166,8 +175,26 @@ public struct TabSnapshotCache<Image> {
         return now.timeIntervalSince(entry.capturedAt) >= min(age ?? maxAge, maxAge)
     }
 
-    public mutating func beginCapture(_ id: UUID) {
+    /// The tab's generation: raised by `remove` when a capture is under way.
+    public func generation(of id: UUID) -> Int {
+        generations[id] ?? 0
+    }
+
+    /// A capture starts: the generation it returns goes to `finishCapture`.
+    @discardableResult
+    public mutating func beginCapture(_ id: UUID) -> Int {
         inFlight.insert(id)
+        return generation(of: id)
+    }
+
+    /// A capture begun at `generation` ended. Stored as `store` stores it,
+    /// only while the tab's generation is unchanged; false, and nothing
+    /// changes (the tab's capture of now included), when it was removed since.
+    @discardableResult
+    public mutating func finishCapture(_ image: Image?, for id: UUID, url: URL, now: Date, generation: Int) -> Bool {
+        guard generation == self.generation(of: id) else { return false }
+        store(image, for: id, url: url, now: now)
+        return true
     }
 
     /// Stores a capture's result; nil records a failure, which also waits `maxAge`.
@@ -182,10 +209,13 @@ public struct TabSnapshotCache<Image> {
         }
     }
 
+    /// The tab's snapshot goes, and a capture of it under way is now of an
+    /// older generation, kept by nobody. A tab with no capture under way keeps
+    /// its number: none can end with it, and the table stays small.
     public mutating func remove(_ id: UUID) {
         entries[id] = nil
         order.removeAll { $0 == id }
-        inFlight.remove(id)
+        if inFlight.remove(id) != nil { generations[id] = generation(of: id) + 1 }
     }
 
     /// Drops the snapshots of tabs that are gone (`isLive` says which remain).
