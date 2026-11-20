@@ -58,7 +58,7 @@ struct CardToolbarView: View {
                 .buttonStyle(.plain)
                 .addressBarControlFocus()
                 .onHover { isHoveringURL = $0 }
-                .help(url?.absoluteString ?? "Open the command bar (⌘L)")
+                .help(url.map { WelcomePageAddress.displayAddress(for: $0) } ?? "Open the command bar (⌘L)")
             }
             .padding(.horizontal, 140)
             .padding(.trailing, 20) // centred about 10 pt left of the card's centre

@@ -90,6 +90,17 @@ final class SplitPaneToolbarTests: XCTestCase {
         XCTAssertEqual(WelcomePageAddress.commandBarPrefill(for: URL(string: "https://example.com/a")!, root: root), "https://example.com/a")
         XCTAssertEqual(WelcomePageAddress.commandBarPrefill(for: URL(string: "file:///tmp/a.html")!, root: root), "file:///tmp/a.html")
 
+        // The address button's tooltip and accessibility help, and a split row's tooltip.
+        XCTAssertEqual(WelcomePageAddress.displayAddress(for: page, root: root), "Welcome to Darni")
+        XCTAssertEqual(WelcomePageAddress.displayAddress(for: reported, root: root), "Welcome to Darni")
+        XCTAssertEqual(WelcomePageAddress.displayAddress(for: URL(string: "https://example.com/a?b=1#c")!, root: root), "https://example.com/a?b=1#c")
+        XCTAssertEqual(WelcomePageAddress.displayAddress(for: URL(string: "file:///tmp/welcome.html")!, root: root), "file:///tmp/welcome.html",
+                       "any other file is shown whole")
+        XCTAssertEqual(WelcomePageAddress.tooltip(title: "Welcome to Darni", url: page, root: root), "Welcome to Darni", "not said twice")
+        XCTAssertEqual(WelcomePageAddress.tooltip(title: "Start here", url: page, root: root), "Start here\nWelcome to Darni", "a renamed tab")
+        XCTAssertEqual(WelcomePageAddress.tooltip(title: "Example", url: URL(string: "https://example.com/a")!, root: root),
+                       "Example\nhttps://example.com/a")
+
         // This process's own page, in the card toolbar and a split pane's row.
         let parts = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(WelcomePageAddress.fileURL()))
         XCTAssertEqual(parts.host, "Welcome to Darni")

@@ -130,7 +130,7 @@ struct SplitPaneToolbarView: View, Equatable {
         .buttonStyle(.plain)
         .addressBarControlFocus()
         .onHover { isHoveringURL = $0 }
-        .help(url?.absoluteString ?? "Open the command bar (⌘L)")
+        .help(url.map { WelcomePageAddress.displayAddress(for: $0) } ?? "Open the command bar (⌘L)")
         .accessibilityLabel("Address of pane: \(parts.map { $0.host + $0.rest } ?? "blank")")
     }
 
