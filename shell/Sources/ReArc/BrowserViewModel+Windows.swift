@@ -19,10 +19,9 @@ extension BrowserViewModel {
     /// load what it shows (the key window's host also takes the tab's lease).
     func windowBecameKey(_ window: SidebarWindowID) {
         if store.keyWindowID != window { cancelTabSwitcher() }
-        // The bar belongs to the window it opened in: another window taking
-        // the keys closes it, as Arc does, so typing never lands in a bar
-        // that window does not show.
-        if isCommandBarPresented, let opened = commandBarWindowID, opened != window { dismissCommandBar() }
+        // Another window taking the keys closes the bar, as Arc does, so typing
+        // never lands in a bar that window does not show.
+        closeCommandBar(openedOutside: window)
         keyLittleArcID = nil
         store.windowBecameKey(window)
         reconcileEngineOwnership()
@@ -41,10 +40,12 @@ extension BrowserViewModel {
         return browserWindowRefs.first { $0.window === window }?.id
     }
 
-    /// A click in browser window `window` while another one shows the bar
-    /// closes the bar. True when it did.
+    /// The bar belongs to the window it opened in (`commandBarWindowID`):
+    /// when browser window `window` takes the keys or a click while another
+    /// one shows the bar, the bar closes. True when it did. The one rule for
+    /// both ways in (`windowBecameKey`, `handleCommandBarMouseDown`).
     @discardableResult
-    func closeCommandBar(forClickIn window: SidebarWindowID) -> Bool {
+    func closeCommandBar(openedOutside window: SidebarWindowID) -> Bool {
         guard isCommandBarPresented, let opened = commandBarWindowID, opened != window else { return false }
         dismissCommandBar()
         return true
@@ -58,7 +59,7 @@ extension BrowserViewModel {
     /// window AppKit did not bring forward is brought forward here.
     func handleCommandBarMouseDown(in window: NSWindow?) {
         guard isCommandBarPresented, let window, let id = sidebarWindowID(of: window),
-              closeCommandBar(forClickIn: id) else { return }
+              closeCommandBar(openedOutside: id) else { return }
         DispatchQueue.main.async { [weak window] in
             guard let window, let app = NSApp, app.isActive, window.isVisible, !window.isKeyWindow else { return }
             window.makeKeyAndOrderFront(nil)
