@@ -62,6 +62,7 @@ expect() { # KEY EXPECTED WHY
 [[ "$(basename "$APP")" == "$NAME.app" ]] || fail "the bundle is named $(basename "$APP"), expected $NAME.app"
 expect CFBundleName "$NAME" "the menu bar and Sparkle's User-Agent"
 expect CFBundleDisplayName "$NAME" "Finder, the Dock and macOS prompts"
+expect MDItemKeywords "Darni, ReArc" "Spotlight finds an updated ReArc.app by Darni, and Darni.app by ReArc"
 
 # What must not move.
 expect CFBundleIdentifier "$BUNDLE_ID" "a new id is a new app to macOS, and Sparkle could not find the update"

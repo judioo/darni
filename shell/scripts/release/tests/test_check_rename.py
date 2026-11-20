@@ -16,7 +16,8 @@ HELPERS = {
     "Chromium Helper (Alerts).app": "com.rearc.browser.framework.AlertNotificationService",
 }
 INFO = {
-    "CFBundleName": "Darni", "CFBundleDisplayName": "Darni", "CFBundleIdentifier": "com.rearc.browser",
+    "CFBundleName": "Darni", "CFBundleDisplayName": "Darni", "MDItemKeywords": "Darni, ReArc",
+    "CFBundleIdentifier": "com.rearc.browser",
     "CFBundleExecutable": "ReArc", "ReArcRelease": True, "SUPublicEDKey": KEY,
     "SUFeedURL": "https://rearc.imara.ae/updates/appcast.xml", "ReArcICloudContainer": "iCloud.com.rearc.browser",
 }
@@ -61,6 +62,7 @@ class CheckRenameTests(unittest.TestCase):
             "the old visible name": (dict(name="ReArc.app"), "expected Darni.app"),
             "CFBundleName": (dict(info={"CFBundleName": "ReArc"}), "CFBundleName is 'ReArc'"),
             "CFBundleDisplayName": (dict(info={"CFBundleDisplayName": "ReArc"}), "CFBundleDisplayName is 'ReArc'"),
+            "no Spotlight keywords": (dict(info={"MDItemKeywords": "Darni"}), "MDItemKeywords is 'Darni'"),
             "a new bundle id": (dict(info={"CFBundleIdentifier": "ae.imara.darni"}), "CFBundleIdentifier is 'ae.imara.darni'"),
             "a new executable": (dict(info={"CFBundleExecutable": "Darni"}), "CFBundleExecutable is 'Darni'"),
             "another feed": (dict(info={"SUFeedURL": "https://darni.example/appcast.xml"}), "SUFeedURL"),

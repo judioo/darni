@@ -199,6 +199,11 @@ fi
 plutil -replace CFBundleExecutable -string ReArc "$PLIST"
 plutil -replace CFBundleName -string Darni "$PLIST"
 plutil -replace CFBundleDisplayName -string Darni "$PLIST"
+# Spotlight finds the app by both names. An updated copy keeps its file name, ReArc.app, and
+# Spotlight shows and matches the file name, so "Darni" found nothing (owner, 2026-11-20); a
+# new download is Darni.app, and people still type "ReArc". MDItemKeywords is the Info.plist
+# key Spotlight reads for an app's extra search words (Ghostty: "Terminal").
+plutil -replace MDItemKeywords -string "Darni, ReArc" "$PLIST"
 # The app's version, not Chromium's (RELEASE.md, "Versioning"): YYYY.MMDD.<build> of the commit,
 # as for any build that is not a release; release.sh stamps a release's own afterwards.
 if shell_stamp="$(python3 -I "$SHELL_DIR/scripts/release/version.py" commit --repo "$REPO" 2>/dev/null)"; then
