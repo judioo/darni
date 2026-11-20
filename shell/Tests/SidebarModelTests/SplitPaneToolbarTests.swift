@@ -64,6 +64,40 @@ final class SplitPaneToolbarTests: XCTestCase {
         XCTAssertNil(SplitPaneToolbarLayout.addressParts(nil))
     }
 
+    /// The onboarding's welcome page is a file in the data folder: the address fields show its
+    /// name, and only that one file's.
+    func testTheWelcomePageIsShownByName() throws {
+        let root = URL(fileURLWithPath: "/Users/kai/Library/Application Support/ReArc", isDirectory: true)
+        let page = WelcomePageAddress.fileURL(in: root)
+        XCTAssertEqual(page.path, "/Users/kai/Library/Application Support/ReArc/Welcome/welcome.html")
+        XCTAssertEqual(WelcomePageAddress.title, "Welcome to Darni")
+        XCTAssertTrue(WelcomePageAddress.matches(page, root: root))
+        // As an engine reports it: percent-encoded, with a fragment.
+        let reported = try XCTUnwrap(URL(string: "file:///Users/kai/Library/Application%20Support/ReArc/Welcome/welcome.html#tips"))
+        XCTAssertTrue(WelcomePageAddress.matches(reported, root: root))
+        for other in ["file:///Users/kai/Library/Application%20Support/ReArc/Welcome/other.html",
+                      "file:///Users/kai/Downloads/Welcome/welcome.html",
+                      "file:///Users/kai/Library/Application%20Support/ReArc/Welcome/welcome.html?x=1",
+                      "file://evil.test/Users/kai/Library/Application%20Support/ReArc/Welcome/welcome.html",
+                      "https://evil.test/Users/kai/Library/Application%20Support/ReArc/Welcome/welcome.html",
+                      "rearc://welcome", "about:blank"] {
+            XCTAssertFalse(WelcomePageAddress.matches(URL(string: other), root: root), other)
+        }
+        XCTAssertFalse(WelcomePageAddress.matches(nil, root: root))
+
+        XCTAssertEqual(WelcomePageAddress.commandBarPrefill(for: page, root: root), "", "⌘L starts empty, as on a new tab")
+        XCTAssertEqual(WelcomePageAddress.commandBarPrefill(for: URL(string: "about:blank")!, root: root), "")
+        XCTAssertEqual(WelcomePageAddress.commandBarPrefill(for: URL(string: "https://example.com/a")!, root: root), "https://example.com/a")
+        XCTAssertEqual(WelcomePageAddress.commandBarPrefill(for: URL(string: "file:///tmp/a.html")!, root: root), "file:///tmp/a.html")
+
+        // This process's own page, in the card toolbar and a split pane's row.
+        let parts = try XCTUnwrap(SplitPaneToolbarLayout.addressParts(WelcomePageAddress.fileURL()))
+        XCTAssertEqual(parts.host, "Welcome to Darni")
+        XCTAssertEqual(parts.rest, "")
+        XCTAssertEqual(SplitPaneToolbarLayout.addressParts(URL(string: "file:///tmp/welcome.html"))?.host, "file:///tmp/welcome.html",
+                       "any other file keeps its whole address")
+    }
+
     /// Security AG-01: the host keeps its registrable domain, IPv6 keeps its brackets, and the
     /// rest cannot hide or reorder text with direction, invisible or space characters.
     func testTheAddressCannotBeSpoofed() throws {

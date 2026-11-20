@@ -180,7 +180,9 @@ struct BrowserView: View {
                     model.library.forgetWindow(windowID)
                     model.libraryGrowth[windowID] = nil
                     model.forgetSidebarMode(for: windowID)
-                }
+                    model.noteBrowserWindow(nil, id: windowID)
+                },
+                onWindow: { model.noteBrowserWindow($0, id: windowID) }
             )
             .frame(width: 0, height: 0)
         )

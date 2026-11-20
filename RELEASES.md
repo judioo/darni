@@ -24,6 +24,15 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+**Fixes**
+- With the command bar open in one window, a click in another Darni window always closes the
+  bar and brings that window forward. Until now the bar could stay open and the other window
+  stay behind.
+- The welcome page shows "Welcome to Darni" in the address field. The last scene of the
+  first-run tour showed `rearc://welcome` there, and the window itself showed the long path
+  of a file on your Mac. Command-L on the welcome page now starts with an empty field, as on
+  a new tab.
+
 ## Darni 2026.1120.1105 — 2026-11-20
 
 **Fixes**

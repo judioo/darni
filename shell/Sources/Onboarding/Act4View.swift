@@ -59,10 +59,11 @@ extension SunrisePainter {
                 c.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(RGBA(hex: UInt32(hex)).color))
             }
             c.fill(Path(roundedRect: A4.urlBar, cornerRadius: H * 0.01), with: .color(.white.opacity(0.45)))
-            c.draw(Text("rearc://welcome").font(.system(size: H * 0.0145)).foregroundColor(ink.opacity(0.55)),
+            // What the real window's address field shows for this page (`WelcomePageAddress`).
+            c.draw(Text(WelcomePageAddress.title).font(.system(size: H * 0.0145)).foregroundColor(ink.opacity(0.55)),
                    at: CGPoint(x: A4.urlBar.minX + H * 0.014, y: A4.urlBar.midY), anchor: .leading)
             c.fill(Path(roundedRect: A4.tabRow, cornerRadius: H * 0.01), with: .color(.white.opacity(0.7)))
-            c.draw(Text("Welcome to Darni").font(.system(size: H * 0.0155, weight: .medium)).foregroundColor(ink),
+            c.draw(Text(WelcomePageAddress.title).font(.system(size: H * 0.0155, weight: .medium)).foregroundColor(ink),
                    at: CGPoint(x: A4.favicon.x + H * 0.02, y: A4.tabRow.midY), anchor: .leading)
             c.draw(Text("+  New Tab").font(.system(size: H * 0.0155)).foregroundColor(ink.opacity(0.45)),
                    at: CGPoint(x: A4.tabRow.minX + H * 0.014, y: A4.tabRow.maxY + H * 0.026), anchor: .leading)
