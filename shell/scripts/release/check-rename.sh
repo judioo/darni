@@ -4,6 +4,8 @@
 # users lose their data or stop getting updates:
 #
 #   the name people see         CFBundleName, CFBundleDisplayName and the file name: Darni
+#   Spotlight's search words    MDItemKeywords "Darni, ReArc": an updated copy is still the
+#                               file ReArc.app, and Spotlight matches the file name
 #   bundle id                   com.rearc.browser, and the helper and framework ids under it
 #                               (a new id is a new app to macOS, and Sparkle finds a renamed
 #                               app inside an update only by its bundle id)
