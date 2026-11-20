@@ -62,7 +62,11 @@ lines and this section starts empty again.
   window's own profile. With one space in that profile there was no arrow at all, and a click
   moved the page straight into that space. A space in the same profile takes the page as it
   is. A space in another profile opens the same address in a new tab there, and the sign-ins
-  of the first profile stay in the first profile, so you may need to sign in again.
+  of the first profile stay in the first profile, so you may need to sign in again. Darni
+  asks before it does this and names the site and the space, and Cancel leaves the window as
+  it is. The visit is then kept in that profile's history. Only web pages can open in another
+  profile or container. For any other page those spaces are greyed out and the menu says why.
+  From a container's window, the spaces of its profile are marked as outside the container.
 
 ## Darni 2026.1120.1105 — 2026-11-20
 

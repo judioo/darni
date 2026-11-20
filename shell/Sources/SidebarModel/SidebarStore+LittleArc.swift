@@ -114,15 +114,20 @@ extension SidebarStore {
     /// loads there, so the title the page had in the window's session stays
     /// behind with its cookies and sign-ins (S-01). The window's record is
     /// removed, as a promote removes it: the page lives on as the tab, and an
-    /// archived copy would name the session it left. Nil, and nothing changes,
-    /// for a space of the window's own session (`promoteLittleArcToTab`), a
-    /// space that cannot be shown, or a window that is not open.
+    /// archived copy would name the session it left. `url` is the address to
+    /// open: the one the person was asked about (OI-01, OI-03), or the
+    /// record's when nil. Nil, and nothing changes, for a space of the
+    /// window's own session (`promoteLittleArcToTab`), a space that cannot be
+    /// shown, a window that is not open, or an address that is not a web
+    /// address (`LittleArcOpenInMenu.canCrossSessions`, OI-02).
     @discardableResult
-    public func reopenLittleArcAsTab(id: LittleArcWindow.ID, in spaceID: Space.ID) -> Tab? {
+    public func reopenLittleArcAsTab(id: LittleArcWindow.ID, in spaceID: Space.ID, url: URL? = nil) -> Tab? {
         guard let index = littleArcWindows.firstIndex(where: { $0.id == id }),
               let space = listedSpace(withID: spaceID), space.profileID != littleArcWindows[index].profileID else { return nil }
-        let window = littleArcWindows.remove(at: index)
-        let tab = addTab(kind: .today, title: window.url.host() ?? "New Tab", url: window.url, in: space.id)
+        let address = url ?? littleArcWindows[index].url
+        guard LittleArcOpenInMenu.canCrossSessions(address) else { return nil }
+        littleArcWindows.remove(at: index)
+        let tab = addTab(kind: .today, title: address.host() ?? "New Tab", url: address, in: space.id)
         focusTab(tab.id)
         notifyMutation()
         return tab
