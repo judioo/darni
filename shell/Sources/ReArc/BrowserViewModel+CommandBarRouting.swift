@@ -111,7 +111,12 @@ extension BrowserViewModel {
         guard let session = TabSwitcherSession(items: store.recentTabSwitcherItems(onScreenOnly: true), forward: forward),
               session.items.count > 1 else { return }
         tabSwitcher = session
-        if !controlHeld { commitTabSwitcher() }
+        if !controlHeld {
+            commitTabSwitcher()
+            return
+        }
+        // The page being left, for its card: a hidden page cannot be captured.
+        TabThumbnails.shared.captureSelectedTab(of: self, olderThan: TabThumbnails.leavingAge)
     }
 
     /// Control released: show the highlighted tab.

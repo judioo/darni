@@ -1031,6 +1031,7 @@ final class BrowserViewModel {
     private func deleteTabNow(_ id: Tab.ID) {
         store.closeTab(id)
         releaseEngine(for: id)
+        TabThumbnails.shared.remove(id)
         loadSelectedIfNeeded()
     }
 
@@ -1269,6 +1270,7 @@ final class BrowserViewModel {
         library.closeStale { [unowned self] in selectedItemID(in: $0) }
         applyAutoPiPOnTabSwitch()
         noteVisibleTabsShown()
+        TabThumbnails.shared.tabShown(in: self)
         if store.selectedEaselRef != nil { return }
         if let split = activeSplit {
             for tab in split.tabs {
@@ -1384,6 +1386,8 @@ final class BrowserViewModel {
         if let tab = store.tab(withID: tabID) {
             engineHost.installBoosts(store.activeBoostEntries(for: tab), forTabID: tabID, profileID: profileID(for: tab))
         }
+        // The tab on screen shows another page: its thumbnail follows.
+        if store.selectedTabID == tabID { TabThumbnails.shared.tabShown(in: self) }
     }
 
     func handleLittleArcNavigationCommit(windowID: LittleArcWindow.ID, url: URL?, title: String?) {

@@ -24,6 +24,13 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+- The ⌃Tab switcher now looks like Arc's. Your recent tabs show as a row of cards, each with a
+  small picture of its page and the site's icon and title beneath. The tab you are on is
+  marked in your space's colour. A tab Darni has no picture of yet, such as one you have not
+  looked at since Darni started, shows its site's icon instead. With more than five recent tabs, the row slides along
+  as you press Tab, and arrows at its ends show there are more. The pictures stay in memory
+  only. Darni never saves them to disk and never takes them in a private window.
+
 ## Darni 2026.1120.1136 — 2026-11-20
 
 **Fixes**

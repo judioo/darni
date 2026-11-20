@@ -130,7 +130,9 @@ struct BrowserView: View {
             if let switcher = model.tabSwitcher, isKeyWindowSheetOwner {
                 TabSwitcherOverlay(
                     session: switcher,
+                    theme: model.shownTheme(in: windowID),
                     favicon: { item in model.store.tab(withID: item.id).flatMap { model.favicon(for: $0) } },
+                    thumbnail: { item in TabThumbnails.shared.image(forTabID: item.id, url: item.url) },
                     onSelect: { model.selectTabSwitcherItem($0) }
                 )
                 .transition(.opacity)

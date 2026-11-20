@@ -674,6 +674,8 @@ extension BrowserViewModel {
             boostSessionApplyByTab[id] = nil
             lastPickedSnapshotByTab[id] = nil
             boostSelectorFingerprintByTab[id] = nil
+            // Its thumbnail shows the page as the old profile or container saw it.
+            TabThumbnails.shared.remove(id)
             // Clear subscriptions and page identity caches as well as the engine:
             // they are keyed by tab UUID, which survives a profile change.
             releaseEngine(for: id)
