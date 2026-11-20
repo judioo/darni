@@ -1089,6 +1089,81 @@ final class ChromiumSelfTest {
         try check(leases == 1, "\(label): tab \(engine.tabID) holds \(leases) live attachments")
     }
 
+    /// Little Darni's Open in ⌄ across profiles (owner report 2026-11-20): a
+    /// window in a profile with one space, while another profile has several.
+    /// The menu offers the other profile's spaces, and choosing one loads the
+    /// address afresh in a new tab of that profile. The window's page is not
+    /// moved: another engine tab, another engine profile, and a cookie set in
+    /// the window is not there (S-01).
+    @MainActor
+    private func littleArcOpenInOtherProfileChecks(model: BrowserViewModel, shell: ChromiumShell, store: SidebarStore,
+                                                   base: String) async throws {
+        let home = store.activeSpace
+        let homeTab = store.selectedTab
+        let second = store.addSpace(name: "Open In Second", profileID: home.profileID)
+        let solo = store.addProfile(name: "Open In Solo")
+        let soloSpace = try XUnwrap(store.spaces(in: solo.id).first, "the new profile's space")
+        store.selectSpace(home.id)
+
+        let address = try XUnwrap(URL(string: "\(base)/a?openin=1"), "open-in address")
+        let record = model.openLittleArc(url: address, profileID: solo.id)
+        guard shell.window(forLittleArc: record.id) != nil,
+              let little = model.littleArcEngine(for: record.id) as? ChromiumEngine else {
+            throw Failure(description: "open in: Little Darni opened no window/engine")
+        }
+        try await wait("open in: Little Darni loaded in the one-space profile", timeout: 20) {
+            little.attachmentID != nil && little.pageTitle == Self.titleA && !little.isLoading
+        }
+        let littleTab = little.tabID, littleProfile = little.engineProfileID
+        _ = try await little.evaluate("(document.cookie = 'rearc_open_in=solo; path=/; max-age=600', document.cookie)", in: .page)
+
+        // The menu: the window's profile has only the target, so every entry is another profile's.
+        try check(store.littleArcTargetSpace(for: record.id)?.id == soloSpace.id,
+                  "open in: target \(store.littleArcTargetSpace(for: record.id)?.name ?? "nil"), expected the window's own space")
+        let sections = LittleArcOpenInMenu.sections(store: store, windowID: record.id)
+        let entries = sections.flatMap(\.entries)
+        let homeOwner = store.owningProfileID(of: home.profileID)
+        try check(sections.map(\.profileID) == [homeOwner] && sections.first?.header != nil
+                  && entries.contains { $0.spaceID == home.id } && entries.contains { $0.spaceID == second.id }
+                  && !entries.contains { $0.spaceID == soloSpace.id } && entries.allSatisfy { $0.kind == .reopen },
+                  "open in: menu \(sections.map { "\($0.header ?? "-"): \($0.entries.map { "\($0.title) \($0.kind)" })" })")
+
+        try check(model.openLittleArcWindow(record.id, in: second.id) == .reopen, "open in: the other profile's space was not a reopen")
+        try await wait("open in: the Little Darni window closed") {
+            shell.window(forLittleArc: record.id) == nil && store.littleArcWindow(withID: record.id) == nil
+        }
+        guard let tab = store.selectedTab, tab.url == address, store.spaceContaining(tabID: tab.id) == second.id,
+              store.activeSpaceID == second.id, model.profileID(for: tab) == home.profileID else {
+            throw Failure(description: "open in: no tab with the address in the chosen space (selected \(store.selectedTab?.url.absoluteString ?? "nil") "
+                          + "in space \(store.activeSpace.name))")
+        }
+        let engine = try shellEngine(model, tab)
+        try await wait("open in: the address loaded in the other profile", timeout: 20) {
+            engine.pageTitle == Self.titleA && engine.currentURL?.query == "openin=1" && !engine.isLoading
+        }
+        let seen = try await cookies(engine)
+        try check(engine.tabID != littleTab && engine.engineProfileID != littleProfile && engine.role == .tab,
+                  "open in: the tab is the window's page (engine tab \(engine.tabID) vs \(littleTab), engine profile "
+                  + "\(engine.engineProfileID) vs \(littleProfile), role \(engine.role))")
+        try check(!seen.contains("rearc_open_in"), "open in: the window's cookie reached the other profile ('\(seen)')")
+        try check(model.engineHost.existingLittleArcEngine(record.id, profileID: solo.id) == nil
+                  && !store.littleArcArchivedWindows.contains { $0.id == record.id }
+                  && store.displayTabs(in: second.id).map(\.id) == [tab.id] && store.displayTabs(in: soloSpace.id).isEmpty,
+                  "open in: the window's engine or record was kept, or more than one tab was made")
+        log("PASS Little Darni Open in another profile: menu \(entries.count) space(s), all reopen; the address loaded afresh in "
+            + "engine tab \(engine.tabID) of engine profile \(engine.engineProfileID) (the window was tab \(littleTab) of profile "
+            + "\(littleProfile)); the window's cookie is not there ('\(seen)'); window closed, record removed")
+
+        model.deleteTab(tab.id)
+        store.selectSpace(home.id)
+        _ = store.removeSpace(second.id)
+        try check(model.deleteProfile(solo.id, deletingSpaces: true) == nil, "open in: the extra profile could not be deleted")
+        if let homeTab {
+            model.selectTab(homeTab.id)
+            try await wait("open in: the first tab shown again", timeout: 15) { store.selectedTab?.id == homeTab.id && store.activeSpaceID == home.id }
+        }
+    }
+
     /// Drives `ChromiumShell` (the normal Chromium-path UI) with a throwaway
     /// sidebar: the same BrowserView, LittleArcWindowView and PrivateWindowView
     /// the app shows, through the model's own commands.
@@ -1263,6 +1338,7 @@ final class ChromiumSelfTest {
         try check(NSApp.isRunning && first.isVisible, "closing Little ReArc changed the app")
         log("PASS Little ReArc: own window with tab \(little.tabID) lease \(littleLease); closed (lease released: "
             + "\(little.attachmentID == nil)) and archived; app still running")
+        try await littleArcOpenInOtherProfileChecks(model: model, shell: shell, store: store, base: base)
 
         // Zoom commands: Cmd+= on the focused tab; Chromium's per-host zoom also
         // reaches a sibling same-host tab of the same profile.

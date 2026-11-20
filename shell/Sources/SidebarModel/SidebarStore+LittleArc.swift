@@ -82,7 +82,8 @@ extension SidebarStore {
     }
 
     /// Promotes a live or archived Little Arc into a today tab in `spaceID`
-    /// (a space of the window's profile), or in the target space above.
+    /// (a space of the window's profile), or in the target space above. A space
+    /// of another session is `reopenLittleArcAsTab`'s.
     @discardableResult
     public func promoteLittleArcToTab(id: LittleArcWindow.ID, into spaceID: Space.ID? = nil) -> Tab? {
         let window: LittleArcWindow
@@ -102,6 +103,27 @@ extension SidebarStore {
         }
         let tab = addTab(kind: .today, title: window.title, url: window.url, in: activeSpaceID)
         selectTab(tab.id)
+        notifyMutation()
+        return tab
+    }
+
+    /// Open in ▸ a space of another session (another profile, or a container):
+    /// the window's address opens afresh as a Today tab in `spaceID`, and that
+    /// space is shown, as a link sent to a space by Air Traffic Control is.
+    /// Only the address goes. The tab is named by its host until the page
+    /// loads there, so the title the page had in the window's session stays
+    /// behind with its cookies and sign-ins (S-01). The window's record is
+    /// removed, as a promote removes it: the page lives on as the tab, and an
+    /// archived copy would name the session it left. Nil, and nothing changes,
+    /// for a space of the window's own session (`promoteLittleArcToTab`), a
+    /// space that cannot be shown, or a window that is not open.
+    @discardableResult
+    public func reopenLittleArcAsTab(id: LittleArcWindow.ID, in spaceID: Space.ID) -> Tab? {
+        guard let index = littleArcWindows.firstIndex(where: { $0.id == id }),
+              let space = listedSpace(withID: spaceID), space.profileID != littleArcWindows[index].profileID else { return nil }
+        let window = littleArcWindows.remove(at: index)
+        let tab = addTab(kind: .today, title: window.url.host() ?? "New Tab", url: window.url, in: space.id)
+        focusTab(tab.id)
         notifyMutation()
         return tab
     }
