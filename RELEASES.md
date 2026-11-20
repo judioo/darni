@@ -24,6 +24,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1120.1136 — 2026-11-20
+
 **Fixes**
 - With the command bar open in one window, a click in another Darni window always closes the
   bar and brings that window forward. Until now the bar could stay open and the other window
@@ -67,7 +69,6 @@ lines and this section starts empty again.
   it is. The visit is then kept in that profile's history. Only web pages can open in another
   profile or container. For any other page those spaces are greyed out and the menu says why.
   From a container's window, the spaces of its profile are marked as outside the container.
-  of the first profile stay in the first profile, so you may need to sign in again.
 - The red, yellow and green window buttons stay in their place. Until now they could jump up
   and to the left when you chose a tab or when a page changed its title, and they stayed there
   until you clicked another window and came back.
