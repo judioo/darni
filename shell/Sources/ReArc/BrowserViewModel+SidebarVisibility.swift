@@ -3,7 +3,10 @@ import SidebarModel
 
 /// ⌘S per window (`SidebarVisibility`): each browser window shows or hides
 /// its own sidebar. A view asks about the window it is in. Commands (⌘S,
-/// the View menu, the command bar) act on the key window.
+/// the View menu, the command bar) act on the key window and pass
+/// `store.keyWindowID`. There is no form without a window, as for the mini
+/// sidebar (`isMiniSidebar(in:)`): the key window's state drawn in every
+/// window is the bug this file fixes.
 extension BrowserViewModel {
 
     func isSidebarVisible(in window: SidebarWindowID?) -> Bool {
@@ -79,35 +82,5 @@ extension BrowserViewModel {
         } completion: { [weak self] in
             self?.onShellAnimationComplete?(.sidebarPeek)
         }
-    }
-
-    // MARK: - The key window's sidebar
-
-    // What ⌘S would act on: for commands, the bench and tests. A view reads
-    // its own window with the `in:` forms above, never these: the key
-    // window's state drawn in every window is the bug this file fixes.
-
-    var isSidebarVisible: Bool {
-        get { isSidebarVisible(in: store.keyWindowID) }
-        set { sidebarVisibility.update(in: store.keyWindowID) { $0.isVisible = newValue } }
-    }
-
-    var isSidebarLaidOut: Bool {
-        get { isSidebarLaidOut(in: store.keyWindowID) }
-        set { sidebarVisibility.update(in: store.keyWindowID) { $0.isLaidOut = newValue } }
-    }
-
-    var sidebarReveal: Double {
-        get { sidebarReveal(in: store.keyWindowID) }
-        set { sidebarVisibility.update(in: store.keyWindowID) { $0.reveal = newValue } }
-    }
-
-    var isSidebarSliding: Bool {
-        isSidebarSliding(in: store.keyWindowID)
-    }
-
-    var isSidebarPeeking: Bool {
-        get { isSidebarPeeking(in: store.keyWindowID) }
-        set { sidebarVisibility.update(in: store.keyWindowID) { $0.isPeeking = newValue } }
     }
 }

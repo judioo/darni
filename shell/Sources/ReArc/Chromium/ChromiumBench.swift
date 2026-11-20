@@ -490,7 +490,7 @@ final class ChromiumBench {
     /// completes; content_lag: the page's first frame at its final size after that.
     private func sidebarToggle() async throws {
         try await iterate("ui.sidebar_toggle", count: options.iterations * 2) { index, warmup, contaminated in
-            let showing = !model.isSidebarVisible
+            let showing = !model.isSidebarVisible(in: model.store.keyWindowID)
             let suffix = showing ? "show" : "hide"
             let input = delivery
             let tabID = (try? selectedEngine())?.tabID ?? 0
@@ -520,13 +520,13 @@ final class ChromiumBench {
             }
             _ = index
         }
-        if !model.isSidebarVisible { model.toggleSidebar() }
+        if !model.isSidebarVisible(in: model.store.keyWindowID) { model.toggleSidebar() }
     }
 
     /// Hover reveal with the sidebar hidden: a mouse move at x = 2 pt (or the
     /// monitor's own callback), then away past the floating sidebar.
     private func sidebarPeek() async throws {
-        if model.isSidebarVisible {
+        if model.isSidebarVisible(in: model.store.keyWindowID) {
             model.toggleSidebar()
             _ = await animations.arm(timeout: 2) { $0 == .sidebarToggle }.value()
         }

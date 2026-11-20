@@ -1562,7 +1562,7 @@ final class ChromiumSelfTest {
             shell.browserWindowCount == 1 && !model.sidebarVisibility.isRegistered(secondID)
         }
         _ = await makeKey(first, firstID, "the first window")
-        try check(model.isSidebarVisible, "the first window's sidebar is hidden after the step")
+        try check(model.isSidebarVisible(in: model.store.keyWindowID), "the first window's sidebar is hidden after the step")
         log("PASS ⌘S per window: with two browser windows, ⌘S in the second hid only its sidebar (the first kept its sidebar, traffic "
             + "lights and page width\(firstWidth.map { " \(Int($0)) pt" } ?? "")); the View menu's title followed the key window; a window "
             + "opened from the hidden one started hidden and was forgotten when closed; three ⌘S in the first window left the second hidden")
@@ -2046,7 +2046,7 @@ final class ChromiumSelfTest {
         try await wait("fullscreen fixture", timeout: 15) { engine.pageTitle == "fs-ready" && !engine.isLoading && engine.attachmentID != nil }
         _ = await bringToFront(window, for: "HTML fullscreen")
         let button = try await cssCenter(of: "#go", in: engine)
-        let sidebarBefore = model.isSidebarVisible
+        let sidebarBefore = model.isSidebarVisible(in: model.store.keyWindowID)
         guard try await enterPageFullscreen(model, window: window, engine: engine, button: button) else {
             log("NOTE HTML fullscreen: the synthesized click produced no fullscreen request (app active \(NSApp.isActive), "
                 + "key \(window.isKeyWindow)); fullscreen is not exercised in this run")
@@ -2067,7 +2067,7 @@ final class ChromiumSelfTest {
             throw Failure(description: "page exit: session \(String(describing: model.htmlFullscreen)) window fullscreen "
                 + "\(window.styleMask.contains(.fullScreen)) title \(engine.pageTitle ?? "-")")
         }
-        try check(model.isSidebarVisible == sidebarBefore && engine.queryFullscreenState() == false, "state after the page's exit")
+        try check(model.isSidebarVisible(in: model.store.keyWindowID) == sidebarBefore && engine.queryFullscreenState() == false, "state after the page's exit")
         var paths = ["page exitFullscreen()"]
 
         // 2. Escape (the engine exits, reason 2).
@@ -2110,7 +2110,7 @@ final class ChromiumSelfTest {
             }
             paths.append("window (⌃⌘F)")
         }
-        try check(model.isSidebarVisible == sidebarBefore, "the sidebar did not come back")
+        try check(model.isSidebarVisible(in: model.store.keyWindowID) == sidebarBefore, "the sidebar did not come back")
         engine.load(URL(string: "\(base)/a")!)
         try await wait("tab A back on /a", timeout: 15) { engine.pageTitle == Self.titleA && !engine.isLoading }
         log("PASS HTML fullscreen (ABI 1.27): click -> requestFullscreen -> window native fullscreen, sidebar hidden; "
@@ -6219,33 +6219,33 @@ extension ChromiumSelfTest {
         // Before the fix: with routing off, ⌘S reaches the focused page, which
         // does not take it, and RenderWidgetHostViewCocoa never hands it to the menu.
         try await show("\(base)/keys?utm_source=selftest")
-        let sidebarShown = model.isSidebarVisible
+        let sidebarShown = model.isSidebarVisible(in: model.store.keyWindowID)
         router.isEnabled = false
         press("s", keyCode: 1, .command, in: window)
         try await waitAsync("⌘S reached the page with routing off", timeout: 5) { await pageKeys().contains("M:s") }
         try await Task.sleep(nanoseconds: 600_000_000)
-        try check(model.isSidebarVisible == sidebarShown, "with routing off ⌘S still toggled the sidebar: the diagnosis does not hold")
+        try check(model.isSidebarVisible(in: model.store.keyWindowID) == sidebarShown, "with routing off ⌘S still toggled the sidebar: the diagnosis does not hold")
         router.isEnabled = true
         log("PASS shortcut diagnosis (\(mode)): routing off, ⌘S on a focused page reached it (keydown M:s) and was dropped (sidebar "
             + "unchanged): RenderWidgetHostViewCocoa takes every key equivalent before the main menu")
 
         // ⌘S (must pass): hides and shows the sidebar; the page keeps focus; the content takes the width.
-        try check(model.isSidebarVisible, "the sidebar is hidden before ⌘S")
+        try check(model.isSidebarVisible(in: model.store.keyWindowID), "the sidebar is hidden before ⌘S")
         let shownWidth = engine.leaseHolder?.bounds.width ?? 0
         press("s", keyCode: 1, .command, in: window)
-        try await wait("⌘S hid the sidebar", timeout: 5) { !model.isSidebarVisible }
+        try await wait("⌘S hid the sidebar", timeout: 5) { !model.isSidebarVisible(in: model.store.keyWindowID) }
         try await Task.sleep(nanoseconds: 700_000_000)
         try check(pageFocused(), "⌘S moved keyboard focus to \(String(describing: window.firstResponder))")
         let hiddenWidth = engine.leaseHolder?.bounds.width ?? 0
         try check(hiddenWidth > shownWidth + model.sidebarWidth(in: model.store.keyWindowID) * 0.8, "the page did not take the sidebar's width (\(shownWidth) -> \(hiddenWidth))")
         moveMouse(to: NSPoint(x: 2, y: window.frame.height / 2), in: window)
-        try await wait("the window edge floats the hidden sidebar") { model.isSidebarPeeking }
+        try await wait("the window edge floats the hidden sidebar") { model.isSidebarPeeking(in: model.store.keyWindowID) }
         moveMouse(to: NSPoint(x: model.sidebarWidth(in: model.store.keyWindowID) + 120, y: window.frame.height / 2), in: window)
-        try await wait("leaving the floating sidebar hides it") { !model.isSidebarPeeking }
+        try await wait("leaving the floating sidebar hides it") { !model.isSidebarPeeking(in: model.store.keyWindowID) }
         try check(abs((engine.leaseHolder?.bounds.width ?? 0) - hiddenWidth) < 1, "the floating sidebar resized the page")
         try await focusPage()
         press("s", keyCode: 1, .command, in: window)
-        try await wait("⌘S showed the sidebar", timeout: 5) { model.isSidebarVisible }
+        try await wait("⌘S showed the sidebar", timeout: 5) { model.isSidebarVisible(in: model.store.keyWindowID) }
         try await Task.sleep(nanoseconds: 700_000_000)
         try check(pageFocused(), "showing the sidebar moved keyboard focus")
         try check(abs((engine.leaseHolder?.bounds.width ?? 0) - shownWidth) < 1, "the page did not give the width back")
@@ -6411,16 +6411,16 @@ extension ChromiumSelfTest {
         try check(kept == true, "⌘R reloaded a page that took it (the website wins)")
         blocked.append("⌘R stayed with the page (website wins)")
 
-        let visible = model.isSidebarVisible
+        let visible = model.isSidebarVisible(in: model.store.keyWindowID)
         press("s", keyCode: 1, .command, in: window)
         try await wait("the page took ⌘S: Arc's prompt") { model.toast?.message == "Press ⌘S again to Show/Hide Sidebar" }
-        try check(model.isSidebarVisible == visible, "the first ⌘S toggled the sidebar although the page took it")
+        try check(model.isSidebarVisible(in: model.store.keyWindowID) == visible, "the first ⌘S toggled the sidebar although the page took it")
         press("s", keyCode: 1, .command, in: window)
-        try await wait("the second ⌘S toggled the sidebar") { model.isSidebarVisible != visible }
+        try await wait("the second ⌘S toggled the sidebar") { model.isSidebarVisible(in: model.store.keyWindowID) != visible }
         let blockedS = await pageKeys().filter { $0 == "M:s" }.count
         try check(blockedS == 1, "the page saw ⌘S \(blockedS) times, not once")
         model.toggleSidebar()
-        try await wait("sidebar restored") { model.isSidebarVisible == visible }
+        try await wait("sidebar restored") { model.isSidebarVisible(in: model.store.keyWindowID) == visible }
         if !pageFocused() { try await focusPage() }
         blocked.append("⌘S once: the page took it and 'Press ⌘S again to Show/Hide Sidebar' showed; twice: the sidebar toggled")
 
@@ -6566,9 +6566,9 @@ extension ChromiumSelfTest {
         var results: [String] = []
         func lightsHidden() -> Bool { window.standardWindowButton(.closeButton)?.isHidden ?? true }
         func toggle(_ visible: Bool) async throws {
-            guard model.isSidebarVisible != visible else { return }
+            guard model.isSidebarVisible(in: model.store.keyWindowID) != visible else { return }
             model.toggleSidebar()
-            try await wait("sidebar \(visible ? "shown" : "hidden")", timeout: 5) { model.isSidebarVisible == visible && !model.isSidebarSliding }
+            try await wait("sidebar \(visible ? "shown" : "hidden")", timeout: 5) { model.isSidebarVisible(in: model.store.keyWindowID) == visible && !model.isSidebarSliding(in: model.store.keyWindowID) }
         }
 
         // (2) Traffic lights: hidden with the sidebar, shown during a peek, back after ⌘S, also in full screen.
@@ -6825,9 +6825,9 @@ extension ChromiumSelfTest {
             log(systemInputNote("pinned lifecycle checks"))
             return
         }
-        if !model.isSidebarVisible {
+        if !model.isSidebarVisible(in: model.store.keyWindowID) {
             model.toggleSidebar()
-            try await wait("sidebar shown for the lifecycle checks", timeout: 5) { model.isSidebarVisible && !model.isSidebarSliding }
+            try await wait("sidebar shown for the lifecycle checks", timeout: 5) { model.isSidebarVisible(in: model.store.keyWindowID) && !model.isSidebarSliding(in: model.store.keyWindowID) }
         }
         var results: [String] = []
         let homeSpace = store.activeSpaceID
@@ -6996,7 +6996,7 @@ extension ChromiumSelfTest {
             log("NOTE media strip in another space skipped: it needs the window on an unlocked screen")
             return
         }
-        let embeds = model.embedsVideoInSidebar, automatic = model.automaticPictureInPicture, sidebarShown = model.isSidebarVisible
+        let embeds = model.embedsVideoInSidebar, automatic = model.automaticPictureInPicture, sidebarShown = model.isSidebarVisible(in: model.store.keyWindowID)
         model.embedsVideoInSidebar = false
         // Off until (4): a covered or locked session's occlusion trigger opens the panel at once.
         model.automaticPictureInPicture = false
@@ -7066,7 +7066,7 @@ extension ChromiumSelfTest {
             let frame = stripElement().map { NSStringFromRect($0.accessibilityFrame()) } ?? "absent"
             throw Failure(description: "the model has the strip but the window does not draw it (view not drawn: the stack missing, "
                           + "zero height or off the window; mini sidebar \(model.isMiniSidebar(in: store.keyWindowID)), "
-                          + "sidebar shown \(model.isSidebarVisible)); element \(frame)")
+                          + "sidebar shown \(model.isSidebarVisible(in: model.store.keyWindowID))); element \(frame)")
         }
         let location = "\(mediaSpace.name) › \(folder.title)"
         try check(info.location == location && (stripElement()?.accessibilityLabel() ?? "").contains(location),
