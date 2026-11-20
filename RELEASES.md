@@ -24,6 +24,8 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1120.1152 — 2026-11-20
+
 **Fixes**
 - An address you type or edit in the command bar now opens. Before, if a tab was already open
   on the same site, Darni offered only Switch to Tab, so Return went to that tab, sometimes on
@@ -49,10 +51,6 @@ lines and this section starts empty again.
   looked at since Darni started, shows its site's icon instead. With more than five recent tabs, the row
   slides along as you press Tab, and arrows at its ends show there are more. The pictures stay in memory
   only. Darni never saves them to disk and never takes them in a private window.
-
-## Darni 2026.1120.1136 — 2026-11-20
-
-**Fixes**
 - With the command bar open in one window, a click in another Darni window always closes the
   bar and brings that window forward. Until now the bar could stay open and the other window
   stay behind.
