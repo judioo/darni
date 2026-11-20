@@ -264,6 +264,25 @@ extension SiteControlCenter {
     /// The title over the hosts the person allowed on this site.
     public static let allowedOnSiteTitle = "Allowed on this site"
 
+    /// What a click on a blocked line's button does.
+    public enum BlockedLineClick: Equatable, Sendable {
+        /// The line's command runs.
+        case perform
+        /// The line shows its button's title, and nothing else happens.
+        case showTitle
+    }
+
+    /// A click acts only on a line that shows its button's title (security
+    /// BL-13). The button is in the line before its title shows, so that a
+    /// click cannot fall between the two. A line can come under a pointer
+    /// that does not move: the list fills again after a reload and pushes
+    /// the allowed section down, or the page asks a new host. A click there
+    /// was meant for what stood in that place before, a Remove for one. It
+    /// only makes the title show. The next click acts.
+    public static func blockedLineClick(titleShows: Bool) -> BlockedLineClick {
+        titleShows ? .perform : .showTitle
+    }
+
     /// A blocked line's button, and the same for an allowed one.
     public static func allowHostTitle(_ host: String) -> String { "Allow \(host) on This Site" }
     public static func removeAllowedHostTitle(_ host: String) -> String { "Block \(host) on This Site Again" }

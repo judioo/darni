@@ -787,9 +787,14 @@ private struct SiteControlsBlockedLinesView: View {
 /// The button is in the line from the start, with one size, and only what it
 /// shows changes under the pointer. It used to be made when the hover event
 /// arrived: a click that came before that event, or between it and the
-/// release, found text where the button was about to be and did nothing
-/// (Darni 2026.1120.1105: a click 250 ms after the pointer arrived did
-/// nothing, one after 700 ms worked). A click now needs no hover.
+/// release, found text where the button was about to be and did nothing,
+/// with no sign (Darni 2026.1120.1105: a click 250 ms after the pointer
+/// arrived did nothing, one after 700 ms worked).
+///
+/// A click acts only on a line that shows the button's title
+/// (`SiteControlCenter.blockedLineClick`, security BL-13). On a line that
+/// still shows its tag and count it makes the title show, and the next click
+/// acts.
 private struct SiteControlsBlockedLine: View {
     let host: String
     let tag: String
@@ -800,6 +805,17 @@ private struct SiteControlsBlockedLine: View {
     var actionAlwaysShows = false
     let perform: () -> Void
     @State private var isHovering = false
+    /// A click showed the title where no hover event had (BL-13). Until the pointer leaves the line.
+    @State private var titleShownByClick = false
+
+    private var showsTitle: Bool { actionAlwaysShows || isHovering || titleShownByClick }
+
+    private func click() {
+        switch SiteControlCenter.blockedLineClick(titleShows: showsTitle) {
+        case .perform: perform()
+        case .showTitle: titleShownByClick = true
+        }
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -810,8 +826,7 @@ private struct SiteControlsBlockedLine: View {
                 .fixedSize()
             Spacer(minLength: 0)
             if let action {
-                let showsTitle = actionAlwaysShows || isHovering
-                Button(action: perform) {
+                Button(action: click) {
                     // Both are laid out always, so the button is as wide as the wider one and
                     // does not change size, or place, when the pointer comes.
                     ZStack(alignment: .trailing) {
@@ -834,7 +849,10 @@ private struct SiteControlsBlockedLine: View {
         }
         .frame(height: SiteControlsBlockedListMetrics.lineHeight)
         .contentShape(Rectangle())
-        .onHover { isHovering = $0 }
+        .onHover { inside in
+            isHovering = inside
+            if !inside { titleShownByClick = false }
+        }
         .contextMenu { if let action { Button(action.help, action: perform) } }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(spoken ?? host)

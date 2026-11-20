@@ -105,6 +105,11 @@ public enum ContentBlockingRuleConverter {
         public var dropped: [Dropped]
         /// The filters taken. The person counts lines, not DNR rules.
         public var filters: Int
+        /// Exceptions for a site whose second rule found no room under the
+        /// limit: they cover what the site's own documents ask, as before,
+        /// and not the frames in its pages. The person is told (security
+        /// addendum 14, remark 4).
+        public var withoutPageRule = 0
 
         /// The DNR rule array the engine takes; `[]` for no rules.
         public var json: String {
@@ -116,9 +121,17 @@ public enum ContentBlockingRuleConverter {
         /// The line under the own-rules field.
         public var summary: String {
             let rules = filters == 1 ? "1 rule" : "\(filters) rules"
-            guard !dropped.isEmpty else { return rules }
-            let lines = dropped.count == 1 ? "1 line is" : "\(dropped.count) lines are"
-            return "\(rules). \(lines) not supported and left out."
+            var text = rules
+            if !dropped.isEmpty {
+                let lines = dropped.count == 1 ? "1 line is" : "\(dropped.count) lines are"
+                text += ". \(lines) not supported and left out."
+            }
+            if withoutPageRule > 0 {
+                let exceptions = withoutPageRule == 1 ? "1 exception does" : "\(withoutPageRule) exceptions do"
+                text += (dropped.isEmpty ? ". " : " ") + "\(exceptions) not cover frames, because the limit of "
+                    + "\(ContentBlockingRuleConverter.maxRules) rules is reached."
+            }
+            return text
         }
     }
 
@@ -150,11 +163,12 @@ public enum ContentBlockingRuleConverter {
             }
         }
         let filters = rules.count
-        for var rule in pageRules.prefix(max(limit - rules.count, 0)) {
+        let fitting = pageRules.prefix(max(limit - rules.count, 0))
+        for var rule in fitting {
             rule.id = rules.count + 1
             rules.append(rule)
         }
-        return Conversion(rules: rules, dropped: dropped, filters: filters)
+        return Conversion(rules: rules, dropped: dropped, filters: filters, withoutPageRule: pageRules.count - fitting.count)
     }
 
     /// The second rule of an exception for a site: `rule` with its sites as
@@ -165,8 +179,16 @@ public enum ContentBlockingRuleConverter {
     /// excludes stays excluded twice over: no page of an excluded site, and
     /// no frame of one in any page. `$third-party` and the types stay as
     /// written.
+    ///
+    /// None for a `$first-party` exception (security addendum 14, remark
+    /// 1). DNR counts the party against the frame that asks, not against
+    /// the page: `@@$first-party,domain=shop.example` means what
+    /// shop.example's documents ask of their own site, and with the site as
+    /// the page it would mean that every frame in a shop.example page may
+    /// ask its own site for anything.
     static func pageRule(of rule: ContentBlockingDNRRule) -> ContentBlockingDNRRule? {
-        guard rule.action.type == "allow", let sites = rule.condition.initiatorDomains, !sites.isEmpty else { return nil }
+        guard rule.action.type == "allow", rule.condition.domainType != "firstParty",
+              let sites = rule.condition.initiatorDomains, !sites.isEmpty else { return nil }
         var second = rule
         second.condition.initiatorDomains = nil
         second.condition.topDomains = sites

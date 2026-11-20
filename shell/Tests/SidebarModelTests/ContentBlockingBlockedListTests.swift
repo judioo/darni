@@ -393,6 +393,14 @@ final class ContentBlockingBlockedListTests: XCTestCase {
         XCTAssertEqual(rules.map(\.priority), [3, 1, 2, 2])
     }
 
+    /// Security BL-13: the button is in a line before its title shows, and a
+    /// line can come under a pointer that does not move. A click acts only
+    /// where the title shows. Elsewhere it shows the title and no more.
+    func testAClickActsOnlyOnALineThatShowsItsButtonsTitle() {
+        XCTAssertEqual(SiteControlCenter.blockedLineClick(titleShows: false), .showTitle)
+        XCTAssertEqual(SiteControlCenter.blockedLineClick(titleShows: true), .perform)
+    }
+
     /// An exception covers the names under its host, and no name that only ends alike.
     func testAnAllowedHostCoversTheNamesUnderIt() {
         typealias Entry = ContentBlockingBlockedList.Entry

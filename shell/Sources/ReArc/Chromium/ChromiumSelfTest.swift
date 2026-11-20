@@ -3906,13 +3906,14 @@ extension ChromiumSelfTest {
             // a site allowed on a real page stayed in the list with a count).
             typealias FrameVerdict = SelfTestBlockingFixture.FrameVerdict
             /// Loads the frame's page until it shows `wanted`; returns the loads it took and the last load's number.
-            @MainActor func frameLoads(until wanted: FrameVerdict, _ what: String, timeout: TimeInterval = 40) async throws -> (loads: Int, run: Int) {
+            @MainActor func frameLoads(until wanted: FrameVerdict, _ what: String, base: String? = nil,
+                                       timeout: TimeInterval = 40) async throws -> (loads: Int, run: Int) {
                 let deadline = Date().addingTimeInterval(timeout)
                 var loads = 0
                 while true {
                     blockingRun += 1
                     let run = blockingRun
-                    loadShellTab(model, tab, engine, SelfTestBlockingFixture.framePageURL(base: serverBase, run: run))
+                    loadShellTab(model, tab, engine, SelfTestBlockingFixture.framePageURL(base: base ?? serverBase, run: run))
                     try await wait("the frame page's load \(run) (title '\(engine.pageTitle ?? "nil")')", timeout: 20) {
                         FrameVerdict(title: engine.pageTitle, run: run) != nil
                     }
@@ -3950,6 +3951,19 @@ extension ChromiumSelfTest {
             try await expectList([], "the frame's page with \(tracker) allowed")
             try check(list()?.stillBlockedNote(allowed: model.allowedBlockedHosts(for: engine, pageSite: pageSite)) == nil,
                       "with \(tracker) allowed and nothing blocked the list has a note")
+            // The other direction (security addendum 14, remark 2): the line is for pages of this site. The same
+            // page from another site, with the line in place, must have the frame blocked at its first load.
+            // This is the check that fails if an engine ever stops honouring the rule's page condition.
+            let otherSite = SelfTestBlockingFixture.siteHost
+            let otherBase = serverBase.replacingOccurrences(of: "127.0.0.1", with: otherSite)
+            try check(otherBase != serverBase, "the fixture server's address '\(serverBase)' has no 127.0.0.1 to put \(otherSite) in for")
+            let elsewhere = try await frameLoads(until: .frameBlocked, "on \(otherSite), with \(tracker) allowed on \(pageSite) alone", base: otherBase)
+            try check(elsewhere.loads == 1, "with \(tracker) allowed on \(pageSite) alone, the frame's page on \(otherSite) had its frame let in "
+                + "for \(elsewhere.loads - 1) load(s)")
+            try await expectList(trackerLine, "the frame's page on \(otherSite)")
+            try check(settings().ownRules == trackerRule + "\n", "the load from \(otherSite) changed the own rules to '\(settings().ownRules)'")
+            // Back on the page's own site, where Remove is.
+            _ = try await frameLoads(until: .innerLoaded, "back on \(pageSite) with \(tracker) allowed")
             model.setBlockedHost(tracker, allowed: false, on: pageSite, of: engine)
             try check(settings().ownRules.isEmpty, "Remove left '\(settings().ownRules)' in the own rules")
             _ = try await frameLoads(until: .frameBlocked, "with the allow removed")
@@ -3957,7 +3971,7 @@ extension ChromiumSelfTest {
             log("PASS blocked list allow in a frame: a frame on \(tracker) that asks its own host is blocked with nothing allowed; with an "
                 + "exception for third-party requests alone the frame loads and its own request stays blocked and listed; with '\(trackerRule)', "
                 + "the line Allow writes, the frame's request reached the fixture server (load \(frameAllowed.loads)) and nothing was counted "
-                + "or listed; removed, the frame is blocked and listed again")
+                + "or listed; the same page on \(otherSite) had the frame blocked at its first load; removed, the frame is blocked and listed again")
 
             // 4. Names that are not one site: listed, and never allowed.
             _ = try await loadList(.sites)
