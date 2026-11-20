@@ -28,6 +28,21 @@ extension BrowserViewModel {
         loadSelectedIfNeeded()
     }
 
+    /// A browser window closed: its Peek goes, and everything the model keeps
+    /// per window is forgotten. The one list: a new per-window store is
+    /// forgotten here, not in the view.
+    func forgetBrowserWindow(_ window: SidebarWindowID) {
+        if peekSession?.windowID == window { dismissPeek(animated: false) }
+        store.unregisterWindow(window)
+        pinnedSectionCollapse.forgetWindow(window)
+        splitMaximize.forgetWindow(window)
+        library.forgetWindow(window)
+        libraryGrowth[window] = nil
+        // The sidebar's mode, its width morph and its shown-or-hidden state.
+        forgetSidebarMode(for: window)
+        noteBrowserWindow(nil, id: window)
+    }
+
     /// `BrowserView` tells which NSWindow it sits in (nil: it left it).
     func noteBrowserWindow(_ window: NSWindow?, id: SidebarWindowID) {
         browserWindowRefs.removeAll { $0.window == nil || $0.id == id }
