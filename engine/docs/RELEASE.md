@@ -42,8 +42,10 @@ What a release makes now:
 | | Up to build 1053 | From build 1054 |
 |---|---|---|
 | App bundle | `ReArc.app` | `Darni.app` |
-| `CFBundleName`, `CFBundleDisplayName` | ReArc | Darni |
-| `MDItemKeywords` (Spotlight's extra search words, from build 1105) | none | "Darni, ReArc": an updated copy keeps the file name `ReArc.app`, and Spotlight matches the file name |
+| `CFBundleName`, `SUBundleName` | ReArc | Darni |
+| `CFBundleDisplayName` in Info.plist | ReArc | Darni in 1054 to 1105; ReArc again after 1105, the file name of every updated copy, so macOS shows the localized one |
+| `CFBundleDisplayName` in each app `<locale>.lproj/InfoPlist.strings`, with `LSHasLocalizedDisplayName` | none | Darni after 1105: Finder, the Dock and Spotlight show an updated `ReArc.app` as Darni |
+| `MDItemKeywords` (Spotlight's extra search words, from build 1105) | none | "Darni, ReArc": a new download, `Darni.app`, is found by ReArc too |
 | DMG | `ReArc-<version>.dmg`, volume "ReArc" | `Darni-<version>.dmg`, volume "Darni" |
 | Delta (named by Sparkle's `generate_appcast`) | `ReArc<to>-<from>.delta` | `Darni<to>-<from>.delta` |
 | `RELEASES.md` heading and release title | `## ReArc <version>`, "ReArc <version>" | `## Darni <version>`, "Darni <version>" |
@@ -80,7 +82,7 @@ The gates, all without a launch:
 
 | Script | Checks |
 |---|---|
-| `release/check-rename.sh APP [--engine-out DIR] [--qa]` | Run by `release.sh` on every build, after bundling and again on the bundle as it ships. The bundle is `Darni.app` with `CFBundleName` and `CFBundleDisplayName` Darni and `MDItemKeywords` "Darni, ReArc". The bundle id, the helper and framework ids, the executable, `SUFeedURL`, `SUPublicEDKey`, the iCloud container and the blocklists URL in the executable are the values above. Without `--qa` the bundle must be a release bundle: `ReArcRelease` true, the feed URL present, and no `REARC_*` variable in `LSEnvironment` (the mark of an update test copy). `--qa` (passed for `release.sh --qa`) lets a test bundle lack the release marker or carry another feed URL. |
+| `release/check-rename.sh APP [--engine-out DIR] [--qa]` | Run by `release.sh` on every build, after bundling and again on the bundle as it ships. The bundle is `Darni.app` with `CFBundleName` and `SUBundleName` Darni, Info.plist's `CFBundleDisplayName` ReArc with `LSHasLocalizedDisplayName`, Darni as `CFBundleDisplayName` in every app `InfoPlist.strings`, and `MDItemKeywords` "Darni, ReArc". The bundle id, the helper and framework ids, the executable, `SUFeedURL`, `SUPublicEDKey`, the iCloud container and the blocklists URL in the executable are the values above. Without `--qa` the bundle must be a release bundle: `ReArcRelease` true, the feed URL present, and no `REARC_*` variable in `LSEnvironment` (the mark of an update test copy). `--qa` (passed for `release.sh --qa`) lets a test bundle lack the release marker or carry another feed URL. |
 | `release/check-safe-storage-name.py APP [--engine-out DIR]` | Called by `check-rename.sh`. `release/BRANDING` says `PRODUCT_SHORTNAME=ReArc`, the engine binary in the bundle holds "ReArc Safe Storage" and no other "<name> Safe Storage" except Chromium's "Endpoint Verification Safe Storage", and the header the engine build generated names the same service and account. |
 | `release/tests/test_sparkle_rename.py` | Sparkle 2.10.1's rule for finding the app in an update (`SUInstaller.m`), ported, on a DMG's layout: a ReArc install finds `Darni.app` by bundle id, an updated or new install by name, and a new bundle id is never found. With Sparkle's own `generate_appcast` and `BinaryDelta` and a throwaway key: one feed for archives of both names, the delta's name, and the delta applied to a host named `ReArc.app` and one named `Darni.app`. |
 
