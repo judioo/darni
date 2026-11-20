@@ -57,6 +57,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHELL_DIR="$(cd "$HERE/../.." && pwd)"
 die() { echo "check-rename-update: $*" >&2; exit 1; }
 key() { plutil -extract "$2" raw "$1/Contents/Info.plist" 2>/dev/null || true; }
+# The name macOS shows for APP: the localized CFBundleDisplayName (en), which is a file of its
+# own. `key` reads APP's Info.plist only.
+shown_name() { plutil -extract CFBundleDisplayName raw "$1/Contents/Resources/en.lproj/InfoPlist.strings" 2>/dev/null || true; }
 note() { echo "check-rename-update: $*"; }
 
 openssl3() {
@@ -234,9 +237,8 @@ PY
     [[ "$(key "$app" CFBundleIdentifier)" == com.rearc.browser ]] || fail "bundle id $(key "$app" CFBundleIdentifier)"
     # Info.plist's own CFBundleDisplayName is ReArc, the copy's file name, so macOS shows the
     # localized one, Darni (bundle-chromium.sh); the rest of the bundle is check-rename.sh's.
-    [[ "$(key "$app" CFBundleName)" == Darni && "$(key "$app" SUBundleName)" == Darni \
-       && "$(key "$app/Contents/Resources/en.lproj/InfoPlist.strings" CFBundleDisplayName)" == Darni ]] \
-      || fail "the installed copy is named '$(key "$app" CFBundleName)' / '$(key "$app" SUBundleName)' / '$(key "$app/Contents/Resources/en.lproj/InfoPlist.strings" CFBundleDisplayName)', expected Darni"
+    [[ "$(key "$app" CFBundleName)" == Darni && "$(key "$app" SUBundleName)" == Darni && "$(shown_name "$app")" == Darni ]] \
+      || fail "the installed copy is named '$(key "$app" CFBundleName)' / '$(key "$app" SUBundleName)' / '$(shown_name "$app")', expected Darni"
     [[ "$(key "$app" LSEnvironment.REARC_DATA_DIR)" == "$WORK/data" ]] || fail "the installed copy lost its throwaway data directory"
     codesign --verify --deep --strict "$app" 2>/dev/null || fail "the installed copy's signature does not verify"
     [[ -d "$WORK/data/Chromium" ]] || fail "no Chromium profile in $WORK/data: the copy did not run on the throwaway data"
