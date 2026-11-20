@@ -40,9 +40,6 @@ final class TabThumbnails {
     private(set) var revision = 0
     @ObservationIgnored private var settle: Timer?
     @ObservationIgnored private var settleTries = 0
-    /// Captures under way, and those whose result is no longer wanted (`remove`).
-    @ObservationIgnored private var capturing: Set<Tab.ID> = []
-    @ObservationIgnored private var unwanted: Set<Tab.ID> = []
 
     func image(for tab: Tab) -> NSImage? {
         image(forTabID: tab.id, url: tab.url)
@@ -55,12 +52,12 @@ final class TabThumbnails {
     }
 
     /// The tab is gone, or its page now belongs to another profile. A
-    /// capture of the old page still under way is thrown away when it ends.
+    /// capture of the old page still under way is thrown away when it ends,
+    /// whenever that is (the cache's generation, TT-01).
     func remove(_ id: Tab.ID) {
-        if capturing.contains(id) { unwanted.insert(id) }
-        guard cache.entries[id] != nil else { return }
+        let had = cache.entries[id] != nil
         cache.remove(id)
-        revision += 1
+        if had { revision += 1 }
     }
 
     // MARK: When
@@ -107,19 +104,14 @@ final class TabThumbnails {
     private func capture(_ tab: Tab, model: BrowserViewModel, olderThan age: TimeInterval?) {
         guard cache.shouldCapture(tab.id, url: tab.url, now: Date(), olderThan: age),
               let engine = model.engineHost.engine(forTabID: tab.id, profileID: model.profileID(for: tab)) else { return }
-        cache.beginCapture(tab.id)
-        capturing.insert(tab.id)
+        let generation = cache.beginCapture(tab.id)
         let id = tab.id, url = tab.url
         Task { @MainActor [weak self, weak model] in
             let png = try? await engine.captureSnapshot(scope: .visible)
             let image = await Self.thumbnail(from: png)
             guard let self else { return }
-            self.capturing.remove(id)
-            if self.unwanted.remove(id) != nil {
-                self.cache.remove(id)
-                return
-            }
-            self.cache.store(image, for: id, url: url, now: Date())
+            // Removed since (closed, or another profile or container): kept by nobody.
+            guard self.cache.finishCapture(image, for: id, url: url, now: Date(), generation: generation) else { return }
             // A tab closed since, this one included, keeps nothing.
             if let model { self.cache.removeAll(except: { model.store.tab(withID: $0) != nil }) }
             self.revision += 1
