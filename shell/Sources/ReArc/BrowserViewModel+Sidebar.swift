@@ -89,7 +89,40 @@ extension BrowserViewModel {
         keyPrivateWindow?.engine ?? keyLittleArcEngine ?? focusedEngine
     }
 
-    func goBack() { navigationEngine?.goBack() }
+    /// Back on a tab a link opened, with nothing behind it, closes the tab and
+    /// returns to the tab that opened it, as in Arc (`TabOpeners`).
+    func goBack() {
+        if keyPrivateWindow == nil, keyLittleArcEngine == nil, store.selectedEaselRef == nil,
+           let tab = store.selectedTab, returnToOpener(from: tab.id) { return }
+        navigationEngine?.goBack()
+    }
+
+    /// The tab Back returns to from `tab`, closing it; nil when Back stays in the tab.
+    func openerToReturnTo(from tab: Tab.ID) -> Tab.ID? {
+        guard let shown = store.tab(withID: tab) else { return nil }
+        let canGoBack = engineHost.engine(forTabID: tab, profileID: profileID(for: shown))?.canGoBack == true
+        return tabOpeners.returnTarget(for: tab, canGoBack: canGoBack, in: store)
+    }
+
+    /// Selects the tab that opened `tab` and closes `tab`; false when Back stays in the tab.
+    @discardableResult
+    func returnToOpener(from tab: Tab.ID) -> Bool {
+        guard let opener = openerToReturnTo(from: tab) else { return false }
+        if let space = store.spaceContaining(tabID: opener), space != store.activeSpaceID { store.selectSpace(space) }
+        selectTab(opener)
+        closeTab(tab)
+        return true
+    }
+
+    /// Back is enabled for a toolbar's page: its own history, or a tab to return to.
+    func canGoBack(_ engine: (any WebEngine)?) -> Bool {
+        guard let engine else { return false }
+        if engine.canGoBack { return true }
+        guard let tab = engineHost.allTabEngines().first(where: { ($0.2 as AnyObject) === (engine as AnyObject) })?.0 else {
+            return false
+        }
+        return openerToReturnTo(from: tab) != nil
+    }
     func goForward() { navigationEngine?.goForward() }
 
     func reload(ignoringCache: Bool = false) {

@@ -70,7 +70,7 @@ struct CardToolbarView: View {
                     // With the sidebar hidden its toggle moves here, before back (§3).
                     navButton(side.toggleSymbol, help: "Show Sidebar (⌘S)", enabled: true) { model.toggleSidebar(in: window) }
                 }
-                navButton("arrow.left", help: "Back (⌘[)", enabled: engine?.canGoBack == true) { model.goBack() }
+                navButton("arrow.left", help: "Back (⌘[)", enabled: model.canGoBack(engine)) { model.goBack() }
                 navButton("arrow.right", help: "Forward (⌘])", enabled: engine?.canGoForward == true) { model.goForward() }
                 if engine?.isLoading == true {
                     navButton("xmark", help: "Stop Loading (⌘.)", enabled: true) { model.stopLoading() }

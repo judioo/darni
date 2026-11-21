@@ -36,7 +36,7 @@ struct SidebarToolbarView: View {
                 .accessibilityLabel("Hide Sidebar")
                 if !urlInToolbar {
                     Spacer(minLength: 4)
-                    navButton("arrow.left", help: "Back (⌘[)", enabled: engine?.canGoBack == true) {
+                    navButton("arrow.left", help: "Back (⌘[)", enabled: model.canGoBack(engine)) {
                         model.goBack()
                     }
                     navButton("arrow.right", help: "Forward (⌘])", enabled: engine?.canGoForward == true) {

@@ -6251,6 +6251,24 @@ extension ChromiumSelfTest {
             try check(engine.pageTitle == "links" && store.spaceContaining(tabID: created.id) == store.activeSpaceID,
                       "\(label): source '\(engine.pageTitle ?? "")', space of the new tab")
             results.append("\(label) -> disposition \(event?.disposition ?? 0), \(selects ? "selected" : "background") tab on /a")
+            if !selects {
+                // Back on a link-opened tab, with nothing behind it, closes it and returns to
+                // the link's tab (owner, 2026-11-21): by swipe here, by ⌘[ on a second one.
+                try await openerBackCheck(model: model, store: store, opener: tab, opened: created, engine: createdEngine,
+                                          window: window, bySwipe: true)
+                let again = Set(store.displayTabs().map(\.id))
+                guard await modifiedClick(.command, opened: { store.displayTabs().contains { !again.contains($0.id) } }) else {
+                    throw Failure(description: "a second ⌘-click opened no tab for the ⌘[ check")
+                }
+                let second = store.displayTabs().first { !again.contains($0.id) }!
+                let secondEngine = try shellEngine(model, second)
+                try await wait("second ⌘-clicked link loaded", timeout: 15) { secondEngine.currentURL?.path == "/a" && !secondEngine.isLoading }
+                try await openerBackCheck(model: model, store: store, opener: tab, opened: second, engine: secondEngine,
+                                          window: window, bySwipe: false)
+                results.append("swipe back and ⌘[ on link-opened tabs -> each closed, the link's tab selected")
+                model.selectTab(tab.id)
+                continue
+            }
             model.deleteTab(created.id)
             model.selectTab(tab.id)
         }
@@ -6267,6 +6285,40 @@ extension ChromiumSelfTest {
         let passed = results.filter { !$0.contains("NOTE") }.count
         log("\(passed == results.count ? "PASS" : "NOTE") modified link opens (ABI 1.39) on an ordinary link: \(results.joined(separator: "; ")); "
             + "tab A stayed on its page; unknown request -> \(unknown.rearcName)")
+    }
+
+    /// Back on `opened`, a tab a link in `opener` opened, with no page behind it: by a swipe
+    /// through the page's swipe handler, or by ⌘[ (`model.goBack`). It closes and `opener` is selected.
+    @MainActor
+    private func openerBackCheck(model: BrowserViewModel, store: SidebarStore, opener: Tab, opened: Tab, engine: ChromiumEngine,
+                                 window: NSWindow, bySwipe: Bool) async throws {
+        let how = bySwipe ? "swipe back" : "⌘["
+        try check(model.tabOpeners.opener(of: opened.id) == opener.id,
+                  "\(how): the link-opened tab's opener is \(String(describing: model.tabOpeners.opener(of: opened.id))), expected the link's tab")
+        model.selectTab(opened.id)
+        func host() -> ChromiumHostView? {
+            var views: [NSView] = window.contentView.map { [$0] } ?? []
+            while let view = views.popLast() {
+                if let host = view as? ChromiumHostView, host.engine === engine { return host }
+                views.append(contentsOf: view.subviews)
+            }
+            return nil
+        }
+        try await wait("\(how): the link-opened tab shown", timeout: 10) {
+            store.selectedTabID == opened.id && host()?.leaseAttachmentID != nil
+        }
+        try check(!engine.canGoBack && model.canGoBack(engine),
+                  "\(how): page history \(engine.canGoBack), Back enabled \(model.canGoBack(engine)); expected no history and Back enabled")
+        if bySwipe {
+            guard let host = host() else { throw Failure(description: "swipe back: the link-opened tab has no page view") }
+            try await swipe(window: window, host: host, dx: 18)
+        } else {
+            model.goBack()
+        }
+        try await wait("\(how) on the link-opened tab closes it and selects the link's tab", timeout: 10) {
+            store.tab(withID: opened.id) == nil && store.selectedTabID == opener.id
+        }
+        log("PASS \(how) on a link-opened tab with no history: it closed and the link's tab is selected")
     }
 
     // MARK: HTTP authentication (ABI 1.38)

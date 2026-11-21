@@ -317,6 +317,10 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         runtime.legacyDefaultOwner = store.profiles.first?.id
         let model = BrowserViewModel(store: store, persistence: persistence, preparedStartup: prepared, deferStartup: true)
         model.removeUnusedProfileAvatarImages()
+        ChromiumHistorySwipe.openerReturn = .init(
+            target: { [weak model] tab in model?.openerToReturnTo(from: tab) },
+            perform: { [weak model] tab in model?.returnToOpener(from: tab) ?? false }
+        )
         // Profile opens complete asynchronously; each gets this policy before its first tab.
         runtime.downloadDirectory = model.downloads.directory
         PerfSignposts.launchEvent("ModelLoaded")
@@ -1528,6 +1532,12 @@ extension BrowserViewModel {
         }
         engineHost.adopt(engine, for: tab, profileID: profileID)
         observeFavicon(of: engine, tabID: tab.id)
+        // Back with nothing behind it returns to the tab whose link opened this one.
+        if let opener = ChromiumRuntime.shared.engine(forTab: event.openerTabID).flatMap({ engine in
+            engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0
+        }) {
+            tabOpeners.record(tab.id, openedBy: opener)
+        }
         // Background-tab disposition stays unselected; the rest take focus in the sidebar,
         // in their own space (as link opens do).
         if event.disposition != 2 {
