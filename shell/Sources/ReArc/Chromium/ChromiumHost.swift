@@ -1512,6 +1512,9 @@ extension BrowserViewModel {
             }
             space = target
         }
+        // A target=_blank link is noopener, so the engine names no opener for it; it came
+        // from the page on screen, the tab selected when the new one arrives.
+        let shownTab = store.selectedEaselRef == nil ? store.selectedTab : nil
         let tab = store.addTab(kind: .today, title: event.title.flatMap { $0.isEmpty ? nil : $0 } ?? "New Tab", url: url, in: space)
         let profileID = profileID(for: tab)
         if case .persistent(let owner) = profileKey, owner != profileID {
@@ -1534,9 +1537,13 @@ extension BrowserViewModel {
         engineHost.adopt(engine, for: tab, profileID: profileID)
         observeFavicon(of: engine, tabID: tab.id)
         // Back with nothing behind it returns to the tab whose link opened this one.
-        if let opener = ChromiumRuntime.shared.engine(forTab: event.openerTabID).flatMap({ engine in
+        let scriptOpener = ChromiumRuntime.shared.engine(forTab: event.openerTabID).flatMap { engine in
             engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0
-        }) {
+        }
+        let linkSource = event.disposition == 1 ? shownTab.flatMap { shown in
+            self.profileID(for: shown) == profileID ? shown.id : nil
+        } : nil
+        if let opener = scriptOpener ?? linkSource {
             tabOpeners.record(tab.id, openedBy: opener)
         }
         // Background-tab disposition stays unselected; the rest take focus in the sidebar,
