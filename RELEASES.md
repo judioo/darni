@@ -24,6 +24,14 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1121.1158 — 2026-11-21
+
+**Fixes**
+- Swiping back and forward with two fingers now works on sites such as YouTube and GitHub.
+  There, the swipe scrolled the page instead of going back. It now goes back or forward as on
+  any other site. A swipe over a row that scrolls sideways, such as a carousel, still scrolls
+  the row until it reaches its end.
+
 ## Darni 2026.1120.1152 — 2026-11-20
 
 **Fixes**
