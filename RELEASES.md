@@ -24,6 +24,22 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1121.1164 — 2026-11-21
+
+**Fixes**
+- Going back on a tab opened from a link now takes you back to the tab you came from, as in Arc.
+  A tab you open with ⌘-click, a middle click, or a link that opens in a new tab starts with no
+  page behind it, so swiping back, ⌘[ and the Back button did nothing there. Now they close
+  that tab and show the tab whose link opened it, if it is still open. Pinned tabs, favorites
+  and tabs in a split view are never closed this way. Darni remembers which tab opened which
+  only until it quits.
+- Swiping back and forward with two fingers now works on sites such as YouTube and GitHub.
+  There, the swipe scrolled the page instead of going back. It now goes back or forward as on
+  any other site. A swipe over a row that scrolls sideways, such as a carousel, still scrolls
+  the row until it reaches its end.
+
+## Darni 2026.1120.1152 — 2026-11-20
+
 **Fixes**
 - An address you type or edit in the command bar now opens. Before, if a tab was already open
   on the same site, Darni offered only Switch to Tab, so Return went to that tab, sometimes on
@@ -49,10 +65,6 @@ lines and this section starts empty again.
   looked at since Darni started, shows its site's icon instead. With more than five recent tabs, the row
   slides along as you press Tab, and arrows at its ends show there are more. The pictures stay in memory
   only. Darni never saves them to disk and never takes them in a private window.
-
-## Darni 2026.1120.1136 — 2026-11-20
-
-**Fixes**
 - With the command bar open in one window, a click in another Darni window always closes the
   bar and brings that window forward. Until now the bar could stay open and the other window
   stay behind.

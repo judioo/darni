@@ -378,6 +378,8 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
                                                    title: URL(string: event.url)?.host() ?? "New Tab") else {
                 return declineLink(event, "tab creation failed")
             }
+            // Back with nothing behind it returns to the link's tab (`TabOpeners`).
+            if let sourceTab { model.tabOpeners.record(tab.id, openedBy: sourceTab) }
             if placement.isActive, space != store.activeSpaceID { store.selectSpace(space) }
             if case .split(let anchor) = placement, let split = store.splitTab(tab.id, with: anchor) {
                 store.selectSplit(split.id, focusTabID: tab.id)

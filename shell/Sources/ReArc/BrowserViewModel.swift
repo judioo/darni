@@ -652,6 +652,8 @@ final class BrowserViewModel {
     var boostEditorDraftByTab: [Tab.ID: BoostEditorDraft] = [:]
     /// The legacy (CSS and JavaScript) boost open in its editor sheet.
     var legacyBoostEditorID: UUID?
+    /// Which tab a page opened from a link, for Back with nothing behind it (`TabOpeners`).
+    var tabOpeners = TabOpeners()
     /// Open DevTools frontends, per sidebar tab, and their engines.
     var devTools = DevToolsSessions()
     @ObservationIgnored var devToolsEngines: [Tab.ID: any WebEngine] = [:]
@@ -1036,6 +1038,7 @@ final class BrowserViewModel {
 
     private func deleteTabNow(_ id: Tab.ID) {
         store.closeTab(id)
+        tabOpeners.forget(id)
         releaseEngine(for: id)
         TabThumbnails.shared.remove(id)
         loadSelectedIfNeeded()

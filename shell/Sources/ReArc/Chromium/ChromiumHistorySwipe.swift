@@ -20,6 +20,19 @@ final class ChromiumHistorySwipe {
     private var generation = 0
     private let indicator = HistorySwipeIndicator()
 
+    /// Set by the model: the tab a swipe back returns to when the page has nothing behind
+    /// it (a tab opened from a link, `TabOpeners`), and the return itself.
+    struct OpenerReturn {
+        let target: (UUID) -> UUID?
+        let perform: (UUID) -> Bool
+    }
+    static var openerReturn: OpenerReturn?
+
+    /// Back from this page: its own history, or the tab that opened it.
+    private func canGoBack(_ engine: ChromiumEngine) -> Bool {
+        engine.canGoBack || Self.openerReturn?.target(engine.shellID) != nil
+    }
+
     init(host: ChromiumHostView) {
         self.host = host
         monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
@@ -37,7 +50,18 @@ final class ChromiumHistorySwipe {
         monitor = nil
     }
 
+    /// The self-test's way in: AppKit drops the position of a synthesized scroll
+    /// event that names a window, so the test passes it. Returns true when the
+    /// swipe took the event, as the local monitor would by returning nil.
+    func handleForSelfTest(_ event: NSEvent, locationInWindow: NSPoint) -> Bool {
+        handle(event, locationInWindow: locationInWindow) == nil
+    }
+
     private func handle(_ event: NSEvent) -> NSEvent? {
+        handle(event, locationInWindow: event.locationInWindow)
+    }
+
+    private func handle(_ event: NSEvent, locationInWindow: NSPoint) -> NSEvent? {
         // Not only the key window: macOS sends a swipe to the window under the pointer even
         // when another window or app is active, and Arc goes back there too (owner, 2026-11-17).
         guard let host, event.window === host.window, host.window?.isVisible == true,
@@ -49,11 +73,11 @@ final class ChromiumHistorySwipe {
             }
             return event
         }
-        let point = host.convert(event.locationInWindow, from: nil)
+        let point = host.convert(locationInWindow, from: nil)
         guard event.hasPreciseScrollingDeltas else { return event }
         if event.phase.contains(.mayBegin) || (event.phase.contains(.began) && !awaitingBegan) {
             let content = host.window?.contentView
-            let target = content.flatMap { $0.hitTest($0.convert(event.locationInWindow, from: nil)) }
+            let target = content.flatMap { $0.hitTest($0.convert(locationInWindow, from: nil)) }
             guard host.bounds.contains(point), let target, target.isDescendant(of: host) else {
                 ChromiumLog.trace("history swipe: gesture not over this page (in bounds \(host.bounds.contains(point)), "
                     + "hit \(target.map { String(describing: type(of: $0)) } ?? "nothing"))")
@@ -128,11 +152,12 @@ final class ChromiumHistorySwipe {
         else if event.phase.contains(.began) { phase = .began }
         else if event.phase.contains(.changed) { phase = .changed }
         else { phase = .unphased }
+        let canGoBack = canGoBack(host.engine)
         let update = machine.handle(phase: phase, x: event.scrollingDeltaX, y: event.scrollingDeltaY,
-                                    edges: edges, canGoBack: host.engine.canGoBack, canGoForward: host.engine.canGoForward)
+                                    edges: edges, canGoBack: canGoBack, canGoForward: host.engine.canGoForward)
         if phase != .momentum {
             ChromiumLog.trace("history swipe: \(phase) dx \(event.scrollingDeltaX) dy \(event.scrollingDeltaY) edges \(edges) "
-                + "canGoBack \(host.engine.canGoBack) canGoForward \(host.engine.canGoForward) -> consumes \(update.consumes)"
+                + "canGoBack \(canGoBack)\(canGoBack && !host.engine.canGoBack ? " (opener)" : "") canGoForward \(host.engine.canGoForward) -> consumes \(update.consumes)"
                 + (update.holds ? " (held)" : "") + (update.replay ? " (gives \(held.count) held to the page)" : "")
                 + (update.commit.map { " commit \($0)" } ?? ""))
         }
@@ -148,7 +173,11 @@ final class ChromiumHistorySwipe {
             indicator.show(direction, progress: update.progress, in: host)
         }
         if let commit = update.commit {
-            if commit == .back { host.engine.goBack() } else { host.engine.goForward() }
+            if commit == .forward {
+                host.engine.goForward()
+            } else if host.engine.canGoBack || Self.openerReturn?.perform(host.engine.shellID) != true {
+                host.engine.goBack()
+            }
         }
         if phase == .cancelled || event.momentumPhase.contains(.ended) { gesture = false }
         return update.consumes

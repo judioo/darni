@@ -404,6 +404,12 @@ final class ChromiumSelfTest {
             try await trustedNavigationChecks(engine: engine, base: base)
         }
 
+        // 14a. Two-finger swipe back and forward: the edge probe on pages built from
+        // custom elements and shadow roots, and a swipe through the real event path.
+        if capabilities.scriptEvaluation {
+            try await historySwipeChecks(engine: engine, base: base, window: window)
+        }
+
         // 15. Named profiles are isolated; an off-the-record child sees neither; teardown order.
         if capabilities.profiles {
             try await profileChecks(base: base)
@@ -1180,9 +1186,12 @@ final class ChromiumSelfTest {
                   "open in: Cancel changed something (window \(shell.window(forLittleArc: record.id) != nil), "
                   + "record \(store.littleArcWindow(withID: record.id) != nil), tabs \(store.displayTabs(in: second.id).count))")
         // An address that is not a web address stays in its window (OI-02), whatever the menu showed.
+        // Only the window's own space (a move within its session) stays enabled; every row that
+        // crosses sessions is disabled (LittleArcOpenInOtherProfileTests, OI-02).
         let local = try XUnwrap(URL(string: "data:text/html,open-in"), "open-in data address")
         try check(LittleArcOpenInMenu.choice(store: store, windowID: record.id, spaceID: second.id, url: local) == .refuse
-                  && LittleArcOpenInMenu.sections(store: store, windowID: record.id, url: local).flatMap(\.entries).allSatisfy { !$0.isEnabled }
+                  && LittleArcOpenInMenu.sections(store: store, windowID: record.id, url: local).flatMap(\.entries)
+                      .filter(\.isEnabled).map(\.spaceID) == [soloSpace.id]
                   && store.reopenLittleArcAsTab(id: record.id, in: second.id, url: local) == nil
                   && store.littleArcWindow(withID: record.id) != nil,
                   "open in: an address that is not a web address was not refused across profiles")
@@ -2570,6 +2579,95 @@ final class ChromiumSelfTest {
     }
 
     // MARK: Trusted navigation
+
+    @MainActor
+    /// Two-finger swipe back and forward. The owner lost it on YouTube and GitHub in 1152:
+    /// the edge probe gave up on any custom element, so every swipe there went to the page.
+    private func historySwipeChecks(engine: ChromiumEngine, base: String, window: NSWindow) async throws {
+        engine.load(URL(string: "\(base)/swipe-edges")!)
+        try await wait("swipe edges fixture") { engine.pageTitle == "swipe-edges-ready" && !engine.isLoading }
+        @MainActor func probe(_ x: Double, _ y: Double) async throws -> (back: Bool, forward: Bool) {
+            let result = try await engine.evaluate(HistorySwipeEdgeScript.source(x: x, y: y), in: .editor) as? [String: Any]
+            return (result?["back"] as? Bool == true, result?["forward"] as? Bool == true)
+        }
+        let cells: [(name: String, x: Double, y: Double, back: Bool, forward: Bool)] = [
+            ("plain text", 0.125, 0.25, true, true),
+            ("custom element with a shadow root", 0.375, 0.25, true, true),
+            ("scroller at its start inside a shadow root", 0.625, 0.25, true, false),
+            ("scroller in its middle", 0.875, 0.25, false, false),
+            ("overscroll-behavior contain, no scroller", 0.125, 0.75, true, true),
+            ("scroller at its start with overscroll-behavior contain", 0.375, 0.75, false, false),
+            ("iframe", 0.625, 0.75, false, false),
+            ("scroller at its end", 0.875, 0.75, false, true),
+        ]
+        for cell in cells {
+            let edges = try await probe(cell.x, cell.y)
+            try check(edges.back == cell.back && edges.forward == cell.forward,
+                      "history swipe probe over \(cell.name): back \(edges.back) forward \(edges.forward), "
+                      + "expected back \(cell.back) forward \(cell.forward)")
+        }
+        log("PASS history swipe probe: \(cells.count) cells (custom elements, shadow roots, scrollers, contain, iframe)")
+        _ = try await engine.evaluate("document.documentElement.style.overscrollBehaviorX = 'none'", in: .page)
+        let rootNone = try await probe(0.125, 0.25)
+        try check(!rootNone.back && !rootNone.forward, "history swipe probe ignored overscroll-behavior-x: none on the root")
+        _ = try await engine.evaluate("document.documentElement.style.overscrollBehaviorX = ''", in: .page)
+        log("PASS history swipe probe: overscroll-behavior-x: none on the root stops the swipe")
+
+        // The real path: phased trackpad events through NSApp, the local monitor, the
+        // probe and the swipe machine, with a first event more vertical than sideways
+        // (real fingers, 2026-11-18). Back from B to A, then forward to B.
+        guard let host = window.contentView?.firstDescendant(ofType: ChromiumHostView.self) else {
+            throw Failure(description: "history swipe: no page view in the window")
+        }
+        window.makeKeyAndOrderFront(nil)
+        engine.load(URL(string: "\(base)/swipe-a")!)
+        try await wait("swipe page A") { engine.pageTitle == "swipe-a" && !engine.isLoading }
+        engine.load(URL(string: "\(base)/swipe-b")!)
+        try await wait("swipe page B") { engine.pageTitle == "swipe-b" && !engine.isLoading && engine.canGoBack }
+        try await swipe(window: window, host: host, dx: 18)
+        try await wait("swipe back to page A", timeout: 10) { engine.pageTitle == "swipe-a" && !engine.isLoading }
+        log("PASS history swipe: a swipe over custom elements goes back")
+        try await wait("forward history after the swipe") { engine.canGoForward }
+        try await swipe(window: window, host: host, dx: -18)
+        try await wait("swipe forward to page B", timeout: 10) { engine.pageTitle == "swipe-b" && !engine.isLoading }
+        log("PASS history swipe: a swipe over custom elements goes forward")
+    }
+
+    /// One trackpad swipe over the middle of `host`: may-begin, a jittery began, 14 changes,
+    /// ended, handed to the page's swipe handler as its local monitor hands them. AppKit drops
+    /// the position of a synthesized scroll event that names a window, so it goes alongside.
+    @MainActor
+    private func swipe(window: NSWindow, host: ChromiumHostView, dx: Int32) async throws {
+        guard let handler = host.historySwipe else { throw Failure(description: "history swipe: the page has no swipe handler") }
+        let mid = host.convert(NSPoint(x: host.bounds.midX, y: host.bounds.midY), to: nil)
+        var taken = 0
+        @MainActor func send(_ dx: Int32, _ dy: Int32, phase: Int64) async throws {
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else {
+                throw Failure(description: "history swipe: no scroll event")
+            }
+            cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(dy))
+            cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx))
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Double(dy))
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Double(dx))
+            // 51: the event's window number (kCGSEventWindowIDField); NSEvent reads its window from it.
+            if let windowField = CGEventField(rawValue: 51) {
+                cg.setIntegerValueField(windowField, value: Int64(window.windowNumber))
+            }
+            guard let event = NSEvent(cgEvent: cg), event.window === window, event.hasPreciseScrollingDeltas else {
+                throw Failure(description: "history swipe: the synthesized scroll event is not a trackpad event for the test window")
+            }
+            if handler.handleForSelfTest(event, locationInWindow: mid) { taken += 1 }
+            try await Task.sleep(nanoseconds: 16_000_000)
+        }
+        try await send(0, 0, phase: 128)
+        let first = dx > 0 ? Int32(1) : Int32(-1)
+        try await send(first, 2, phase: 1)
+        for _ in 0..<14 { try await send(dx, 0, phase: 2) }
+        try await send(0, 0, phase: 4)
+        try check(taken >= 15, "history swipe took \(taken) of 17 events; the page got the rest")
+    }
 
     @MainActor
     private func trustedNavigationChecks(engine: ChromiumEngine, base: String) async throws {
@@ -6153,6 +6251,41 @@ extension ChromiumSelfTest {
             try check(engine.pageTitle == "links" && store.spaceContaining(tabID: created.id) == store.activeSpaceID,
                       "\(label): source '\(engine.pageTitle ?? "")', space of the new tab")
             results.append("\(label) -> disposition \(event?.disposition ?? 0), \(selects ? "selected" : "background") tab on /a")
+            if !selects {
+                // Back on a link-opened tab, with nothing behind it, closes it and returns to
+                // the link's tab (owner, 2026-11-21): by swipe here, by ⌘[ on a second one.
+                try await openerBackCheck(model: model, store: store, opener: tab, opened: created, engine: createdEngine,
+                                          window: window, bySwipe: true)
+                let again = Set(store.displayTabs().map(\.id))
+                guard await modifiedClick(.command, opened: { store.displayTabs().contains { !again.contains($0.id) } }) else {
+                    throw Failure(description: "a second ⌘-click opened no tab for the ⌘[ check")
+                }
+                let second = store.displayTabs().first { !again.contains($0.id) }!
+                let secondEngine = try shellEngine(model, second)
+                try await wait("second ⌘-clicked link loaded", timeout: 15) { secondEngine.currentURL?.path == "/a" && !secondEngine.isLoading }
+                try await openerBackCheck(model: model, store: store, opener: tab, opened: second, engine: secondEngine,
+                                          window: window, bySwipe: false)
+                // A target=_blank link: Chromium makes the contents, the shell adopts them as a tab.
+                let beforeBlank = Set(store.displayTabs().map(\.id))
+                let blankLink = try await cssCenter(of: "#blank", in: engine)
+                var blankOpened = false
+                for _ in 0..<3 where !blankOpened {
+                    focus(window)
+                    model.noteMouseDown(modifiers: [])
+                    click(window, engine: engine, at: blankLink)
+                    blankOpened = await eventually(timeout: 3) { store.displayTabs().contains { !beforeBlank.contains($0.id) } }
+                }
+                guard blankOpened, let third = store.displayTabs().first(where: { !beforeBlank.contains($0.id) }) else {
+                    throw Failure(description: "a click on the target=_blank link opened no tab")
+                }
+                let thirdEngine = try shellEngine(model, third)
+                try await wait("target=_blank link loaded", timeout: 15) { thirdEngine.currentURL?.path == "/a" && !thirdEngine.isLoading }
+                try await openerBackCheck(model: model, store: store, opener: tab, opened: third, engine: thirdEngine,
+                                          window: window, bySwipe: true)
+                results.append("swipe back and ⌘[ on ⌘-clicked tabs, swipe back on a target=_blank tab -> each closed, the link's tab selected")
+                model.selectTab(tab.id)
+                continue
+            }
             model.deleteTab(created.id)
             model.selectTab(tab.id)
         }
@@ -6169,6 +6302,40 @@ extension ChromiumSelfTest {
         let passed = results.filter { !$0.contains("NOTE") }.count
         log("\(passed == results.count ? "PASS" : "NOTE") modified link opens (ABI 1.39) on an ordinary link: \(results.joined(separator: "; ")); "
             + "tab A stayed on its page; unknown request -> \(unknown.rearcName)")
+    }
+
+    /// Back on `opened`, a tab a link in `opener` opened, with no page behind it: by a swipe
+    /// through the page's swipe handler, or by ⌘[ (`model.goBack`). It closes and `opener` is selected.
+    @MainActor
+    private func openerBackCheck(model: BrowserViewModel, store: SidebarStore, opener: Tab, opened: Tab, engine: ChromiumEngine,
+                                 window: NSWindow, bySwipe: Bool) async throws {
+        let how = bySwipe ? "swipe back" : "⌘["
+        try check(model.tabOpeners.opener(of: opened.id) == opener.id,
+                  "\(how): the link-opened tab's opener is \(String(describing: model.tabOpeners.opener(of: opened.id))), expected the link's tab")
+        model.selectTab(opened.id)
+        func host() -> ChromiumHostView? {
+            var views: [NSView] = window.contentView.map { [$0] } ?? []
+            while let view = views.popLast() {
+                if let host = view as? ChromiumHostView, host.engine === engine { return host }
+                views.append(contentsOf: view.subviews)
+            }
+            return nil
+        }
+        try await wait("\(how): the link-opened tab shown", timeout: 10) {
+            store.selectedTabID == opened.id && host()?.leaseAttachmentID != nil
+        }
+        try check(!engine.canGoBack && model.canGoBack(engine),
+                  "\(how): page history \(engine.canGoBack), Back enabled \(model.canGoBack(engine)); expected no history and Back enabled")
+        if bySwipe {
+            guard let host = host() else { throw Failure(description: "swipe back: the link-opened tab has no page view") }
+            try await swipe(window: window, host: host, dx: 18)
+        } else {
+            model.goBack()
+        }
+        try await wait("\(how) on the link-opened tab closes it and selects the link's tab", timeout: 10) {
+            store.tab(withID: opened.id) == nil && store.selectedTabID == opener.id
+        }
+        log("PASS \(how) on a link-opened tab with no history: it closed and the link's tab is selected")
     }
 
     // MARK: HTTP authentication (ABI 1.38)

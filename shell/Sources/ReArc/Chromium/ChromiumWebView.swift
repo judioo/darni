@@ -40,7 +40,7 @@ final class ChromiumHostView: NSView {
     private var reportedScale: CGFloat = 0
     private var keyObserver: NSObjectProtocol?
     private var placeholder: NSTextField?
-    private var historySwipe: ChromiumHistorySwipe?
+    private(set) var historySwipe: ChromiumHistorySwipe?
 
     init(engine: ChromiumEngine) {
         self.engine = engine

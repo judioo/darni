@@ -367,6 +367,11 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     /// itself first); after `presentCachedWindow` it must be the same model.
     @MainActor
     func start(model: BrowserViewModel) {
+        // A swipe back on a link-opened tab with no history returns to its opener (TabOpeners).
+        ChromiumHistorySwipe.openerReturn = .init(
+            target: { [weak model] tab in model?.openerToReturnTo(from: tab) },
+            perform: { [weak model] tab in model?.returnToOpener(from: tab) ?? false }
+        )
         if let early = self.model {
             precondition(early === model)
         } else {
@@ -1507,6 +1512,9 @@ extension BrowserViewModel {
             }
             space = target
         }
+        // A target=_blank link is noopener, so the engine names no opener for it; it came
+        // from the page on screen, the tab selected when the new one arrives.
+        let shownTab = store.selectedEaselRef == nil ? store.selectedTab : nil
         let tab = store.addTab(kind: .today, title: event.title.flatMap { $0.isEmpty ? nil : $0 } ?? "New Tab", url: url, in: space)
         let profileID = profileID(for: tab)
         if case .persistent(let owner) = profileKey, owner != profileID {
@@ -1528,6 +1536,16 @@ extension BrowserViewModel {
         }
         engineHost.adopt(engine, for: tab, profileID: profileID)
         observeFavicon(of: engine, tabID: tab.id)
+        // Back with nothing behind it returns to the tab whose link opened this one.
+        let scriptOpener = ChromiumRuntime.shared.engine(forTab: event.openerTabID).flatMap { engine in
+            engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0
+        }
+        let linkSource = event.disposition == 1 ? shownTab.flatMap { shown in
+            self.profileID(for: shown) == profileID ? shown.id : nil
+        } : nil
+        if let opener = scriptOpener ?? linkSource {
+            tabOpeners.record(tab.id, openedBy: opener)
+        }
         // Background-tab disposition stays unselected; the rest take focus in the sidebar,
         // in their own space (as link opens do).
         if event.disposition != 2 {
