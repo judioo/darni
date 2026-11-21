@@ -2633,30 +2633,32 @@ final class ChromiumSelfTest {
         log("PASS history swipe: a swipe over custom elements goes forward")
     }
 
-    /// One trackpad swipe over the middle of `host`: may-begin, a jittery began, 14 changes, ended.
+    /// One trackpad swipe over the middle of `host`: may-begin, a jittery began, 14 changes,
+    /// ended, handed to the page's swipe handler as its local monitor hands them. AppKit drops
+    /// the position of a synthesized scroll event that names a window, so it goes alongside.
     @MainActor
     private func swipe(window: NSWindow, host: ChromiumHostView, dx: Int32) async throws {
+        guard let handler = host.historySwipe else { throw Failure(description: "history swipe: the page has no swipe handler") }
         let mid = host.convert(NSPoint(x: host.bounds.midX, y: host.bounds.midY), to: nil)
-        let screen = window.convertPoint(toScreen: mid)
-        let top = NSScreen.screens.first?.frame.maxY ?? screen.y
-        let global = CGPoint(x: screen.x, y: top - screen.y)
+        var taken = 0
         @MainActor func send(_ dx: Int32, _ dy: Int32, phase: Int64) async throws {
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else {
                 throw Failure(description: "history swipe: no scroll event")
             }
-            cg.location = global
             cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
             cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
             cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(dy))
             cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx))
             cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Double(dy))
             cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Double(dx))
-            cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
-            cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
-            guard let event = NSEvent(cgEvent: cg), event.window === window else {
-                throw Failure(description: "history swipe: the synthesized scroll event is not for the test window")
+            // 51: the event's window number (kCGSEventWindowIDField); NSEvent reads its window from it.
+            if let windowField = CGEventField(rawValue: 51) {
+                cg.setIntegerValueField(windowField, value: Int64(window.windowNumber))
             }
-            NSApp.sendEvent(event)
+            guard let event = NSEvent(cgEvent: cg), event.window === window, event.hasPreciseScrollingDeltas else {
+                throw Failure(description: "history swipe: the synthesized scroll event is not a trackpad event for the test window")
+            }
+            if handler.handleForSelfTest(event, locationInWindow: mid) { taken += 1 }
             try await Task.sleep(nanoseconds: 16_000_000)
         }
         try await send(0, 0, phase: 128)
@@ -2664,6 +2666,7 @@ final class ChromiumSelfTest {
         try await send(first, 2, phase: 1)
         for _ in 0..<14 { try await send(dx, 0, phase: 2) }
         try await send(0, 0, phase: 4)
+        try check(taken >= 15, "history swipe took \(taken) of 17 events; the page got the rest")
     }
 
     @MainActor

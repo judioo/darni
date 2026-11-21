@@ -37,7 +37,18 @@ final class ChromiumHistorySwipe {
         monitor = nil
     }
 
+    /// The self-test's way in: AppKit drops the position of a synthesized scroll
+    /// event that names a window, so the test passes it. Returns true when the
+    /// swipe took the event, as the local monitor would by returning nil.
+    func handleForSelfTest(_ event: NSEvent, locationInWindow: NSPoint) -> Bool {
+        handle(event, locationInWindow: locationInWindow) == nil
+    }
+
     private func handle(_ event: NSEvent) -> NSEvent? {
+        handle(event, locationInWindow: event.locationInWindow)
+    }
+
+    private func handle(_ event: NSEvent, locationInWindow: NSPoint) -> NSEvent? {
         // Not only the key window: macOS sends a swipe to the window under the pointer even
         // when another window or app is active, and Arc goes back there too (owner, 2026-11-17).
         guard let host, event.window === host.window, host.window?.isVisible == true,
@@ -49,11 +60,11 @@ final class ChromiumHistorySwipe {
             }
             return event
         }
-        let point = host.convert(event.locationInWindow, from: nil)
+        let point = host.convert(locationInWindow, from: nil)
         guard event.hasPreciseScrollingDeltas else { return event }
         if event.phase.contains(.mayBegin) || (event.phase.contains(.began) && !awaitingBegan) {
             let content = host.window?.contentView
-            let target = content.flatMap { $0.hitTest($0.convert(event.locationInWindow, from: nil)) }
+            let target = content.flatMap { $0.hitTest($0.convert(locationInWindow, from: nil)) }
             guard host.bounds.contains(point), let target, target.isDescendant(of: host) else {
                 ChromiumLog.trace("history swipe: gesture not over this page (in bounds \(host.bounds.contains(point)), "
                     + "hit \(target.map { String(describing: type(of: $0)) } ?? "nothing"))")
