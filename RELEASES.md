@@ -24,9 +24,15 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1121.1158 — 2026-11-21
+## Darni 2026.1121.1164 — 2026-11-21
 
 **Fixes**
+- Going back on a tab opened from a link now takes you back to the tab you came from, as in Arc.
+  A tab you open with ⌘-click, a middle click, or a link that opens in a new tab starts with no
+  page behind it, so swiping back, ⌘[ and the Back button did nothing there. Now they close
+  that tab and show the tab whose link opened it, if it is still open. Pinned tabs, favorites
+  and tabs in a split view are never closed this way. Darni remembers which tab opened which
+  only until it quits.
 - Swiping back and forward with two fingers now works on sites such as YouTube and GitHub.
   There, the swipe scrolled the page instead of going back. It now goes back or forward as on
   any other site. A swipe over a row that scrolls sideways, such as a carousel, still scrolls
