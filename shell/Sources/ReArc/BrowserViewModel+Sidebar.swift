@@ -118,9 +118,7 @@ extension BrowserViewModel {
     func canGoBack(_ engine: (any WebEngine)?) -> Bool {
         guard let engine else { return false }
         if engine.canGoBack { return true }
-        guard let tab = engineHost.allTabEngines().first(where: { ($0.2 as AnyObject) === (engine as AnyObject) })?.0 else {
-            return false
-        }
+        guard let tab = engineHost.tabID(showing: engine as AnyObject) else { return false }
         return openerToReturnTo(from: tab) != nil
     }
     func goForward() { navigationEngine?.goForward() }
