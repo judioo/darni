@@ -57,6 +57,57 @@ final class LoopbackFixtureServer {
         document.title = 'nav:' + performance.getEntriesByType('navigation')[0].type + ':' + n;
         </script></head><body style="font:32px -apple-system"><h1>ReArc selftest navigation page</h1></body></html>
         """,
+        // History swipe edges: a 4×2 grid of fixed cells, each probed at its centre
+        // (ChromiumSelfTest.historySwipeChecks). Cells, row by row: plain text; a custom
+        // element with an open shadow root (YouTube, GitHub); a scroller at its start
+        // inside a shadow root; a scroller in its middle; a non-scrolling element with
+        // overscroll-behavior-x: contain; a scroller at its start with contain; an iframe;
+        // a scroller at its end.
+        "/swipe-edges": """
+        <!doctype html><html><head><title>swipe-edges</title><style>
+        html, body { margin: 0; height: 100%; overflow: hidden; font: 16px -apple-system; }
+        .cell { position: fixed; width: 25vw; height: 50vh; box-sizing: border-box; }
+        .scroller { overflow-x: auto; overflow-y: hidden; white-space: nowrap; }
+        .wide { display: inline-block; width: 300vw; height: 100%; background: linear-gradient(90deg, #ddd, #889); }
+        </style></head><body>
+        <div class="cell" style="left: 0; top: 0">plain text</div>
+        <x-card class="cell" id="custom" style="left: 25vw; top: 0"></x-card>
+        <x-carousel class="cell" id="shadowScroller" style="left: 50vw; top: 0"></x-carousel>
+        <div class="cell scroller" id="middle" style="left: 75vw; top: 0"><span class="wide"></span></div>
+        <div class="cell" style="left: 0; top: 50vh; overscroll-behavior-x: contain">contained, no scroller</div>
+        <div class="cell scroller" style="left: 25vw; top: 50vh; overscroll-behavior-x: contain"><span class="wide"></span></div>
+        <iframe class="cell" style="left: 50vw; top: 50vh; border: 0" srcdoc="<p>frame</p>"></iframe>
+        <div class="cell scroller" id="end" style="left: 75vw; top: 50vh"><span class="wide"></span></div>
+        <script>
+        customElements.define('x-card', class extends HTMLElement {
+          constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML = '<div style="height:100%"><slot></slot>card</div>'; }
+        });
+        customElements.define('x-carousel', class extends HTMLElement {
+          constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML =
+            '<div style="height:100%;overflow-x:auto;white-space:nowrap"><span style="display:inline-block;width:300vw;height:100%"></span></div>'; }
+        });
+        const middle = document.getElementById('middle'); middle.scrollLeft = (middle.scrollWidth - middle.clientWidth) / 2;
+        const end = document.getElementById('end'); end.scrollLeft = end.scrollWidth;
+        document.title = 'swipe-edges-ready';
+        </script></body></html>
+        """,
+        // History swipe pages: YouTube-like, the whole page is custom elements with shadow roots.
+        "/swipe-a": """
+        <!doctype html><html><head><title>swipe-a</title></head><body style="margin:0;font:32px -apple-system">
+        <x-app style="display:block;height:100vh"></x-app><script>
+        customElements.define('x-app', class extends HTMLElement {
+          constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML = '<x-feed style="display:block;height:100vh">page A</x-feed>'; }
+        });
+        </script></body></html>
+        """,
+        "/swipe-b": """
+        <!doctype html><html><head><title>swipe-b</title></head><body style="margin:0;font:32px -apple-system">
+        <x-app style="display:block;height:100vh"></x-app><script>
+        customElements.define('x-app', class extends HTMLElement {
+          constructor() { super(); this.attachShadow({mode: 'open'}).innerHTML = '<x-feed style="display:block;height:100vh">page B</x-feed>'; }
+        });
+        </script></body></html>
+        """,
         // A button that asks for element fullscreen (needs the click's user activation).
         "/fullscreen": """
         <!doctype html><html><head><title>fs-ready</title></head><body style="margin:0;font:24px -apple-system">

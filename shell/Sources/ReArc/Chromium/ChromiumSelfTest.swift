@@ -404,6 +404,12 @@ final class ChromiumSelfTest {
             try await trustedNavigationChecks(engine: engine, base: base)
         }
 
+        // 14a. Two-finger swipe back and forward: the edge probe on pages built from
+        // custom elements and shadow roots, and a swipe through the real event path.
+        if capabilities.scriptEvaluation {
+            try await historySwipeChecks(engine: engine, base: base, window: window)
+        }
+
         // 15. Named profiles are isolated; an off-the-record child sees neither; teardown order.
         if capabilities.profiles {
             try await profileChecks(base: base)
@@ -2575,6 +2581,91 @@ final class ChromiumSelfTest {
     // MARK: Trusted navigation
 
     @MainActor
+    /// Two-finger swipe back and forward. The owner lost it on YouTube and GitHub in 1152:
+    /// the edge probe gave up on any custom element, so every swipe there went to the page.
+    private func historySwipeChecks(engine: ChromiumEngine, base: String, window: NSWindow) async throws {
+        engine.load(URL(string: "\(base)/swipe-edges")!)
+        try await wait("swipe edges fixture") { engine.pageTitle == "swipe-edges-ready" && !engine.isLoading }
+        func probe(_ x: Double, _ y: Double) async throws -> (back: Bool, forward: Bool) {
+            let result = try await engine.evaluate(HistorySwipeEdgeScript.source(x: x, y: y), in: .editor) as? [String: Any]
+            return (result?["back"] as? Bool == true, result?["forward"] as? Bool == true)
+        }
+        let cells: [(name: String, x: Double, y: Double, back: Bool, forward: Bool)] = [
+            ("plain text", 0.125, 0.25, true, true),
+            ("custom element with a shadow root", 0.375, 0.25, true, true),
+            ("scroller at its start inside a shadow root", 0.625, 0.25, true, false),
+            ("scroller in its middle", 0.875, 0.25, false, false),
+            ("overscroll-behavior contain, no scroller", 0.125, 0.75, true, true),
+            ("scroller at its start with overscroll-behavior contain", 0.375, 0.75, false, false),
+            ("iframe", 0.625, 0.75, false, false),
+            ("scroller at its end", 0.875, 0.75, false, true),
+        ]
+        for cell in cells {
+            let edges = try await probe(cell.x, cell.y)
+            try check(edges.back == cell.back && edges.forward == cell.forward,
+                      "history swipe probe over \(cell.name): back \(edges.back) forward \(edges.forward), "
+                      + "expected back \(cell.back) forward \(cell.forward)")
+        }
+        log("PASS history swipe probe: \(cells.count) cells (custom elements, shadow roots, scrollers, contain, iframe)")
+        _ = try await engine.evaluate("document.documentElement.style.overscrollBehaviorX = 'none'", in: .page)
+        let rootNone = try await probe(0.125, 0.25)
+        try check(!rootNone.back && !rootNone.forward, "history swipe probe ignored overscroll-behavior-x: none on the root")
+        _ = try await engine.evaluate("document.documentElement.style.overscrollBehaviorX = ''", in: .page)
+        log("PASS history swipe probe: overscroll-behavior-x: none on the root stops the swipe")
+
+        // The real path: phased trackpad events through NSApp, the local monitor, the
+        // probe and the swipe machine, with a first event more vertical than sideways
+        // (real fingers, 2026-11-18). Back from B to A, then forward to B.
+        guard let host = window.contentView?.firstDescendant(ofType: ChromiumHostView.self) else {
+            throw Failure(description: "history swipe: no page view in the window")
+        }
+        window.makeKeyAndOrderFront(nil)
+        engine.load(URL(string: "\(base)/swipe-a")!)
+        try await wait("swipe page A") { engine.pageTitle == "swipe-a" && !engine.isLoading }
+        engine.load(URL(string: "\(base)/swipe-b")!)
+        try await wait("swipe page B") { engine.pageTitle == "swipe-b" && !engine.isLoading && engine.canGoBack }
+        try await swipe(window: window, host: host, dx: 18)
+        try await wait("swipe back to page A", timeout: 10) { engine.pageTitle == "swipe-a" && !engine.isLoading }
+        log("PASS history swipe: a swipe over custom elements goes back")
+        try await wait("forward history after the swipe") { engine.canGoForward }
+        try await swipe(window: window, host: host, dx: -18)
+        try await wait("swipe forward to page B", timeout: 10) { engine.pageTitle == "swipe-b" && !engine.isLoading }
+        log("PASS history swipe: a swipe over custom elements goes forward")
+    }
+
+    /// One trackpad swipe over the middle of `host`: may-begin, a jittery began, 14 changes, ended.
+    @MainActor
+    private func swipe(window: NSWindow, host: ChromiumHostView, dx: Int32) async throws {
+        let mid = host.convert(NSPoint(x: host.bounds.midX, y: host.bounds.midY), to: nil)
+        let screen = window.convertPoint(toScreen: mid)
+        let top = NSScreen.screens.first?.frame.maxY ?? screen.y
+        let global = CGPoint(x: screen.x, y: top - screen.y)
+        func send(_ dx: Int32, _ dy: Int32, phase: Int64) async throws {
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else {
+                throw Failure(description: "history swipe: no scroll event")
+            }
+            cg.location = global
+            cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(dy))
+            cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(dx))
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Double(dy))
+            cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Double(dx))
+            cg.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+            cg.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+            guard let event = NSEvent(cgEvent: cg), event.window === window else {
+                throw Failure(description: "history swipe: the synthesized scroll event is not for the test window")
+            }
+            NSApp.sendEvent(event)
+            try await Task.sleep(nanoseconds: 16_000_000)
+        }
+        try await send(0, 0, phase: 128)
+        let first = dx > 0 ? Int32(1) : Int32(-1)
+        try await send(first, 2, phase: 1)
+        for _ in 0..<14 { try await send(dx, 0, phase: 2) }
+        try await send(0, 0, phase: 4)
+    }
+
     private func trustedNavigationChecks(engine: ChromiumEngine, base: String) async throws {
         let viewSource = NavigationURLPolicy.viewSourceURL(for: URL(string: "\(base)/a")!, engine: .chromium)!
         let viewSourceStatus = engine.navigateNow(viewSource)
