@@ -2583,10 +2583,11 @@ final class ChromiumSelfTest {
     @MainActor
     /// Two-finger swipe back and forward. The owner lost it on YouTube and GitHub in 1152:
     /// the edge probe gave up on any custom element, so every swipe there went to the page.
+    @MainActor
     private func historySwipeChecks(engine: ChromiumEngine, base: String, window: NSWindow) async throws {
         engine.load(URL(string: "\(base)/swipe-edges")!)
         try await wait("swipe edges fixture") { engine.pageTitle == "swipe-edges-ready" && !engine.isLoading }
-        func probe(_ x: Double, _ y: Double) async throws -> (back: Bool, forward: Bool) {
+        @MainActor func probe(_ x: Double, _ y: Double) async throws -> (back: Bool, forward: Bool) {
             let result = try await engine.evaluate(HistorySwipeEdgeScript.source(x: x, y: y), in: .editor) as? [String: Any]
             return (result?["back"] as? Bool == true, result?["forward"] as? Bool == true)
         }
@@ -2640,7 +2641,7 @@ final class ChromiumSelfTest {
         let screen = window.convertPoint(toScreen: mid)
         let top = NSScreen.screens.first?.frame.maxY ?? screen.y
         let global = CGPoint(x: screen.x, y: top - screen.y)
-        func send(_ dx: Int32, _ dy: Int32, phase: Int64) async throws {
+        @MainActor func send(_ dx: Int32, _ dy: Int32, phase: Int64) async throws {
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0) else {
                 throw Failure(description: "history swipe: no scroll event")
             }
