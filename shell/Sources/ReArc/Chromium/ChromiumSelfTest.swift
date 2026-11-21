@@ -2583,7 +2583,6 @@ final class ChromiumSelfTest {
     @MainActor
     /// Two-finger swipe back and forward. The owner lost it on YouTube and GitHub in 1152:
     /// the edge probe gave up on any custom element, so every swipe there went to the page.
-    @MainActor
     private func historySwipeChecks(engine: ChromiumEngine, base: String, window: NSWindow) async throws {
         engine.load(URL(string: "\(base)/swipe-edges")!)
         try await wait("swipe edges fixture") { engine.pageTitle == "swipe-edges-ready" && !engine.isLoading }
@@ -2667,6 +2666,7 @@ final class ChromiumSelfTest {
         try await send(0, 0, phase: 4)
     }
 
+    @MainActor
     private func trustedNavigationChecks(engine: ChromiumEngine, base: String) async throws {
         let viewSource = NavigationURLPolicy.viewSourceURL(for: URL(string: "\(base)/a")!, engine: .chromium)!
         let viewSourceStatus = engine.navigateNow(viewSource)
