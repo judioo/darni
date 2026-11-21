@@ -6265,7 +6265,24 @@ extension ChromiumSelfTest {
                 try await wait("second ⌘-clicked link loaded", timeout: 15) { secondEngine.currentURL?.path == "/a" && !secondEngine.isLoading }
                 try await openerBackCheck(model: model, store: store, opener: tab, opened: second, engine: secondEngine,
                                           window: window, bySwipe: false)
-                results.append("swipe back and ⌘[ on link-opened tabs -> each closed, the link's tab selected")
+                // A target=_blank link: Chromium makes the contents, the shell adopts them as a tab.
+                let beforeBlank = Set(store.displayTabs().map(\.id))
+                let blankLink = try await cssCenter(of: "#blank", in: engine)
+                var blankOpened = false
+                for _ in 0..<3 where !blankOpened {
+                    focus(window)
+                    model.noteMouseDown(modifiers: [])
+                    click(window, engine: engine, at: blankLink)
+                    blankOpened = await eventually(timeout: 3) { store.displayTabs().contains { !beforeBlank.contains($0.id) } }
+                }
+                guard blankOpened, let third = store.displayTabs().first(where: { !beforeBlank.contains($0.id) }) else {
+                    throw Failure(description: "a click on the target=_blank link opened no tab")
+                }
+                let thirdEngine = try shellEngine(model, third)
+                try await wait("target=_blank link loaded", timeout: 15) { thirdEngine.currentURL?.path == "/a" && !thirdEngine.isLoading }
+                try await openerBackCheck(model: model, store: store, opener: tab, opened: third, engine: thirdEngine,
+                                          window: window, bySwipe: true)
+                results.append("swipe back and ⌘[ on ⌘-clicked tabs, swipe back on a target=_blank tab -> each closed, the link's tab selected")
                 model.selectTab(tab.id)
                 continue
             }
