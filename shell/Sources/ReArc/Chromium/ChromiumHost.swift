@@ -317,10 +317,6 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         runtime.legacyDefaultOwner = store.profiles.first?.id
         let model = BrowserViewModel(store: store, persistence: persistence, preparedStartup: prepared, deferStartup: true)
         model.removeUnusedProfileAvatarImages()
-        ChromiumHistorySwipe.openerReturn = .init(
-            target: { [weak model] tab in model?.openerToReturnTo(from: tab) },
-            perform: { [weak model] tab in model?.returnToOpener(from: tab) ?? false }
-        )
         // Profile opens complete asynchronously; each gets this policy before its first tab.
         runtime.downloadDirectory = model.downloads.directory
         PerfSignposts.launchEvent("ModelLoaded")
@@ -371,6 +367,11 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     /// itself first); after `presentCachedWindow` it must be the same model.
     @MainActor
     func start(model: BrowserViewModel) {
+        // A swipe back on a link-opened tab with no history returns to its opener (TabOpeners).
+        ChromiumHistorySwipe.openerReturn = .init(
+            target: { [weak model] tab in model?.openerToReturnTo(from: tab) },
+            perform: { [weak model] tab in model?.returnToOpener(from: tab) ?? false }
+        )
         if let early = self.model {
             precondition(early === model)
         } else {
