@@ -132,7 +132,7 @@ struct SplitContentView: View {
             if let row {
                 SplitPaneToolbarView(
                     model: model, splitID: split.id, orientation: split.orientation, tab: tab, engine: engine, row: row,
-                    trafficLightsClearance: trafficLightsClearance
+                    moves: split.paneMoves(for: tab.id), trafficLightsClearance: trafficLightsClearance
                 )
                 .equatable()
                 .zIndex(1)

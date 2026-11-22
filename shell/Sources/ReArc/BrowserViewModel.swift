@@ -356,6 +356,10 @@ final class BrowserViewModel {
     var itemIconEditorID: UUID?
     /// The split row whose name is being edited in place.
     var renamingSplitID: SplitViewItem.ID?
+    /// A pane chip being dragged along its split's sidebar row, and where it would land.
+    var splitPaneChipDrag: SplitPaneChipDrag?
+    /// The pane chip under the pointer: a drag that begins there may reorder the panes.
+    @ObservationIgnored var hoveredSplitPaneChip: (splitID: SplitViewItem.ID, tabID: Tab.ID)?
     /// Today tabs archived by the last Clear, for Undo.
     var lastClearedTabIDs: [Tab.ID] = []
     var archiveFilter = LibraryArchiveFilter()
@@ -2282,6 +2286,8 @@ final class BrowserViewModel {
             guard let tab = store.selectedTab else { return "No tab selected" }
             guard store.splitContaining(tabID: tab.id) != nil else { return "Tab is not in a split" }
             unsplitTabIfInSplit(tab.id)
+        case .moveSplitPane(let offset):
+            guard moveFocusedSplitPane(by: offset) else { return "The pane cannot move that way" }
         case .nextTab:
             selectNextTab()
         case .previousTab:

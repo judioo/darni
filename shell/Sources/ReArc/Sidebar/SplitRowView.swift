@@ -2,10 +2,19 @@ import AppKit
 import SwiftUI
 import SidebarModel
 
+/// Where the pane chips sit in a split's row. The chips share what is left
+/// of the row's width equally, which is how a drag along the row knows the
+/// chip under the pointer (`SplitPaneChipDrag.chipIndex`).
+enum SplitRowMetrics {
+    static let chipsLeading: CGFloat = 4
+    static let rowTrailing: CGFloat = 8
+}
+
 /// Sidebar row for a split, stacked in place like Arc's (ARC-RECORDING
 /// §8): one row on the tab pitch. Unnamed, its panes sit side by side as
 /// chips; named or given an icon, it reads "<icon> <name>" like a tab, and
-/// double-click renames it there.
+/// double-click renames it there. A chip dragged onto another chip's place
+/// reorders the panes; the insertion line shows where it lands.
 struct SplitRowView<Menu: View>: View {
     let split: SplitViewItem
     let isSelected: Bool
@@ -25,6 +34,11 @@ struct SplitRowView<Menu: View>: View {
     let onRename: (String) -> Void
     var paneRename: (Tab.ID) -> SidebarRowRename? = { _ in nil }
     var onRenamePane: (Tab.ID) -> Void = { _ in }
+    /// A chip of this row is being dragged along it: the chip boundary it
+    /// would land on, 0 before the first chip to the pane count after the last.
+    var paneDropBoundary: Int? = nil
+    /// The pointer went on or off a pane's chip.
+    var onHoverPane: (Tab.ID, Bool) -> Void = { _, _ in }
     /// The split's menu; a chip passes its pane for the pane's own items.
     @ViewBuilder let menu: (Tab.ID?) -> Menu
 
@@ -39,7 +53,7 @@ struct SplitRowView<Menu: View>: View {
                 chips
             }
         }
-        .padding(.trailing, 8)
+        .padding(.trailing, SplitRowMetrics.rowTrailing)
         .frame(height: SidebarMetrics.rowHeight)
         .background {
             let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -126,14 +140,33 @@ struct SplitRowView<Menu: View>: View {
                     onClose: { option in onClosePane(option, tab.id) },
                     onMute: { onMutePane(tab.id) },
                     rename: paneRename(tab.id),
-                    onRename: { onRenamePane(tab.id) }
+                    onRename: { onRenamePane(tab.id) },
+                    onHover: { onHoverPane(tab.id, $0) }
                 )
                 .contextMenu { menu(tab.id) }
+                .overlay(alignment: .leading) { paneInsertionLine(at: index, edge: .leading) }
+                .overlay(alignment: .trailing) { paneInsertionLine(at: index, edge: .trailing) }
             }
         }
-        .padding(.leading, 4)
+        .padding(.leading, SplitRowMetrics.chipsLeading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Split view of \(split.tabs.count) tabs")
+    }
+
+    /// The sidebar's insertion line, upright: the dragged pane lands in the
+    /// gap it marks. Every boundary but the last is drawn on the leading
+    /// edge of the chip after it.
+    @ViewBuilder
+    private func paneInsertionLine(at index: Int, edge: HorizontalEdge) -> some View {
+        let boundary = edge == .leading ? index : index + 1
+        if paneDropBoundary == boundary, edge == .leading || index == split.tabs.count - 1 {
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: 2)
+                .padding(.vertical, 4)
+                .offset(x: edge == .leading ? -2 : 2)
+                .allowsHitTesting(false)
+        }
     }
 
     private func closeButton(help: String, size: CGFloat, action: @escaping () -> Void) -> some View {
@@ -164,6 +197,7 @@ private struct SplitPaneChip: View {
     let onMute: () -> Void
     var rename: SidebarRowRename? = nil
     var onRename: () -> Void = {}
+    var onHover: (Bool) -> Void = { _ in }
 
     @State private var isHovering = false
     @Environment(\.themeChrome) private var chrome
@@ -218,7 +252,11 @@ private struct SplitPaneChip: View {
         .contentShape(RoundedRectangle(cornerRadius: 6))
         .gesture(TapGesture().onEnded { onSelect() }, including: rename == nil ? .all : .subviews)
         .simultaneousGesture(TapGesture(count: 2).onEnded { if rename == nil { onRename() } })
-        .onHover { isHovering = $0 }
+        .onHover {
+            isHovering = $0
+            onHover($0)
+        }
+        .onDisappear { onHover(false) }
         .help(WelcomePageAddress.tooltip(title: tab.displayTitle, url: tab.url))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tab.displayTitle)
