@@ -84,7 +84,12 @@ if [[ $WEEKLY == 1 ]]; then
   BUILD="${TAG#v0.1.0-}"
   [[ $BUILD =~ ^[0-9]+$ ]] || die "no released build: no v0.1.0-NNNN tag"
   RELEASED=1
-  if [[ -f $DATA/builds/$BUILD.json && $REMEASURE == 0 ]]; then
+  HARNESS_NOW="$(cd "$PERF" && python3 -c 'import darni_perf; print(darni_perf.HARNESS)')"
+  HARNESS_THEN=""
+  [[ ! -f $DATA/builds/$BUILD.json ]] || HARNESS_THEN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["method"]["harness"])' "$DATA/builds/$BUILD.json")"
+  if [[ -f $DATA/builds/$BUILD.json && $HARNESS_THEN != "$HARNESS_NOW" ]]; then
+    echo "perf-check: Darni $BUILD was measured with harness $HARNESS_THEN; the harness is now $HARNESS_NOW, so it is measured again"
+  elif [[ -f $DATA/builds/$BUILD.json && $REMEASURE == 0 ]]; then
     DO_DARNI=0
     echo "perf-check: Darni $BUILD ($TAG), the newest release, is already measured ($(sed -n 's/.*"measured_at": "\([^"]*\)".*/\1/p' "$DATA/builds/$BUILD.json" | head -n 1)); no release since."
   else
