@@ -1,5 +1,13 @@
 import Foundation
 
+/// The capture commands' names, one for each wherever it shows: the File
+/// menu, the command bar, the site controls and the Library's Media page
+/// (its empty text said "Capture Page", a name no menu had).
+public enum CaptureCommandTitle {
+    public static let fullPage = "Capture Full Page"
+    public static let visibleArea = "Capture Visible Area"
+}
+
 public enum CaptureScope: String, Codable, CaseIterable {
     case visible
     case fullPage
