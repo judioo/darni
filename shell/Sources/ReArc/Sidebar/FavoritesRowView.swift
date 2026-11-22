@@ -56,7 +56,8 @@ struct FavoritesRowView: View {
                     )
                 }
             }
-            if draggedTabID != nil {
+            // Not while a pane chip is dragged along its own row (`SidebarDragLayout`).
+            if model.sidebarOpensDropAreas(dragging: draggedTabID) {
                 SectionEndDropZone(
                     destination: .favorites(profileID),
                     placeholder: favorites.isEmpty && draggedTabID.flatMap({ model.store.entry(withID: $0) }).map(isPlainTab) == true

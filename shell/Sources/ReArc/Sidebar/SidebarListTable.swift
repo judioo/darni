@@ -19,6 +19,9 @@ struct SidebarListTable: NSViewRepresentable {
     let model: BrowserViewModel
     let spaceID: Space.ID
     var tint: Color
+    /// The drag under way shows the drop row after each section
+    /// (`SidebarDragLayout`): any drag but a pane chip's along its own row.
+    var opensDropAreas: Bool
     @Binding var draggedItemID: UUID?
     @Binding var dropState: SidebarDropState?
     @Environment(\.themeChrome) private var chrome
@@ -73,7 +76,7 @@ struct SidebarListTable: NSViewRepresentable {
         if cells.draggedItemID != draggedItemID { cells.draggedItemID = draggedItemID }
         if cells.dropState != dropState { cells.dropState = dropState }
         controller.reduceMotion = reduceMotion
-        controller.update(spaceID: spaceID, isDragging: draggedItemID != nil)
+        controller.update(spaceID: spaceID, isDragging: draggedItemID != nil, opensDropAreas: opensDropAreas)
     }
 }
 
@@ -128,6 +131,8 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     var reduceMotion = false
     private(set) var rows: [SidebarListRow] = []
     private var isDragging = false
+    /// The section drop rows are in the list (`SidebarDragLayout`).
+    private var opensDropAreas = false
     private var measured: [SidebarListRow.ID: Double] = [:]
     private let heights = SidebarListHeights.sidebar
     private weak var tableView: NSTableView?
@@ -390,13 +395,18 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
     }
 
     /// From the representable: a different space reloads; a drag starting or
-    /// ending adds or takes away the section drop rows.
-    func update(spaceID: Space.ID, isDragging: Bool) {
-        guard spaceID != self.spaceID || isDragging != self.isDragging else { return }
+    /// ending makes every row a drop target or plain again, and adds or
+    /// takes away the section drop rows. A pane chip dragged along its own
+    /// row gets the drop targets at once and the drop rows only when it
+    /// leaves the row: they move the rows after them.
+    func update(spaceID: Space.ID, isDragging: Bool, opensDropAreas: Bool? = nil) {
+        let opensDropAreas = opensDropAreas ?? isDragging
+        guard spaceID != self.spaceID || isDragging != self.isDragging || opensDropAreas != self.opensDropAreas else { return }
         let spaceChanged = spaceID != self.spaceID
         let dragChanged = isDragging != self.isDragging
         self.spaceID = spaceID
         self.isDragging = isDragging
+        self.opensDropAreas = opensDropAreas
         if spaceChanged { measured = [:] }
         rebuild(animated: false, reloadAll: spaceChanged)
         if dragChanged { syncPlainCells() }
@@ -415,7 +425,7 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
                 outline: store.outline(for: spaceID),
                 expanded: store.expandedFolderIDs,
                 pinnedCollapsed: model.isPinnedSectionCollapsed(spaceID: spaceID, in: window),
-                isDragging: isDragging,
+                isDragging: opensDropAreas,
                 selection: { store.selection(among: $0, inSpace: spaceID, in: window) }
             )
         } onChange: { [weak self] in

@@ -59,6 +59,31 @@ extension BrowserViewModel {
         splitPaneChipDrag = SplitPaneChipDrag(splitID: split.id, tabID: hovered.tabID)
     }
 
+    /// A drag began on a pane's own chip (`SplitRowView`'s chips are drag
+    /// sources themselves): the pane is known from the chip, with no need
+    /// of the hover. The split's row is still what the drag carries.
+    func splitPaneChipDragBegan(_ tabID: Tab.ID, in split: SplitViewItem) {
+        guard !split.showsAsNamedRow, split.tabs.contains(where: { $0.id == tabID }) else {
+            if splitPaneChipDrag != nil { splitPaneChipDrag = nil }
+            return
+        }
+        splitPaneChipDrag = SplitPaneChipDrag(splitID: split.id, tabID: tabID)
+    }
+
+    /// Whether the sidebar opens its drop areas for the drag of `dragged`
+    /// (`SidebarDragLayout`): not for a chip still along its own row, whose
+    /// rows must stay under the pointer.
+    func sidebarOpensDropAreas(dragging dragged: UUID?) -> Bool {
+        SidebarDragLayout.opensDropAreas(dragging: dragged, chipDrag: splitPaneChipDrag)
+    }
+
+    /// The pointer left the row of the chip being dragged (or is over
+    /// another drop target): the drag is the row's own from here on.
+    func splitPaneChipDragLeftRow() {
+        guard splitPaneChipDrag?.hasLeftRow == false else { return }
+        splitPaneChipDrag?.leaveRow()
+    }
+
     /// The pointer went on or off a pane's chip. Not observed: only the
     /// start of a drag reads it.
     func splitPaneChipHovered(_ hovering: Bool, tabID: Tab.ID, in splitID: SplitViewItem.ID) {

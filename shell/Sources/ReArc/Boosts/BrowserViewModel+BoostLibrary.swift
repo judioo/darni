@@ -121,7 +121,7 @@ extension BrowserViewModel {
         }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = trimmed.isEmpty ? "Boost for \(page.host() ?? "site")" : trimmed
-        guard store.createBoostForCurrentSite(name: title, css: "/* ReArc boost */\n", pageURL: page) != nil else {
+        guard store.createBoostForCurrentSite(name: title, css: BoostStarterCSS.text, pageURL: page) != nil else {
             return "Could not create the boost"
         }
         syncAllTabBoosts()

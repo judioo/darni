@@ -2338,7 +2338,7 @@ final class BrowserViewModel {
             let host = tab.url.host() ?? "site"
             guard let created = store.createBoostForCurrentSite(
                 name: "Boost for \(host)",
-                css: "/* ReArc boost */\n",
+                css: BoostStarterCSS.text,
                 pageURL: tab.url
             ) else {
                 return "Cannot create boost for this page"

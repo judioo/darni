@@ -6581,7 +6581,9 @@ extension ChromiumSelfTest {
     /// own engines with its default; choosing one makes it that profile's
     /// default in the engine, read back with a fresh `ReArcSearchListEngines`
     /// and not from the pop-up's copy, while a second profile keeps its own;
-    /// the first profile's default is put back. The stock settings pages
+    /// after the change the engine still offers the old default and the
+    /// pop-up lists the same engines as before; the first profile's default
+    /// is put back. The stock settings pages
     /// Darni has replaced (search, downloads) open from no shell route.
     @MainActor
     private func searchEngineChecks(model: BrowserViewModel, store: SidebarStore) async throws {
@@ -6608,12 +6610,14 @@ extension ChromiumSelfTest {
         let other = store.addProfile(name: "Search Engine Other")
         store.selectSpace(homeSpace.id)
         func row(_ profile: Profile.ID) -> ProfileSearchEngineRow? { ProfileSearchEngineRow(model: model, profileID: profile) }
-        /// The engine's own answer for the profile's default, never the pop-up's copy.
-        func engineDefault(_ profile: Profile.ID) async -> SearchEngineChoices.Engine? {
+        /// The engine's own list for the profile, read now, never the pop-up's copy.
+        func engineList(_ profile: Profile.ID) async -> SearchEngineChoices? {
             await withCheckedContinuation { continuation in
-                runtime.searchEngines(for: profile) { continuation.resume(returning: $0?.current) }
+                runtime.searchEngines(for: profile) { continuation.resume(returning: $0) }
             }
         }
+        /// The engine's own answer for the profile's default, never the pop-up's copy.
+        func engineDefault(_ profile: Profile.ID) async -> SearchEngineChoices.Engine? { await engineList(profile)?.current }
         try await wait("the search engine lists of both profiles", timeout: 25) {
             [home, other.id].allSatisfy { (row($0)?.options.count ?? 0) > 1 && row($0)?.selection != nil }
         }
@@ -6636,6 +6640,26 @@ extension ChromiumSelfTest {
         let homeAfter = await engineDefault(home)
         try check(homeAfter.map { String($0.id) } == pick.id && homeAfter?.name == pick.name,
                   "search engines: chose \(pick.name) (\(pick.id)), the engine's default is \(homeAfter?.name ?? "-") (\(homeAfter?.id ?? 0))")
+        // The engine's list after the change: the old default is still offered, and the pop-up
+        // lists what the engine offers, in its order (the old default left the pop-up until a
+        // relaunch: Chromium's can_make_default is false for the default itself, and the shell
+        // moved the default in its own copy without the flag; found on screen 2026-11-22).
+        guard let listAfter = await engineList(home) else {
+            throw Failure(description: "search engines: no list from the engine after the default changed")
+        }
+        let offeredAfter = listAfter.offered.map { String($0.id) }
+        try check(offeredAfter.contains(original), "search engines: after choosing \(pick.name) the engine no longer offers the old "
+                  + "default (\(listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }))")
+        try check(listAfter.engines.first { String($0.id) == original }?.canMakeDefault == true
+                  && listAfter.current?.canMakeDefault == false,
+                  "search engines: the engine's can_make_default did not move with the default "
+                  + "(\(listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }))")
+        try await wait("the pop-up lists the engine's choices after the change", timeout: 10) {
+            row(home)?.options.map(\.id) == offeredAfter
+        }
+        try check(row(home)?.options.map(\.id) == homeRow.options.map(\.id),
+                  "search engines: the pop-up listed \(homeRow.options.map(\.name)) and after choosing \(pick.name) lists "
+                  + "\(row(home)?.options.map(\.name) ?? []): choosing an engine changed the list")
         let otherAfter = await engineDefault(other.id)
         try check(otherAfter?.id == otherBefore.id && otherAfter?.name == otherBefore.name && row(other.id)?.selection == otherRow.selection,
                   "search engines: the second profile's default changed with the first's (\(otherBefore.name) -> \(otherAfter?.name ?? "-"))")
@@ -6644,6 +6668,9 @@ extension ChromiumSelfTest {
         model.setDefaultSearchEngine(original, for: home)
         try await waitAsync("the first profile's default search put back", timeout: 15) {
             await engineDefault(home).map { String($0.id) } == original
+        }
+        try await wait("the pop-up as it was, the default and the list", timeout: 10) {
+            row(home)?.selection == original && row(home)?.options.map(\.id) == homeRow.options.map(\.id)
         }
         if let services = model.commandBarServices as? ChromiumCommandBarServices {
             services.refreshSearchProvider(for: home)
@@ -6660,7 +6687,8 @@ extension ChromiumSelfTest {
         }
         log("PASS search engine pop-up (Settings › Profiles): the engine's list installed at ready; \(homeRow.options.count) engines in the "
             + "first profile, \(otherRow.options.count) in a second; choosing \(pick.name) made it the first profile's default in the "
-            + "engine (ReArcSearchListEngines), the second kept \(otherBefore.name); default put back; no shell route opens Chromium's "
+            + "engine (ReArcSearchListEngines), the second kept \(otherBefore.name); the old default still offered and the pop-up's list "
+            + "unchanged after the change; default put back; no shell route opens Chromium's "
             + "search or download settings pages")
     }
 
