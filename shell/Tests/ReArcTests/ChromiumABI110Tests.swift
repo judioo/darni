@@ -174,7 +174,7 @@ final class PrivateWindowTests: XCTestCase {
     private final class Presenter: BrowserWindowPresenting {
         var littleArc: [LittleArcWindow.ID] = []
         var privateWindows: [UUID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID) { littleArc.append(id) }
+        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) { littleArc.append(id) }
         func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
         func presentPrivateWindow(_ window: PrivateWindowModel) { privateWindows.append(window.id) }
     }

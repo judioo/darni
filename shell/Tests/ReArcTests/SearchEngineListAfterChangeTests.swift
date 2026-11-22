@@ -17,6 +17,10 @@ final class SearchEngineListAfterChangeTests: XCTestCase {
     /// none under policy), a change refused for an engine that cannot be made default.
     private final class Engine: SearchEngineChoicesSource {
         var names: [(id: Int64, name: String)] = [(2, "Google"), (5, "Brave"), (3, "Microsoft Bing"), (7, "DuckDuckGo"), (9, "Яндекс")]
+        /// Engines the profile holds that are not prepopulated (a site search, an imported
+        /// engine): `ReArcSearchListEngines` lists one only while it is the default, and
+        /// `ReArcSearchSetDefaultEngine` still takes it by id.
+        var custom: [(id: Int64, name: String)] = []
         var defaults: [Profile.ID: Int64] = [:]
         /// Engines Chromium lists and refuses as the default whoever asks.
         var neverDefault: Set<Int64> = []
@@ -30,11 +34,16 @@ final class SearchEngineListAfterChangeTests: XCTestCase {
 
         func list(for profileID: Profile.ID) -> SearchEngineChoices {
             let current = defaults[profileID] ?? 2
-            return SearchEngineChoices(engines: names.map { id, name in
+            let prepopulated = names.map { id, name in
                 SearchEngineChoices.Engine(id: id, name: name, keyword: "\(id).test", searchTemplate: "https://\(id).test/?q=%s",
                                            isDefault: id == current, isPrepopulated: true,
                                            canMakeDefault: !managed && id != current && !neverDefault.contains(id))
-            }, isManaged: managed)
+            }
+            let listedCustom = custom.filter { $0.id == current }.map { id, name in
+                SearchEngineChoices.Engine(id: id, name: name, keyword: "\(id).test", searchTemplate: "https://\(id).test/?q=%s",
+                                           isDefault: true, isPrepopulated: false, canMakeDefault: false)
+            }
+            return SearchEngineChoices(engines: prepopulated + listedCustom, isManaged: managed)
         }
 
         func searchEngines(for profileID: Profile.ID, completion: @escaping (SearchEngineChoices?) -> Void) {
@@ -45,7 +54,9 @@ final class SearchEngineListAfterChangeTests: XCTestCase {
         }
 
         func setDefaultSearchEngine(_ id: Int64, for profileID: Profile.ID, completion: @escaping (Bool) -> Void) {
-            guard let row = list(for: profileID).engines.first(where: { $0.id == id }), row.canMakeDefault else { return completion(false) }
+            let current = defaults[profileID] ?? 2
+            let heldCustom = !managed && id != current && custom.contains { $0.id == id }
+            guard heldCustom || list(for: profileID).engines.first(where: { $0.id == id })?.canMakeDefault == true else { return completion(false) }
             defaults[profileID] = id
             completion(true)
         }
@@ -69,6 +80,28 @@ final class SearchEngineListAfterChangeTests: XCTestCase {
     }
 
     private func names(_ settings: ChromiumSearchEngineSettings) -> [String] { settings.engines(for: profile).map(\.name) }
+
+    /// The self-test's first run of the step (RC 1229, 2026-11-22): the profile's default
+    /// was a custom engine, not prepopulated. Chromium's list holds the default plus the
+    /// prepopulated engines, so once another engine was chosen the old default left the
+    /// engine's list, and the pop-up re-read from it dropped it: it could not be chosen again.
+    func testACustomDefaultLeftBehindStaysInThePopUpAndCanBeChosenAgain() {
+        let engine = Engine()
+        engine.custom = [(42, "Local Search")]
+        engine.defaults[profile] = 42
+        let settings = loaded(engine)
+        XCTAssertEqual(names(settings), all + ["Local Search"])
+        XCTAssertEqual(settings.defaultEngine(for: profile), "42")
+
+        settings.setDefaultEngine("7", for: profile)
+        XCTAssertEqual(settings.defaultEngine(for: profile), "7")
+        XCTAssertEqual(names(settings), all + ["Local Search"], "the custom engine left behind is still offered")
+
+        settings.setDefaultEngine("42", for: profile)
+        XCTAssertEqual(engine.defaults[profile], 42, "the engine took it back by id")
+        XCTAssertEqual(settings.defaultEngine(for: profile), "42")
+        XCTAssertEqual(names(settings), all + ["Local Search"])
+    }
 
     func testChoosingAnotherEngineKeepsEveryEngineInThePopUp() {
         let engine = Engine()

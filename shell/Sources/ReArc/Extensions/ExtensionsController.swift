@@ -53,6 +53,14 @@ final class ExtensionsController {
         actionsByEngine.values.contains { $0.contains { isWanted($0.id) } }
     }
 
+    /// The extension's name, when a tab has shown its action.
+    func name(of extensionID: String) -> String? {
+        for items in actionsByEngine.values {
+            if let item = items.first(where: { $0.id == extensionID }), !item.name.isEmpty { return item.name }
+        }
+        return nil
+    }
+
     func setActions(_ items: [ExtensionActionItem], for engine: AnyObject) {
         let key = ObjectIdentifier(engine)
         if actionsByEngine[key] != items { actionsByEngine[key] = items }

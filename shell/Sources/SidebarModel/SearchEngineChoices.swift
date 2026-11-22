@@ -74,6 +74,25 @@ public struct SearchEngineChoices: Equatable, Sendable {
         return copy
     }
 
+    /// The engine's list read after a change, keeping every engine `earlier` offered
+    /// that the engine no longer lists, as a choice that can be made default again.
+    /// Chromium's list is the default plus the prepopulated engines, so a custom
+    /// default (a site search, an imported engine) leaves it as soon as another engine
+    /// is chosen, though the engine still holds it and takes it back by id (found by
+    /// the self-test of RC 1229, 2026-11-22). Kept for this session only; under a
+    /// policy nothing is added.
+    public func keeping(_ earlier: SearchEngineChoices?) -> SearchEngineChoices {
+        guard let earlier, !isManaged else { return self }
+        var copy = self
+        for engine in earlier.offered where !copy.engines.contains(where: { $0.id == engine.id }) {
+            var kept = engine
+            kept.isDefault = false
+            kept.canMakeDefault = true
+            copy.engines.append(kept)
+        }
+        return copy
+    }
+
     /// The command bar's provider for an engine (suggestions are not part of the list).
     public static func provider(_ engine: Engine) -> SearchProvider {
         SearchProvider(id: engine.keyword, name: engine.name, keyword: engine.keyword, searchTemplate: engine.searchTemplate)

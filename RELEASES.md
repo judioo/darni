@@ -24,7 +24,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1122.1229 — 2026-11-22
+## Darni 2026.1122.1231 — 2026-11-22
 
 **New**
 - Split View panes can be put in a different order. Move Pane Left and Move Pane Right (Up and
@@ -45,7 +45,8 @@ lines and this section starts empty again.
   pages or extensions keep switching spaces, Darni stops following them for a minute and
   says so.
 - The search engine choice in Settings › Profiles was missing when Darni had started normally.
-  It is always there now, and it lists every engine, also after you change it.
+  It is always there now, and it keeps listing every engine after you change it, including a
+  custom engine you had chosen before.
 - The Air Traffic Control window is wider, can be resized and keeps its size. Long space and
   profile names show in full, and the bin button of a rule is never under the scroll bar.
 - File › Capture shows its shortcut as ⇧⌘2.

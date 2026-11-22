@@ -445,7 +445,7 @@ final class Wave22ShellTests: XCTestCase {
     private final class WindowPresenter: BrowserWindowPresenting {
         var browserWindows = 0
         var privateWindows: [PrivateWindowModel] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID) {}
+        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
         func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
         func presentPrivateWindow(_ window: PrivateWindowModel) { privateWindows.append(window) }
         func presentBrowserWindow() { browserWindows += 1 }

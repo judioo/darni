@@ -5319,6 +5319,9 @@ enum SelfTestExtensionFixture {
     static let frontName = "ReArc selftest front"
     /// How long the front fixture runs after a click on its action.
     static let frontRun: TimeInterval = 15
+    static let floodName = "ReArc selftest flood"
+    /// How many tabs the flood fixture asks for at once: over `ExtensionTabRate.limit`.
+    static let floodBurst = ExtensionTabRate.limit + 5
     static let popupSize = CGSize(width: 320, height: 180)
 
     /// Writes the fixtures into a fresh temp directory; their paths for `--load-extension`.
@@ -5329,7 +5332,7 @@ enum SelfTestExtensionFixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-extensions-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let popup = root.appendingPathComponent("popup"), click = root.appendingPathComponent("click")
-        let front = root.appendingPathComponent("front")
+        let front = root.appendingPathComponent("front"), flood = root.appendingPathComponent("flood")
         func file(_ dir: URL, _ name: String, _ text: String) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try? Data(text.utf8).write(to: dir.appendingPathComponent(name))
@@ -5396,7 +5399,33 @@ enum SelfTestExtensionFixture {
           timer = setInterval(tick, 250);
         });
         """)
-        return [popup, click, front]
+        file(flood, "manifest.json", """
+        {"name":"\(floodName)","version":"1.0","manifest_version":3,"background":{"service_worker":"bg.js"},"permissions":["tabs"],
+         "action":{"default_title":"\(floodName)"}}
+        """)
+        // A client that asks by itself (security RC-2026.1122.1231 FX-01, FX-02). Its badge says what
+        // it did last, and so what the next click does: the first two clicks each ask for a window of
+        // the clicked tab's site (`w1` made, `w0` failed), every later one asks for `floodBurst` tabs
+        // with an address at once and shows how many were made and how many failed (`10/5`).
+        file(flood, "bg.js", """
+        chrome.action.onClicked.addListener(async (tab) => {
+          const done = await chrome.action.getBadgeText({});
+          let base;
+          try { base = new URL(tab.url).origin; } catch (e) { chrome.action.setBadgeText({text: 'nourl'}); return; }
+          if (!done.startsWith('w') || done.length < 4) {
+            let made = '0';
+            try { await chrome.windows.create({url: base + '/a?flood=window' + done.length}); made = '1'; } catch (e) {}
+            chrome.action.setBadgeText({text: done + 'w' + made});
+            return;
+          }
+          const asked = [];
+          for (let i = 0; i < \(floodBurst); i++) asked.push(chrome.tabs.create({url: base + '/a?flood=' + i, active: false}));
+          const answers = await Promise.allSettled(asked);
+          const made = answers.filter((answer) => answer.status === 'fulfilled').length;
+          chrome.action.setBadgeText({text: made + '/' + (answers.length - made)});
+        });
+        """)
+        return [popup, click, front, flood]
     }
 
     private static func png(_ size: Int) -> Data {
@@ -6029,6 +6058,146 @@ extension ChromiumSelfTest {
             + " with no input; the space on screen never changed by itself; the copy not on screen got its tab as its window's active "
             + "tab (not focused) and \(finalHome) blank tab(s) in the first profile, \(finalOther) in the second (limit "
             + "\(ExtensionBlankTabs.limit)); the copy on screen opened none; the user's own switch worked; loop breaker not needed")
+        try await extensionFloodChecks(model: model, store: store, shell: shell, host: host, tab: tab, engine: engine, base: base)
+    }
+
+    /// Security RC-2026.1122.1231 FX-02 and FX-01, with the flood fixture and
+    /// nobody at the keyboard. `windows.create`: the Little Darni window is
+    /// made and is on screen, but behind the window in front, neither key nor
+    /// main nor focused to the engine, and a toast with Show says so; after a
+    /// key or click of the user's the next one comes to the front. Then
+    /// `floodBurst` `tabs.create` calls at once, each with an address on the
+    /// fixture server: `ExtensionTabRate.limit` tabs open, the rest of the
+    /// calls fail in the extension, and one toast names the extension.
+    @MainActor
+    private func extensionFloodChecks(model: BrowserViewModel, store: SidebarStore, shell: ChromiumShell, host: ChromiumExtensionHost,
+                                      tab: Tab, engine: ChromiumEngine, base: String) async throws {
+        let controller = model.extensions
+        let floodName = SelfTestExtensionFixture.floodName
+        func floodAction() -> ExtensionActionItem? { controller.actions(for: engine).first { $0.name == floodName } }
+        /// Runs the fixture's action and waits for the badge that says it has finished. The
+        /// toasts shown meanwhile are kept: one may be gone again before a slow page has loaded.
+        var toasts: [ShellToast] = []
+        func click(_ label: String, until finished: @escaping (String) -> Bool) async throws -> String {
+            guard let action = floodAction() else { throw Failure(description: "extension flood: \(label): the fixture's action is gone") }
+            toasts = []
+            controller.run(action.id, for: engine, anchor: nil)
+            var badge = ""
+            try await waitAsync("extension flood: \(label): the fixture's answer in its badge", timeout: 30) {
+                for _ in 0..<6 {
+                    if let toast = model.toast, !toasts.contains(where: { $0.id == toast.id }) { toasts.append(toast) }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                controller.refresh(engine, scale: 2)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if let toast = model.toast, !toasts.contains(where: { $0.id == toast.id }) { toasts.append(toast) }
+                badge = floodAction()?.badgeText ?? ""
+                return finished(badge)
+            }
+            return badge
+        }
+        func order(_ window: NSWindow) -> Int { NSApp.orderedWindows.firstIndex { $0 === window } ?? -1 }
+
+        // The fixture reads its site from the clicked tab.
+        model.selectTab(tab.id)
+        loadShellTab(model, tab, engine, try XUnwrap(URL(string: "\(base)/a"), "address"))
+        try await wait("extension flood: tab A", timeout: 20) { engine.pageTitle == Self.titleA && !engine.isLoading }
+        let space = store.activeSpace
+        guard let browserWindow = engine.leaseHolder?.window else { throw Failure(description: "extension flood: tab A is in no window") }
+        try await waitAsync("extension flood: the flood fixture's action", timeout: 20) {
+            controller.refresh(engine, scale: 2)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            return floodAction() != nil
+        }
+
+        // 1. windows.create by itself. An earlier step's synthesized click must not count.
+        model.extensionFocusGate = ExtensionFocusGate()
+        model.extensionTabRate = ExtensionTabRate()
+        let focusLogged = model.extensionFocusLog.count
+        let littleBefore = Set(store.littleArcLiveWindows.map(\.id))
+        func newLittle() -> [LittleArcWindow] { store.littleArcLiveWindows.filter { !littleBefore.contains($0.id) } }
+        // The window it must stay behind. With none on screen (every window minimised) only the keyboard is checked.
+        let front = LittleArcWindowOrdering.frontWindow(among: NSApp.orderedWindows)
+        let key = NSApp.keyWindow, main = NSApp.mainWindow, keyLittle = model.keyLittleArcID
+        let first = try await click("windows.create with no input") { $0.count >= 2 }
+        try check(first == "w1", "extension flood: windows.create with no input failed in the extension (badge '\(first)')")
+        try check(toasts.contains { $0.message == "\(floodName) opened a window behind this one" && $0.action == .show },
+                  "extension flood: no toast with Show for the window behind (toasts \(toasts.map(\.message)))")
+        let behind = try XUnwrap(newLittle().first, "the Little Darni window an extension made")
+        guard let behindWindow = shell.window(forLittleArc: behind.id),
+              let behindEngine = model.littleArcEngine(for: behind.id) as? ChromiumEngine else {
+            throw Failure(description: "extension flood: windows.create opened no window or engine")
+        }
+        // Loaded and settled: a window that takes the keyboard does so when it opens or when its page has it.
+        try await wait("extension flood: the window's page", timeout: 20) {
+            behindEngine.currentURL?.query == "flood=window0" && !behindEngine.isLoading
+        }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        try check(behindWindow.isVisible, "extension flood: the window an extension made is not on screen at all")
+        try check(!behindWindow.isKeyWindow && !behindWindow.isMainWindow && model.keyLittleArcID == keyLittle
+                  && NSApp.keyWindow === key && NSApp.mainWindow === main,
+                  "extension flood: a window an extension made by itself took the keyboard (key \(behindWindow.isKeyWindow), main "
+                  + "\(behindWindow.isMainWindow), key Little Darni \(String(describing: model.keyLittleArcID)), app key window "
+                  + "'\(NSApp.keyWindow?.title ?? "none")')")
+        if let front {
+            try check(LittleArcWindowOrdering.frontWindow(among: NSApp.orderedWindows) === front && order(behindWindow) > order(front),
+                      "extension flood: a window an extension made by itself is in front (its place \(order(behindWindow)), the front "
+                      + "window's \(order(front)) of \(NSApp.orderedWindows.count))")
+        } else {
+            log("NOTE extension flood: no window was on screen for the new one to stay behind; only the keyboard was checked")
+        }
+        host.reconcileWindows()
+        let (status, state) = runtime.extensionState(tab: behindEngine.tabID)
+        try check(status == .rearcOK && state.active && !state.focused, "extension flood: the engine has the window's tab as \(status.rearcName) \(state)")
+
+        // 2. The same after a key or click of the user's: that window comes to the front.
+        model.noteUserInput()
+        let second = try await click("windows.create after input") { $0.count >= 4 }
+        try check(second == "w1w1", "extension flood: windows.create after input failed in the extension (badge '\(second)')")
+        try check(!toasts.contains { $0.action == .show }, "extension flood: a window the user's input started was said to be behind")
+        let shown = try XUnwrap(newLittle().first { $0.id != behind.id }, "the second Little Darni window")
+        let shownWindow = try XUnwrap(shell.window(forLittleArc: shown.id), "the second Little Darni's window")
+        try check(shownWindow.isVisible && LittleArcWindowOrdering.frontWindow(among: NSApp.orderedWindows) === shownWindow,
+                  "extension flood: a window the user's input started did not come to the front (its place \(order(shownWindow)))")
+        // Key only while the app is active; the order above holds either way.
+        let tookKey = shownWindow.isKeyWindow
+        try check(model.extensionFocusLog.count == focusLogged, "extension flood: the loop breaker stepped in: \(model.extensionFocusLog.suffix(1))")
+        for record in [behind, shown] { shell.dismissLittleArcWindow(record.id) }
+        try await wait("extension flood: the fixture's windows closed", timeout: 15) {
+            shell.window(forLittleArc: behind.id) == nil && shell.window(forLittleArc: shown.id) == nil
+                && store.littleArcWindow(withID: behind.id) == nil && store.littleArcWindow(withID: shown.id) == nil
+        }
+        browserWindow.makeKeyAndOrderFront(nil)
+        model.selectTab(tab.id)
+
+        // 3. A burst of tabs.create with an address, over the cap.
+        model.extensionFocusGate = ExtensionFocusGate()
+        model.extensionTabRate = ExtensionTabRate()
+        let rateLogged = model.extensionTabRateLog.count
+        let before = Set(store.displayTabs(in: space.id).map(\.id))
+        func added() -> [Tab] { store.displayTabs(in: space.id).filter { !before.contains($0.id) } }
+        let limit = ExtensionTabRate.limit, burst = SelfTestExtensionFixture.floodBurst
+        let answer = try await click("a burst of tabs.create") { $0.contains("/") }
+        try check(answer == "\(limit)/\(burst - limit)",
+                  "extension flood: of \(burst) tabs.create calls at once the extension saw made/failed '\(answer)', expected \(limit)/\(burst - limit)")
+        try check(toasts.filter { $0.message == "\(floodName) tried to open many tabs; Darni stopped it" }.count == 1,
+                  "extension flood: not exactly one toast naming the extension (toasts \(toasts.map(\.message)))")
+        try await wait("extension flood: the burst's tabs on their pages", timeout: 30) {
+            added().count >= limit && added().allSatisfy { $0.url.query?.hasPrefix("flood=") == true }
+        }
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        try check(added().count == limit, "extension flood: \(added().count) tabs opened for \(burst) requests (cap \(limit))")
+        try check(store.activeSpaceID == space.id && store.selectedTab?.id == tab.id, "extension flood: the burst changed what is on screen")
+        try check(model.extensionTabRateLog.count == rateLogged + 1,
+                  "extension flood: the rate cap logged \(model.extensionTabRateLog.count - rateLogged) bursts for one")
+
+        for created in added() { model.deleteTab(created.id) }
+        model.selectTab(tab.id)
+        try await wait("extension flood: the first tab shown again", timeout: 15) { store.selectedTab?.id == tab.id && added().isEmpty }
+        log("PASS extension windows and tab bursts (security FX-01, FX-02): windows.create with no input made a Little Darni window "
+            + "behind the window in front (not key, not main, not focused to the engine) with a Show toast; after the user's input the "
+            + "next one came to the front (key: \(tookKey), app active \(NSApp.isActive)); of \(burst) tabs.create calls at once with "
+            + "an address \(limit) opened and \(burst - limit) failed in the extension, with one toast naming it")
     }
 
     // MARK: Autofill suggestions (ABI 1.34) and save offers (1.37)
@@ -6648,16 +6817,24 @@ extension ChromiumSelfTest {
             throw Failure(description: "search engines: no list from the engine after the default changed")
         }
         let offeredAfter = listAfter.offered.map { String($0.id) }
-        try check(offeredAfter.contains(original), "search engines: after choosing \(pick.name) the engine no longer offers the old "
-                  + "default (\(listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }))")
-        try check(listAfter.engines.first { String($0.id) == original }?.canMakeDefault == true
-                  && listAfter.current?.canMakeDefault == false,
-                  "search engines: the engine's can_make_default did not move with the default "
-                  + "(\(listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }))")
-        try await wait("the pop-up lists the engine's choices after the change", timeout: 10) {
-            row(home)?.options.map(\.id) == offeredAfter
+        let listing = listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }
+        // Chromium lists the default plus its prepopulated engines: a custom old default (the
+        // self-test's own local engine, a site search) leaves the engine's list, and the pop-up
+        // keeps offering it (`SearchEngineChoices.keeping`; RC 1229's first self-test, 2026-11-22).
+        let originalIsCustom = !offeredAfter.contains(original)
+        if !originalIsCustom {
+            try check(listAfter.engines.first { String($0.id) == original }?.canMakeDefault == true,
+                      "search engines: the engine's can_make_default did not move to the old default (\(listing))")
         }
-        try check(row(home)?.options.map(\.id) == homeRow.options.map(\.id),
+        try check(listAfter.current?.canMakeDefault == false,
+                  "search engines: the new default can still be made default in the engine (\(listing))")
+        try await wait("the pop-up lists the engine's choices after the change, and the old default", timeout: 10) {
+            let shown = row(home)?.options.map(\.id) ?? []
+            return Array(shown.prefix(offeredAfter.count)) == offeredAfter && shown.contains(original)
+                && shown.count == offeredAfter.count + (originalIsCustom ? 1 : 0)
+        }
+        // The same engines (a custom old default moves to the end of the list).
+        try check(Set(row(home)?.options.map(\.id) ?? []) == Set(homeRow.options.map(\.id)),
                   "search engines: the pop-up listed \(homeRow.options.map(\.name)) and after choosing \(pick.name) lists "
                   + "\(row(home)?.options.map(\.name) ?? []): choosing an engine changed the list")
         let otherAfter = await engineDefault(other.id)
@@ -6670,7 +6847,7 @@ extension ChromiumSelfTest {
             await engineDefault(home).map { String($0.id) } == original
         }
         try await wait("the pop-up as it was, the default and the list", timeout: 10) {
-            row(home)?.selection == original && row(home)?.options.map(\.id) == homeRow.options.map(\.id)
+            row(home)?.selection == original && Set(row(home)?.options.map(\.id) ?? []) == Set(homeRow.options.map(\.id))
         }
         if let services = model.commandBarServices as? ChromiumCommandBarServices {
             services.refreshSearchProvider(for: home)
