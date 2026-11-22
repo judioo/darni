@@ -660,7 +660,7 @@ public enum AppCommandRegistry {
             ),
             AppCommand(
                 id: "capture-page",
-                title: "Capture Page",
+                title: CaptureCommandTitle.fullPage,
                 keywords: ["capture", "screenshot", "snapshot", "full", "page"],
                 minQueryLength: 2,
                 action: .capturePage
@@ -681,7 +681,7 @@ public enum AppCommandRegistry {
             ),
             AppCommand(
                 id: "capture-visible",
-                title: "Capture Visible Area",
+                title: CaptureCommandTitle.visibleArea,
                 keywords: ["capture", "screenshot", "visible", "viewport", "snapshot"],
                 minQueryLength: 2,
                 action: .captureVisibleArea

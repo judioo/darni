@@ -258,8 +258,8 @@ enum ShellMenus {
     static func capture(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
         [[
             ShellMenuItem("Capture", "2", [.command, .shift]) { model.beginPageCapture() },
-            ShellMenuItem("Capture Full Page") { Task { await model.performCapture(scope: .fullPage) } },
-            ShellMenuItem("Capture Visible Area") { Task { await model.performCapture(scope: .visible) } },
+            ShellMenuItem(CaptureCommandTitle.fullPage) { Task { await model.performCapture(scope: .fullPage) } },
+            ShellMenuItem(CaptureCommandTitle.visibleArea) { Task { await model.performCapture(scope: .visible) } },
             ShellMenuItem("Capture in Portrait Mode") { Task { await model.capturePortrait() } },
             ShellMenuItem("Portrait Capture Watermark On/Off") { model.portraitCaptureWatermark.toggle() },
         ]]

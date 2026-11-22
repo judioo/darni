@@ -155,7 +155,7 @@ extension BrowserViewModel {
         }
         if let created = store.createBoostForCurrentSite(
             name: "Boost for \(tab.url.host() ?? "site")",
-            css: "/* ReArc boost */\n",
+            css: BoostStarterCSS.text,
             pageURL: tab.url
         ) {
             syncAllTabBoosts()

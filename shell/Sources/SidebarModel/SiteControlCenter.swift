@@ -53,6 +53,14 @@ public enum SiteControlCenter {
 /// What Arc's toolbar site-controls popover lists, top to bottom: four
 /// square buttons, the Extensions grid, the site's Settings rows, then a
 /// footer with the connection and a ⋯ menu (docs/arc-recordings/2026-11-06-site-controls-panel.md).
+/// The capture commands' names, one for each wherever it shows: the File
+/// menu, the command bar, the site controls and the Library's Media page
+/// (its empty text said "Capture Page", a name no menu had).
+public enum CaptureCommandTitle {
+    public static let fullPage = "Capture Full Page"
+    public static let visibleArea = "Capture Visible Area"
+}
+
 extension SiteControlCenter {
     /// The top row, in Arc's order.
     public enum QuickAction: String, CaseIterable, Sendable {
@@ -63,7 +71,7 @@ extension SiteControlCenter {
             case .share: return "Share"
             case .boost: return "New Boost"
             case .capture: return "Capture"
-            case .captureFullPage: return "Capture Full Page"
+            case .captureFullPage: return CaptureCommandTitle.fullPage
             }
         }
 

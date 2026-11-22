@@ -279,6 +279,9 @@ struct ProfilesSettingsPane: View {
     @State private var showsLearnMore = false
 
     private static let listWidth: CGFloat = 205
+    private static let listToDetail: CGFloat = 10
+    /// The width of the boxes beside the profile list: what a row there has to fit in.
+    static let detailWidth = SettingsMetrics.boxWidth - listWidth - listToDetail
 
     private var selected: Profile? {
         // Opens on the profile, also from a container's space: its settings (blocking among
@@ -297,7 +300,7 @@ struct ProfilesSettingsPane: View {
     var body: some View {
         SettingsPage {
             intro
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: Self.listToDetail) {
                 profileList
                 VStack(alignment: .leading, spacing: SettingsMetrics.boxSpacing) {
                     if let cloud = selectedCloud {

@@ -13,9 +13,10 @@ enum ChromiumEngineError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noTab: return "The Chromium tab is not available"
-        case .rejected(let operation, let status): return "Chromium rejected \(operation): \(status.rearcName)"
-        case .failed(let operation, let status): return "Chromium \(operation) failed: \(status.rearcName)"
+        // A failed capture shows these (`captureErrorMessage`): they name what failed, not the engine.
+        case .noTab: return "The page is not available"
+        case .rejected(let operation, let status): return "The engine refused \(operation): \(status.rearcName)"
+        case .failed(let operation, let status): return "The engine’s \(operation) failed: \(status.rearcName)"
         case .staleContent: return "The page changed while capturing"
         }
     }
