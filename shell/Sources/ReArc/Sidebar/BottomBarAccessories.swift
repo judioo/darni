@@ -38,7 +38,7 @@ struct RecentDownloadsStack: View {
                 RecentDownloadRow(record: record, time: RecentDownloads.relativeTime(record.updatedAt, now: now)) {
                     downloads.perform(.open, on: record.id)
                 }
-                .contextMenu { DownloadContextMenu(records: [record], downloads: downloads) }
+                .downloadMenu(for: record, downloads: downloads)
                 .modifier(QuickViewRowPose(fromBottom: index))
             }
         }
@@ -145,7 +145,8 @@ private struct RecentDownloadRow: View {
         .onHover { isHovering = $0 }
         .onTapGesture(perform: open)
         .onDrag { DownloadDrag.provider(for: record.targetPath) }
-        .help(record.targetPath)
+        // The file's and its folder's names: the path would show the person's folders.
+        .help(DownloadLocationText.tooltip(fileName: record.fileName, targetPath: record.targetPath))
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("\(record.fileName), \(time)")
     }

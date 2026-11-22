@@ -111,6 +111,30 @@ public enum DownloadMenuItem: Hashable, Sendable {
     }
 }
 
+/// Where a download is, for a tooltip: the names of the file and of its
+/// folder, never the folder's path, which shows the person's folder names to
+/// anyone who sees the screen (a recording, a shared screen).
+public enum DownloadLocationText {
+    /// "report.pdf in Downloads"; the file's name alone while it has no folder.
+    public static func tooltip(fileName: String, targetPath: String) -> String {
+        guard !targetPath.isEmpty else { return fileName }
+        let folder = folderName(URL(fileURLWithPath: targetPath).deletingLastPathComponent())
+        return folder.isEmpty ? fileName : "\(fileName) in \(folder)"
+    }
+
+    /// The folder's own name ("Downloads"); empty for the volume's root.
+    public static func folderName(_ directory: URL) -> String {
+        let name = directory.lastPathComponent
+        return name == "/" ? "" : name
+    }
+
+    /// The download folder's tooltip, on the tray's folder menu.
+    public static func savedTo(_ directory: URL) -> String {
+        let folder = folderName(directory)
+        return folder.isEmpty ? "Where downloads are saved" : "Downloads are saved to \(folder)"
+    }
+}
+
 public enum DownloadMenu {
     public struct Entry: Equatable, Sendable {
         public var item: DownloadMenuItem

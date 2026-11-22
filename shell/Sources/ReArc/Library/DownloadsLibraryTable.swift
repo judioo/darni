@@ -136,7 +136,7 @@ final class DownloadsTableController: NSObject, NSTableViewDataSource, NSTableVi
         table.target = self
         table.doubleAction = #selector(openClicked(_:))
         table.controller = self
-        let menu = NSMenu()
+        let menu = NSMenu.darniContextMenu()
         menu.delegate = self
         table.menu = menu
         table.setAccessibilityLabel("Downloads")
@@ -352,21 +352,7 @@ final class DownloadsTableController: NSObject, NSTableViewDataSource, NSTableVi
 
     /// The row's menu (`DownloadMenu`), as the tray's; several rows get the actions that apply to each.
     func menuItems(for records: [DownloadRecord]) -> [NSMenuItem] {
-        var items: [NSMenuItem] = []
-        let ids = records.map(\.id)
-        for (index, section) in DownloadMenu.sections(for: records, isWarned: isWarned).enumerated() {
-            if index > 0 { items.append(.separator()) }
-            for entry in section {
-                let item = DownloadsMenuItem(title: entry.item.title(count: records.count)) { [weak self] in
-                    self?.downloads.perform(entry.item, on: ids) { moved in
-                        if moved == 0 { NSSound.beep() }
-                    }
-                }
-                item.isEnabled = entry.isEnabled
-                items.append(item)
-            }
-        }
-        return items
+        DownloadRowMenu.items(for: records, downloads: downloads)
     }
 
     // MARK: NSTableViewDataSource, NSTableViewDelegate
@@ -401,22 +387,6 @@ final class DownloadsTableController: NSObject, NSTableViewDataSource, NSTableVi
         guard let record = record(at: row), record.hasFileOnDisk else { return nil }
         return URL(fileURLWithPath: record.targetPath) as NSURL
     }
-}
-
-/// A menu item that runs a closure.
-private final class DownloadsMenuItem: NSMenuItem {
-    private let run: () -> Void
-
-    init(title: String, action: @escaping () -> Void) {
-        run = action
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
-        target = self
-    }
-
-    @available(*, unavailable)
-    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    @objc private func fire() { run() }
 }
 
 /// The table: keyboard actions for the selection, and the row under the
