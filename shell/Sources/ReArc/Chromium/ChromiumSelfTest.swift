@@ -1359,6 +1359,8 @@ final class ChromiumSelfTest {
         model.flipSplitOrientation()
         log("PASS Split View flip (\(split.orientation) -> \(split.orientation.flipped), panes re-attached) and Expand Current Split "
             + "(tab A alone, companion tab \(companion.tabID) kept open, restored)")
+        try await splitPaneMoveChecks(model: model, store: store, splitID: split.id, paneA: engineA, tabA: tabA.id, paneB: companion,
+                                      tabB: companionTab.id, base: base, window: first)
         model.closeTab(companionTab.id)
         model.selectTab(tabA.id)
         try await wait("tab A alone after closing the split companion") {
@@ -7557,6 +7559,162 @@ extension ChromiumSelfTest {
             labelled("Close Pane").count == 2 && controlsAbove(other)
         }
         log("PASS split pane rows: 2 rows, site controls in the focused pane's row, moved by a click in the other pane")
+    }
+}
+
+// MARK: Split pane order (View > Move Pane Left/Right/Up/Down, owner report 2026-11-22)
+
+extension ChromiumSelfTest {
+    /// A two-pane split, side by side then stacked: View > Move Pane Right / Left / Down / Up
+    /// (the real menu's items, with their live titles and enabled state) swap the two engine
+    /// views' frames, each pane keeps its width, the moved pane keeps the focus, and neither
+    /// page loads again (same document and navigation, a value set in each page still there).
+    @MainActor
+    func splitPaneMoveChecks(model: BrowserViewModel, store: SidebarStore, splitID: SplitViewItem.ID, paneA: ChromiumEngine, tabA: Tab.ID,
+                             paneB: ChromiumEngine, tabB: Tab.ID, base: String, window: NSWindow) async throws {
+        func screenRect(_ engine: ChromiumEngine) -> NSRect? {
+            guard let host = engine.leaseHolder, let hostWindow = host.window, hostWindow === window else { return nil }
+            return hostWindow.convertToScreen(host.convert(host.bounds, to: nil))
+        }
+        func order() -> [Tab.ID] { store.split(withID: splitID)?.tabs.map(\.id) ?? [] }
+        // The View menu as it is when opened: titles and enabled state read again.
+        func viewItem(_ title: String) -> NSMenuItem? {
+            guard let menu = NSApp.mainMenu?.items.first(where: { $0.title == "View" })?.submenu else { return nil }
+            menu.delegate?.menuNeedsUpdate?(menu)
+            menu.update()
+            return menu.items.first { $0.title == title && !$0.isHidden }
+        }
+        func viewTitles() -> [String] {
+            NSApp.mainMenu?.items.first { $0.title == "View" }?.submenu?.items.filter { !$0.isHidden }.map(\.title) ?? []
+        }
+        func choose(_ title: String) throws {
+            guard let item = viewItem(title), item.isEnabled, let action = item.action else {
+                throw Failure(description: "View > \(title) is missing or disabled; View menu: \(viewTitles())")
+            }
+            try check(NSApp.sendAction(action, to: item.target, from: item), "View > \(title) ran nothing")
+        }
+        var sawLoading = false
+        func settled() -> Bool {
+            sawLoading = sawLoading || paneA.isLoading || paneB.isLoading
+            return paneA.attachmentID != nil && paneB.attachmentID != nil && screenRect(paneA) != nil && screenRect(paneB) != nil
+        }
+
+        model.selectSplit(splitID, focusTabID: tabA)
+        try await wait("split side by side again, both panes attached", timeout: 20) {
+            store.split(withID: splitID)?.orientation == .horizontal && settled()
+        }
+        try check(order() == [tabA, tabB], "the split does not start as [tab A, companion]")
+        // Both panes on a real page, with widths that differ: 30 % and 70 %.
+        paneB.load(URL(string: "\(base)/nav")!)
+        try await wait("companion pane loaded /nav", timeout: 20) { paneB.currentURL?.path == "/nav" && !paneB.isLoading && !paneA.isLoading }
+        store.resizeSplitPanes(splitID: splitID, widthFactors: [tabA: 0.3, tabB: 0.7])
+        try await wait("panes laid out 30/70, tab A on the left", timeout: 10) {
+            guard settled(), let a = screenRect(paneA), let b = screenRect(paneB) else { return false }
+            return a.maxX <= b.minX + 1 && a.width > 100 && a.width < b.width * 0.6
+        }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        guard let startA = screenRect(paneA), let startB = screenRect(paneB) else { throw Failure(description: "a pane has no host view") }
+        let scripted = paneA.supportsScriptEvaluation
+        if scripted {
+            _ = try await paneA.evaluate("(function(){ window.__darniPaneMove = 'A'; return 1; })()", in: .page)
+            _ = try await paneB.evaluate("(function(){ window.__darniPaneMove = 'B'; return 1; })()", in: .page)
+        }
+        let documentA = paneA.currentDocumentIdentity, documentB = paneB.currentDocumentIdentity
+        let engineTabs = [paneA.tabID, paneB.tabID], urls = [paneA.currentURL, paneB.currentURL]
+        sawLoading = false
+
+        /// Neither page loaded again since the values above were taken.
+        func checkNoReload(_ step: String) async throws {
+            try check(!sawLoading, "\(step): a pane was loading during the move")
+            try check([paneA.tabID, paneB.tabID] == engineTabs, "\(step): the panes' engine tabs changed (\(engineTabs) -> \([paneA.tabID, paneB.tabID]))")
+            try check([paneA.currentURL, paneB.currentURL] == urls, "\(step): a pane's URL changed")
+            if let documentA, let documentB {
+                let nowA = paneA.currentDocumentIdentity, nowB = paneB.currentDocumentIdentity
+                try check(nowA?.isSameDocument(as: documentA, sameNavigation: true) == true,
+                          "\(step): tab A has a new document [\(String(describing: nowA))] was [\(documentA)]")
+                try check(nowB?.isSameDocument(as: documentB, sameNavigation: true) == true,
+                          "\(step): the companion has a new document [\(String(describing: nowB))] was [\(documentB)]")
+            }
+            if scripted {
+                let markA = try await paneA.evaluate("String(window.__darniPaneMove)", in: .page) as? String
+                let markB = try await paneB.evaluate("String(window.__darniPaneMove)", in: .page) as? String
+                try check(markA == "A" && markB == "B", "\(step): the pages lost their state (tab A '\(markA ?? "nil")', companion '\(markB ?? "nil")')")
+            }
+        }
+        func near(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool { abs(lhs - rhs) <= 2 }
+
+        // The real View menu: Arc's items are there, and the first pane can only go right.
+        let titles = viewTitles()
+        try check(titles.contains("Separate Page from Split View") && titles.contains("Add Split View")
+                  && titles.contains("Close this Split Pane"), "View menu lacks Arc's split items: \(titles)")
+        try check(viewItem("Move Pane Left")?.isEnabled == false && viewItem("Move Pane Right")?.isEnabled == true,
+                  "tab A is the first pane: Move Pane Left \(String(describing: viewItem("Move Pane Left")?.isEnabled)), "
+                  + "Move Pane Right \(String(describing: viewItem("Move Pane Right")?.isEnabled)); View menu: \(viewTitles())")
+
+        // Move Pane Right: the views swap, each with its own width.
+        try choose("Move Pane Right")
+        try check(order() == [tabB, tabA], "Move Pane Right left the order \(order() == [tabA, tabB] ? "unchanged" : "wrong")")
+        try await wait("Move Pane Right: the engine views swapped places and kept their widths", timeout: 20) {
+            guard settled(), let a = screenRect(paneA), let b = screenRect(paneB) else { return false }
+            return b.maxX <= a.minX + 1 && near(a.width, startA.width) && near(b.width, startB.width)
+                && near(b.minX, startA.minX) && near(a.maxX, startB.maxX)
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        _ = settled()
+        try check(store.split(withID: splitID)?.focusTabID == tabA && store.selectedItemID == splitID, "the moved pane lost the focus")
+        try checkOneLease(paneA, "moved pane A")
+        try checkOneLease(paneB, "moved companion")
+        try await checkNoReload("Move Pane Right")
+        try check(viewItem("Move Pane Left")?.isEnabled == true && viewItem("Move Pane Right")?.isEnabled == false,
+                  "tab A is now the last pane, the View menu does not say so")
+        let movedA = screenRect(paneA) ?? .zero, movedB = screenRect(paneB) ?? .zero
+
+        // Move Pane Left: back where they were.
+        try choose("Move Pane Left")
+        try await wait("Move Pane Left: the engine views are back in their places", timeout: 20) {
+            guard settled(), order() == [tabA, tabB], let a = screenRect(paneA), let b = screenRect(paneB) else { return false }
+            return near(a.minX, startA.minX) && near(a.width, startA.width) && near(b.minX, startB.minX) && near(b.width, startB.width)
+        }
+        try await checkNoReload("Move Pane Left")
+
+        // Stacked: the same two items are Move Pane Up and Move Pane Down.
+        model.flipSplitOrientation(splitID)
+        try await wait("split stacked, tab A on top", timeout: 20) {
+            guard settled(), store.split(withID: splitID)?.orientation == .vertical,
+                  let a = screenRect(paneA), let b = screenRect(paneB) else { return false }
+            return a.minY >= b.maxY - 1
+        }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        guard let stackedA = screenRect(paneA), let stackedB = screenRect(paneB) else { throw Failure(description: "a stacked pane has no host view") }
+        let stackedTitles = viewTitles()
+        try check(viewItem("Move Pane Up")?.isEnabled == false && viewItem("Move Pane Down")?.isEnabled == true
+                  && viewItem("Move Pane Left") == nil && viewItem("Move Pane Right") == nil,
+                  "a stacked split's View menu should read Move Pane Up (disabled) and Move Pane Down: \(stackedTitles) -> \(viewTitles())")
+        try choose("Move Pane Down")
+        try await wait("Move Pane Down: the engine views swapped places and kept their heights", timeout: 20) {
+            guard settled(), order() == [tabB, tabA], let a = screenRect(paneA), let b = screenRect(paneB) else { return false }
+            return b.minY >= a.maxY - 1 && near(a.height, stackedA.height) && near(b.height, stackedB.height)
+        }
+        try check(store.split(withID: splitID)?.focusTabID == tabA, "the pane moved down lost the focus")
+        try await checkNoReload("Move Pane Down")
+        try choose("Move Pane Up")
+        try await wait("Move Pane Up: tab A on top again", timeout: 20) {
+            guard settled(), order() == [tabA, tabB], let a = screenRect(paneA), let b = screenRect(paneB) else { return false }
+            return a.minY >= b.maxY - 1
+        }
+        try await checkNoReload("Move Pane Up")
+
+        // As the split was, for the steps after this one.
+        model.flipSplitOrientation(splitID)
+        store.resizeSplitPanes(splitID: splitID, widthFactors: [tabA: 0.5, tabB: 0.5])
+        try await wait("split side by side and even again", timeout: 20) {
+            store.split(withID: splitID)?.orientation == .horizontal && settled()
+        }
+        log("PASS Split pane order: View > Move Pane Right swapped the engine views (tab A x \(Int(startA.minX)) w \(Int(startA.width)) -> x "
+            + "\(Int(movedA.minX)) w \(Int(movedA.width)); companion x \(Int(startB.minX)) w \(Int(startB.width)) -> x \(Int(movedB.minX)) w "
+            + "\(Int(movedB.width))), Move Pane Left put them back, Move Pane Down / Up did the same stacked; focus stayed on the moved pane; "
+            + "ends disabled in the View menu; no reload (same engine tabs and URLs, never loading"
+            + "\(documentA != nil && documentB != nil ? ", same document and navigation" : "")\(scripted ? ", page state kept" : ""))")
     }
 }
 #endif
