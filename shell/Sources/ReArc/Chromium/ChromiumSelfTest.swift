@@ -6648,16 +6648,24 @@ extension ChromiumSelfTest {
             throw Failure(description: "search engines: no list from the engine after the default changed")
         }
         let offeredAfter = listAfter.offered.map { String($0.id) }
-        try check(offeredAfter.contains(original), "search engines: after choosing \(pick.name) the engine no longer offers the old "
-                  + "default (\(listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }))")
-        try check(listAfter.engines.first { String($0.id) == original }?.canMakeDefault == true
-                  && listAfter.current?.canMakeDefault == false,
-                  "search engines: the engine's can_make_default did not move with the default "
-                  + "(\(listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }))")
-        try await wait("the pop-up lists the engine's choices after the change", timeout: 10) {
-            row(home)?.options.map(\.id) == offeredAfter
+        let listing = listAfter.engines.map { "\($0.name) default=\($0.isDefault) can=\($0.canMakeDefault)" }
+        // Chromium lists the default plus its prepopulated engines: a custom old default (the
+        // self-test's own local engine, a site search) leaves the engine's list, and the pop-up
+        // keeps offering it (`SearchEngineChoices.keeping`; RC 1229's first self-test, 2026-11-22).
+        let originalIsCustom = !offeredAfter.contains(original)
+        if !originalIsCustom {
+            try check(listAfter.engines.first { String($0.id) == original }?.canMakeDefault == true,
+                      "search engines: the engine's can_make_default did not move to the old default (\(listing))")
         }
-        try check(row(home)?.options.map(\.id) == homeRow.options.map(\.id),
+        try check(listAfter.current?.canMakeDefault == false,
+                  "search engines: the new default can still be made default in the engine (\(listing))")
+        try await wait("the pop-up lists the engine's choices after the change, and the old default", timeout: 10) {
+            let shown = row(home)?.options.map(\.id) ?? []
+            return Array(shown.prefix(offeredAfter.count)) == offeredAfter && shown.contains(original)
+                && shown.count == offeredAfter.count + (originalIsCustom ? 1 : 0)
+        }
+        // The same engines (a custom old default moves to the end of the list).
+        try check(Set(row(home)?.options.map(\.id) ?? []) == Set(homeRow.options.map(\.id)),
                   "search engines: the pop-up listed \(homeRow.options.map(\.name)) and after choosing \(pick.name) lists "
                   + "\(row(home)?.options.map(\.name) ?? []): choosing an engine changed the list")
         let otherAfter = await engineDefault(other.id)
@@ -6670,7 +6678,7 @@ extension ChromiumSelfTest {
             await engineDefault(home).map { String($0.id) } == original
         }
         try await wait("the pop-up as it was, the default and the list", timeout: 10) {
-            row(home)?.selection == original && row(home)?.options.map(\.id) == homeRow.options.map(\.id)
+            row(home)?.selection == original && Set(row(home)?.options.map(\.id) ?? []) == Set(homeRow.options.map(\.id))
         }
         if let services = model.commandBarServices as? ChromiumCommandBarServices {
             services.refreshSearchProvider(for: home)

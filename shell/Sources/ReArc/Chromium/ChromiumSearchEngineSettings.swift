@@ -67,7 +67,9 @@ final class ChromiumSearchEngineSettings: SearchEngineSettings {
         changes[profileID] = change
         source.searchEngines(for: profileID) { [weak self] list in
             guard let self, self.changes[profileID] == change, let list else { return }
-            if self.choices[profileID] != list { self.choices[profileID] = list }
+            // An engine the engine stopped listing (a custom default left behind) stays a choice.
+            let kept = list.keeping(self.choices[profileID])
+            if self.choices[profileID] != kept { self.choices[profileID] = kept }
         }
     }
 
