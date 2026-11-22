@@ -21,16 +21,7 @@ final class ExtensionTabFloodTests: XCTestCase {
     private var clock = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
     /// What the shell was asked to do with Little Darni windows.
-    private final class Presenter: BrowserWindowPresenting {
-        struct Shown: Equatable {
-            var id: LittleArcWindow.ID
-            var inFront: Bool
-        }
-        var shown: [Shown] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) { shown.append(Shown(id: id, inFront: inFront)) }
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
-        func presentPrivateWindow(_ window: PrivateWindowModel) {}
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     private func makeModel() -> (BrowserViewModel, Presenter) {
         let store = SidebarStore(spaces: [Space(name: "Personal", sortRank: "a")])
