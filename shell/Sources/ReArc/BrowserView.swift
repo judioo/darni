@@ -151,6 +151,10 @@ struct BrowserView: View {
             DragSessionEndMonitor(isActive: draggedItemID != nil) { draggedItemID = nil }
                 .frame(width: 0, height: 0)
         )
+        // Wherever the drag ended (a drop, or let go over nothing), a pane chip's drag ends with it.
+        .onChange(of: draggedItemID) { _, dragged in
+            if dragged == nil { model.sidebarDragEnded() }
+        }
         .background(WindowFullscreenReader { fullscreen, window in
             model.nativeFullscreenChanged(fullscreen, window: window)
             var transaction = Transaction()

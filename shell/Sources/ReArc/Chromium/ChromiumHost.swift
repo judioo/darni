@@ -1293,7 +1293,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             model.toggleSidebar()
         }] + ShellMenus.miniSidebar(model)], to: view)
         view.addItem(.separator())
-        target.add(ShellMenus.navigation(model), to: view)
+        target.add(ShellMenus.viewPageAndSplit(model), to: view)
         if runtime.capabilities.downloads {
             view.addItem(.separator())
             target.add(ShellMenus.downloads(model), to: view)
@@ -1355,8 +1355,6 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         target.add(ShellMenus.tabNavigation(model), to: tabs)
         target.add(ShellMenus.tabSwitcher(model), to: tabs)
         tabs.addItem(.separator())
-        target.add(ShellMenus.split(model), to: tabs)
-        tabs.addItem(.separator())
         target.add(ShellMenus.tabPositions(model), to: tabs)
         tabs.addItem(.separator())
         target.add(ShellMenus.sidebarItems(model), to: tabs)
@@ -1394,6 +1392,8 @@ final class ChromiumMenuTarget: NSObject, NSMenuItemValidation, NSMenuDelegate {
     private var checks: [Int: () -> Bool] = [:]
     /// Live titles (`ShellMenuItem.liveTitle`); nil hides the item.
     private var titles: [Int: () -> String?] = [:]
+    /// Whether an item can act now (`ShellMenuItem.isEnabled`), read each time the menu opens or its key is pressed.
+    private var enabled: [Int: () -> Bool] = [:]
 
     func checkItem(_ title: String, isOn: @escaping () -> Bool, action: @escaping () -> Void) -> NSMenuItem {
         let item = item(title, "", [], action: action)
@@ -1409,13 +1409,14 @@ final class ChromiumMenuTarget: NSObject, NSMenuItemValidation, NSMenuDelegate {
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if let isOn = checks[menuItem.tag] { menuItem.state = isOn() ? .on : .off }
+        let canAct = enabled[menuItem.tag]?() ?? true
         if let title = titles[menuItem.tag] {
             let current = title()
             menuItem.isHidden = current == nil
             if let current { menuItem.title = current }
-            return current != nil
+            return current != nil && canAct
         }
-        return true
+        return canAct
     }
 
     /// Hidden items need refreshing too: setup can be deferred after the
@@ -1454,6 +1455,7 @@ final class ChromiumMenuTarget: NSObject, NSMenuItemValidation, NSMenuDelegate {
                 // Arc's alternates (⌘← Back, F12): hidden, their keys still work.
                 menuItem.isHidden = entry.isAlternate
                 menuItem.allowsKeyEquivalentWhenHidden = entry.isAlternate
+                if let isEnabled = entry.isEnabled { enabled[menuItem.tag] = isEnabled }
                 if let live = entry.liveTitle {
                     menu.delegate = self
                     titles[menuItem.tag] = live

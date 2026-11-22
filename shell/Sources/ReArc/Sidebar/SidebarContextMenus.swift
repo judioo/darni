@@ -87,6 +87,7 @@ struct TabContextMenu: View {
         if model.canSplitWithSelectedTab(tab.id) {
             Button("Split with Current Tab") { model.splitWithSelectedTab(tab.id) }
         }
+        AddToSplitViewMenu(model: model, ids: [tab.id])
         Button("Open in Little Darni") { model.openLittleArc(url: tab.url, title: tab.displayTitle, profileID: model.profileID(for: tab)) }
         if BoostScopeMatcher.urlIsEligibleForBoosts(tab.url) {
             Button("Edit Boost for This Site") {
@@ -194,6 +195,7 @@ struct SectionItemContextMenu: View {
             if let pane = split.tabs.first(where: { $0.id == (paneID ?? split.focusTabID) }) {
                 Section(pane.displayTitle) {
                     Button("Rename Pane…") { model.beginRename(.tab(pane.id)) }
+                    SplitPaneMoveMenuItems(model: model, tabID: pane.id, moves: split.paneMoves(for: pane.id))
                     Button("Separate from Split View") { model.unsplitTabIfInSplit(pane.id) }
                     Button("Copy Link") { model.copyURL(of: pane.id) }
                     Button("Close Pane") { model.closeTab(pane.id) }
@@ -249,6 +251,7 @@ struct SelectionContextMenu: View {
         if model.canOpenInSplitView(ids) {
             Button("Open in Split View") { model.openInSplitView(ids) }
         }
+        AddToSplitViewMenu(model: model, ids: ids)
         if model.tabGroupsEnabled, !tabs.isEmpty, let spaceID {
             Button(tabs.count == 1 ? "Add Tab to New Group" : "Add \(tabs.count) Tabs to New Group") {
                 model.store.clearMultiSelection(in: model.store.keyWindowID)
@@ -298,6 +301,26 @@ struct MoveToSpaceMenu: View {
             Menu("Move to Space") {
                 ForEach(destinations) { space in
                     Button(model.spaceMenuTitle(space)) { move(space.id) }
+                }
+            }
+        }
+    }
+}
+
+/// Add to Split View ▸: the space's splits with room for these tabs, each
+/// named as its sidebar row reads. The tabs become the chosen split's last
+/// panes. Not shown when no split can take them (none in the space, all
+/// full, or a row that is not a plain tab of the space).
+struct AddToSplitViewMenu: View {
+    let model: BrowserViewModel
+    let ids: [UUID]
+
+    var body: some View {
+        let splits = model.addToSplitChoices(for: ids)
+        if !splits.isEmpty {
+            Menu("Add to Split View") {
+                ForEach(splits) { split in
+                    Button(split.menuTitle) { model.addTabs(ids, toSplit: split.id) }
                 }
             }
         }

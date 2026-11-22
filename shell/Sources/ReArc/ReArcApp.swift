@@ -96,7 +96,7 @@ struct ReArcApp: App {
                 ShellMenuButtons(groups: ShellMenus.find(model), overrides: model.shortcutOverrides)
             }
             CommandGroup(after: .toolbar) {
-                ShellMenuButtons(groups: ShellMenus.navigation(model), overrides: model.shortcutOverrides)
+                ShellMenuButtons(groups: ShellMenus.viewPageAndSplit(model), overrides: model.shortcutOverrides)
                 Divider()
                 ShellMenuButtons(groups: ShellMenus.downloads(model), overrides: model.shortcutOverrides)
                 Divider()
@@ -118,8 +118,6 @@ struct ReArcApp: App {
                 Divider()
                 ShellMenuButtons(groups: ShellMenus.tabNavigation(model), overrides: model.shortcutOverrides)
                 ShellMenuButtons(groups: ShellMenus.tabSwitcher(model), overrides: model.shortcutOverrides)
-                Divider()
-                ShellMenuButtons(groups: ShellMenus.split(model), overrides: model.shortcutOverrides)
                 Divider()
                 ShellMenuButtons(groups: ShellMenus.tabPositions(model), overrides: model.shortcutOverrides)
                 Divider()
