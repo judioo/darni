@@ -49,6 +49,14 @@ launches the bundle with `open`, once plain and once with a link, under
 `--rearc-launch-probe` (a throwaway profile, no sidebar model), and checks
 that it reaches `ready` on Chromium with the link delivered.
 
+The WebKit path has its own check, `scripts/check-webkit.sh`: it builds the WebKit shell, runs
+the WebKit engine tests (`Tests/ReArcTests/WebKitEngine`: real `WKEngine`s loading pages from a
+loopback server, with no window) and writes a parity report for the build, every feature with
+its verdict on each engine and whether a WebKit test covers it. `--full` runs the whole
+`swift test` suite. It launches no app and needs no screen. What each feature does on each
+engine, with evidence, is in [docs/ENGINE-PARITY.md](../docs/ENGINE-PARITY.md); its index is
+`docs/engine-parity.json`, and the check fails when the two disagree.
+
 ### Build and run with Chromium
 
 Needs the existing engine output in `engine/chromium/src/out/ReArc-dev-arm64`
