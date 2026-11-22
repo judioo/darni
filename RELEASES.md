@@ -24,6 +24,19 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1123.1255 — 2026-11-23
+
+**Fixes**
+- An extension can no longer flood Darni with tabs or windows. Each extension can open up to 10
+  tabs or windows in 10 seconds in a profile. If it asks for more, Darni stops it and shows a
+  notice with the extension's name.
+- A window an extension opens on its own, such as a sign-in or permission prompt, now opens
+  behind the window you are using, unless you just clicked or typed in Darni. A notice in every
+  Darni window says how many windows are waiting, and Show brings them forward. If you are in
+  another app, Darni's Dock icon bounces once.
+- Darni no longer downloads Live Caption's speech models, about 440 MB, the first time it starts.
+  It also uses much less of your Mac's processor in its first minutes.
+
 ## Darni 2026.1122.1231 — 2026-11-22
 
 **New**
