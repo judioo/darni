@@ -14,6 +14,8 @@ struct SplitPaneToolbarView: View, Equatable {
     let tab: Tab
     let engine: any WebEngine
     let row: SplitPaneToolbarLayout.Row
+    /// This pane's Move Pane items: where it sits decides which is enabled.
+    var moves: [SplitPaneMove] = []
     /// The first row clears the traffic lights with the sidebar on the right.
     var trafficLightsClearance: CGFloat = 0
     @Environment(\.sidebarWindow) private var window
@@ -29,7 +31,8 @@ struct SplitPaneToolbarView: View, Equatable {
     /// again only when its own inputs change.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.splitID == rhs.splitID && lhs.orientation == rhs.orientation && lhs.tab == rhs.tab
-            && lhs.engine === rhs.engine && lhs.row == rhs.row && lhs.trafficLightsClearance == rhs.trafficLightsClearance
+            && lhs.engine === rhs.engine && lhs.row == rhs.row && lhs.moves == rhs.moves
+            && lhs.trafficLightsClearance == rhs.trafficLightsClearance
     }
 
     var body: some View {
@@ -174,6 +177,8 @@ struct SplitPaneToolbarView: View, Equatable {
                 model.toggleExpandedSplitPane(splitID, in: window)
             }
             Divider()
+            SplitPaneMoveMenuItems(model: model, tabID: tab.id, moves: moves)
+            Divider()
             Button("Separate from Split View") { model.unsplitTabIfInSplit(tab.id) }
             Button("Separate All Tabs") { model.unsplit(splitID) }
             Divider()
@@ -193,5 +198,21 @@ struct SplitPaneToolbarView: View, Equatable {
         .fixedSize()
         .help("Split View")
         .accessibilityLabel("Split View menu")
+    }
+}
+
+/// A pane's Move Pane Left/Right (Up/Down when the split is stacked), in
+/// its split menu and its chip's menu. The item towards the end the pane
+/// sits on is disabled.
+struct SplitPaneMoveMenuItems: View {
+    let model: BrowserViewModel
+    let tabID: Tab.ID
+    let moves: [SplitPaneMove]
+
+    var body: some View {
+        ForEach(moves) { move in
+            Button(move.title) { model.moveSplitPane(tabID, by: move.offset) }
+                .disabled(!move.isEnabled)
+        }
     }
 }

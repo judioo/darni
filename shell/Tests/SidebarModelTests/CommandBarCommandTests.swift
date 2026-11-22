@@ -52,11 +52,11 @@ final class CommandBarCommandTests: XCTestCase {
         _ = store.createSplit(tabIDs: [a.id, b.id], orientation: .horizontal)
         store.selectSplit(store.split(withID: store.displayEntries()[0].id)!.id, focusTabID: a.id)
         let context = CommandBarContext(store: store, isSidebarVisible: true, closedTabStack: store.closedTabStack)
-        XCTAssertTrue(AppCommandRegistry.all(in: context).contains(where: { $0.title == "Separate from Split View" }))
+        XCTAssertTrue(AppCommandRegistry.all(in: context).contains(where: { $0.title == "Separate Page from Split View" }))
 
         store.unsplit(store.split(withID: store.displayEntries()[0].id)!.id)
         let context2 = CommandBarContext(store: store, isSidebarVisible: true, closedTabStack: store.closedTabStack)
-        XCTAssertFalse(AppCommandRegistry.all(in: context2).contains(where: { $0.title == "Separate from Split View" }))
+        XCTAssertFalse(AppCommandRegistry.all(in: context2).contains(where: { $0.title == "Separate Page from Split View" }))
     }
 
     func testBlendedModeOrdersTabsBeforeCommands() {

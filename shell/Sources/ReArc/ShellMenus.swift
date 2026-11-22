@@ -24,17 +24,21 @@ struct ShellMenuItem: Identifiable {
     /// The title as the app's state has it now, nil to hide the item (Arc's
     /// Spaces menu names its spaces; Show/Hide Sidebar flips). `title` is the fallback.
     var liveTitle: (() -> String?)?
+    /// Whether the item can act now, nil for always (Move Pane Left on the
+    /// first pane is there and disabled, as in Arc).
+    var isEnabled: (() -> Bool)?
     let action: () -> Void
 
     var id: String { isAlternate ? "\(title) (alternate)" : title }
 
     init(_ title: String, _ key: Key? = nil, _ modifiers: NSEvent.ModifierFlags = .command, alternate: Bool = false,
-         liveTitle: (() -> String?)? = nil, action: @escaping () -> Void) {
+         liveTitle: (() -> String?)? = nil, isEnabled: (() -> Bool)? = nil, action: @escaping () -> Void) {
         self.title = title
         self.key = key
         self.modifiers = modifiers
         self.isAlternate = alternate
         self.liveTitle = liveTitle
+        self.isEnabled = isEnabled
         self.action = action
     }
 
@@ -104,6 +108,9 @@ struct ShellMenuItem: Identifiable {
 
     /// The title to show now; nil hides the item.
     var shownTitle: String? { liveTitle.map { $0() } ?? title }
+
+    /// Whether the item can act now.
+    var isEnabledNow: Bool { isEnabled?() ?? true }
 
     var keyEquivalent: KeyEquivalent? {
         switch key {
@@ -194,15 +201,30 @@ enum ShellMenus {
         ]]
     }
 
-    /// Tabs menu: Arc's View > Add Split View (⌃⇧=) and Close this Split Pane (⌃⇧-).
+    /// View menu, as Arc's: Add Split View (⌃⇧=), Close this Split Pane (⌃⇧-),
+    /// Separate Page from Split View, then the focused pane's two moves (Left
+    /// and Right side by side, Up and Down stacked; disabled at the ends and
+    /// with no split).
     static func split(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
         [[
             ShellMenuItem("Add Split View", "=", [.control, .shift]) { model.addSplitView(orientation: .horizontal) },
             ShellMenuItem("Close this Split Pane", "-", [.control, .shift]) { model.closeFocusedSplitPane() },
-            ShellMenuItem("Separate from Split View") {
-                if let tab = model.store.selectedTab { model.unsplitTabIfInSplit(tab.id) }
+            ShellMenuItem("Separate Page from Split View", isEnabled: { model.focusedSplitPane != nil }) {
+                model.separateFocusedPageFromSplit()
             },
-        ]]
+        ], [-1, 1].map { offset in
+            ShellMenuItem(
+                SplitPaneMove.title(offset: offset, orientation: .horizontal),
+                liveTitle: { model.focusedSplitPaneMove(offset: offset).title },
+                isEnabled: { model.focusedSplitPaneMove(offset: offset).isEnabled }
+            ) { model.moveFocusedSplitPane(by: offset) }
+        }]
+    }
+
+    /// The View menu's page groups on both engines: the page navigation,
+    /// then Arc's split view items (Arc has them in View, not in a tab menu).
+    static func viewPageAndSplit(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
+        navigation(model) + split(model)
     }
 
     /// File menu: print the key page (⌘P, as every browser) and Export as PDF… (Safari's name).
@@ -439,8 +461,10 @@ struct ShellMenuButtons: View {
                 if let shortcut = item.keyboardShortcut(with: overrides) {
                     Button(item.shownTitle ?? item.title, action: item.action)
                         .keyboardShortcut(shortcut)
+                        .disabled(!item.isEnabledNow)
                 } else {
                     Button(item.shownTitle ?? item.title, action: item.action)
+                        .disabled(!item.isEnabledNow)
                 }
             }
         }

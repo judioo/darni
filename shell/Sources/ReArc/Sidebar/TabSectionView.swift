@@ -184,7 +184,9 @@ struct SidebarEntryRow: View, Equatable {
                 ),
                 onRename: { model.renameSplit(split.id, to: $0) },
                 paneRename: { SidebarRowRename(row: $0, model: model) },
-                onRenamePane: { model.beginRename(.tab($0)) }
+                onRenamePane: { model.beginRename(.tab($0)) },
+                paneDropBoundary: model.splitPaneChipDrag?.boundary(in: split),
+                onHoverPane: { pane, hovering in model.splitPaneChipHovered(hovering, tabID: pane, in: split.id) }
             ) { paneID in
                 SectionItemContextMenu(model: model, entry: entry, paneID: paneID)
             }
@@ -203,16 +205,18 @@ struct SidebarDropRow<Content: View>: View {
     @Binding var dropState: SidebarDropState?
     @ViewBuilder let content: () -> Content
 
-    @State private var height: CGFloat = 28
+    @State private var size = CGSize(width: 0, height: 28)
 
     var body: some View {
         content()
             // A geometry observer, not a GeometryReader view per row.
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
             .overlay(alignment: .top) { insertionLine(.before) }
             .overlay(alignment: .bottom) { insertionLine(.after) }
             .onDrag {
                 draggedItemID = entry.id
+                // On a split's pane chip the same drag can reorder the panes along the row.
+                model.sidebarDragBegan(on: entry)
                 SidebarDropHaptics.dragBegan()
                 return SidebarDragPayload.itemProvider(for: entry.id)
             }
@@ -220,7 +224,8 @@ struct SidebarDropRow<Content: View>: View {
                 of: SidebarURLDropLoader.acceptedTypes,
                 delegate: SidebarRowDropDelegate(
                     target: entry,
-                    rowHeight: height,
+                    rowHeight: size.height,
+                    rowWidth: size.width,
                     model: model,
                     draggedItemID: $draggedItemID,
                     dropState: $dropState
@@ -267,9 +272,22 @@ enum SidebarGroupingDwell {
 struct SidebarRowDropDelegate: DropDelegate {
     let target: SidebarEntry
     let rowHeight: CGFloat
+    var rowWidth: CGFloat = 0
     let model: BrowserViewModel
     @Binding var draggedItemID: UUID?
     @Binding var dropState: SidebarDropState?
+
+    /// A split's own row under the drag of one of its pane chips: the place
+    /// the pane would take there (nil over its own chip). Any other drag
+    /// over any other row is nil, and goes on as a row drag.
+    private func paneDestination(for info: DropInfo) -> Int? {
+        guard draggedItemID == target.id, case .split(let split) = target else { return nil }
+        return model.splitPaneChipDestination(
+            in: split,
+            x: info.location.x - SplitRowMetrics.chipsLeading,
+            width: rowWidth - SplitRowMetrics.chipsLeading - SplitRowMetrics.rowTrailing
+        )
+    }
 
     private func position(for info: DropInfo) -> SidebarDropPosition? {
         if draggedItemID == nil, SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info) {
@@ -308,6 +326,17 @@ struct SidebarRowDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        if draggedItemID == target.id, case .split(let split) = target {
+            // The row under its own drag: a pane chip over another chip's place, or nothing.
+            let destination = paneDestination(for: info)
+            model.splitPaneChipDragMoved(to: destination, in: split)
+            if dropState?.targetID == target.id { dropState = nil }
+            // The same tick as a row's new drop position: one per chip place.
+            if let destination, split.tabs.indices.contains(destination) {
+                SidebarDropHaptics.positionChanged(to: SidebarDropState(targetID: split.tabs[destination].id, position: .into))
+            }
+            return DropProposal(operation: destination == nil ? .forbidden : .move)
+        }
         guard let position = position(for: info) else {
             if dropState?.targetID == target.id { dropState = nil }
             return DropProposal(operation: .forbidden)
@@ -320,6 +349,8 @@ struct SidebarRowDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         if dropState?.targetID == target.id { dropState = nil }
+        // Off its row the chip's drag is the split's own again: no insertion line left behind.
+        if case .split(let split) = target { model.splitPaneChipDragMoved(to: nil, in: split) }
     }
 
     func performDrop(info: DropInfo) -> Bool {
@@ -327,6 +358,12 @@ struct SidebarRowDropDelegate: DropDelegate {
             draggedItemID = nil
             dropState = nil
             _ = SidebarGroupingDwell.isReady(over: nil)
+            model.sidebarDragEnded()
+        }
+        if case .split(let split) = target, let destination = paneDestination(for: info) {
+            let moved = model.dropSplitPaneChip(in: split, at: destination)
+            SidebarDropHaptics.dropped(moved: moved)
+            return moved
         }
         if draggedItemID == nil, let position = position(for: info) {
             let target = target.id, model = model

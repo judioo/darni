@@ -21,6 +21,8 @@ public enum AppCommandAction: Equatable, Hashable {
     case addSplitRight
     case addSplitBottom
     case separateFromSplit
+    /// The focused pane one place along its split: -1 left or up, 1 right or down.
+    case moveSplitPane(offset: Int)
     /// SPLIT-VIEW §3: flip orientation, Expand Current Split.
     case flipSplitOrientation
     case expandSplitPane
@@ -224,6 +226,9 @@ public struct AppCommand: Equatable, Identifiable {
         case .separateFromSplit, .flipSplitOrientation, .expandSplitPane:
             guard let tab = store.selectedTab else { return false }
             return store.splitContaining(tabID: tab.id) != nil
+        case .moveSplitPane(let offset):
+            guard let tab = store.selectedTab, let split = store.splitContaining(tabID: tab.id)?.split else { return false }
+            return store.canMoveSplitPane(splitID: split.id, tabID: tab.id, by: offset)
         case .nextTab, .previousTab:
             return !store.displayEntries().isEmpty
         case .peekAtURL, .openLittleArcWindow:
@@ -417,6 +422,8 @@ public enum AppCommandRegistry {
 
     private static func staticCommands(in context: CommandBarContext) -> [AppCommand] {
         let sidebarTitle = context.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar"
+        let splitOrientation = context.store.selectedTabID
+            .flatMap { context.store.splitContaining(tabID: $0)?.split.orientation } ?? .horizontal
         return [
             AppCommand(
                 id: "new-tab",
@@ -503,10 +510,25 @@ public enum AppCommandRegistry {
             ),
             AppCommand(
                 id: "separate-split",
-                title: "Separate from Split View",
-                keywords: ["split", "separate", "detach", "unsplit"],
+                title: "Separate Page from Split View",
+                keywords: ["split", "separate", "detach", "unsplit", "remove", "pane", "page"],
                 minQueryLength: 2,
                 action: .separateFromSplit
+            ),
+            // Named for the selected split's layout: Left and Right side by side, Up and Down stacked.
+            AppCommand(
+                id: "move-split-pane-back",
+                title: SplitPaneMove.title(offset: -1, orientation: splitOrientation),
+                keywords: ["split", "pane", "move", "reorder", "order", "left", "up", "swap"],
+                minQueryLength: 2,
+                action: .moveSplitPane(offset: -1)
+            ),
+            AppCommand(
+                id: "move-split-pane-forward",
+                title: SplitPaneMove.title(offset: 1, orientation: splitOrientation),
+                keywords: ["split", "pane", "move", "reorder", "order", "right", "down", "swap"],
+                minQueryLength: 2,
+                action: .moveSplitPane(offset: 1)
             ),
             AppCommand(
                 id: "next-tab",
