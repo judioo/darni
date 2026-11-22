@@ -5404,7 +5404,7 @@ enum SelfTestExtensionFixture {
          "action":{"default_title":"\(floodName)"}}
         """)
         // A client that asks by itself (security RC-2026.1122.1231 FX-01, FX-02). Its badge says what
-        // it did last, and so what the next click does: the first two clicks each ask for a window of
+        // it did last, and so what the next click does: the first three clicks each ask for a window of
         // the clicked tab's site (`w1` made, `w0` failed), every later one asks for `floodBurst` tabs
         // with an address at once and shows how many were made and how many failed (`10/5`).
         file(flood, "bg.js", """
@@ -5412,7 +5412,7 @@ enum SelfTestExtensionFixture {
           const done = await chrome.action.getBadgeText({});
           let base;
           try { base = new URL(tab.url).origin; } catch (e) { chrome.action.setBadgeText({text: 'nourl'}); return; }
-          if (!done.startsWith('w') || done.length < 4) {
+          if (!done.startsWith('w') || done.length < 6) {
             let made = '0';
             try { await chrome.windows.create({url: base + '/a?flood=window' + done.length}); made = '1'; } catch (e) {}
             chrome.action.setBadgeText({text: done + 'w' + made});
@@ -6064,8 +6064,10 @@ extension ChromiumSelfTest {
     /// Security RC-2026.1122.1231 FX-02 and FX-01, with the flood fixture and
     /// nobody at the keyboard. `windows.create`: the Little Darni window is
     /// made and is on screen, but behind the window in front, neither key nor
-    /// main nor focused to the engine, and a toast with Show says so; after a
-    /// key or click of the user's the next one comes to the front. Then
+    /// main nor focused to the engine, and a notice with Show says so and
+    /// stays; after a key or click of the user's the next one comes to the
+    /// front and is not counted. Show brings the first forward and the notice
+    /// goes; a third, opened behind, takes its notice with it when it closes. Then
     /// `floodBurst` `tabs.create` calls at once, each with an address on the
     /// fixture server: `ExtensionTabRate.limit` tabs open, the rest of the
     /// calls fail in the extension, and one toast names the extension.
@@ -6124,9 +6126,12 @@ extension ChromiumSelfTest {
         let key = NSApp.keyWindow, main = NSApp.mainWindow, keyLittle = model.keyLittleArcID
         let first = try await click("windows.create with no input") { $0.count >= 2 }
         try check(first == "w1", "extension flood: windows.create with no input failed in the extension (badge '\(first)')")
-        try check(toasts.contains { $0.message == "\(floodName) opened a window behind this one" && $0.action == .show },
-                  "extension flood: no toast with Show for the window behind (toasts \(toasts.map(\.message)))")
         let behind = try XUnwrap(newLittle().first, "the Little Darni window an extension made")
+        func noticeText() -> String { model.extensionWindowNotice.map { "'\($0.message)' for \($0.windows.count)" } ?? "none" }
+        try check(model.extensionWindowNotice?.message == "\(floodName) opened a window behind this one"
+                  && model.extensionWindowNotice?.windows == [behind.id] && model.extensionWindowNotice?.toast.action == .show,
+                  "extension flood: no notice with Show for the window behind (notice \(noticeText()), toasts \(toasts.map(\.message)))")
+        try check(!toasts.contains { $0.action == .show }, "extension flood: the window behind was said in a toast, which goes by itself")
         guard let behindWindow = shell.window(forLittleArc: behind.id),
               let behindEngine = model.littleArcEngine(for: behind.id) as? ChromiumEngine else {
             throw Failure(description: "extension flood: windows.create opened no window or engine")
@@ -6157,19 +6162,36 @@ extension ChromiumSelfTest {
         model.noteUserInput()
         let second = try await click("windows.create after input") { $0.count >= 4 }
         try check(second == "w1w1", "extension flood: windows.create after input failed in the extension (badge '\(second)')")
-        try check(!toasts.contains { $0.action == .show }, "extension flood: a window the user's input started was said to be behind")
         let shown = try XUnwrap(newLittle().first { $0.id != behind.id }, "the second Little Darni window")
+        // The first is still behind and still said: its notice outlives the page load and the second window.
+        try check(model.extensionWindowNotice?.windows == [behind.id],
+                  "extension flood: after a window the user's input started, the notice is \(noticeText()); it must count the first window only")
         let shownWindow = try XUnwrap(shell.window(forLittleArc: shown.id), "the second Little Darni's window")
         try check(shownWindow.isVisible && LittleArcWindowOrdering.frontWindow(among: NSApp.orderedWindows) === shownWindow,
                   "extension flood: a window the user's input started did not come to the front (its place \(order(shownWindow)))")
         // Key only while the app is active; the order above holds either way.
         let tookKey = shownWindow.isKeyWindow
         try check(model.extensionFocusLog.count == focusLogged, "extension flood: the loop breaker stepped in: \(model.extensionFocusLog.suffix(1))")
-        for record in [behind, shown] { shell.dismissLittleArcWindow(record.id) }
-        try await wait("extension flood: the fixture's windows closed", timeout: 15) {
-            shell.window(forLittleArc: behind.id) == nil && shell.window(forLittleArc: shown.id) == nil
-                && store.littleArcWindow(withID: behind.id) == nil && store.littleArcWindow(withID: shown.id) == nil
+
+        // 2a. The notice's Show: the window behind comes to the front, and the notice goes.
+        model.showExtensionWindowsBehind()
+        try await wait("extension flood: Show brought the window behind to the front", timeout: 10) {
+            LittleArcWindowOrdering.frontWindow(among: NSApp.orderedWindows) === behindWindow
         }
+        try check(model.extensionWindowNotice == nil, "extension flood: the notice stayed after Show (\(noticeText()))")
+
+        // 2b. One more by itself (the input above is spent), closed while it is behind: its notice goes with it.
+        model.extensionFocusGate = ExtensionFocusGate()
+        let third = try await click("windows.create with no input, again") { $0.count >= 6 }
+        try check(third == "w1w1w1", "extension flood: the third windows.create failed in the extension (badge '\(third)')")
+        let closing = try XUnwrap(newLittle().first { $0.id != behind.id && $0.id != shown.id }, "the third Little Darni window")
+        try check(model.extensionWindowNotice?.windows == [closing.id],
+                  "extension flood: the notice for a second window behind is \(noticeText())")
+        for record in [behind, shown, closing] { shell.dismissLittleArcWindow(record.id) }
+        try await wait("extension flood: the fixture's windows closed", timeout: 15) {
+            [behind, shown, closing].allSatisfy { shell.window(forLittleArc: $0.id) == nil && store.littleArcWindow(withID: $0.id) == nil }
+        }
+        try check(model.extensionWindowNotice == nil, "extension flood: the notice outlived its window (\(noticeText()))")
         browserWindow.makeKeyAndOrderFront(nil)
         model.selectTab(tab.id)
 
@@ -6198,8 +6220,9 @@ extension ChromiumSelfTest {
         model.selectTab(tab.id)
         try await wait("extension flood: the first tab shown again", timeout: 15) { store.selectedTab?.id == tab.id && added().isEmpty }
         log("PASS extension windows and tab bursts (security FX-01, FX-02): windows.create with no input made a Little Darni window "
-            + "behind the window in front (not key, not main, not focused to the engine) with a Show toast; after the user's input the "
-            + "next one came to the front (key: \(tookKey), app active \(NSApp.isActive)); of \(burst) tabs.create calls at once with "
+            + "behind the window in front (not key, not main, not focused to the engine) with a notice and Show that stayed; after the "
+            + "user's input the next one came to the front (key: \(tookKey), app active \(NSApp.isActive)); Show brought the first "
+            + "forward and cleared the notice; a third closed behind took its notice with it; of \(burst) tabs.create calls at once with "
             + "an address \(limit) opened and \(burst - limit) failed in the extension, with one toast naming it")
     }
 

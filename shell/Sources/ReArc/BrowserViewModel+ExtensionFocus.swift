@@ -19,6 +19,8 @@ extension BrowserViewModel {
     /// A key or a mouse button went down in one of Darni's windows.
     func noteUserInput(at now: Date = Date()) {
         extensionFocusGate.noteUserInput(at: now)
+        // The user is at Darni: the next window opened behind while they are away bounces the Dock icon again.
+        extensionWindowAttentionRequested = false
     }
 
     /// Whether a program may bring the space `target` on screen now.
@@ -66,26 +68,20 @@ extension BrowserViewModel {
     /// of the window: it comes to the front and takes the keyboard only when
     /// the extension belongs to the profile on screen and the user's own key
     /// or click started it, and the loop breaker counts it. Otherwise it opens
-    /// behind the window in front, and a toast with a Show button says so: the
-    /// extension's sign-in or permission question would be lost without one.
+    /// behind the window in front, and a notice with a Show button says so in
+    /// every browser window until the user answers it
+    /// (`noteExtensionWindowBehind`): the extension's sign-in or permission
+    /// question would be lost without one. When the loop breaker has just
+    /// tripped its toast says why, and the notice still counts the window.
     ///
     /// The engine asks for every such window as an active one and does not
     /// pass on `focused: false`, so a window that asked to stay behind comes
     /// forward too when the user started it.
     @discardableResult
     func presentExtensionLittleArc(_ record: LittleArcWindow, by extensionID: String, at now: Date = Date()) -> ExtensionFocusGate.Verdict {
-        let trips = extensionFocusGate.trips
         let verdict = programMayShow(littleArc: record, source: .extensionRequest, newWindow: true, at: now)
         requestLittleArcWindow(record.id, inFront: verdict == .follow)
-        // When the loop breaker has just tripped, its own toast has said why.
-        if verdict != .follow, extensionFocusGate.trips == trips {
-            let id = record.id
-            showUndoToast("\(extensionToastName(extensionID)) opened a window behind this one", systemImage: "macwindow.on.rectangle",
-                          action: .show) { [weak self] in
-                guard let self, self.store.littleArcWindow(withID: id) != nil else { return }
-                self.requestLittleArcWindow(id)
-            }
-        }
+        if verdict != .follow { noteExtensionWindowBehind(record.id, by: extensionID) }
         return verdict
     }
 

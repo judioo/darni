@@ -81,6 +81,34 @@ extension View {
     }
 }
 
+/// The notice of windows an extension opened behind this one
+/// (`BrowserViewModel.extensionWindowNotice`), over browser window `window`'s
+/// card: drawn as a toast, centred `toolbarHeight` down, under the strip. It
+/// stays until answered, so it covers no control. A view of its own: what the
+/// notice reads (the open Little Darni windows, the extensions' names) redraws
+/// this and not the card.
+struct ExtensionWindowNoticeLayer: View {
+    let model: BrowserViewModel
+    let window: SidebarWindowID?
+    var toolbarHeight: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if let notice = model.extensionWindowNotice(in: window) {
+                ShellToastView(toast: notice.toast, undo: { model.showExtensionWindowsBehind() },
+                               dismiss: { model.dismissExtensionWindowNotice() })
+                    .padding(.top, toolbarHeight + 8 + (isBelowToast ? ShellToastView.height + 6 : 0))
+                    .transition(.scale(scale: 0.5, anchor: .top).combined(with: .opacity))
+            }
+        }
+    }
+
+    /// A toast is centred there too (the full-screen Esc hint), in the window that shows it.
+    private var isBelowToast: Bool {
+        model.isKeyBrowserWindow(window) && model.toast?.placement == .belowToolbar
+    }
+}
+
 extension ShellToast {
     /// In over one or two 10 fps frames from ≈ 50 % scale; out in one.
     static let inAnimation = Animation.easeOut(duration: 0.15)
@@ -95,8 +123,11 @@ struct ShellToastView: View {
     var choose: (Bool) -> Void = { _ in }
     /// A tip's "Settings…" button.
     var openSettings: (SettingsPane) -> Void = { _ in }
-    /// The Undo button.
+    /// The Undo button, or Show.
     var undo: () -> Void = {}
+    /// A trailing close button, for a notice that stays until answered.
+    var dismiss: (() -> Void)?
+    static let height: CGFloat = 30
     @Environment(\.themeChrome) private var chrome
     @State private var shareAnchor: NSView?
 
@@ -156,10 +187,22 @@ struct ShellToastView: View {
             if toast.action == .show {
                 toastButton("Show", prominent: true, action: undo)
             }
+            if let dismiss {
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 20, height: 20)
+                        .background(chrome.title.opacity(0.06), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(chrome.title)
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss")
+            }
         }
         .padding(.leading, 10)
-        .padding(.trailing, toast.action == nil ? 12 : 6)
-        .frame(height: 30)
+        .padding(.trailing, toast.action == nil && dismiss == nil ? 12 : 6)
+        .frame(height: Self.height)
         .background(chrome.toast, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(chrome.title.opacity(0.1)))
         .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
