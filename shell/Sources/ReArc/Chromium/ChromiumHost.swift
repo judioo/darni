@@ -714,16 +714,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             window.makeKeyAndOrderFront(nil)
             return
         }
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 360),
-            styleMask: [.titled, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.isReleasedWhenClosed = false
-        window.title = "Air Traffic Control"
-        window.contentView = NSHostingView(rootView: AirTrafficControlView(model: model))
-        window.center()
+        let window = AirTrafficControlWindow.make(model: model)
         airTrafficControlWindow = window
         window.makeKeyAndOrderFront(nil)
     }

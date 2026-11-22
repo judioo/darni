@@ -142,6 +142,7 @@ struct ReArcApp: App {
         Window("Air Traffic Control", id: "airTrafficControl") {
             AirTrafficControlView(model: model)
         }
+        .defaultSize(AirTrafficControlWindow.defaultContentSize)
         .windowResizability(.contentSize)
 
         Settings {
