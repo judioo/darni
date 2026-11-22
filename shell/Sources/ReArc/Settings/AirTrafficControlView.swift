@@ -8,6 +8,13 @@ struct AirTrafficControlView: View {
     @Bindable var model: BrowserViewModel
     @State private var testLink = ""
 
+    /// The smallest size that still shows a whole rule row.
+    static let minWidth: CGFloat = 720
+    static let minHeight: CGFloat = 300
+    /// Room at the trailing edge of the rules for the scroll bar, so it never
+    /// covers a row's buttons. An overlay scroll bar is 15 pt at most.
+    static let scrollBarGutter: CGFloat = 18
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Links you open in other apps go to the first rule that matches. Rules for a deleted space or profile are skipped.")
@@ -26,8 +33,9 @@ struct AirTrafficControlView: View {
                             ruleRow($rule)
                         }
                     }
+                    .padding(.trailing, Self.scrollBarGutter)
                 }
-                .frame(minHeight: 80, maxHeight: 260)
+                .frame(minHeight: 80, maxHeight: .infinity)
             }
 
             HStack {
@@ -47,7 +55,7 @@ struct AirTrafficControlView: View {
 
             Divider()
             HStack(spacing: 8) {
-                TextField("Test a link, like https://github.com/rearc", text: $testLink)
+                TextField("Test a link, like https://en.wikipedia.org", text: $testLink)
                     .textFieldStyle(.roundedBorder)
                 if let answer = model.describeExternalRoute(testLink) {
                     Label(answer, systemImage: "arrow.right")
@@ -58,7 +66,7 @@ struct AirTrafficControlView: View {
             }
         }
         .padding(18)
-        .frame(width: 640)
+        .frame(minWidth: Self.minWidth, maxWidth: .infinity, minHeight: Self.minHeight, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func ruleRow(_ rule: Binding<LinkRoutingRule>) -> some View {
@@ -75,6 +83,7 @@ struct AirTrafficControlView: View {
             .fixedSize()
             TextField(value.matchType.placeholder, text: rule.pattern)
                 .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 160)
                 .foregroundStyle(value.pattern.isEmpty || value.isValid ? Color.primary : Color.red)
                 .help(value.isValid || value.pattern.isEmpty ? "" : "This pattern matches nothing")
             Image(systemName: "arrow.right").foregroundStyle(.secondary)
@@ -94,18 +103,24 @@ struct AirTrafficControlView: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 170)
+            // The whole space and profile name, always; the pattern field takes what is left.
+            .fixedSize()
+            .frame(minWidth: 170, alignment: .leading)
+            .accessibilityLabel("Destination")
             Button { model.linkRouting.move(value.id, by: -1) } label: { Image(systemName: "chevron.up") }
                 .buttonStyle(.borderless)
                 .disabled(model.linkRouting.rules.first?.id == value.id)
                 .help("Move up: earlier rules win")
+                .accessibilityLabel("Move Rule Up")
             Button { model.linkRouting.move(value.id, by: 1) } label: { Image(systemName: "chevron.down") }
                 .buttonStyle(.borderless)
                 .disabled(model.linkRouting.rules.last?.id == value.id)
                 .help("Move down")
+                .accessibilityLabel("Move Rule Down")
             Button { model.removeLinkRoutingRule(value.id) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
                 .help("Delete rule")
+                .accessibilityLabel("Delete Rule")
         }
     }
 }
