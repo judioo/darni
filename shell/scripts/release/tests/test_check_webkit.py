@@ -55,6 +55,11 @@ class CheckWebKitTests(unittest.TestCase):
         (self.repo / "docs").mkdir()
         shutil.copy(SCRIPTS / "check-webkit.sh", shell / "scripts" / "check-webkit.sh")
         shutil.copy(SCRIPTS / "release" / "webkit-parity-report.py", shell / "scripts" / "release" / "webkit-parity-report.py")
+        shutil.copy(SCRIPTS / "release" / "version.py", shell / "scripts" / "release" / "version.py")
+        # The fixture's one commit is build 1, a release by its RELEASES.md entry (headed ReArc: before the rename).
+        (self.repo / "RELEASES.md").write_text("# Releases\n\n## ReArc 2026.1122.1 — 2026-11-22\n\n- A fixture.\n", encoding="utf-8")
+        (shell / "Sources").mkdir()
+        (shell / "Sources" / "Engine.swift").write_text("// the release's source\n", encoding="utf-8")
         (self.repo / "docs" / "engine-parity.json").write_text(json.dumps(INDEX), encoding="utf-8")
         (self.repo / "docs" / "ENGINE-PARITY.md").write_text(DOC, encoding="utf-8")
         (shell / "Tests" / "ReArcTests" / "WebKitEngine" / "WebKitEngineSmokeTests.swift").write_text(TESTS, encoding="utf-8")
@@ -141,6 +146,44 @@ class CheckWebKitTests(unittest.TestCase):
         self.resolved.write_text('{"pins": ["mine"]}\n', encoding="utf-8")
         self.assertEqual(self.run_check().returncode, 0)
         self.assertEqual(self.resolved.read_text(), '{"pins": []}\n', "not reverted to the committed file")
+
+    def record_folder(self):
+        return self.repo / "docs" / "releases" / "1" / "engine-parity"
+
+    def test_record_keeps_the_releases_record_and_its_history_line(self):
+        result = self.run_check("--record", "HEAD")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report_text = (self.record_folder() / "REPORT.md").read_text(encoding="utf-8")
+        commit = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--short=8", "HEAD"], capture_output=True, text=True).stdout.strip()
+        self.assertIn("# Engine parity at Darni 2026.1122.1", report_text)
+        self.assertIn(f"Release build 1, `main` at `{commit}`, 2026-11-22.", report_text)
+        self.assertTrue((self.record_folder() / "NOTES.md").exists())
+        self.assertTrue((self.record_folder() / "ENGINE-PARITY.md").exists())
+        history = (self.repo / "docs" / "releases" / "ENGINE-PARITY-HISTORY.md").read_text(encoding="utf-8")
+        self.assertIn(f"| [2026.1122.1](1/engine-parity/REPORT.md) | 2026-11-22 | `{commit}` | pass |", history)
+        self.assertEqual(self.made()["build"], f"Darni 2026.1122.1 (main {commit}), WebKit shell")
+
+    def test_record_keeps_a_failed_pass_too(self):
+        result = self.run_check("--record", "HEAD", STUB_RESULT="failed")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("**WebKit pass: FAIL.**", (self.record_folder() / "REPORT.md").read_text(encoding="utf-8"))
+
+    def test_record_refuses_sources_that_are_not_the_releases(self):
+        (self.repo / "shell" / "Sources" / "Engine.swift").write_text("// changed since the release\n", encoding="utf-8")
+        result = self.run_check("--record", "HEAD")
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("would not be Darni 2026.1122.1's pass", result.stderr)
+        self.assertEqual(self.swift_calls(), [])
+        self.assertFalse(self.record_folder().exists())
+
+    def test_record_refuses_a_commit_that_is_not_a_release(self):
+        (self.repo / "RELEASES.md").write_text("# Releases\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-q", "-am", "no entry"], check=True, capture_output=True)
+        result = self.run_check("--record", "HEAD")
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("is not a release commit", result.stderr)
+        self.assertEqual(self.swift_calls(), [])
 
     def test_an_unknown_option_is_refused(self):
         result = self.run_check("--screen")

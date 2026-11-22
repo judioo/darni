@@ -167,6 +167,129 @@ class ConsistencyTests(unittest.TestCase):
         self.assertFalse(fixture.out.exists())
 
 
+class ReleaseRecordTests(unittest.TestCase):
+    """--record-release: a folder per release that people can read later, and the history."""
+
+    def setUp(self):
+        self.fixture = Fixture(self)
+        self.releases = Path(self.fixture.dir.name) / "releases"
+
+    def record(self, version, commit="abc12345", date="2026-11-22", index=None, doc=None, log=None):
+        if index is not None:
+            self.fixture.index.write_text(json.dumps(index), encoding="utf-8")
+        if doc is not None:
+            self.fixture.doc.write_text(doc, encoding="utf-8")
+        if log is not None:
+            self.fixture.log.write_text(log, encoding="utf-8")
+        return self.fixture.run("--record-release", version, "--releases", str(self.releases), "--commit", commit, "--date", date)
+
+    def folder(self, build):
+        return self.releases / str(build) / "engine-parity"
+
+    def text(self, build, name):
+        return (self.folder(build) / name).read_text(encoding="utf-8")
+
+    def history(self):
+        return (self.releases / "ENGINE-PARITY-HISTORY.md").read_text(encoding="utf-8")
+
+    def test_the_first_record_has_the_report_the_notes_to_write_and_the_document_as_it_stood(self):
+        result = self.record("2026.1122.1231")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report_text = self.text(1231, "REPORT.md")
+        self.assertIn("# Engine parity at Darni 2026.1122.1231", report_text)
+        self.assertIn("Release build 1231, `main` at `abc12345`, 2026-11-22.", report_text)
+        self.assertIn("**WebKit pass: PASS.**", report_text)
+        self.assertIn("This is the first release with a record.", report_text)
+        self.assertIn("| New tabs from links | works | missing | no test |", report_text)
+        self.assertIn("[ENGINE-PARITY.md](ENGINE-PARITY.md)", report_text)
+        copy = self.text(1231, "ENGINE-PARITY.md")
+        self.assertTrue(copy.startswith("> A copy of docs/ENGINE-PARITY.md as it stood at Darni 2026.1122.1231 (`abc12345`)."))
+        self.assertTrue(copy.endswith(DOC))
+        self.assertIn(report.NOTES_PENDING, self.text(1231, "NOTES.md"))
+        made = json.loads(self.text(1231, "report.json"))
+        self.assertEqual(made["release"], {"version": "2026.1122.1231", "build": 1231, "commit": "abc12345", "date": "2026-11-22"})
+        self.assertEqual((made["previous"], made["changes"], made["documentSnapshot"]), (None, [], 1231))
+        line = self.history().splitlines()[-1]
+        self.assertEqual(line, "| [2026.1122.1231](1231/engine-parity/REPORT.md) | 2026-11-22 | `abc12345` | pass | 2 | 0 | 1 | 0 "
+                               "| 2 of 3 | none | first record | not written yet |")
+
+    def test_a_release_with_no_verdict_change_points_at_the_document_it_already_has(self):
+        self.record("2026.1122.1231")
+        result = self.record("2026.1125.1260", commit="def67890", date="2026-11-25")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report_text = self.text(1260, "REPORT.md")
+        self.assertIn("## Changed since build 1231", report_text)
+        self.assertIn("No verdict changed.", report_text)
+        self.assertIn("[ENGINE-PARITY.md](../../1231/engine-parity/ENGINE-PARITY.md)", report_text)
+        self.assertIn("as it stood at build 1231; no verdict has changed since", report_text)
+        self.assertFalse((self.folder(1260) / "ENGINE-PARITY.md").exists())
+        self.assertIn("What changed since 1231, by engine", self.text(1260, "NOTES.md"))
+        rows = [line for line in self.history().splitlines() if line.startswith("| [")]
+        self.assertEqual([row.split("]")[0] for row in rows], ["| [2026.1125.1260", "| [2026.1122.1231"], "newest first")
+        self.assertIn("| none | none | not written yet |", rows[0])
+
+    def test_changed_added_and_removed_rows_are_listed_and_the_document_is_copied_again(self):
+        self.record("2026.1122.1231")
+        index = [INDEX[0], dict(INDEX[1], webkit="works"),
+                 {"id": "zoom.page", "area": "Pages", "feature": "Zoom", "chromium": "works", "webkit": "partial", "note": ""}]
+        doc = DOC.replace("**missing** (P0)", "**works**").replace("| Find | works | **works** | | `find.count` |\n", "") \
+            + "| Zoom | works | **partial** | | `zoom.page` |\n"
+        tests = TESTS.replace("// parity: find.count, navigation.load", "// parity: navigation.load")
+        (self.fixture.tests / "WebKitEngineSmokeTests.swift").write_text(tests, encoding="utf-8")
+        result = self.record("2026.1125.1260", index=index, doc=doc)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report_text = self.text(1260, "REPORT.md")
+        self.assertIn("| New tabs from links | missing → works on WebKit | `tabs.popups` |", report_text)
+        self.assertIn("| Zoom | new row, partial on WebKit | `zoom.page` |", report_text)
+        self.assertIn("| Find | row removed (was works on WebKit) | `find.count` |", report_text)
+        self.assertTrue((self.folder(1260) / "ENGINE-PARITY.md").exists())
+        made = json.loads(self.text(1260, "report.json"))
+        self.assertEqual(made["documentSnapshot"], 1260)
+        self.assertEqual([c["id"] for c in made["changes"]], ["tabs.popups", "zoom.page", "find.count"])
+        self.assertIn("| none | 3 | not written yet |", self.history())
+
+    def test_a_chromium_verdict_change_is_a_change_too(self):
+        self.record("2026.1122.1231")
+        self.record("2026.1125.1260", index=[dict(INDEX[0], chromium="partial"), INDEX[1], INDEX[2]],
+                    doc=DOC.replace("| Page load | works |", "| Page load | partial |"))
+        self.assertIn("| Page load | works on WebKit, as before; works → partial on Chromium | `navigation.load` |", self.text(1260, "REPORT.md"))
+
+    def test_notes_are_never_overwritten_and_the_history_shows_them_once_written(self):
+        self.record("2026.1122.1231")
+        notes = self.folder(1231) / "NOTES.md"
+        notes.write_text("# Notes\n\nWebKit has no extensions.\n", encoding="utf-8")
+        self.record("2026.1122.1231")
+        self.assertEqual(notes.read_text(encoding="utf-8"), "# Notes\n\nWebKit has no extensions.\n")
+        self.assertIn("| first record | [notes](1231/engine-parity/NOTES.md) |", self.history())
+
+    def test_history_alone_rewrites_the_table(self):
+        self.record("2026.1122.1231")
+        (self.folder(1231) / "NOTES.md").write_text("written\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(SCRIPT), "--history", str(self.releases)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("history of 1 release in", result.stdout)
+        self.assertIn("[notes](1231/engine-parity/NOTES.md)", self.history())
+
+    def test_a_failed_pass_is_recorded_as_failed(self):
+        result = self.record("2026.1122.1231", log=LOG.replace("testFindCounts]' passed", "testFindCounts]' failed"))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("**WebKit pass: FAIL.**", self.text(1231, "REPORT.md"))
+        self.assertIn("| **fail** | 2 | 0 | 1 | 0 | 0 of 3 | navigation.load, find.count | first record |", self.history())
+
+    def test_a_record_needs_its_commit_date_and_a_version_that_ends_in_the_build(self):
+        result = self.fixture.run("--record-release", "2026.1122.1231", "--releases", str(self.releases))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--record-release needs", result.stderr)
+        result = self.fixture.run("--record-release", "nightly", "--releases", str(self.releases), "--commit", "abc", "--date", "2026-11-22")
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(self.releases.exists())
+
+    def test_an_inconsistent_index_records_nothing(self):
+        result = self.record("2026.1122.1231", doc=DOC.replace("**missing** (P0)", "**partial** (P0)"))
+        self.assertEqual(result.returncode, 2)
+        self.assertFalse(self.releases.exists())
+
+
 class ParsingTests(unittest.TestCase):
     def test_a_test_that_failed_once_stays_failed(self):
         with tempfile.TemporaryDirectory() as folder:
