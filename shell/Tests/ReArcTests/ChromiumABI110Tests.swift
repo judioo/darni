@@ -171,13 +171,7 @@ final class BoostEditorPageMessageTests: XCTestCase {
 }
 
 final class PrivateWindowTests: XCTestCase {
-    private final class Presenter: BrowserWindowPresenting {
-        var littleArc: [LittleArcWindow.ID] = []
-        var privateWindows: [UUID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) { littleArc.append(id) }
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
-        func presentPrivateWindow(_ window: PrivateWindowModel) { privateWindows.append(window.id) }
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     private func makeModel() -> (BrowserViewModel, Tab) {
         let store = SidebarStore(spaces: [Space(name: "Main")])
@@ -204,7 +198,7 @@ final class PrivateWindowTests: XCTestCase {
         model.windowPresenter = presenter
         let window = model.openPrivateWindow()
         let record = model.openLittleArc(url: URL(string: "https://b.test")!)
-        XCTAssertEqual(presenter.privateWindows, [window.id])
+        XCTAssertEqual(presenter.privateWindows.map(\.id), [window.id])
         XCTAssertEqual(presenter.littleArc, [record.id])
         XCTAssertTrue(model.privateWindowOpenRequests.isEmpty && model.littleArcOpenRequests.isEmpty)
     }

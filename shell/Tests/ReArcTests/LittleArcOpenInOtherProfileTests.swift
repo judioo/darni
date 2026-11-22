@@ -12,14 +12,7 @@ import SidebarModel
 /// and go the same way as a row of the picker.
 @MainActor
 struct LittleArcOpenInOtherProfileTests {
-    private final class Presenter: BrowserWindowPresenting {
-        var focused: [SidebarWindowID] = []
-        var presented: [LittleArcWindow.ID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) { presented.append(id) }
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
-        func presentPrivateWindow(_ window: PrivateWindowModel) {}
-        func focusBrowserWindow(_ id: SidebarWindowID) { focused.append(id) }
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     /// The owner's shape: "Personal" with several spaces and a profile with one.
     private struct Fixture {
