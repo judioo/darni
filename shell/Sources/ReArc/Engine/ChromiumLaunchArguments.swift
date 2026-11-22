@@ -32,7 +32,15 @@ enum ChromiumLaunchArguments {
     ///   into it (CVE-2026-121035, fixed upstream in 157 by 403a04e98, not in 156). Off, the
     ///   broker lives as long as its frame, as it did before the feature. Remove it when the
     ///   engine has that fix.
-    static let disabledEngineFeatureNames = ["SafeBrowsingLocalListsUseSBv5", "LazyBrowserInterfaceBroker"]
+    /// - `PreemptiveSodaDownload`, from the testing config (off by default in Chromium): with
+    ///   it, every new profile downloads the speech recognition library and a language pack at
+    ///   its first start, for Live Caption, which nobody has turned on: about 220 MB on disk and
+    ///   as much again in the component cache, and the CPU and network to fetch and unpack it
+    ///   (the performance check of 1164 measured that as idle CPU). Off, the library is
+    ///   fetched when Live Caption is turned on, as in Chrome. A profile that already has it
+    ///   keeps it until Chromium's own 30-day unused timer removes it; the feature's
+    ///   preferences are read the same way with it off.
+    static let disabledEngineFeatureNames = ["SafeBrowsingLocalListsUseSBv5", "LazyBrowserInterfaceBroker", "PreemptiveSodaDownload"]
     static let disabledEngineFeatures = "--disable-features=" + disabledEngineFeatureNames.joined(separator: ",")
 
     enum KeychainMode: Equatable {
