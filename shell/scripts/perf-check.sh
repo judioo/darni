@@ -13,6 +13,8 @@
 #                    build is already in the data folder (no release since the last weekly run),
 #                    it says so and measures nothing, unless --remeasure (a second session of the
 #                    same build, for calibration; the earlier file stays in git history)
+#   --check-due      with --weekly: only say whether a run is due and exit (0 not due, 10 due);
+#                    touches nothing, needs no screen. The weekly scheduled task uses it.
 #   --build NNNN     measures shell/dist/rcNNNN/Darni.app, through a QA copy made once at
 #                    shell/dist/perf-NNNN/Darni.app (ReArcReleaseVerification, re-signed), on a
 #                    fresh REARC_DATA_DIR per run
@@ -39,7 +41,7 @@ REPO="$(cd "$SHELL_DIR/.." && pwd)"
 PERF="$REPO/perf"
 DATA="${DARNI_PERF_DATA:-$HOME/.t3/worktrees/rearc-monorepo/perf-data/data/performance}"
 COMPARE_BROWSERS="darni,chrome,brave,helium,cra,ardia,zen,orion,arc,dia,safari"
-BUILD="" WEEKLY=0 REMEASURE=0 RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
+BUILD="" WEEKLY=0 REMEASURE=0 CHECK_DUE=0 RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
 die() { echo "perf-check: $*" >&2; exit 2; }
 refuse() { echo "perf-check: refusing to run: $*" >&2; exit 75; }
 while [[ $# -gt 0 ]]; do
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     --build) BUILD="$2"; shift ;;
     --weekly) WEEKLY=1 ;;
     --remeasure) REMEASURE=1 ;;
+    --check-due) CHECK_DUE=1 ;;
     --released) RELEASED=1 ;;
     --compare) COMPARE=1 ;;
     --browsers) BROWSERS="$2"; shift ;;
@@ -60,7 +63,7 @@ while [[ $# -gt 0 ]]; do
     --no-commit) COMMIT=0 ;;
     --no-guards) GUARDS=0 ;;
     --gate-only) GATE_ONLY="$2"; shift ;;
-    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -76,8 +79,13 @@ if [[ $WEEKLY == 1 ]]; then
     echo "perf-check: Darni $BUILD ($TAG), the newest release, is already measured ($(sed -n 's/.*"measured_at": "\([^"]*\)".*/\1/p' "$DATA/builds/$BUILD.json" | head -n 1)); no release since. Nothing to measure this week (--remeasure to measure it again)."
     exit 0
   fi
+  if [[ $CHECK_DUE == 1 ]]; then
+    echo "perf-check: due: Darni $BUILD ($TAG) is the newest release and is not measured yet"
+    exit 10
+  fi
   echo "perf-check: weekly run: Darni $BUILD ($TAG)"
 fi
+[[ $CHECK_DUE == 0 ]] || die "--check-due goes with --weekly"
 [[ $BUILD =~ ^[0-9]+$ ]] || die "--build NNNN or --weekly is required"
 mkdir -p "$DATA"
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
