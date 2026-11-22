@@ -15,7 +15,7 @@ final class ChromiumABI154Tests: XCTestCase {
 
     private final class Presenter: BrowserWindowPresenting {
         var devTools: [String] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID) {}
+        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
         func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
         func presentPrivateWindow(_ window: PrivateWindowModel) {}
         func presentDevToolsWindow(for tabID: Tab.ID) { devTools.append("present") }

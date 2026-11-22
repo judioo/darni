@@ -153,6 +153,9 @@ struct ShellToastView: View {
             if toast.action == .undo {
                 toastButton("Undo", prominent: true, action: undo)
             }
+            if toast.action == .show {
+                toastButton("Show", prominent: true, action: undo)
+            }
         }
         .padding(.leading, 10)
         .padding(.trailing, toast.action == nil ? 12 : 6)

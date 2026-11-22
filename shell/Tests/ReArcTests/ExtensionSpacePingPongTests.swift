@@ -62,7 +62,7 @@ final class ExtensionSpacePingPongTests: XCTestCase {
                 request, currentSpace: shown, windowSpace: window,
                 spaces: [shown] + store.visibleSpaces.map(\.id).filter { $0 != shown }
             ) { store.space(withID: $0)?.profileID == profile }
-            guard case .newTab(let space) = placement, model.extensionTabRefusal(for: request, in: space) == nil else {
+            guard case .newTab(let space) = placement, model.extensionTabRefusal(for: request, in: space, at: clock()) == nil else {
                 declined += 1
                 return nil
             }
@@ -146,6 +146,9 @@ final class ExtensionSpacePingPongTests: XCTestCase {
         XCTAssertEqual(blankRows(store, in: personal.id), ExtensionBlankTabs.limit)
         XCTAssertEqual(blankRows(store, in: work.id), 0, "the copy on screen saw its window focused and asked for nothing")
         XCTAssertEqual(host.declined, 20 - ExtensionBlankTabs.limit)
+        // It kept asking, so the rate cap says which extension it is, once.
+        XCTAssertEqual(model.extensionTabRateLog.count, 1)
+        XCTAssertEqual(model.toast?.message, "An extension tried to open many tabs; Darni stopped it")
     }
 
     func testAnActiveNewTabOfAProfileNotOnScreenOpensInItsOwnSpaceOnly() throws {
@@ -288,6 +291,8 @@ final class ExtensionSpacePingPongTests: XCTestCase {
         XCTAssertEqual(blankRows(store, in: space), ExtensionBlankTabs.limit)
         XCTAssertEqual(host.declined, 40 - ExtensionBlankTabs.limit)
 
+        // The rate cap stopped that burst as well; once it has been quiet for the window only the blank cap is left.
+        clock.addTimeInterval(ExtensionTabRate.window + 1)
         // A page of its own is not a blank tab, and another extension has its own count.
         XCTAssertNotNil(host.tabsCreate(by: Self.extensionID, in: profile, url: "chrome-extension://\(Self.extensionID)/options.html", active: false))
         XCTAssertNotNil(host.tabsCreate(by: "another", in: profile, active: false))

@@ -10,7 +10,7 @@ import XCTest
 final class Wave35ShellTests: XCTestCase {
     private final class Presenter: BrowserWindowPresenting {
         var dismissed: [LittleArcWindow.ID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID) {}
+        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
         func dismissLittleArcWindow(_ id: LittleArcWindow.ID) { dismissed.append(id) }
         func presentPrivateWindow(_ window: PrivateWindowModel) {}
     }
