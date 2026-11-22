@@ -347,10 +347,23 @@ final class WKEngine: NSObject, WebEngine {
             webView.observe(\.estimatedProgress, options: [.new]) { webView, _ in refresh(webView) },
             webView.observe(\.hasOnlySecureContent, options: [.new]) { webView, _ in refresh(webView) },
             webView.observe(\.url, options: [.new]) { webView, _ in refresh(webView) },
+            webView.observe(\.title, options: [.new]) { [weak self] webView, _ in
+                DispatchQueue.main.async { self?.syncTitle(from: webView) }
+            },
             webView.observe(\.themeColor, options: [.new]) { [weak self] webView, _ in
                 DispatchQueue.main.async { self?.syncThemeColor(from: webView) }
             },
         ]
+    }
+
+    /// WebKit reports the title on its own: it can arrive after `didFinish`, and a
+    /// page can change it at any time (an unread count). The row's name and the
+    /// unread mark follow `pageTitle`. The empty title between two documents is
+    /// not the page's: the last one stays until the new page's arrives or the
+    /// load finishes without one.
+    private func syncTitle(from webView: WKWebView) {
+        guard let title = webView.title, !title.isEmpty, title != pageTitle else { return }
+        pageTitle = title
     }
 
     private func syncThemeColor(from webView: WKWebView) {
