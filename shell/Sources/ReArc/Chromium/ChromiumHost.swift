@@ -356,9 +356,6 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                 ChromiumLog.trace("selection \(describe(old)) -> \(describe(new)) from \(callers.joined(separator: " < "))")
             }
         }
-        if runtime.capabilities.searchEngines {
-            model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
-        }
         // Before startup's first reading of 1Password's connection.
         model.onePasswordHelperPath = runtime.onePasswordHelperPath
     }
@@ -376,6 +373,12 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             precondition(early === model)
         } else {
             adopt(model)
+        }
+        // Here, at ready, and not in `adopt`: the cached window adopts the model before
+        // the engine has reported its capabilities, so there the check was always false
+        // and Settings › Profiles had no search engine pop-up on an ordinary launch.
+        if runtime.capabilities.searchEngines {
+            model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
         }
         model.presentAirTrafficControl = { [weak self] in self?.presentAirTrafficControl() }
         if runtime.capabilities.perfMetrics {
@@ -435,8 +438,9 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         devToolsHost.install()
         self.devToolsHost = devToolsHost
         if runtime.capabilities.autofillSuggestions {
-            // "Manage…" in the suggestions: Chromium's settings page for the product, as a tab.
-            runtime.onAutofillSettings = { [weak model] url, _ in model?.openPageInNewTab(url, title: "Settings") }
+            // "Manage passwords…" in the suggestions: Chromium's password manager, as a tab.
+            // The other products' pages are Chromium's settings, which `openPageInNewTab` refuses.
+            runtime.onAutofillSettings = { [weak model] url, _ in model?.openPageInNewTab(url, title: BrowserInternalPage.passwords.title) }
         }
         if runtime.capabilities.passwordLeakDetection {
             // The self-test sets its own choice first (off: no sign-in reaches Google's leak service).
@@ -1206,12 +1210,10 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         app.addItem(target.item("About Darni", "") { [weak self] in self?.presentAbout() })
         if let updates = AppUpdater.shared.makeMenuItem() { app.addItem(updates) }
         app.addItem(.separator())
-        // ReArc's own window; Chromium's settings pages open from its buttons.
+        // ReArc's own window. No item opens Chromium's settings pages (Clear Browsing
+        // Data… was one of them): Darni never shows that page.
         app.addItem(target.item("Settings…", ",") { model.showSettings() })
         if runtime.capabilities.navigationExtended {
-            app.addItem(target.item("Clear Browsing Data…", "\u{8}", [.command, .shift]) {
-                model.openBrowserPage(.clearBrowsingData)
-            })
             app.addItem(target.item("About Chromium Engine", "") { model.openBrowserPage(.version) })
             app.addItem(.separator())
         }
@@ -1254,7 +1256,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             if let window = NSApp.keyWindow { self?.closeWindow(window) }
         })
         file.addItem(.separator())
-        target.add(ShellMenus.importing(model, chromiumImporter: runtime.capabilities.navigationExtended), to: file)
+        target.add(ShellMenus.importing(model), to: file)
         // snapshot_viewport and snapshot_full_page are ABI 1.0 features.
         file.addItem(.separator())
         target.add(ShellMenus.capture(model), to: file)

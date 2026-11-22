@@ -185,7 +185,7 @@ extension SiteControlCenter {
 
     /// What a Settings row's menu can do.
     public enum SettingAction: Equatable, Sendable {
-        case allow, block, reset, snoozeOneHour, openSiteSettings
+        case allow, block, reset, snoozeOneHour
         /// "Block ads and trackers": a site exception on or off, and the way to the switch.
         case turnOffBlockingForSite, turnOnBlockingForSite, openBlockingSettings
         /// Blocking is off for every site under a public suffix (an exception
@@ -208,7 +208,6 @@ extension SiteControlCenter {
             case .block: return "Block"
             case .reset: return "Reset"
             case .snoozeOneHour: return "Snooze for 1 Hour"
-            case .openSiteSettings: return "Site Settings…"
             }
         }
     }
@@ -357,7 +356,8 @@ extension SiteControlCenter {
     /// prompts' answers is not shown: it can only repeat or contradict them.
     /// `needsReload`: a setting was changed from the panel since the page loaded.
     /// `permissionsInEngine`: an engine that keeps remembered answers but
-    /// does not report them (ABI before 1.67): a row opens its Site Settings.
+    /// does not report them (ABI before 1.67): a row shows the answer the shell
+    /// recorded and cannot change it (the engine's own settings page is never opened).
     /// On WebKit the shell's store is the answer.
     public static func settingRows(
         contentBlocking: SettingRow? = nil,
@@ -378,9 +378,7 @@ extension SiteControlCenter {
             let sorted = permissions.sorted { (rank($0.type), $0.type.name) < (rank($1.type), $1.type.name) }
             rows = sorted.map { type, entry in
                 let blocked = entry.decision == .deny
-                let actions: [SettingAction] = permissionsInEngine
-                    ? [.openSiteSettings]
-                    : [blocked ? .allow : .block, .reset]
+                let actions: [SettingAction] = permissionsInEngine ? [] : [blocked ? .allow : .block, .reset]
                 return SettingRow(kind: .permission(type.key), title: type.name, state: permissionState(entry),
                                   symbol: type.symbol, isBlocked: blocked, actions: actions)
             }
@@ -428,11 +426,9 @@ extension SiteControlCenter {
         case zoomIn, zoomOut, actualSize(enabled: Bool)
         case boost(id: UUID, name: String, enabled: Bool)
         case editBoosts
-        /// WebKit: the shell clears the site's records itself.
+        /// WebKit: the shell clears the site's records itself. Chromium has no
+        /// call for it, and its own settings page is never opened.
         case clearSiteData
-        /// Chromium: its Site Settings page lists and clears them.
-        case cookiesAndSiteData
-        case siteSettings
 
         public var title: String {
             switch self {
@@ -443,26 +439,17 @@ extension SiteControlCenter {
             case .boost(_, let name, _): return name
             case .editBoosts: return "Edit Boost…"
             case .clearSiteData: return "Clear Cookies and Site Data"
-            case .cookiesAndSiteData: return "Cookies and Site Data…"
-            case .siteSettings: return "Site Settings…"
             }
         }
     }
 
     /// Sections of the ⋯ menu, divided in the view.
-    public static func moreMenu(zoomPercent: Int, boosts: [BoostRow], shellClearsSiteData: Bool, siteSettingsAvailable: Bool) -> [[MenuItem]] {
+    public static func moreMenu(zoomPercent: Int, boosts: [BoostRow], shellClearsSiteData: Bool) -> [[MenuItem]] {
         var sections: [[MenuItem]] = [[.zoomLevel(percent: zoomPercent), .zoomIn, .zoomOut, .actualSize(enabled: zoomPercent != 100)]]
         if !boosts.isEmpty {
             sections.append(boosts.map { .boost(id: $0.id, name: $0.name, enabled: $0.isEnabled) } + [.editBoosts])
         }
-        var site: [MenuItem] = []
-        if shellClearsSiteData {
-            site.append(.clearSiteData)
-        } else if siteSettingsAvailable {
-            site.append(.cookiesAndSiteData)
-        }
-        if siteSettingsAvailable { site.append(.siteSettings) }
-        if !site.isEmpty { sections.append(site) }
+        if shellClearsSiteData { sections.append([.clearSiteData]) }
         return sections
     }
 
@@ -472,7 +459,7 @@ extension SiteControlCenter {
     }
 
     public enum FooterAction: Equatable, Sendable {
-        case showCertificate, openSiteSettings
+        case showCertificate
     }
 
     public struct Footer: Equatable, Sendable {
@@ -484,14 +471,14 @@ extension SiteControlCenter {
     }
 
     /// "🔒 Secure" in Arc. A click shows the certificate where the engine
-    /// hands one over (WebKit), otherwise the site's settings (Chromium).
-    public static func footer(_ connection: Connection, certificateAvailable: Bool, siteSettingsAvailable: Bool) -> Footer {
-        let action: FooterAction? = certificateAvailable ? .showCertificate : (siteSettingsAvailable ? .openSiteSettings : nil)
+    /// hands one over (WebKit); otherwise the badge is a label.
+    public static func footer(_ connection: Connection, certificateAvailable: Bool) -> Footer {
+        let action: FooterAction? = certificateAvailable ? .showCertificate : nil
         switch connection {
         case .secure: return Footer(title: "Secure", symbol: "lock.fill", isWarning: false, action: action)
         case .insecure: return Footer(title: "Not Secure", symbol: "lock.open.fill", isWarning: true, action: action)
         case .dangerous: return Footer(title: "Dangerous", symbol: "exclamationmark.octagon.fill", isWarning: true, action: action)
-        case .unknown: return Footer(title: "Site Info", symbol: "info.circle", isWarning: false, action: siteSettingsAvailable ? .openSiteSettings : nil)
+        case .unknown: return Footer(title: "Site Info", symbol: "info.circle", isWarning: false, action: nil)
         }
     }
 }

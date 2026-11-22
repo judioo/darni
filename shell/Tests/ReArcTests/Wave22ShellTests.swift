@@ -21,7 +21,6 @@ private final class FakeRouter: PageLinkRouting {
     func searchWeb(for text: String, from prompts: PagePromptCenter) { opened.append(("search", URL(string: "search:\(text.count)")!)) }
     func imageSearchProvider(for prompts: PagePromptCenter) -> SearchProvider? { imageSearch }
     func revealPage(of prompts: PagePromptCenter) { revealed += 1 }
-    func openSiteSettings(origin: String, from prompts: PagePromptCenter) { opened.append(("settings", URL(string: origin)!)) }
 }
 
 private final class FakePanelHandle: FilePanelHandle {

@@ -117,7 +117,7 @@ final class BrowserImportShellTests: XCTestCase {
 
     func testTheMenuAndCommandBarOpenTheImportWindow() {
         let model = makeModel()
-        XCTAssertEqual(ShellMenus.importing(model, chromiumImporter: false).first?.first?.title, "Import from Arc, Chrome or Brave…")
+        XCTAssertEqual(ShellMenus.importing(model).first?.first?.title, "Import from Arc, Chrome or Brave…")
         let context = CommandBarContext(store: model.store, isSidebarVisible: true, closedTabStack: ClosedTabStack())
         let command = AppCommandRegistry.all(in: context).first { $0.id == "import-from-browser" }
         XCTAssertEqual(command?.action, .importFromBrowser)

@@ -72,7 +72,7 @@ extension BrowserViewModel {
             case .allow: store.allowAutoPiP(forHost: host)
             case .block: store.setAutoPiPDisabled(forHost: host)
             case .snoozeOneHour: store.snoozeAutoPiP(forHost: host)
-            case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings,
+            case .reset, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings,
                  .turnOffBlockingForSiteOnly, .removeDevice, .reloadPage: break
             }
         case .contentBlocking:
@@ -81,11 +81,10 @@ extension BrowserViewModel {
             case .turnOnBlockingForSite: setContentBlocking(true, forSiteOf: engine, site: site)
             case .turnOffBlockingForSiteOnly: narrowContentBlockingException(forSiteOf: engine, site: site)
             case .openBlockingSettings: showSettings(.profiles)
-            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .removeDevice, .reloadPage: break
+            case .allow, .block, .reset, .snoozeOneHour, .removeDevice, .reloadPage: break
             }
         case .sitePermission, .siteDevice:
             // The engine's own state: it checks that the page is still on the site the row was shown for.
-            if action == .openSiteSettings { return openSiteSettings(origin: site.origin) }
             // With the origin this view showed, not the one the model holds by now.
             siteAccessModel(for: engine)?.perform(action, on: row, origin: site.origin)
         case .reloadToApply:
@@ -99,8 +98,6 @@ extension BrowserViewModel {
                 sitePermissions.record(action == .allow ? .allow : .deny, remembered: true, request: request, scope: scope)
             case .reset:
                 sitePermissions.reset(origin: site.origin, scope: scope, type: type)
-            case .openSiteSettings:
-                openSiteSettings(origin: site.origin)
             case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .turnOffBlockingForSiteOnly,
                  .removeDevice, .reloadPage:
                 break
@@ -112,8 +109,7 @@ extension BrowserViewModel {
         SiteControlCenter.moreMenu(
             zoomPercent: PageZoom.percent(engine.zoomFactor),
             boosts: siteControlBoostRows(for: engine.currentURL ?? URL(string: site.origin)!),
-            shellClearsSiteData: engine is SiteDataManaging,
-            siteSettingsAvailable: sitePermissionsLiveInEngine
+            shellClearsSiteData: engine is SiteDataManaging
         )
     }
 
@@ -131,8 +127,6 @@ extension BrowserViewModel {
                 await manager.clearSiteData(host: site.host)
                 engine.reload()
             }
-        case .cookiesAndSiteData, .siteSettings:
-            openSiteSettings(origin: site.origin)
         }
     }
 
@@ -146,7 +140,7 @@ extension BrowserViewModel {
         case .none, .unknown: connection = .unknown
         }
         let trust = (engine as? ServerCertificateProviding)?.serverTrust
-        return SiteControlCenter.footer(connection, certificateAvailable: trust != nil, siteSettingsAvailable: sitePermissionsLiveInEngine)
+        return SiteControlCenter.footer(connection, certificateAvailable: trust != nil)
     }
 }
 
@@ -224,7 +218,7 @@ struct SiteControlCenterView: View {
             ForEach(model.siteControlSettingRows(for: engine, site: site)) { row in
                 SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark,
                                            disclosure: row.hasBlockedList ? $showsBlockedList : nil) { action in
-                    if action == .openSiteSettings || action == .openBlockingSettings || action == .reloadPage { dismiss() }
+                    if action == .openBlockingSettings || action == .reloadPage { dismiss() }
                     model.performSiteSetting(action, on: row, engine: engine, site: site)
                 }
                 if row.kind == .contentBlocking {
@@ -307,7 +301,7 @@ struct SiteControlCenterView: View {
             }
             .buttonStyle(.plain)
             .disabled(footer.action == nil)
-            .help(footer.action == .showCertificate ? "Show Certificate" : "Site Settings for \(site.host)")
+            .help(footer.action == .showCertificate ? "Show Certificate" : footer.title)
             Spacer(minLength: 8)
             SiteControlsMoreButton(model: model, engine: engine, site: site, dismiss: dismiss)
         }
@@ -319,9 +313,6 @@ struct SiteControlCenterView: View {
             guard let trust = (engine as? ServerCertificateProviding)?.serverTrust else { return }
             dismiss()
             DispatchQueue.main.async { SFCertificatePanel.shared()?.runModal(for: trust, showGroup: true) }
-        case .openSiteSettings:
-            dismiss()
-            model.openSiteSettings(origin: site.origin)
         case nil:
             break
         }
@@ -910,7 +901,7 @@ private struct SiteControlsMoreButton: View {
             for item in section {
                 let entry = ClosureMenuItem(item.title) { [model, engine, site, dismiss] in
                     switch item {
-                    case .editBoosts, .cookiesAndSiteData, .siteSettings: dismiss()
+                    case .editBoosts: dismiss()
                     default: break
                     }
                     model.performSiteControlsMenuItem(item, engine: engine, site: site)

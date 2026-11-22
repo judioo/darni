@@ -2020,8 +2020,8 @@ final class BrowserViewModel {
         if route == .current { loadSelectedIfNeeded() }
     }
 
-    /// Opens a Chromium-owned page (settings, version, history, downloads,
-    /// passwords, extensions) instead of a shell reimplementation, reusing a
+    /// Opens a Chromium-owned page (version, history, downloads, passwords,
+    /// extensions; never its settings) instead of a shell reimplementation, reusing a
     /// tab already showing that WebUI host. Pages the engine does not admit
     /// (no `webui_daily_pages` for the daily-use hosts) do nothing.
     func openBrowserPage(_ page: BrowserInternalPage) {
@@ -2149,7 +2149,7 @@ final class BrowserViewModel {
     }
 
     /// The WebKit search preference (provider and suggestions); nil on
-    /// Chromium, whose default search lives in chrome://settings/search.
+    /// Chromium, whose default search is each profile's own (`searchEngineSettings`).
     var webKitSearchPreference: SearchProviderPreference? {
         get {
             _ = searchProviderRevision

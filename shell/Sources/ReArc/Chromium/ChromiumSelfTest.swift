@@ -1486,6 +1486,7 @@ final class ChromiumSelfTest {
         }
         try await shortcutChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await settingsWindowChecks(model: model, shell: shell, window: first)
+        try await searchEngineChecks(model: model, store: store)
         try await wave33UIChecks(model: model, store: store, tab: tabA, engine: engineA, other: tabB, window: first)
         try await pinnedLifecycleChecks(model: model, store: store, home: tabA, homeEngine: engineA, window: first)
         try await mediaStripElsewhereChecks(model: model, store: store, home: tabA, homeEngine: engineA, window: first)
@@ -2469,28 +2470,30 @@ final class ChromiumSelfTest {
         log("PASS Air Traffic Control: a 'URL contains' rule sent a GetURL link to a Little ReArc (tab \(routedEngine.tabID)) "
             + "instead of the default (current space)")
 
-        // Site Control Center on tab A: the panel's zoom acts on this page; site data lives in Chromium's Site Settings.
+        // Site Control Center on tab A: the panel's zoom acts on this page; nothing in it opens Chromium's Site Settings.
         guard let site = SiteControlCenter.site(for: engine.currentURL) else { throw Failure(description: "tab A has no site") }
         model.zoom(.zoomIn, engine: engine)
         try await wait("Site Control Center zoom in") { !PageZoom.isDefault(engine.zoomFactor) }
         model.zoom(.reset, engine: engine)
         try await wait("Site Control Center zoom reset") { PageZoom.isDefault(engine.zoomFactor) }
         try check((engine as AnyObject) is SiteDataManaging == false && model.sitePermissionsLiveInEngine,
-                  "Chromium site data should open Site Settings")
-        // Arc's panel: the ⋯ menu ends with Chromium's pages; the footer has no certificate to show.
+                  "Chromium keeps its sites' data and permissions itself")
+        // Arc's panel: the ⋯ menu is the zoom (and boosts); it has no item for Chromium's pages,
+        // and the footer, with no certificate to show, is a label.
         let menu = model.siteControlsMenu(for: engine, site: site)
-        try check(menu.last == [.cookiesAndSiteData, .siteSettings], "⋯ menu \(menu)")
+        let menuTitles = menu.flatMap { $0 }.map(\.title)
+        try check(!menuTitles.contains { $0.contains("Site Settings") || $0.contains("Site Data") }, "⋯ menu \(menuTitles)")
         let rows = model.siteControlSettingRows(for: engine, site: site)
         // The content blocking row (an engine with ABI 1.66) has its own actions; the
         // content blocking checks below test it.
         let settingRows = rows.filter { $0.kind != .contentBlocking }
         try check(settingRows.last?.kind == .autoPictureInPicture
-                  && settingRows.dropLast().allSatisfy { $0.actions == [.openSiteSettings] }, "settings rows \(rows.map(\.title))")
+                  && !rows.flatMap(\.actions).contains { $0.title.contains("Site Settings") }, "settings rows \(rows.map(\.title))")
         let footer = model.siteControlsFooter(for: engine)
-        try check(footer.action == .openSiteSettings, "footer \(footer)")
-        log("PASS Site Control Center for \(site.host): panel zoom in and reset on tab A (zoom events); cookies and site data "
-            + "-> chrome://settings/content/siteDetails; Arc's panel: \(rows.count) settings rows, ⋯ menu \(menu.count) sections, "
-            + "footer '\(footer.title)'")
+        try check(footer.action == nil, "footer \(footer)")
+        log("PASS Site Control Center for \(site.host): panel zoom in and reset on tab A (zoom events); "
+            + "Arc's panel: \(rows.count) settings rows, ⋯ menu \(menu.count) sections, footer '\(footer.title)' (a label); "
+            + "no row, menu item or footer opens Chromium's site settings")
     }
 
     /// ⌥⌘-click on a link in tab A: Chromium makes a background tab, which the
@@ -2697,13 +2700,10 @@ final class ChromiumSelfTest {
             log("PASS evaluation on WebUI refused: \(webUIError)")
         }
 
-        let settingsStatus = engine.navigateNow(BrowserInternalPage.settings.url)
-        try check(settingsStatus == .rearcOK, "chrome://settings rejected: \(settingsStatus.rearcName)")
-        try await wait("chrome://settings commit", timeout: 25) {
-            engine.currentURL?.host() == "settings" && engine.currentURL?.scheme == "chrome" && !engine.isLoading
-        }
-        log("PASS chrome://settings committed (the shell's Settings entry point), title '\(engine.pageTitle ?? "")'")
-        try await importDataChecks(engine: engine)
+        // Chromium's stock settings page has no entry point in the shell (its Settings are
+        // Darni's own window), so it is not loaded here either.
+        try check(!BrowserInternalPage.allCases.contains { BrowserInternalPage.isStockSettings($0.url) },
+                  "a shell page is one of Chromium's stock settings pages")
 
         if runtime.capabilities.webUIDailyPages {
             var committed: [String] = []
@@ -5725,31 +5725,6 @@ extension ChromiumSelfTest {
         return value
     }
 
-    /// Wave 28: File > Import from Another Browser opens chrome://settings/importData. WebUI
-    /// refuses both script and snapshots, so the dialog itself cannot be observed; the step checks
-    /// that the route commits and stays (Settings closes the dialog by leaving it). Nothing is
-    /// imported (that would read this Mac's real Safari, Chrome or Firefox data).
-    @MainActor
-    private func importDataChecks(engine: ChromiumEngine) async throws {
-        let status = engine.navigateNow(BrowserInternalPage.importData.url)
-        try check(status == .rearcOK, "chrome://settings/importData rejected: \(status.rearcName)")
-        try await wait("chrome://settings/importData commit", timeout: 25) {
-            engine.currentURL?.host() == "settings" && engine.currentURL?.path == "/importData" && !engine.isLoading
-        }
-        try await Task.sleep(nanoseconds: 1_500_000_000)
-        let route = engine.currentURL?.path ?? ""
-        let snapshot: String
-        do {
-            _ = try await engine.captureSnapshot(scope: .visible)
-            snapshot = "a snapshot was allowed"
-        } catch {
-            snapshot = "snapshots of WebUI are refused (\(error))"
-        }
-        try check(route == "/importData", "the import route did not stay: '\(route)'")
-        log("PASS import: chrome://settings/importData committed in the settings tab and kept its route for 1.5 s, title "
-            + "'\(engine.pageTitle ?? "")'; the dialog is not observable (script on WebUI is refused, \(snapshot)); no import run")
-    }
-
     // MARK: Extensions (ABI 1.31–1.33, 1.36)
 
     @MainActor
@@ -5938,12 +5913,15 @@ extension ChromiumSelfTest {
             let tabs = Set(store.displayTabs().map(\.id))
             let status = runtime.manageAutofill(request)
             let opened = await eventually(timeout: 3) { store.displayTabs().contains { !tabs.contains($0.id) && $0.url.scheme == "chrome" } }
-            if let settings = store.displayTabs().first(where: { !tabs.contains($0.id) && $0.url.scheme == "chrome" }) {
-                log("PASS autofill Manage… (ABI 1.34): ReArcAutofillManage -> \(status.rearcName), opened \(settings.url.absoluteString) as a tab")
-                model.deleteTab(settings.id)
+            if let page = store.displayTabs().first(where: { !tabs.contains($0.id) && $0.url.scheme == "chrome" }) {
+                let url = page.url
+                model.deleteTab(page.id)
                 model.selectTab(tab.id)
+                try check(!BrowserInternalPage.isStockSettings(url), "autofill Manage… opened Chromium's settings page \(url.absoluteString)")
+                log("PASS autofill Manage… (ABI 1.34): ReArcAutofillManage -> \(status.rearcName), opened \(url.absoluteString) as a tab")
             } else {
-                log("NOTE autofill Manage…: \(status.rearcName), no settings page for the datalist product (opened \(opened))")
+                log("PASS autofill Manage… (ABI 1.34): ReArcAutofillManage -> \(status.rearcName); the datalist product's page is one of "
+                    + "Chromium's settings pages, which Darni never opens (opened \(opened))")
                 prompts.dismissAutofill()
             }
         }
@@ -6421,6 +6399,96 @@ extension ChromiumSelfTest {
         ShellInput.moveMouse(to: point, in: window)
     }
 
+    /// Settings › Profiles' Search engine pop-up, through the model the pop-up
+    /// draws from (`ProfileSearchEngineRow`) and the call its binding makes.
+    /// The shell installs the engine's list at ready; each profile lists its
+    /// own engines with its default; choosing one makes it that profile's
+    /// default in the engine, read back with a fresh `ReArcSearchListEngines`
+    /// and not from the pop-up's copy, while a second profile keeps its own;
+    /// the first profile's default is put back. No route opens Chromium's
+    /// stock settings: not a page asked for by URL, not the Darni and File
+    /// menus, not ⇧⌘⌫.
+    @MainActor
+    private func searchEngineChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        // Chromium's stock settings page, by any route the shell has.
+        let stock = try XUnwrap(URL(string: "chrome://\(BrowserInternalPage.stockSettingsHost)/search"), "stock settings address")
+        let tabsBefore = store.displayTabs().map(\.id)
+        model.openPageInNewTab(stock, title: "Search")
+        try check(store.displayTabs().map(\.id) == tabsBefore, "the shell opened \(stock.absoluteString) as a tab")
+        let menuTitles = (NSApp.mainMenu?.items ?? []).flatMap { $0.submenu?.items ?? [] }.map(\.title)
+        for gone in ["Clear Browsing Data…", "Import from Safari or Firefox…"] {
+            try check(!menuTitles.contains(gone), "the menu bar still has \(gone), which opened Chromium's settings")
+        }
+
+        guard runtime.capabilities.searchEngines else {
+            try check(model.searchEngineSettings == nil, "a search engine list without search_engines")
+            log("ABI-GAP search_engines not advertised: Settings › Profiles has no search engine pop-up; no route opens Chromium's settings")
+            return
+        }
+        try check(model.searchEngineSettings is ChromiumSearchEngineSettings,
+                  "the shell did not install the engine's search engine list at ready: the pop-up has no source")
+        let homeSpace = store.activeSpace
+        let homeTab = store.selectedTab
+        let home = homeSpace.profileID
+        let other = store.addProfile(name: "Search Engine Other")
+        store.selectSpace(homeSpace.id)
+        func row(_ profile: Profile.ID) -> ProfileSearchEngineRow? { ProfileSearchEngineRow(model: model, profileID: profile) }
+        /// The engine's own answer for the profile's default, never the pop-up's copy.
+        func engineDefault(_ profile: Profile.ID) async -> SearchEngineChoices.Engine? {
+            await withCheckedContinuation { continuation in
+                runtime.searchEngines(for: profile) { continuation.resume(returning: $0?.current) }
+            }
+        }
+        try await wait("the search engine lists of both profiles", timeout: 25) {
+            [home, other.id].allSatisfy { (row($0)?.options.count ?? 0) > 1 && row($0)?.selection != nil }
+        }
+        guard let homeRow = row(home), let otherRow = row(other.id), let original = homeRow.selection,
+              let otherBefore = await engineDefault(other.id) else {
+            throw Failure(description: "search engines: no list or default for one of the profiles")
+        }
+        try check(homeRow.isEditable && otherRow.isEditable, "search engines: the pop-up cannot change the default")
+        try check(otherRow.selection == String(otherBefore.id), "search engines: the pop-up shows \(otherRow.selection ?? "-") for the second "
+                  + "profile, the engine has \(otherBefore.id)")
+        // An engine that is neither profile's default now, so that a change in the wrong profile would show.
+        guard let pick = homeRow.options.first(where: { $0.id != original && $0.name != otherBefore.name })
+            ?? homeRow.options.first(where: { $0.id != original }) else {
+            throw Failure(description: "search engines: only one engine to choose (\(homeRow.options.map(\.name)))")
+        }
+        let provider = model.searchProvider
+        // As the pop-up's binding sets it.
+        model.setDefaultSearchEngine(pick.id, for: home)
+        try await wait("the pop-up shows the chosen engine") { row(home)?.selection == pick.id }
+        let homeAfter = await engineDefault(home)
+        try check(homeAfter.map { String($0.id) } == pick.id && homeAfter?.name == pick.name,
+                  "search engines: chose \(pick.name) (\(pick.id)), the engine's default is \(homeAfter?.name ?? "-") (\(homeAfter?.id ?? 0))")
+        let otherAfter = await engineDefault(other.id)
+        try check(otherAfter?.id == otherBefore.id && otherAfter?.name == otherBefore.name && row(other.id)?.selection == otherRow.selection,
+                  "search engines: the second profile's default changed with the first's (\(otherBefore.name) -> \(otherAfter?.name ?? "-"))")
+
+        // Back as it was: the steps after this one search through the first profile's default.
+        model.setDefaultSearchEngine(original, for: home)
+        try await waitAsync("the first profile's default search put back", timeout: 15) {
+            await engineDefault(home).map { String($0.id) } == original
+        }
+        if let services = model.commandBarServices as? ChromiumCommandBarServices {
+            services.refreshSearchProvider(for: home)
+            try await wait("the command bar's search provider as before", timeout: 10) {
+                model.searchProvider.searchTemplate == provider.searchTemplate
+            }
+        }
+        try check(model.deleteProfile(other.id, deletingSpaces: true) == nil, "search engines: the extra profile could not be deleted")
+        if let homeTab {
+            model.selectTab(homeTab.id)
+            try await wait("search engines: the first tab shown again", timeout: 15) {
+                store.selectedTab?.id == homeTab.id && store.activeSpaceID == homeSpace.id
+            }
+        }
+        log("PASS search engine pop-up (Settings › Profiles): the engine's list installed at ready; \(homeRow.options.count) engines in the "
+            + "first profile, \(otherRow.options.count) in a second; choosing \(pick.name) made it the first profile's default in the "
+            + "engine (ReArcSearchListEngines), the second kept \(otherBefore.name); default put back; no shell route opens Chromium's "
+            + "settings (a tab asked for by URL, Clear Browsing Data…, Import from Safari or Firefox…)")
+    }
+
     /// Wave 35 (ARC-RECORDING-2026-11-06 §6.4 item 9): ⌘, opens ReArc's own
     /// Settings window, not a chrome://settings tab; every pane shows under its
     /// toolbar item with its name as the title; a switch and a recorded shortcut
@@ -6449,7 +6517,7 @@ extension ChromiumSelfTest {
         }
         try check(NSApp.mainMenu?.performKeyEquivalent(with: comma) == true, "⌘, ran no menu item")
         try await wait("Settings window after ⌘,") { shell.settingsWindowForTesting?.isVisible == true }
-        try check(model.store.displayTabs().count == tabsBefore, "⌘, opened a tab (chrome://settings) instead of the window")
+        try check(model.store.displayTabs().count == tabsBefore, "⌘, opened a tab instead of the Settings window")
         guard let settings = shell.settingsWindowForTesting else { throw Failure(description: "no Settings window") }
         let toolbar = settings.toolbar?.items.map(\.itemIdentifier.rawValue) ?? []
         try check(toolbar == SettingsPane.allCases.map(\.rawValue), "Settings toolbar \(toolbar)")

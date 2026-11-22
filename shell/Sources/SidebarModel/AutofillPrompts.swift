@@ -131,6 +131,23 @@ public struct AutofillPopup: Equatable, Sendable {
 
     public var hasRows: Bool { rows.contains { $0.kind != .separator } }
 
+    /// The engine's rows as Darni lists them: without "Manage…" for the
+    /// products whose manage page is one of Chromium's stock settings pages
+    /// (addresses, payment methods), which Darni never opens, and without
+    /// the divider that row leaves behind. Passwords keep theirs: it opens
+    /// the password manager. Rows keep their engine index (`id`).
+    public static func rowsWithoutStockSettings(_ rows: [AutofillSuggestionRow], product: AutofillProduct) -> [AutofillSuggestionRow] {
+        guard product != .password, rows.contains(where: { $0.kind == .manage }) else { return rows }
+        var kept: [AutofillSuggestionRow] = []
+        for row in rows where row.kind != .manage {
+            // No divider first, and never two in a row.
+            if row.kind == .separator, kept.last.map({ $0.kind == .separator }) ?? true { continue }
+            kept.append(row)
+        }
+        if kept.last?.kind == .separator { kept.removeLast() }
+        return kept
+    }
+
     /// The index the next arrow key would select (wrapping, skipping separators and
     /// rows that cannot be accepted), for a host that routes keys itself.
     public func nextSelectable(from current: Int?, forward: Bool) -> Int? {

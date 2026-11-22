@@ -777,41 +777,6 @@ public enum AppCommandRegistry {
                 action: .clearCommandBarHistory
             ),
             AppCommand(
-                id: "browser-settings",
-                title: "Settings",
-                keywords: ["settings", "preferences", "options", "chrome", "browser"],
-                minQueryLength: 2,
-                action: .openBrowserPage(.settings)
-            ),
-            AppCommand(
-                id: "privacy-settings",
-                title: "Privacy and Security Settings",
-                keywords: ["privacy", "security", "cookies", "settings"],
-                minQueryLength: 2,
-                action: .openBrowserPage(.privacy)
-            ),
-            AppCommand(
-                id: "site-settings",
-                title: "Site Settings",
-                keywords: ["site", "permissions", "camera", "location", "notifications", "settings"],
-                minQueryLength: 2,
-                action: .openBrowserPage(.siteSettings)
-            ),
-            AppCommand(
-                id: "clear-browsing-data",
-                title: "Clear Browsing Data…",
-                keywords: ["clear", "history", "cache", "cookies", "browsing", "data"],
-                minQueryLength: 2,
-                action: .openBrowserPage(.clearBrowsingData)
-            ),
-            AppCommand(
-                id: "import-browser-data",
-                title: "Import from Safari or Firefox…",
-                keywords: ["import", "browser", "safari", "firefox", "bookmarks", "passwords", "history"],
-                minQueryLength: 3,
-                action: .openBrowserPage(.importData)
-            ),
-            AppCommand(
                 id: "browser-credits",
                 title: "Credits",
                 keywords: ["credits", "licences", "licenses", "open source", "chromium"],
@@ -852,34 +817,6 @@ public enum AppCommandRegistry {
                 keywords: ["extensions", "extension", "addons", "plugins", "chrome"],
                 minQueryLength: 2,
                 action: .openBrowserPage(.extensions)
-            ),
-            AppCommand(
-                id: "search-engine-settings",
-                title: "Search Engine Settings",
-                keywords: ["search", "engine", "google", "default", "settings"],
-                minQueryLength: 3,
-                action: .openBrowserPage(.searchSettings)
-            ),
-            AppCommand(
-                id: "download-settings",
-                title: "Download Settings",
-                keywords: ["download", "location", "folder", "settings"],
-                minQueryLength: 3,
-                action: .openBrowserPage(.downloadSettings)
-            ),
-            AppCommand(
-                id: "payment-settings",
-                title: "Payment Methods",
-                keywords: ["payment", "credit", "cards", "autofill", "settings"],
-                minQueryLength: 3,
-                action: .openBrowserPage(.payments)
-            ),
-            AppCommand(
-                id: "notification-settings",
-                title: "Notification Settings",
-                keywords: ["notifications", "alerts", "permissions", "settings"],
-                minQueryLength: 3,
-                action: .openBrowserPage(.notifications)
             ),
             AppCommand(
                 id: "view-page-source",

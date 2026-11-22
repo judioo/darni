@@ -106,7 +106,7 @@ final class SiteAccessTests: XCTestCase {
         // Without the engine's state the record shows as before.
         let before = SiteControlCenter.settingRows(permissions: recorded, permissionsInEngine: true, autoPiP: .enabled, autoPiPEnabled: true)
         XCTAssertEqual(before.first?.kind, .permission("camera_stream"))
-        XCTAssertEqual(before.first?.actions, [.openSiteSettings])
+        XCTAssertEqual(before.first?.actions, [])
     }
 
     func testTheAddressBadgeShowsWhatIsInUseBeforeTheConnection() throws {

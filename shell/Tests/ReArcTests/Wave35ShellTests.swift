@@ -241,7 +241,7 @@ final class Wave35ShellTests: XCTestCase {
 
     func testChromiumPageRowsNeedTheEngine() {
         let model = makeModel()
-        for page: BrowserInternalPage in [.settings, .searchSettings, .downloadSettings, .privacy, .payments, .notifications, .clearBrowsingData] {
+        for page in BrowserInternalPage.allCases {
             XCTAssertFalse(model.canOpenBrowserPage(page), "WebKit has no Chromium pages: \(page.rawValue) row hidden")
         }
     }

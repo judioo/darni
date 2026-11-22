@@ -16,7 +16,7 @@ struct SearchEngineChoice: Identifiable, Hashable {
 /// Reads and sets a profile's default search engine for Settings › Profiles.
 /// Chromium's comes from `search_engines` (ABI 1.46, per profile); WebKit's
 /// choice is app-wide (`webKitSearchPreference`). Without a source the pane
-/// shows Search Settings… only.
+/// has no search engine row.
 protocol SearchEngineSettings: AnyObject {
     func engines(for profileID: Profile.ID) -> [SearchEngineChoice]
     func defaultEngine(for profileID: Profile.ID) -> SearchEngineChoice.ID?

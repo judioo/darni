@@ -76,7 +76,7 @@ extension BrowserViewModel {
         return store.spaces(in: profileID).first.map { "the “\($0.name)” container" } ?? "the container"
     }
 
-    /// A Chromium settings page in `profileID`'s own storage: in one of its own
+    /// A Chromium page (Passwords) in `profileID`'s own storage: in one of its own
     /// spaces, never a container's space of that profile.
     func openBrowserPage(_ page: BrowserInternalPage, inStorageOf profileID: Profile.ID) {
         if store.activeSpace.profileID != profileID {

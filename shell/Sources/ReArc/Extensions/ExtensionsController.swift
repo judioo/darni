@@ -95,7 +95,8 @@ extension BrowserViewModel {
     /// Opens `url` as a new today tab, if the engine admits it. Chromium's
     /// own pages reuse a tab already on that page's host (Chrome's singleton rule).
     func openPageInNewTab(_ url: URL, title: String? = nil) {
-        guard NavigationURLPolicy.allows(url, engine: engineHost.navigationSchemes) else { return }
+        // Never Chromium's stock settings, whoever asks (autofill's Manage… for addresses and cards).
+        guard NavigationURLPolicy.allowsShellRoute(url, engine: engineHost.navigationSchemes) else { return }
         let name = title ?? url.host() ?? url.absoluteString
         if url.scheme?.lowercased() == "chrome",
            let existing = store.displayTabs().first(where: { $0.url.scheme?.lowercased() == "chrome" && $0.url.host() == url.host() }) {

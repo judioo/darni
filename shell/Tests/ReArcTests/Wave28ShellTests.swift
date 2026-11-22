@@ -262,16 +262,12 @@ final class Wave28ShellTests: XCTestCase {
 
     // MARK: Browser import
 
-    func testImportMenuOffersChromiumsImporterOnlyWithTheEngine() {
+    func testImportMenuOffersDarnisOwnImportsOnly() {
         let model = makeModel()
-        XCTAssertEqual(titles(ShellMenus.importing(model, chromiumImporter: false)),
+        // Chromium's importer (Safari and Firefox) was a page of its stock settings: no item opens it.
+        XCTAssertEqual(titles(ShellMenus.importing(model)),
                        ["Import from Arc, Chrome or Brave…", "Import Bookmarks from HTML File…"])
-        XCTAssertEqual(titles(ShellMenus.importing(model, chromiumImporter: true)),
-                       ["Import from Arc, Chrome or Brave…", "Import from Safari or Firefox…", "Import Bookmarks from HTML File…"])
-        XCTAssertEqual(BrowserInternalPage.importData.url.absoluteString, "chrome://settings/importData")
-        XCTAssertFalse(BrowserInternalPage.importData.isAvailable(engine: model.engineHost.navigationSchemes), "WebKit has no Chromium WebUI")
-        XCTAssertTrue(BrowserInternalPage.importData.isAvailable(engine: .chromium))
-        XCTAssertNotNil(model.executeCommand(.openBrowserPage(.importData), commandID: nil), "explains it needs the Chromium engine")
+        XCTAssertNotNil(model.executeCommand(.openBrowserPage(.history), commandID: nil), "explains it needs the Chromium engine")
 
         XCTAssertEqual(model.importBookmarks(fromHTML: "plain text", spaceName: "X"), "That file is not a bookmarks export")
         let html = "<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><DT><A HREF=\"https://one.test/\">One</A></DL>"

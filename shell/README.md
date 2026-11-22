@@ -127,13 +127,18 @@ did against that engine.
   navigation requests all use the same policy, with the schemes taken from
   `EngineHost.navigationSchemes`. On WebKit, `chrome://` and `view-source:`
   are not admitted.
-- **Settings routing.** On the Chromium path the browser settings entry
-  points open Chromium WebUI in a single reused tab (`BrowserInternalPage`).
-  They are the app menu's Settings… (⌘,), Clear Browsing Data… (⇧⌘⌫) and
-  About Chromium Engine items, and the command-bar commands Settings,
-  Privacy and Security Settings, Site Settings, Clear Browsing Data… and
-  About Chromium Engine. View > View Page Source (⌥⌘U) and the matching
-  command open `view-source:` for the selected tab. All of these are hidden
+- **Settings routing.** Settings… (⌘,) is Darni's own window. Chromium's
+  stock settings (`chrome://settings` and every page under it) is never
+  opened by the shell: no menu item, Settings row, command, site panel link
+  or autofill row leads to it (`BrowserInternalPage`,
+  `NavigationURLPolicy.allowsShellRoute`, `StockSettingsRouteTests`). What
+  it held is Darni's own where Darni has it (Settings › Profiles' search
+  engine pop-up and download location, the site panel's permissions) and
+  has no route otherwise (clearing browsing data, payment methods, the
+  privacy and notification pages, Chromium's Safari and Firefox importer).
+  The Chromium pages the shell does open, each in a single reused tab, are
+  the app menu's About Chromium Engine and the matching command. View >
+  View Page Source (⌥⌘U) and the matching command open `view-source:` for the selected tab. All of these are hidden
   or disabled when `navigation_extended` is off. View > History (⌘Y),
   Downloads (⌥⌘L), Passwords and Extensions, and the matching command-bar
   commands, open Chromium's own pages the same way; they exist only with
@@ -1538,12 +1543,9 @@ Both engines unless noted.
   browser exports (Safari, Chrome, Firefox, Edge, Arc) into a new space:
   folders become pinned folders (closed), links pinned tabs, in file
   order; only http and https links, at most 2000, folders at most 6 deep.
-  On Chromium, File > Import from Safari or Firefox… (and the command) opens
-  Chromium's own importer, `chrome://settings/importData`, in the settings
-  tab. It imports into the engine profile: passwords and history appear in
-  Chromium's pages and the command bar's history, and imported bookmarks
-  go into Chromium's bookmark model, which ReArc does not show, so use the
-  HTML file for bookmarks.
+  Chromium's own importer (Safari and Firefox, with passwords and history)
+  is a page of its stock settings, which Darni never opens; from those
+  browsers, use the HTML file for bookmarks.
 - **Import from Arc, Chrome or Brave** (File menu and command, both
   engines; docs/PROFILE-IMPORT.md). Chromium's importer has no source for
   another Chromium profile on macOS, so ReArc reads the files itself, read

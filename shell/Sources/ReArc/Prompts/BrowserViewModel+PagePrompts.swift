@@ -69,24 +69,6 @@ extension BrowserViewModel: PageLinkRouting {
         if store.focusTab(id) { loadSelectedIfNeeded() }
     }
 
-    /// chrome://settings/content/siteDetails for `origin`, in the settings tab if one is open.
-    func openSiteSettings(origin: String) {
-        guard BrowserInternalPage.siteSettings.isAvailable(engine: engineHost.navigationSchemes),
-              let url = BrowserInternalPage.siteDetailsURL(origin: origin) else { return }
-        if let existing = store.displayTabs().first(where: { BrowserInternalPage.siteSettings.isShown(by: $0.url) }) {
-            store.updateTab(existing.id, title: BrowserInternalPage.siteSettings.title, url: url)
-            store.focusTab(existing.id)
-        } else {
-            let tab = store.addTab(kind: .today, title: BrowserInternalPage.siteSettings.title, url: url)
-            store.selectTab(tab.id)
-        }
-        loadSelectedIfNeeded()
-    }
-
-    func openSiteSettings(origin: String, from prompts: PagePromptCenter) {
-        openSiteSettings(origin: origin)
-    }
-
     private func openLinkTab(_ url: URL, from prompts: PagePromptCenter, select: Bool) {
         if let session = prompts.privateSession {
             let window = openPrivateWindow(session: session, parentProfileID: prompts.profileID)
@@ -133,9 +115,11 @@ extension BrowserViewModel: PageLinkRouting {
         return SitePermissionSummary(origin: origin, scope: scope, rows: entries)
     }
 
-    /// Chromium keeps remembered permissions itself; the shell can only send the user to them.
+    /// Chromium keeps remembered permissions itself (every engine with its WebUI
+    /// admission is one). The site panel shows and changes them where the engine
+    /// reports them (ABI 1.67); the shell never opens Chromium's own settings for them.
     var sitePermissionsLiveInEngine: Bool {
-        BrowserInternalPage.siteSettings.isAvailable(engine: engineHost.navigationSchemes)
+        engineHost.navigationSchemes.contains(.trustedWebUI)
     }
 }
 

@@ -89,8 +89,8 @@ final class NavigationURLPolicyTests: XCTestCase {
             XCTAssertFalse(NavigationURLPolicy.allows(page.url), page.rawValue)
             XCTAssertFalse(page.isAvailable(engine: []), page.rawValue)
         }
-        XCTAssertTrue(BrowserInternalPage.settings.isShown(by: URL(string: "chrome://settings/privacy")!))
-        XCTAssertFalse(BrowserInternalPage.settings.isShown(by: URL(string: "chrome://version")!))
+        XCTAssertTrue(BrowserInternalPage.extensions.isShown(by: URL(string: "chrome://extensions/shortcuts")!))
+        XCTAssertFalse(BrowserInternalPage.extensions.isShown(by: URL(string: "chrome://version")!))
     }
 
     func testSettingsCommandsRequireChromiumWebUI() {
@@ -105,7 +105,7 @@ final class NavigationURLPolicyTests: XCTestCase {
         )
         let webKitActions = AppCommandRegistry.all(in: webKit).map(\.action)
         let chromiumActions = AppCommandRegistry.all(in: chromium).map(\.action)
-        XCTAssertFalse(webKitActions.contains(.openBrowserPage(.settings)))
+        XCTAssertFalse(webKitActions.contains(.openBrowserPage(.version)))
         XCTAssertFalse(webKitActions.contains(.viewPageSource))
         for page in BrowserInternalPage.allCases {
             XCTAssertEqual(chromiumActions.contains(.openBrowserPage(page)), !Self.dailyPages.contains(page) && page != .credits, page.rawValue)
@@ -127,7 +127,8 @@ final class NavigationURLPolicyTests: XCTestCase {
         if let selected = store.selectedTab, NavigationURLPolicy.viewSourceURL(for: selected.url, engine: .chromium) != nil {
             XCTAssertTrue(chromiumActions.contains(.viewPageSource))
         }
-        let results = CommandBarSearch.results(for: ">settings", in: store, navigationSchemes: .chromium)
-        XCTAssertEqual(results.first?.commandAction, .openBrowserPage(.settings))
+        // ">settings" finds no Chromium page: Darni's Settings window is the menu bar's Settings… (⌘,).
+        let results = CommandBarSearch.results(for: ">settings", in: store, navigationSchemes: daily.union(.creditsWebUI))
+        XCTAssertFalse(results.contains { if case .openBrowserPage = $0.commandAction { return true } else { return false } })
     }
 }

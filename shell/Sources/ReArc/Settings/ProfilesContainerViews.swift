@@ -73,12 +73,6 @@ struct ContainerSettingsDetail: View {
         }
         ProfileCloudStatusGroup(model: model, profileID: container.id)
         SettingsGroup {
-            if model.canOpenBrowserPage(.clearBrowsingData) {
-                SettingsLabeledRow(label: BrowserInternalPage.clearBrowsingData.title, detail: "Opens in the container's space, for its data only.") {
-                    Button("Clear…") { model.openBrowserPage(.clearBrowsingData, inStorageOf: container.id) }
-                        .buttonStyle(SettingsButtonStyle())
-                }
-            }
             SettingsLabeledRow(label: "Make This a Profile", detail: "The space leaves \(parent?.name ?? "its profile") with its sign-ins, as a profile of its own.") {
                 Button("Make Profile") { model.makeProfile(container.id) }
                     .buttonStyle(SettingsButtonStyle())
