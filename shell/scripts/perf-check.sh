@@ -97,7 +97,7 @@ if [[ -z $GATE_ONLY ]]; then
   MEASURE=(--runs "$RUNS" --darni-app "$QA")
   RELEASE_FLAG=()
   [[ $RELEASED == 0 ]] || RELEASE_FLAG=(--released)
-  [[ $SPEEDOMETER == 1 ]] || MEASURE+=(--no-speedometer)
+  [[ $SPEEDOMETER == 1 ]] || MEASURE+=(--no-speedometer --speedometer-reason "${DARNI_PERF_SPEEDOMETER_REASON:-Speedometer was not run in this session}")
   [[ $ARC == 0 ]] || MEASURE+=(--arc-quit-allowed)
   [[ $OWNER_DARNI == 0 ]] || MEASURE+=(--quit-owner-darni)
   RESULT="$OUT/build-$BUILD.json"

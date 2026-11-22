@@ -12,6 +12,10 @@ struct ProbeChordTests {
         #expect(ProbeChord.parse("opt+cmd+n") == .optionCommandN)
         #expect(ProbeChord.parse("Command+N") == KeyChord("N", 45, .command))
         #expect(ProbeChord.parse("ctrl+tab") == .controlTab)
+        #expect(ProbeChord.parse("opt+cmd+down") == KeyChord("↓", 125, [.option, .command]))
+        #expect(ProbeChord.parse("opt+cmd+left") == .optionCommandLeft)
+        #expect(ProbeChord.parse("opt+cmd+left")?.isArrow == true)
+        #expect(ProbeChord.parse("shift+cmd+]") == KeyChord("]", 30, [.shift, .command]))
     }
 
     @Test func rejectsWhatItDoesNotKnow() {

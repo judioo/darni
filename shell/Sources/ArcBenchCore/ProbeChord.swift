@@ -6,6 +6,7 @@ public enum ProbeChord {
     private static let keys: [String: (label: String, code: UInt16)] = [
         "t": ("T", 17), "n": ("N", 45), "w": ("W", 13), "l": ("L", 37), "s": ("S", 1), "r": ("R", 15),
         "esc": ("Esc", 53), "escape": ("Esc", 53), "tab": ("Tab", 48), "return": ("Return", 36),
+        "left": ("←", 123), "right": ("→", 124), "down": ("↓", 125), "up": ("↑", 126), "[": ("[", 33), "]": ("]", 30),
     ]
     private static let modifiers: [String: KeyModifiers] = [
         "cmd": .command, "command": .command, "opt": .option, "option": .option, "alt": .option,
