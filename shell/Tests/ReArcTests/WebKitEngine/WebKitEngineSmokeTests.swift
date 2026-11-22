@@ -47,25 +47,39 @@ final class WebKitEngineSmokeTests: XCTestCase {
         }
     }
 
+    /// Loads `path` and waits for the page itself (the web view's title), so a test
+    /// fails for its own row only: what the shell sees of the title is `tabs.title`'s.
     private func load(_ engine: WKEngine, _ path: String, title: String, file: StaticString = #filePath, line: UInt = #line) async throws {
         engine.load(server.url(path))
         do {
-            try await wait("\(path) to show the title \(title)", file: file, line: line) { engine.pageTitle == title && !engine.isLoading }
+            try await wait("\(path) to load with the title \(title)", file: file, line: line) {
+                engine.webView.title == title && !engine.isLoading && !engine.webView.isLoading
+            }
         } catch {
-            XCTFail("state: pageTitle=\(String(describing: engine.pageTitle)) webView.title=\(String(describing: engine.webView.title)) isLoading=\(engine.isLoading)/\(engine.webView.isLoading) url=\(String(describing: engine.webView.url)) requests=\(server.requests.map(\.path))", file: file, line: line)
+            XCTFail("state: webView.title=\(String(describing: engine.webView.title)) isLoading=\(engine.isLoading)/\(engine.webView.isLoading) "
+                + "url=\(String(describing: engine.webView.url)) requests=\(server.requests.map(\.path))", file: file, line: line)
             throw error
         }
     }
 
     // parity: navigation.load
-    func testAPageLoadsAndTheShellSeesItsTitleURLAndSecurity() async throws {
+    func testAPageLoadsAndTheShellSeesItsURLAndSecurity() async throws {
         server.route("/a", .page(title: "page A"))
         let engine = engine()
         try await load(engine, "/a", title: "page A")
         XCTAssertEqual(engine.currentURL, server.url("/a"))
         XCTAssertEqual(engine.securityState, .insecure, "plain http is not secure")
+        XCTAssertFalse(engine.isLoading)
         XCTAssertFalse(engine.isCrashed)
         XCTAssertFalse(engine.canGoBack)
+    }
+
+    // parity: tabs.title
+    func testTheShellSeesTheTitleOfAPageThatHasLoaded() async throws {
+        server.route("/a", .page(title: "page A"))
+        let engine = engine()
+        try await load(engine, "/a", title: "page A")
+        try await wait("the shell to see the title") { engine.pageTitle == "page A" }
     }
 
     // parity: tabs.title
@@ -73,6 +87,7 @@ final class WebKitEngineSmokeTests: XCTestCase {
         server.route("/a", .page(title: "Inbox"))
         let engine = engine()
         try await load(engine, "/a", title: "Inbox")
+        try await wait("the shell to see the first title") { engine.pageTitle == "Inbox" }
         _ = try await engine.webView.evaluateJavaScript("document.title = 'Inbox (3)'; true")
         try await wait("the changed title") { engine.pageTitle == "Inbox (3)" }
     }
@@ -83,6 +98,7 @@ final class WebKitEngineSmokeTests: XCTestCase {
         server.route("/bare", .html("<!doctype html><html><head></head><body>no title</body></html>"))
         let engine = engine()
         try await load(engine, "/a", title: "page A")
+        try await wait("the shell to see the first title") { engine.pageTitle == "page A" }
         engine.load(server.url("/bare"))
         try await wait("the untitled page") { engine.currentURL == self.server.url("/bare") && !engine.isLoading && engine.pageTitle != "page A" }
         XCTAssertEqual(engine.pageTitle ?? "", "")
@@ -97,9 +113,9 @@ final class WebKitEngineSmokeTests: XCTestCase {
         try await load(engine, "/b", title: "page B")
         try await wait("back to be offered") { engine.canGoBack }
         engine.goBack()
-        try await wait("page A after Back") { engine.pageTitle == "page A" && engine.canGoForward }
+        try await wait("page A after Back") { engine.webView.title == "page A" && engine.canGoForward }
         engine.goForward()
-        try await wait("page B after Forward") { engine.pageTitle == "page B" && !engine.canGoForward }
+        try await wait("page B after Forward") { engine.webView.title == "page B" && !engine.canGoForward }
     }
 
     // parity: profiles.storage
@@ -208,7 +224,7 @@ final class WebKitEngineSmokeTests: XCTestCase {
         let record = try XCTUnwrap(downloads.records.first)
         XCTAssertEqual(URL(fileURLWithPath: record.targetPath).lastPathComponent, "report.bin")
         XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: record.targetPath)).count, 4096)
-        XCTAssertEqual(engine.pageTitle, "page A", "the page that started the download stays")
+        XCTAssertEqual(engine.webView.title, "page A", "the page that started the download stays")
     }
 
     // parity: zoom.page
@@ -234,7 +250,7 @@ final class WebKitEngineSmokeTests: XCTestCase {
         """)
         try await wait("the link to reach Peek") { !peeked.isEmpty }
         XCTAssertEqual(peeked, [server.url("/b")])
-        XCTAssertEqual(engine.pageTitle, "page A")
+        XCTAssertEqual(engine.webView.title, "page A")
     }
 
     // parity: media.state
