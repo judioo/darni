@@ -13,6 +13,11 @@ import XCTest
 /// without asking the focus gate. It is still made, but comes to the front
 /// only when the user started it, and the loop breaker counts it.
 ///
+/// The owner's decision of 2026-11-22: a window opened behind is said in a
+/// notice that stays in every browser window until it is answered, and the
+/// Dock icon bounces once when Darni is not the active app (the Claude
+/// extension asks for sign-in and permission in such windows).
+///
 /// The Chromium host is not compiled here (it needs the engine), so `Host`
 /// makes the host's calls in the host's order, as in `ExtensionSpacePingPongTests`.
 @MainActor
@@ -45,6 +50,9 @@ final class ExtensionTabFloodTests: XCTestCase {
         model.externalLinkDefaults = UserDefaults(suiteName: "rearc-flood-links-\(UUID().uuidString)")!
         let presenter = Presenter()
         model.windowPresenter = presenter
+        // Darni is the active app unless a test says otherwise, and no test reaches the real Dock.
+        model.appIsActive = { true }
+        model.requestDockAttention = {}
         return (model, presenter)
     }
 
@@ -197,10 +205,11 @@ final class ExtensionTabFloodTests: XCTestCase {
         XCTAssertNotNil(store.littleArcWindow(withID: record.id), "the window exists: the extension's call succeeded")
 
         // The user is told, and Show is their own click.
-        let toast = try XCTUnwrap(model.toast)
-        XCTAssertEqual(toast.message, "Claude opened a window behind this one")
-        XCTAssertEqual(toast.action, .show)
-        model.runToastUndo()
+        let notice = try XCTUnwrap(model.extensionWindowNotice)
+        XCTAssertEqual(notice.message, "Claude opened a window behind this one")
+        XCTAssertEqual(notice.toast.action, .show)
+        XCTAssertNil(model.toast, "the notice has its own place: no toast is used up, and none can replace it")
+        model.showExtensionWindowsBehind()
         XCTAssertEqual(presenter.shown.last, .init(id: record.id, inFront: true))
     }
 
@@ -215,6 +224,7 @@ final class ExtensionTabFloodTests: XCTestCase {
         let asked = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID))
         XCTAssertEqual(presenter.shown, [.init(id: asked.id, inFront: true)])
         XCTAssertNil(model.toast, "nothing to say about a window the user asked for")
+        XCTAssertNil(model.extensionWindowNotice)
 
         // The click is spent: a second window by itself stays behind.
         clock.addTimeInterval(0.2)
@@ -236,7 +246,7 @@ final class ExtensionTabFloodTests: XCTestCase {
         model.noteUserInput(at: clock)
         let record = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: work.id))
         XCTAssertEqual(presenter.shown, [.init(id: record.id, inFront: false)], "a click in this profile is not a click for that one")
-        XCTAssertEqual(model.toast?.message, "An extension opened a window behind this one")
+        XCTAssertEqual(model.extensionWindowNotice?.message, "An extension opened a window behind this one")
     }
 
     func testTheLoopBreakerCountsLittleDarniWindows() throws {
@@ -263,15 +273,18 @@ final class ExtensionTabFloodTests: XCTestCase {
         XCTAssertEqual(model.extensionActivatedTab(tab.id, at: clock.addingTimeInterval(0.1)), .inItsSpace(.loop))
     }
 
-    func testTheLoopBreakersTripIsSaidInsteadOfTheWindowToast() throws {
+    func testTheLoopBreakersTripIsSaidInAToastAndTheNoticeCountsItsWindow() throws {
         let (model, _) = makeModel()
         let host = Host(model: model) { [unowned self] in self.clock }
+        var last: LittleArcWindow?
         for _ in 0..<5 {
             clock.addTimeInterval(1)
             model.noteUserInput(at: clock)
-            _ = host.windowsCreate(by: Self.extensionID, in: model.store.activeProfileID)
+            last = host.windowsCreate(by: Self.extensionID, in: model.store.activeProfileID)
         }
         XCTAssertEqual(model.toast?.message, "Stopped extensions bringing windows to the front")
+        // The window that tripped it is behind like any other: it is not lost for the toast's sake.
+        XCTAssertEqual(model.extensionWindowNotice?.windows, [try XCTUnwrap(last).id])
     }
 
     func testWindowsCountTowardsTheRateCapWithTabs() throws {
@@ -299,6 +312,185 @@ final class ExtensionTabFloodTests: XCTestCase {
             host.tabsCreate(by: Self.extensionID, in: store.activeProfileID, url: "https://example.com/") != nil
         }.count
         XCTAssertEqual(tabs, ExtensionTabRate.limit - 1)
+    }
+
+    // MARK: The notice of windows opened behind
+
+    func testTheNoticeStaysPastTheTimeAToastWouldHaveGone() throws {
+        let (model, _) = makeModel()
+        let host = Host(model: model) { [unowned self] in self.clock }
+        name(model, "Claude")
+        let record = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: model.store.activeProfileID))
+
+        // The toast it replaced went after 8 s. The main queue runs meanwhile, as a toast's timer needs.
+        let waited = expectation(description: "longer than the old toast stayed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShellToast.defaultDuration + 3 + 0.4) { waited.fulfill() }
+        wait(for: [waited], timeout: 15)
+        XCTAssertEqual(model.extensionWindowNotice?.windows, [record.id], "still up: only the user's answer takes it away")
+        XCTAssertEqual(model.extensionWindowNotice?.message, "Claude opened a window behind this one")
+    }
+
+    func testAToastDoesNotTakeTheNoticesPlace() throws {
+        let (model, _) = makeModel()
+        let host = Host(model: model) { [unowned self] in self.clock }
+        let record = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: model.store.activeProfileID))
+        // The single toast slot gave the old one to whatever was said next.
+        model.showToast("Copied Current URL", systemImage: "link")
+        XCTAssertEqual(model.toast?.message, "Copied Current URL")
+        XCTAssertEqual(model.extensionWindowNotice?.windows, [record.id])
+    }
+
+    func testTheNoticeIsInEveryBrowserWindowAndAnsweredInAllAtOnce() throws {
+        let (model, _) = makeModel()
+        let store = model.store
+        let host = Host(model: model) { [unowned self] in self.clock }
+        let key = SidebarWindowID(), other = SidebarWindowID(), third = SidebarWindowID()
+        for window in [key, other, third] { store.registerWindow(window) }
+        store.windowBecameKey(key)
+        func shown() -> [ExtensionWindowNotice?] { [key, other, third].map { model.extensionWindowNotice(in: $0) } }
+
+        let record = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID))
+        XCTAssertFalse(model.isKeyBrowserWindow(other), "a toast would not show here")
+        XCTAssertEqual(shown().map { $0?.windows }, [[record.id], [record.id], [record.id]], "seen whichever window is in front")
+
+        // Dismissed in one window: gone from every one, and the window stays behind.
+        model.dismissExtensionWindowNotice()
+        XCTAssertEqual(shown(), [nil, nil, nil])
+        XCTAssertNotNil(store.littleArcWindow(withID: record.id))
+
+        // Show in one window: gone from every one too.
+        let again = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID))
+        XCTAssertEqual(shown().map { $0?.windows }, [[again.id], [again.id], [again.id]], "a dismissed window is not counted again")
+        model.showExtensionWindowsBehind()
+        XCTAssertEqual(shown(), [nil, nil, nil])
+    }
+
+    func testSeveralWindowsAreOneNoticeWithTheirCount() throws {
+        let (model, _) = makeModel()
+        let store = model.store
+        let host = Host(model: model) { [unowned self] in self.clock }
+        name(model, "Claude")
+        var records: [LittleArcWindow] = []
+        for expected in ["Claude opened a window behind this one", "Claude opened 2 windows behind this one",
+                         "Claude opened 3 windows behind this one"] {
+            clock.addTimeInterval(1)
+            records.append(try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID)))
+            XCTAssertEqual(model.extensionWindowNotice?.message, expected)
+        }
+        XCTAssertEqual(model.extensionWindowNotice?.windows, records.map(\.id), "oldest first")
+
+        // Another extension's window joins the same notice; it names neither.
+        name(model, "Wallet", for: "another")
+        let fourth = try XCTUnwrap(host.windowsCreate(by: "another", in: store.activeProfileID))
+        XCTAssertEqual(model.extensionWindowNotice?.message, "Extensions opened 4 windows behind this one")
+        XCTAssertEqual(model.extensionWindowNotice?.windows, (records + [fourth]).map(\.id))
+    }
+
+    func testShowBringsEveryCountedWindowForwardTheMostRecentLast() throws {
+        let (model, presenter) = makeModel()
+        let store = model.store
+        let host = Host(model: model) { [unowned self] in self.clock }
+        let first = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID))
+        let closed = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID))
+        let last = try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID))
+        XCTAssertFalse(presenter.shown.contains { $0.inFront }, "all three opened behind")
+        model.closeLittleArcWindow(closed.id)
+        presenter.shown = []
+
+        model.showExtensionWindowsBehind()
+        XCTAssertEqual(presenter.shown, [.init(id: first.id, inFront: true), .init(id: last.id, inFront: true)],
+                       "in front and key, the most recent last so it ends on top; a closed one is not asked for")
+        XCTAssertNil(model.extensionWindowNotice)
+
+        // Show again has nothing left to bring forward.
+        presenter.shown = []
+        model.showExtensionWindowsBehind()
+        XCTAssertEqual(presenter.shown, [])
+    }
+
+    func testTheNoticeGoesWhenItsWindowClosesOrComesForwardAnotherWay() throws {
+        let (model, _) = makeModel()
+        let store = model.store
+        let host = Host(model: model) { [unowned self] in self.clock }
+        name(model, "Claude")
+        func open() throws -> LittleArcWindow { try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID)) }
+
+        // Closed, by the user's close button or the extension's windows.remove.
+        let closed = try open(), kept = try open()
+        model.closeLittleArcWindow(closed.id)
+        XCTAssertEqual(model.extensionWindowNotice?.windows, [kept.id])
+        XCTAssertEqual(model.extensionWindowNotice?.message, "Claude opened a window behind this one", "the count follows")
+        model.closeLittleArcWindow(kept.id)
+        XCTAssertNil(model.extensionWindowNotice, "nothing is behind any more")
+
+        // Archived by the store itself, with no word to the model (the idle auto-archive).
+        let idle = try open()
+        XCTAssertNotNil(model.extensionWindowNotice)
+        store.archiveLittleArcWindow(id: idle.id, reason: .auto)
+        XCTAssertNil(model.extensionWindowNotice)
+
+        // Opened as a tab in a space: its window is gone too.
+        let promoted = try open()
+        model.promoteLittleArcWindow(promoted.id)
+        XCTAssertNil(model.extensionWindowNotice)
+
+        // Brought forward another way: the user clicked it, or chose it in the Window menu, and it took the keyboard.
+        let clicked = try open(), behind = try open()
+        model.keyLittleArcID = clicked.id
+        XCTAssertEqual(model.extensionWindowNotice?.windows, [behind.id])
+        model.keyLittleArcID = behind.id
+        XCTAssertNil(model.extensionWindowNotice)
+        // And it does not come back when that window loses the keyboard again.
+        model.keyLittleArcID = nil
+        XCTAssertNil(model.extensionWindowNotice)
+    }
+
+    func testTheDockIconBouncesOnlyWhenDarniIsNotTheActiveApp() throws {
+        let (model, _) = makeModel()
+        let store = model.store
+        let host = Host(model: model) { [unowned self] in self.clock }
+        var active = true, bounces = 0
+        model.appIsActive = { active }
+        model.requestDockAttention = { bounces += 1 }
+        func open() throws -> LittleArcWindow { try XCTUnwrap(host.windowsCreate(by: Self.extensionID, in: store.activeProfileID)) }
+
+        // Darni is in front: the notice is on screen, and the Dock is left alone.
+        _ = try open()
+        XCTAssertNotNil(model.extensionWindowNotice)
+        XCTAssertEqual(bounces, 0)
+
+        // The user works in another app: the next window behind bounces the icon, once.
+        active = false
+        _ = try open()
+        XCTAssertEqual(bounces, 1)
+        // More windows while they are away are the same notice: no bounce for each.
+        _ = try open()
+        _ = try open()
+        XCTAssertEqual(bounces, 1)
+
+        // They came back and used Darni, then left: a later window is news again.
+        active = true
+        model.noteUserInput(at: clock)
+        clock.addTimeInterval(ExtensionFocusGate.userInputWindow + 1)
+        active = false
+        _ = try open()
+        XCTAssertEqual(bounces, 2)
+
+        // A window the user's own input brought to the front needs no attention at all.
+        model.dismissExtensionWindowNotice()
+        active = true
+        model.noteUserInput(at: clock)
+        active = false
+        let asked = try open()
+        XCTAssertNil(model.extensionWindowNotice, "it came to the front: \(asked.id)")
+        XCTAssertEqual(bounces, 2)
+
+        // After the notice was answered, the next one bounces again.
+        clock.addTimeInterval(ExtensionFocusGate.userInputWindow + 1)
+        _ = try open()
+        model.dismissExtensionWindowNotice()
+        _ = try open()
+        XCTAssertEqual(bounces, 4)
     }
 
     // MARK: How the window comes on screen

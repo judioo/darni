@@ -512,6 +512,10 @@ struct BrowserView: View {
                     openSettings: { model.showSettings($0) }, undo: { model.runToastUndo() }) { start in
             if start { model.startPendingExtensionReinstall() } else { model.postponePendingExtensionReinstall() }
         }
+        // In every browser window, key or not, until it is answered in one of them.
+        .overlay(alignment: .top) {
+            ExtensionWindowNoticeLayer(model: model, window: windowID, toolbarHeight: showsCardToolbar ? CardToolbarView.height : 0)
+        }
         // The whole card, its toolbar strip too, as in Arc.
         .overlay {
             PeekBackdropWash(isShown: model.showsPeek(in: windowID) && !model.isPeekPageFullscreen) {
