@@ -38,8 +38,8 @@ enum Probe {
             case let .key(probe):
                 guard InputGuard.lockHeld else { return refuse("the input lock \(InputGuard.lock.path) is not held by the caller") }
                 return emit(try await key(probe))
-            case let .quit(pid, timeoutMs):
-                return emit(try await quit(pid: pid, timeout: Double(timeoutMs) / 1000))
+            case let .quit(pid, timeoutMs, viaMenu):
+                return emit(try await quit(pid: pid, timeout: Double(timeoutMs) / 1000, viaMenu: viaMenu))
             case let .record(pid, out, seconds, fps, stopFile):
                 return emit(try await record(pid: pid, out: URL(fileURLWithPath: out), seconds: seconds, fps: fps, stopFile: stopFile))
             }
@@ -183,12 +183,24 @@ enum Probe {
     // MARK: quit
 
     /// The app's own quit (NSRunningApplication.terminate, as ⌘Q), then waits. Never forces.
-    static func quit(pid: pid_t, timeout: Double) async throws -> [String: Any] {
+    static func quit(pid: pid_t, timeout: Double, viaMenu: Bool = false) async throws -> [String: Any] {
         guard let app = NSRunningApplication(processIdentifier: pid) else { return ["exited": true, "was_running": false] }
         let start = HostClock.now
-        guard app.terminate() else { throw Failure("pid \(pid) did not accept the quit request") }
+        if viaMenu {
+            // The app menu is the menu bar's second item (after Apple's); its "Quit …" item.
+            guard let bar = AX.value(AX.app(pid), kAXMenuBarAttribute, as: AXUIElement.self),
+                  AX.children(bar).count > 1, let menu = AX.children(AX.children(bar)[1]).first,
+                  let item = AX.children(menu).first(where: { AX.title($0)?.hasPrefix("Quit ") == true }) else {
+                throw Failure("pid \(pid) has no Quit item in its app menu")
+            }
+            guard AX.press(item) else { throw Failure("pressing \(AX.title(item) ?? "Quit") failed") }
+        } else {
+            guard app.terminate() else { throw Failure("pid \(pid) did not accept the quit request") }
+        }
         while HostClock.now - start < timeout {
-            if app.isTerminated || kill(pid, 0) != 0 { return ["exited": true, "ms": (HostClock.now - start) * 1000] }
+            if app.isTerminated || kill(pid, 0) != 0 {
+                return ["exited": true, "ms": (HostClock.now - start) * 1000, "via": viaMenu ? "menu" : "terminate"]
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         throw Failure("pid \(pid) was still running \(Int(timeout)) s after the quit request")

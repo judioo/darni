@@ -2,7 +2,7 @@
 # The performance check before a release (docs/PERFORMANCE-CHIP.md §7).
 #
 # Usage: scripts/perf-check.sh --build NNNN [--released] [--compare [--browsers LIST]]
-#          [--halt RULES] [--confirm FILE] [--runs N] [--no-speedometer] [--arc-quit-allowed]
+#          [--halt RULES] [--confirm FILE] [--runs N] [--no-speedometer] [--arc-quit-allowed] [--quit-owner-darni]
 #          [--data DIR] [--no-commit] [--no-guards] [--gate-only FILE]
 #
 #   --build NNNN     measures shell/dist/rcNNNN/Darni.app, through a QA copy made once at
@@ -15,6 +15,8 @@
 #                    policy is in thresholds.json (everything flags, 2026-11-22)
 #   --confirm FILE   a second measurement of the same build: a regression must repeat
 #   --arc-quit-allowed  the owner approved quitting and relaunching Arc for this session
+#   --quit-owner-darni  the owner allowed quitting their Darni by its Quit menu item for the run;
+#                    it is relaunched after and checked
 #   --data DIR       the monorepo data folder (default: the perf-data worktree's
 #                    data/performance); --no-commit leaves it uncommitted
 #   --gate-only FILE gate, index, chart and commit an existing build result; measures nothing
@@ -29,7 +31,7 @@ REPO="$(cd "$SHELL_DIR/.." && pwd)"
 PERF="$REPO/perf"
 DATA="${DARNI_PERF_DATA:-$HOME/.t3/worktrees/rearc-monorepo/perf-data/data/performance}"
 COMPARE_BROWSERS="darni,chrome,brave,helium,cra,ardia,zen,orion,arc,dia,safari"
-BUILD="" RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY=""
+BUILD="" RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
 die() { echo "perf-check: $*" >&2; exit 2; }
 refuse() { echo "perf-check: refusing to run: $*" >&2; exit 75; }
 while [[ $# -gt 0 ]]; do
@@ -43,11 +45,12 @@ while [[ $# -gt 0 ]]; do
     --runs) RUNS="$2"; shift ;;
     --no-speedometer) SPEEDOMETER=0 ;;
     --arc-quit-allowed) ARC=1 ;;
+    --quit-owner-darni) OWNER_DARNI=1 ;;
     --data) DATA="$2"; shift ;;
     --no-commit) COMMIT=0 ;;
     --no-guards) GUARDS=0 ;;
     --gate-only) GATE_ONLY="$2"; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -96,6 +99,7 @@ if [[ -z $GATE_ONLY ]]; then
   [[ $RELEASED == 0 ]] || RELEASE_FLAG=(--released)
   [[ $SPEEDOMETER == 1 ]] || MEASURE+=(--no-speedometer)
   [[ $ARC == 0 ]] || MEASURE+=(--arc-quit-allowed)
+  [[ $OWNER_DARNI == 0 ]] || MEASURE+=(--quit-owner-darni)
   RESULT="$OUT/build-$BUILD.json"
   set +e
   py measure --kind build --id "$BUILD" --browsers darni ${RELEASE_FLAG[@]+"${RELEASE_FLAG[@]}"} "${MEASURE[@]}" --out "$RESULT"

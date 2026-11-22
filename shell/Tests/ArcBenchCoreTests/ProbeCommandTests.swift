@@ -45,9 +45,11 @@ struct ProbeCommandTests {
     }
 
     @Test func quitTakesAPidAndAnOptionalTimeout() throws {
-        #expect(try ProbeCommand.parse(["quit", "--pid", "42"]) == .quit(pid: 42, timeoutMs: 20000))
-        #expect(try ProbeCommand.parse(["quit", "--pid", "42", "--timeout-ms", "5000"]) == .quit(pid: 42, timeoutMs: 5000))
+        #expect(try ProbeCommand.parse(["quit", "--pid", "42"]) == .quit(pid: 42, timeoutMs: 20000, viaMenu: false))
+        #expect(try ProbeCommand.parse(["quit", "--pid", "42", "--timeout-ms", "5000"]) == .quit(pid: 42, timeoutMs: 5000, viaMenu: false))
+        #expect(try ProbeCommand.parse(["quit", "--pid", "42", "--via", "menu"]) == .quit(pid: 42, timeoutMs: 20000, viaMenu: true))
         #expect(throws: ProbeCommand.UsageError.self) { try ProbeCommand.parse(["quit"]) }
+        #expect(throws: ProbeCommand.UsageError.self) { try ProbeCommand.parse(["quit", "--pid", "42", "--via", "kill"]) }
     }
 
     @Test func frameAndRecord() throws {

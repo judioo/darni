@@ -16,8 +16,9 @@ import Foundation
 ///               [--timeout-ms MS] [--quiet-ms MS] [--pre-quiet-ms MS]
 ///         posts one key to that window (frontmost and key, checked first) and times the
 ///         first changed frame, or the new window
-///     probe quit --pid PID [--timeout-ms MS]
-///         asks that one process to quit (as ⌘Q does) and waits for it to exit; never forces
+///     probe quit --pid PID [--timeout-ms MS] [--via menu]
+///         asks that one process to quit (as ⌘Q does) and waits for it to exit; never forces.
+///         `--via menu` presses the app menu's own "Quit …" item over Accessibility instead
 ///     probe record --pid PID --out FILE.mp4 [--seconds S] [--fps N] [--stop-file PATH]
 ///         records only that app's windows on the display it is on, until S seconds, the
 ///         stop file appears, SIGINT/SIGTERM, or the input gate goes
@@ -31,7 +32,7 @@ public enum ProbeCommand: Equatable, Sendable {
     case frame(pid: Int32, window: UInt32, rect: [Double])
     case key(KeyProbe)
     case record(pid: Int32, out: String, seconds: Double, fps: Int, stopFile: String?)
-    case quit(pid: Int32, timeoutMs: Int)
+    case quit(pid: Int32, timeoutMs: Int, viaMenu: Bool)
 
     public enum KeyMeasure: String, Equatable, Sendable { case frames, newWindow = "new-window", none }
 
@@ -122,7 +123,10 @@ public enum ProbeCommand: Equatable, Sendable {
                               seconds: try double("seconds", 1 ... 7200, default: 1800), fps: try int("fps", 1 ... 60, default: 30),
                               stopFile: values.removeValue(forKey: "stop-file"))
         case "quit":
-            command = .quit(pid: try int("pid", 1 ... Int32.max), timeoutMs: try int("timeout-ms", 1000 ... 120_000, default: 20000))
+            let via = values.removeValue(forKey: "via") ?? "terminate"
+            guard via == "terminate" || via == "menu" else { throw UsageError("probe quit: --via terminate or menu") }
+            command = .quit(pid: try int("pid", 1 ... Int32.max), timeoutMs: try int("timeout-ms", 1000 ... 120_000, default: 20000),
+                            viaMenu: via == "menu")
         default:
             throw UsageError("probe: unknown command \(verb) (launch, window, frame, key, quit, record)")
         }
