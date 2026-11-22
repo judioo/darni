@@ -34,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --full) FULL=1 ;;
     --label) LABEL="${2:?--label needs text}"; shift ;;
     --scratch-path) SCRATCH=(--scratch-path "${2:?--scratch-path needs a directory}"); shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "check-webkit: unknown option: $1" >&2; exit 64 ;;
   esac
   shift
