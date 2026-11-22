@@ -174,6 +174,8 @@ final class Wave22PromptModelTests: XCTestCase {
         XCTAssertEqual(PageOrigin.of(URL(string: "http://127.0.0.1:8080/x")!), "http://127.0.0.1:8080")
         XCTAssertNil(PageOrigin.of(URL(string: "data:text/html,hi")!))
         XCTAssertNil(PageOrigin.displayHost(""))
+        XCTAssertEqual(BrowserInternalPage.siteDetailsURL(origin: "https://a.test:8443")?.absoluteString,
+                       "chrome://settings/content/siteDetails?site=https://a.test:8443")
         XCTAssertEqual(URLEntry.searchURL(for: "red pandas")?.absoluteString, "https://duckduckgo.com/?q=red%20pandas")
     }
 

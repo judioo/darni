@@ -239,14 +239,18 @@ enum ShellMenus {
     }
 
     /// File menu: import. ReArc's own window for Arc, Chrome and Brave
-    /// (PROFILE-IMPORT.md) and, on both engines, a bookmarks file exported
-    /// from any browser. Chromium's own importer is a page of its stock
-    /// settings, which Darni never opens.
-    static func importing(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
-        [[
+    /// (PROFILE-IMPORT.md); Chromium's importer (Safari and Firefox, with
+    /// passwords and history) where the engine has it; on both engines, a
+    /// bookmarks file exported from any browser.
+    static func importing(_ model: BrowserViewModel, chromiumImporter: Bool) -> [[ShellMenuItem]] {
+        var items = [
             ShellMenuItem("Import from Arc, Chrome or Brave…") { model.showBrowserImport() },
             ShellMenuItem("Import Bookmarks from HTML File…") { model.importBookmarksFile() },
-        ]]
+        ]
+        if chromiumImporter {
+            items.insert(ShellMenuItem("Import from Safari or Firefox…") { model.openBrowserPage(.importData) }, at: 1)
+        }
+        return [items]
     }
 
     /// File menu: Arc's capture commands (EASEL-CAPTURE §5). ⇧⌘2 sits beside

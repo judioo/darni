@@ -130,7 +130,7 @@ struct SiteInfoPopoverView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(rows) { row in
                         SiteControlsSettingRowView(row: row, isDark: colorScheme == .dark) { action in
-                            if action == .reloadPage { dismiss() }
+                            if action == .openSiteSettings || action == .reloadPage { dismiss() }
                             model.performSiteSetting(action, on: row, engine: engine, site: site)
                         }
                     }
@@ -148,6 +148,16 @@ struct SiteInfoPopoverView: View {
     private var panelLinks: some View {
         Divider().padding(.top, 10).padding(.bottom, 8)
         HStack {
+            if model.sitePermissionsLiveInEngine {
+                Button("Site Settings…") {
+                    dismiss()
+                    model.openSiteSettings(origin: site.origin)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .help("Every setting for \(site.host)")
+            }
             Spacer()
             Button("Site Controls") {
                 dismiss()

@@ -96,7 +96,7 @@ final class SiteControlsPanelTests: XCTestCase {
         XCTAssertEqual(chromium[0].kind, .permission("geolocation"))
         XCTAssertTrue(chromium[0].isBlocked)
         XCTAssertFalse(chromium[1].isBlocked)
-        XCTAssertEqual(chromium[0].actions, [], "Chromium keeps the answer; the row shows it and never opens Chromium's settings")
+        XCTAssertEqual(chromium[0].actions, [.openSiteSettings], "Chromium keeps the answer; its Site Settings change it")
         XCTAssertEqual(chromium[0].symbol, PermissionType.geolocation.symbol)
 
         let webKit = SiteControlCenter.settingRows(permissions: permissions, permissionsInEngine: false,
@@ -137,15 +137,16 @@ final class SiteControlsPanelTests: XCTestCase {
     }
 
     func testMoreMenuHoldsZoomBoostsAndSiteData() {
-        // Chromium: no item for its Site Settings page (cookies and site data lived there).
-        let chromium = SiteControlCenter.moreMenu(zoomPercent: 100, boosts: [], shellClearsSiteData: false)
+        let chromium = SiteControlCenter.moreMenu(zoomPercent: 100, boosts: [], shellClearsSiteData: false, siteSettingsAvailable: true)
         XCTAssertEqual(chromium, [
             [.zoomLevel(percent: 100), .zoomIn, .zoomOut, .actualSize(enabled: false)],
+            [.cookiesAndSiteData, .siteSettings],
         ])
-        XCTAssertEqual(chromium.flatMap { $0 }.map(\.title), ["Zoom 100%", "Zoom In", "Zoom Out", "Actual Size"])
+        XCTAssertEqual(chromium.flatMap { $0 }.map(\.title),
+                       ["Zoom 100%", "Zoom In", "Zoom Out", "Actual Size", "Cookies and Site Data…", "Site Settings…"])
 
         let boost = SiteControlCenter.BoostRow(id: UUID(), name: "Dark", isEnabled: true)
-        let webKit = SiteControlCenter.moreMenu(zoomPercent: 125, boosts: [boost], shellClearsSiteData: true)
+        let webKit = SiteControlCenter.moreMenu(zoomPercent: 125, boosts: [boost], shellClearsSiteData: true, siteSettingsAvailable: false)
         XCTAssertEqual(webKit, [
             [.zoomLevel(percent: 125), .zoomIn, .zoomOut, .actualSize(enabled: true)],
             [.boost(id: boost.id, name: "Dark", enabled: true), .editBoosts],
@@ -154,16 +155,15 @@ final class SiteControlsPanelTests: XCTestCase {
     }
 
     func testFooterFollowsTheConnection() {
-        let secure = SiteControlCenter.footer(.secure, certificateAvailable: false)
-        XCTAssertEqual(secure, .init(title: "Secure", symbol: "lock.fill", isWarning: false, action: nil),
-                       "with no certificate to show the badge is a label: it never opens Chromium's Site Settings")
-        XCTAssertEqual(SiteControlCenter.footer(.secure, certificateAvailable: true).action, .showCertificate)
-        let insecure = SiteControlCenter.footer(.insecure, certificateAvailable: false)
+        let secure = SiteControlCenter.footer(.secure, certificateAvailable: false, siteSettingsAvailable: true)
+        XCTAssertEqual(secure, .init(title: "Secure", symbol: "lock.fill", isWarning: false, action: .openSiteSettings))
+        XCTAssertEqual(SiteControlCenter.footer(.secure, certificateAvailable: true, siteSettingsAvailable: false).action, .showCertificate)
+        let insecure = SiteControlCenter.footer(.insecure, certificateAvailable: false, siteSettingsAvailable: false)
         XCTAssertEqual(insecure.title, "Not Secure")
         XCTAssertTrue(insecure.isWarning)
         XCTAssertNil(insecure.action)
-        XCTAssertEqual(SiteControlCenter.footer(.dangerous, certificateAvailable: false).title, "Dangerous")
-        XCTAssertEqual(SiteControlCenter.footer(.unknown, certificateAvailable: true).action, nil,
+        XCTAssertEqual(SiteControlCenter.footer(.dangerous, certificateAvailable: false, siteSettingsAvailable: true).title, "Dangerous")
+        XCTAssertEqual(SiteControlCenter.footer(.unknown, certificateAvailable: true, siteSettingsAvailable: false).action, nil,
                        "no certificate to show without a connection")
     }
 }

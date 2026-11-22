@@ -7,7 +7,8 @@ import XCTest
 /// Build 1164 (2026-11-22): Settings › Profiles had no search engine pop-up on
 /// an ordinary launch, only a "Search Settings…" button that opened Chromium's
 /// stock settings page ("About Chromium", "AI in Chrome"). The pane now has
-/// Darni's pop-up for each profile, and nothing in the shell opens that page.
+/// Darni's pop-up for each profile, and the search and download settings no
+/// longer lead to Chromium's pages.
 final class ProfilesSearchEngineTests: XCTestCase {
     /// An engine's per-profile lists, as Chromium's `search_engines` gives them.
     private final class EngineLists: SearchEngineSettings {
@@ -74,27 +75,30 @@ final class ProfilesSearchEngineTests: XCTestCase {
         XCTAssertTrue(labels.contains(ProfileSearchEngineGroup.label), "no pop-up named Search engine in \(labels)")
         XCTAssertTrue(labels.contains("DuckDuckGo"), "the pop-up shows the profile's default in \(labels)")
         XCTAssertTrue(labels.contains("Change…"), "Download location has Darni's own chooser in \(labels)")
-        for stock in ["Search Settings…", "Manage search", "Download Settings…", "More Settings…"] {
+        for stock in ["Search Settings…", "Manage search", "Download Settings…"] {
             XCTAssertFalse(labels.contains(stock), "\(stock) opened Chromium's stock settings page")
         }
         XCTAssertFalse(labels.contains { $0.hasPrefix("/") }, "the download folder is named, not located: \(labels)")
     }
 
-    // MARK: No route to Chromium's stock settings
+    // MARK: The command bar's Search Engine Settings and Download Settings
 
-    func testNoMenuItemLeadsToChromiumsSettings() {
+    /// They opened chrome://settings/search and /downloads; now Darni's own
+    /// Profiles pane, where the pop-up and the Download location row are.
+    func testTheSearchAndDownloadCommandsOpenDarnisProfilesPane() {
         let model = Build1164TestSupport.makeModel()
-        let groups = ShellMenus.importing(model) + ShellMenus.browserPages(model) + ShellMenus.printing(model) + ShellMenus.capture(model)
-            + ShellMenus.documents(model) + ShellMenus.library(model) + ShellMenus.downloads(model) + ShellMenus.sidebarItems(model)
-        let titles = groups.flatMap { $0 }.map(\.title)
-        for gone in ["Import from Safari or Firefox…", "Clear Browsing Data…", "Site Settings…", "Search Settings…"] {
-            XCTAssertFalse(titles.contains(gone), gone)
-        }
-        XCTAssertEqual(ShellMenus.importing(model).flatMap { $0 }.map(\.title),
-                       ["Import from Arc, Chrome or Brave…", "Import Bookmarks from HTML File…"])
-        // A page the shell is asked to open by address goes through the same refusal.
+        var shown: [SettingsPane?] = []
+        model.presentSettings = { shown.append($0) }
         let tabs = model.store.displayTabs().map(\.id)
-        model.openPageInNewTab(URL(string: "chrome://settings/search")!, title: "Search")
-        XCTAssertEqual(model.store.displayTabs().map(\.id), tabs)
+        let context = CommandBarContext(store: model.store, isSidebarVisible: true, closedTabStack: ClosedTabStack())
+        for id in ["search-engine-settings", "download-settings"] {
+            let command = AppCommandRegistry.all(in: context).first { $0.id == id }
+            XCTAssertEqual(command?.action, .showSettings(.profiles), id)
+            guard let action = command?.action else { continue }
+            XCTAssertNil(model.executeCommand(action, commandID: id), id)
+        }
+        XCTAssertEqual(shown, [.profiles, .profiles])
+        XCTAssertEqual(model.settingsPane, .profiles)
+        XCTAssertEqual(model.store.displayTabs().map(\.id), tabs, "no tab opens: the settings are Darni's window")
     }
 }

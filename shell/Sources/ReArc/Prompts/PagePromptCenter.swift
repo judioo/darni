@@ -17,6 +17,8 @@ protocol PageLinkRouting: AnyObject {
     func imageSearchProvider(for prompts: PagePromptCenter) -> SearchProvider?
     /// Shows the tab a prompt belongs to (a leave-site prompt on a tab being closed).
     func revealPage(of prompts: PagePromptCenter)
+    /// Chromium's site details page for `origin`.
+    func openSiteSettings(origin: String, from prompts: PagePromptCenter)
     var navigationSchemes: NavigationURLPolicy.EngineSchemes { get }
 }
 

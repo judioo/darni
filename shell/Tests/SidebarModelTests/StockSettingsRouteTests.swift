@@ -1,145 +1,192 @@
 import XCTest
 @testable import SidebarModel
 
-/// Chromium's stock settings page (chrome://settings and every page under it:
-/// "About Chromium", "AI in Chrome", Chromium's own shortcuts) is never shown:
-/// no page, command, site panel item, autofill row or source line of the shell
-/// leads to it. Found on build 1164, where Settings › Profiles' "Search
-/// Settings…" opened it.
+/// Chromium's stock settings (chrome://settings and the pages under it) shows
+/// "About Chromium" and "AI in Chrome", which Darni should never show. Some
+/// jobs have no Darni screen yet, so their routes stay (never regress): each
+/// is listed here with its reason, and in docs/STOCK-SETTINGS-ROUTES.md as the
+/// to-do. A route that is not listed fails. The search engine and the
+/// download location have Darni's own rows and route there no more (build
+/// 1164's "Search Settings…" opened it).
 final class StockSettingsRouteTests: XCTestCase {
+    private struct Kept {
+        let address: String
+        /// The shell's page for it; nil for an address built for a site or sent by the engine.
+        let page: BrowserInternalPage?
+        /// The engine names the address (autofill's Manage…): it is in no shell source line.
+        var fromEngine = false
+        let reason: String
+    }
+
+    /// Every stock settings page the shell may still open, and why.
+    private static let kept: [Kept] = [
+        Kept(address: "chrome://settings/clearBrowserData", page: .clearBrowsingData,
+             reason: "Clear Browsing Data: no Darni UI yet, and the engine ABI has no call for it"),
+        Kept(address: "chrome://settings/content/siteDetails", page: nil,
+             reason: "a site's Site Settings… and Cookies and Site Data…: the site panel cannot clear one site's data"),
+        Kept(address: "chrome://settings/content", page: .siteSettings,
+             reason: "Site Settings: no Darni list of every site's permissions"),
+        Kept(address: "chrome://settings/privacy", page: .privacy,
+             reason: "Privacy and Security: no Darni screen for cookies or the Safe Browsing level"),
+        Kept(address: "chrome://settings/payments", page: .payments,
+             reason: "Payment Methods, and autofill's Manage payment methods…: no Darni UI for saved cards"),
+        Kept(address: "chrome://settings/contactInfo", page: nil, fromEngine: true,
+             reason: "autofill's Manage addresses…: no Darni UI for saved addresses"),
+        Kept(address: "chrome://settings/autofill", page: nil, fromEngine: true,
+             reason: "autofill's Manage… for its other products: no Darni autofill settings"),
+        Kept(address: "chrome://settings/content/notifications", page: .notifications,
+             reason: "Notifications: no Darni list of sites allowed to notify"),
+        Kept(address: "chrome://settings/importData", page: .importData,
+             reason: "Import from Safari or Firefox…: Darni's importer reads Arc, Chrome and Brave only"),
+        Kept(address: "chrome://settings", page: .settings,
+             reason: "More Settings…: everything Chromium has a setting for and Darni does not"),
+    ]
+
+    /// What Darni has replaced: the shell opens these from nowhere.
+    private static let replaced = ["chrome://settings/search", "chrome://settings/searchEngines", "chrome://settings/downloads"]
+
     private let everyEngine = NavigationURLPolicy.EngineSchemes.chromium.union(.dailyWebUI).union(.creditsWebUI)
 
     private func url(_ string: String) -> URL { URL(string: string)! }
 
-    func testNoInternalPageIsAStockSettingsPage() {
-        XCTAssertEqual(Set(BrowserInternalPage.allCases), [.credits, .version, .history, .downloads, .passwords, .extensions])
-        for page in BrowserInternalPage.allCases {
-            XCTAssertFalse(BrowserInternalPage.isStockSettings(page.url), "\(page.rawValue) opens \(page.url.absoluteString)")
-            XCTAssertNotEqual(page.url.host(), "settings", page.rawValue)
-        }
-        for stock in ["chrome://settings", "chrome://settings/", "chrome://settings/search", "CHROME://SETTINGS/privacy",
-                      "chrome://settings/content/siteDetails?site=https://a.test", "chrome://settings/clearBrowserData"] {
-            XCTAssertTrue(BrowserInternalPage.isStockSettings(url(stock)), stock)
-        }
-        for other in ["chrome://password-manager/passwords", "chrome://extensions/shortcuts", "chrome://version", "chrome://history/",
-                      "https://settings.example/", "https://example.com/settings/search", "file:///settings"] {
-            XCTAssertFalse(BrowserInternalPage.isStockSettings(url(other)), other)
-        }
+    private var repository: URL {
+        URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    /// A menu, a Settings row or a prompt's link opens its page through this check.
-    func testTheShellOpensNoStockSettingsPageOfItsOwnAccord() {
-        for stock in ["chrome://settings", "chrome://settings/search", "chrome://settings/payments", "chrome://settings/addresses",
-                      "chrome://settings/clearBrowserData", "chrome://settings/importData", "chrome://settings/content/notifications"] {
-            XCTAssertTrue(NavigationURLPolicy.allows(url(stock), engine: everyEngine), "the engine itself admits \(stock)")
-            XCTAssertFalse(NavigationURLPolicy.allowsShellRoute(url(stock), engine: everyEngine), stock)
-        }
-        for page in BrowserInternalPage.allCases {
-            XCTAssertTrue(NavigationURLPolicy.allowsShellRoute(page.url, engine: everyEngine), page.rawValue)
-        }
-        XCTAssertTrue(NavigationURLPolicy.allowsShellRoute(url("chrome://extensions/shortcuts"), engine: everyEngine))
-        XCTAssertTrue(NavigationURLPolicy.allowsShellRoute(url("chrome://password-manager/passwords"), engine: everyEngine))
-        XCTAssertTrue(NavigationURLPolicy.allowsShellRoute(url("https://example.com/"), engine: []))
-        XCTAssertFalse(NavigationURLPolicy.allowsShellRoute(url("chrome://flags"), engine: everyEngine), "still what the engine admits")
-    }
-
-    func testNoCommandOpensAStockSettingsPage() {
-        let store = SidebarStore.sample()
-        store.addTab(kind: .today, title: "Example", url: url("https://example.com"))
-        let context = CommandBarContext(store: store, isSidebarVisible: true, closedTabStack: store.closedTabStack, navigationSchemes: everyEngine)
-        let commands = AppCommandRegistry.all(in: context)
-        XCTAssertFalse(commands.isEmpty)
-        for command in commands {
-            if case .openBrowserPage(let page) = command.action {
-                XCTAssertFalse(BrowserInternalPage.isStockSettings(page.url), "\(command.id) opens \(page.url.absoluteString)")
+    func testEveryStockSettingsPageIsListedWithItsReason() {
+        let listed = Dictionary(uniqueKeysWithValues: Self.kept.compactMap { entry in entry.page.map { ($0, entry) } })
+        for page in BrowserInternalPage.allCases where BrowserInternalPage.isStockSettings(page.url) {
+            guard let entry = listed[page] else {
+                XCTFail("\(page.rawValue) opens \(page.url.absoluteString), a page of Chromium's stock settings that is not listed: "
+                    + "give Darni its own screen, or list it here and in docs/STOCK-SETTINGS-ROUTES.md with the reason")
+                continue
             }
+            XCTAssertEqual(page.url.absoluteString, entry.address, page.rawValue)
         }
-        // The commands that opened its pages are gone, by ID and by what the person reads.
-        let gone = ["browser-settings", "privacy-settings", "site-settings", "clear-browsing-data", "import-browser-data",
-                    "search-engine-settings", "download-settings", "payment-settings", "notification-settings"]
-        XCTAssertTrue(Set(commands.map(\.id)).isDisjoint(with: gone))
-        let titles = Set(commands.map(\.title))
-        for title in ["Settings", "Privacy and Security Settings", "Site Settings", "Clear Browsing Data…", "Import from Safari or Firefox…",
-                      "Search Engine Settings", "Download Settings", "Payment Methods", "Notification Settings"] {
-            XCTAssertFalse(titles.contains(title), title)
+        for (page, entry) in listed {
+            XCTAssertTrue(BrowserInternalPage.allCases.contains(page))
+            XCTAssertEqual(page.url.absoluteString, entry.address, "\(page.rawValue) is listed for another address")
         }
-        // What stays: Chromium's pages that are not its settings.
-        XCTAssertTrue(commands.contains { $0.action == .openBrowserPage(.passwords) })
-        XCTAssertTrue(commands.contains { $0.action == .openBrowserPage(.extensions) })
-        for query in [">settings", ">search engine", ">clear browsing", ">privacy", ">payment"] {
-            for result in CommandBarSearch.results(for: query, in: store, navigationSchemes: everyEngine) {
-                if case .openBrowserPage(let page) = result.commandAction {
-                    XCTAssertFalse(BrowserInternalPage.isStockSettings(page.url), "\(query) offers \(page.url.absoluteString)")
-                }
-            }
+        XCTAssertEqual(Set(Self.kept.map(\.address)).count, Self.kept.count, "an address listed twice")
+        for entry in Self.kept {
+            XCTAssertTrue(BrowserInternalPage.isStockSettings(url(entry.address)), entry.address)
+            XCTAssertGreaterThan(entry.reason.count, 30, "\(entry.address) needs its reason")
+        }
+        // The pages that are not Chromium's settings need no entry.
+        for page in [BrowserInternalPage.credits, .version, .history, .downloads, .passwords, .extensions] {
+            XCTAssertFalse(BrowserInternalPage.isStockSettings(page.url), page.rawValue)
         }
     }
 
-    /// The site panel on Chromium: no row, ⋯ menu item or footer leads to
-    /// Chromium's per-site settings page.
-    func testTheSitePanelHasNoWayToChromiumsSiteSettings() {
-        let menu = SiteControlCenter.moreMenu(zoomPercent: 100, boosts: [], shellClearsSiteData: false)
-        XCTAssertEqual(menu.flatMap { $0 }.map(\.title), ["Zoom 100%", "Zoom In", "Zoom Out", "Actual Size"])
-        for connection in [SiteControlCenter.Connection.secure, .insecure, .dangerous, .unknown] {
-            XCTAssertNil(SiteControlCenter.footer(connection, certificateAvailable: false).action, "\(connection)")
-        }
-        let entry = SitePermissionStore.Entry(decision: .deny, remembered: true, date: Date())
-        let rows = SiteControlCenter.settingRows(permissions: [(type: .camera, entry: entry)], permissionsInEngine: true,
-                                                 autoPiP: .enabled, autoPiPEnabled: true)
-        XCTAssertEqual(rows.first?.kind, .permission(PermissionType.camera.key))
-        XCTAssertFalse(rows.flatMap(\.actions).map(\.title).contains { $0.contains("Site Settings") })
-        XCTAssertEqual(rows.first?.actions, [])
-    }
-
-    /// Autofill's list: "Manage addresses…" and "Manage payment methods…"
-    /// opened chrome://settings/addresses and /payments. Passwords keep theirs
-    /// (the password manager is its own page).
-    func testAutofillListsNoManageRowForAStockSettingsPage() {
-        let engineRows = [
-            AutofillSuggestionRow(id: 0, value: "1 Main Street"),
-            AutofillSuggestionRow(id: 1, value: "2 Side Street"),
-            AutofillSuggestionRow(id: 2, value: "", kind: .separator, isAcceptable: false),
-            AutofillSuggestionRow(id: 3, value: "Manage addresses…", icon: "settings", kind: .manage),
-        ]
-        for product in [AutofillProduct.address, .creditCard, .iban, .autocomplete, .datalist] {
-            let rows = AutofillPopup.rowsWithoutStockSettings(engineRows, product: product)
-            XCTAssertEqual(rows.map(\.id), [0, 1], "product \(product.rawValue): the fill rows keep the engine's indexes")
-            XCTAssertFalse(rows.contains { $0.kind == .manage || $0.kind == .separator }, "product \(product.rawValue)")
-        }
-        XCTAssertEqual(AutofillPopup.rowsWithoutStockSettings(engineRows, product: .password), engineRows,
-                       "Manage passwords… opens the password manager, not Chromium's settings")
-        // A divider between fill rows stays; none is left first, last or doubled.
-        let mixed = [
-            AutofillSuggestionRow(id: 0, value: "", kind: .manage),
-            AutofillSuggestionRow(id: 1, value: "", kind: .separator, isAcceptable: false),
-            AutofillSuggestionRow(id: 2, value: "Visa"),
-            AutofillSuggestionRow(id: 3, value: "", kind: .separator, isAcceptable: false),
-            AutofillSuggestionRow(id: 4, value: "", kind: .separator, isAcceptable: false),
-            AutofillSuggestionRow(id: 5, value: "Amex"),
-            AutofillSuggestionRow(id: 6, value: "", kind: .separator, isAcceptable: false),
-        ]
-        XCTAssertEqual(AutofillPopup.rowsWithoutStockSettings(mixed, product: .creditCard).map(\.id), [2, 3, 5])
-        let plain = [AutofillSuggestionRow(id: 0, value: "one"), AutofillSuggestionRow(id: 1, value: "two")]
-        XCTAssertEqual(AutofillPopup.rowsWithoutStockSettings(plain, product: .datalist), plain)
-    }
-
-    /// Every line of shell source outside a comment: none holds the address
-    /// of Chromium's settings, so no menu, action or constant can open it.
-    func testNoShellSourceLineHoldsTheStockSettingsAddress() throws {
-        let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources", isDirectory: true)
+    /// Every line of shell source outside a comment that holds a settings
+    /// address: the address is a listed one. A new route (a constant, a menu
+    /// action, a link) with an unlisted address fails here.
+    func testEveryStockSettingsAddressInTheShellsSourceIsListed() throws {
+        let sources = repository.appendingPathComponent("shell/Sources", isDirectory: true)
         let files = try XCTUnwrap(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
             .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
         XCTAssertGreaterThan(files.count, 200, "the shell's sources were not found at \(sources.path)")
-        let address = "chrome://" + BrowserInternalPage.stockSettingsHost
-        var found: [String] = []
+        let pattern = try NSRegularExpression(pattern: "chrome://settings[A-Za-z0-9/_-]*", options: [.caseInsensitive])
+        var found: [String: [String]] = [:]
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
-            for (index, line) in text.components(separatedBy: "\n").enumerated() where line.lowercased().contains(address) {
+            for (index, line) in text.components(separatedBy: "\n").enumerated() {
                 if line.trimmingCharacters(in: .whitespaces).hasPrefix("//") { continue }
-                found.append("\(file.lastPathComponent):\(index + 1): \(line.trimmingCharacters(in: .whitespaces))")
+                let range = NSRange(line.startIndex..., in: line)
+                for match in pattern.matches(in: line, range: range) {
+                    var address = String(line[Range(match.range, in: line)!])
+                    while address.hasSuffix("/") { address.removeLast() }
+                    found[address, default: []].append("\(file.lastPathComponent):\(index + 1)")
+                }
             }
         }
-        XCTAssertEqual(found, [], "shell code names Chromium's stock settings page")
+        let listed = Set(Self.kept.map(\.address))
+        for (address, places) in found.sorted(by: { $0.key < $1.key }) where !listed.contains(address) {
+            XCTFail("\(address) (\(places.joined(separator: ", "))) is a page of Chromium's stock settings that is not listed: "
+                + "give Darni its own screen, or list it here and in docs/STOCK-SETTINGS-ROUTES.md with the reason")
+        }
+        for address in Self.replaced {
+            XCTAssertNil(found[address], "\(address) has Darni's own UI: the shell must not route there")
+        }
+        // A listed route nothing opens any more should leave the list (and the document).
+        for entry in Self.kept where !entry.fromEngine {
+            XCTAssertNotNil(found[entry.address], "\(entry.address) is listed and no shell source opens it")
+        }
+    }
+
+    /// The default search engine and the download location are Darni's own
+    /// (Settings › Profiles): no page, no command and no shell route leads to
+    /// Chromium's pages for them.
+    func testSearchEngineAndDownloadsNeverRouteToStockSettings() {
+        XCTAssertEqual(BrowserInternalPage.replacedStockSettingsPaths, ["/search", "/searchEngines", "/downloads"])
+        let listed = Set(Self.kept.map(\.address))
+        for address in Self.replaced {
+            XCTAssertFalse(listed.contains(address), address)
+            XCTAssertFalse(BrowserInternalPage.allCases.contains { $0.url.absoluteString == address }, address)
+            XCTAssertTrue(BrowserInternalPage.isReplacedStockSettings(url(address)), address)
+            XCTAssertTrue(NavigationURLPolicy.allows(url(address), engine: everyEngine), "the engine itself admits \(address)")
+            XCTAssertFalse(NavigationURLPolicy.allowsShellRoute(url(address), engine: everyEngine), address)
+        }
+        for variant in ["chrome://settings/search/", "CHROME://SETTINGS/downloads", "chrome://settings/searchEngines?q=x"] {
+            XCTAssertFalse(NavigationURLPolicy.allowsShellRoute(url(variant), engine: everyEngine), variant)
+        }
+        XCTAssertFalse(BrowserInternalPage.isReplacedStockSettings(url("chrome://downloads/")), "Chromium's downloads page is not a settings page")
+        XCTAssertFalse(BrowserInternalPage.isReplacedStockSettings(url("https://example.com/search")))
+
+        // The two commands lead to Darni's Profiles pane, on either engine.
+        let store = SidebarStore.sample()
+        for schemes in [NavigationURLPolicy.EngineSchemes([]), everyEngine] {
+            let context = CommandBarContext(store: store, isSidebarVisible: true, closedTabStack: store.closedTabStack, navigationSchemes: schemes)
+            let commands = AppCommandRegistry.all(in: context)
+            for id in ["search-engine-settings", "download-settings"] {
+                let command = commands.first { $0.id == id }
+                XCTAssertEqual(command?.action, .showSettings(.profiles), id)
+                XCTAssertEqual(command?.isEnabled(in: context), true, id)
+            }
+        }
+    }
+
+    /// Never regress: what Darni cannot do yet stays reachable, through the
+    /// shell's own routes and from the command bar.
+    func testEveryKeptRouteStaysReachable() {
+        for entry in Self.kept {
+            XCTAssertTrue(NavigationURLPolicy.allowsShellRoute(url(entry.address), engine: everyEngine), entry.address)
+            XCTAssertFalse(BrowserInternalPage.isReplacedStockSettings(url(entry.address)), entry.address)
+        }
+        XCTAssertEqual(BrowserInternalPage.siteDetailsURL(origin: "https://a.test:8443")?.absoluteString,
+                       "chrome://settings/content/siteDetails?site=https://a.test:8443")
+        let store = SidebarStore.sample()
+        let context = CommandBarContext(store: store, isSidebarVisible: true, closedTabStack: store.closedTabStack, navigationSchemes: everyEngine)
+        let commands = AppCommandRegistry.all(in: context)
+        let expected: [String: BrowserInternalPage] = [
+            "browser-settings": .settings, "privacy-settings": .privacy, "site-settings": .siteSettings,
+            "clear-browsing-data": .clearBrowsingData, "import-browser-data": .importData,
+            "payment-settings": .payments, "notification-settings": .notifications,
+        ]
+        for (id, page) in expected {
+            let command = commands.first { $0.id == id }
+            XCTAssertEqual(command?.action, .openBrowserPage(page), id)
+            XCTAssertEqual(command?.isEnabled(in: context), true, id)
+        }
+        // The site panel on Chromium: Cookies and Site Data… and Site Settings…, and the footer badge.
+        let menu = SiteControlCenter.moreMenu(zoomPercent: 100, boosts: [], shellClearsSiteData: false, siteSettingsAvailable: true)
+        XCTAssertEqual(menu.last, [.cookiesAndSiteData, .siteSettings])
+        XCTAssertEqual(SiteControlCenter.footer(.secure, certificateAvailable: false, siteSettingsAvailable: true).action, .openSiteSettings)
+    }
+
+    /// The to-do document names every kept route, and the replaced ones.
+    func testTheToDoDocumentListsEveryKeptRoute() throws {
+        let document = try String(contentsOf: repository.appendingPathComponent("docs/STOCK-SETTINGS-ROUTES.md"), encoding: .utf8)
+        for entry in Self.kept {
+            XCTAssertTrue(document.contains("`\(entry.address)`"), "docs/STOCK-SETTINGS-ROUTES.md does not list \(entry.address)")
+        }
+        for address in Self.replaced {
+            XCTAssertTrue(document.contains("`\(address)`"), "docs/STOCK-SETTINGS-ROUTES.md does not say \(address) is replaced")
+        }
+        let keptSection = try XCTUnwrap(document.components(separatedBy: "## Replaced").first)
+        for address in Self.replaced {
+            XCTAssertFalse(keptSection.contains("`\(address)`"), "\(address) is listed as kept")
+        }
     }
 }

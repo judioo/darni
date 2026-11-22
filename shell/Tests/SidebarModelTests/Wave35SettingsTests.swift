@@ -308,4 +308,16 @@ final class Wave35SettingsTests: XCTestCase {
         XCTAssertTrue(single.otherWindows.isEmpty)
         XCTAssertEqual(WindowSessionSnapshot(windows: [], lastClosed: window(40, key: false)).launchWindowOnly.launchWindow?.frame.minX, 40)
     }
+
+    // MARK: Chromium settings pages
+
+    func testSettingsWindowPagesAreSettingsSubpages() {
+        for page: BrowserInternalPage in [.payments, .notifications, .privacy, .clearBrowsingData] {
+            XCTAssertEqual(page.url.host(), "settings", page.rawValue)
+            XCTAssertTrue(page.isAvailable(engine: .chromium), page.rawValue)
+            XCTAssertFalse(page.isAvailable(engine: []), page.rawValue)
+            XCTAssertTrue(BrowserInternalPage.settings.isShown(by: page.url), "reuses an open settings tab")
+        }
+        XCTAssertEqual(BrowserInternalPage.notifications.url.absoluteString, "chrome://settings/content/notifications")
+    }
 }

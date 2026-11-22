@@ -491,7 +491,11 @@ struct ProfilesSettingsPane: View {
         ArchivedSpacesGroup(model: model, profileID: profile.id)
         // Arc's icons and colours.
         let dataRows: [(BrowserInternalPage, String, Color)] = [
+            (.privacy, "lock.fill", .blue),
             (.passwords, "key.fill", .green),
+            (.payments, "creditcard.and.123", .yellow),
+            (.notifications, "bell.fill", .orange),
+            (.clearBrowsingData, "trash.fill", .red),
         ].filter { model.canOpenBrowserPage($0.0) }
         // Ad and tracker blocking, when the engine has it (CONTENT-BLOCKING.md §3).
         let blocking = model.contentBlocking.isAvailable
@@ -1039,6 +1043,13 @@ struct AdvancedSettingsPane: View {
                                   icon: icon("paintbrush.fill", .purple),
                                   isOn: Binding(get: { model.boostsEnabledInAllProfiles }, set: { model.boostsEnabledInAllProfiles = $0 }))
             }
+            if model.canOpenBrowserPage(.settings) {
+                HStack {
+                    Button("More Settings…") { model.openBrowserPage(.settings) }
+                    Spacer()
+                }
+                .padding(.top, 12)
+            }
         }
     }
 }
@@ -1050,19 +1061,20 @@ struct SafeBrowsingRow: Equatable {
     var isWarning: Bool
 
     init(_ status: SafeBrowsingStatus, now: Date = Date()) {
+        let level = " Choose the level in Privacy and security › Security."
         switch status {
         case .unavailable:
             value = "Unavailable"
-            info = "This build of Darni has no Safe Browsing key, so it can’t check sites or downloads against Google’s lists of phishing and malware."
+            info = "This build of Darni has no Safe Browsing key, so it can’t check sites or downloads against Google’s lists of phishing and malware. The protection level in Privacy and security has no effect."
             isWarning = true
         case .waitingForLists:
             value = "Starting"
-            info = "Darni is downloading Google’s lists of phishing and malware sites. Until they arrive, sites and downloads are not checked."
+            info = "Darni is downloading Google’s lists of phishing and malware sites. Until they arrive, sites and downloads are not checked." + level
             isWarning = false
         case .active(let date):
             value = "On"
             info = "Warnings before known phishing and malware sites and downloads. Lists updated "
-                + RelativeDateTimeFormatter().localizedString(for: date, relativeTo: now) + "."
+                + RelativeDateTimeFormatter().localizedString(for: date, relativeTo: now) + "." + level
             isWarning = false
         case .notUpdating:
             value = "Not working"

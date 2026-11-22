@@ -84,7 +84,7 @@ struct ReArcApp: App {
                 ShellMenuButtons(groups: [ShellMenus.miniSidebar(model)], overrides: model.shortcutOverrides)
             }
             CommandGroup(replacing: .importExport) {
-                ShellMenuButtons(groups: ShellMenus.importing(model), overrides: model.shortcutOverrides)
+                ShellMenuButtons(groups: ShellMenus.importing(model, chromiumImporter: false), overrides: model.shortcutOverrides)
             }
             CommandGroup(replacing: .printItem) {
                 ShellMenuButtons(groups: ShellMenus.capture(model), overrides: model.shortcutOverrides)

@@ -95,7 +95,7 @@ extension BrowserViewModel {
     /// Opens `url` as a new today tab, if the engine admits it. Chromium's
     /// own pages reuse a tab already on that page's host (Chrome's singleton rule).
     func openPageInNewTab(_ url: URL, title: String? = nil) {
-        // Never Chromium's stock settings, whoever asks (autofill's Manage… for addresses and cards).
+        // Never a Chromium settings page Darni has its own UI for (search engine, downloads), whoever asks.
         guard NavigationURLPolicy.allowsShellRoute(url, engine: engineHost.navigationSchemes) else { return }
         let name = title ?? url.host() ?? url.absoluteString
         if url.scheme?.lowercased() == "chrome",

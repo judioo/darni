@@ -43,8 +43,7 @@ struct ChromiumAutofillEvent {
         }
         popup = AutofillPopup(
             requestID: e.request_id, tabID: e.tab_id, product: AutofillProduct(rawValue: e.product),
-            field: CGRect(x: e.x, y: e.y, width: e.width, height: e.height),
-            rows: AutofillPopup.rowsWithoutStockSettings(rows, product: AutofillProduct(rawValue: e.product)),
+            field: CGRect(x: e.x, y: e.y, width: e.width, height: e.height), rows: rows,
             selected: e.selected >= 0 ? Int(e.selected) : nil
         )
         settingsURL = string(e.settings_url)
@@ -107,8 +106,7 @@ extension ChromiumRuntime {
             + "settings \(event.settingsURL.isEmpty ? "-" : event.settingsURL)")
         promptEvents["autofill", default: 0] += 1
         if event.phase == .openSettings {
-            // "Manage passwords…" (row or ReArcAutofillManage): Chromium's password manager, opened as a
-            // tab. A settings page (addresses, payment methods) is refused where the tab would open.
+            // "Manage…" (row or ReArcAutofillManage): Chromium's settings page, opened as a tab.
             if let url = URL(string: event.settingsURL) { onAutofillSettings?(url, engine(forTab: event.tabID)) }
             return
         }
