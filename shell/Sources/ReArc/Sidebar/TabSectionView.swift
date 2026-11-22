@@ -186,11 +186,43 @@ struct SidebarEntryRow: View, Equatable {
                 paneRename: { SidebarRowRename(row: $0, model: model) },
                 onRenamePane: { model.beginRename(.tab($0)) },
                 paneDropBoundary: model.splitPaneChipDrag?.boundary(in: split),
-                onHoverPane: { pane, hovering in model.splitPaneChipHovered(hovering, tabID: pane, in: split.id) }
+                onHoverPane: { pane, hovering in model.splitPaneChipHovered(hovering, tabID: pane, in: split.id) },
+                onDragPane: { pane in
+                    // The chip's own drag: it carries the split's row, as the row's drag does,
+                    // and along the row it reorders the panes.
+                    model.splitPaneChipDragBegan(pane, in: split)
+                    draggedItemID = split.id
+                    SidebarDropHaptics.dragBegan()
+                    return SidebarDragPayload.itemProvider(for: split.id)
+                }
             ) { paneID in
                 SectionItemContextMenu(model: model, entry: entry, paneID: paneID)
             }
         }
+    }
+}
+
+/// The sidebar's insertion line: where a dragged row lands between rows, or
+/// a split's pane between its chips. One weight and one colour for both:
+/// the accent every drop area of the sidebar uses (`Color.accentColor`,
+/// the Mac's own; on macOS it does not follow a view's `tint`).
+struct SidebarInsertionLine: View {
+    /// The line's weight, across its length.
+    static let thickness: CGFloat = 2
+    /// The upright line's length: the split row's whole height. A chip's
+    /// drag image is the chip, 26 pt tall, so the line shows above and
+    /// below it wherever the image is.
+    static let uprightLength: CGFloat = SidebarMetrics.rowHeight
+
+    /// `.horizontal` lies between two rows; `.vertical` stands between two chips.
+    let axis: Axis
+
+    var body: some View {
+        Capsule()
+            .fill(Color.accentColor)
+            .frame(width: axis == .vertical ? Self.thickness : nil,
+                   height: axis == .vertical ? Self.uprightLength : Self.thickness)
+            .allowsHitTesting(false)
     }
 }
 
@@ -236,12 +268,9 @@ struct SidebarDropRow<Content: View>: View {
     @ViewBuilder
     private func insertionLine(_ position: SidebarDropPosition) -> some View {
         if dropPosition == position {
-            Capsule()
-                .fill(Color.accentColor)
-                .frame(height: 2)
+            SidebarInsertionLine(axis: .horizontal)
                 .padding(.horizontal, 6)
                 .offset(y: position == .before ? -1 : 1)
-                .allowsHitTesting(false)
         }
     }
 }
@@ -337,6 +366,8 @@ struct SidebarRowDropDelegate: DropDelegate {
             }
             return DropProposal(operation: destination == nil ? .forbidden : .move)
         }
+        // Over any other row a chip's drag is off its own row, whether or not that row saw it go.
+        model.splitPaneChipDragLeftRow()
         guard let position = position(for: info) else {
             if dropState?.targetID == target.id { dropState = nil }
             return DropProposal(operation: .forbidden)
@@ -349,8 +380,12 @@ struct SidebarRowDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         if dropState?.targetID == target.id { dropState = nil }
-        // Off its row the chip's drag is the split's own again: no insertion line left behind.
-        if case .split(let split) = target { model.splitPaneChipDragMoved(to: nil, in: split) }
+        // Off its row the chip's drag is the split's own again: no insertion line left behind,
+        // and the sidebar's drop areas open, as for any row's drag.
+        if case .split(let split) = target {
+            model.splitPaneChipDragMoved(to: nil, in: split)
+            if draggedItemID == target.id { model.splitPaneChipDragLeftRow() }
+        }
     }
 
     func performDrop(info: DropInfo) -> Bool {

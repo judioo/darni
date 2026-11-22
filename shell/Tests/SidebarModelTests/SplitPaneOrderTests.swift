@@ -177,6 +177,51 @@ final class SplitPaneOrderTests: XCTestCase {
         XCTAssertNil(drag.boundary(in: other), "another split's row shows nothing")
     }
 
+    // MARK: The rows under a chip's drag (found on screen 2026-11-22)
+
+    /// Where a row's top is in the sidebar list, from the rows above it.
+    private func top(of id: UUID, in rows: [SidebarListRow]) throws -> Double {
+        let index = try XCTUnwrap(rows.firstIndex { $0.id == .item(id) })
+        let heights = SidebarListHeights()
+        return rows[..<index].reduce(0) { $0 + heights.height($1, measured: nil) }
+    }
+
+    func testAChipDraggedAlongItsRowOpensNoDropAreasUntilItLeavesTheRow() throws {
+        let (store, splitID, tabs) = try makeSplit()
+        _ = store.addTab(kind: .pinned, title: "Pinned", url: url("pinned"))
+        func rows(dragging: Bool, chip: SplitPaneChipDrag?) -> [SidebarListRow] {
+            SidebarListRow.rows(outline: store.outline(for: store.activeSpaceID), expanded: [], pinnedCollapsed: false,
+                                isDragging: SidebarDragLayout.opensDropAreas(dragging: dragging ? splitID : nil, chipDrag: chip)) { _ in nil }
+        }
+        let still = rows(dragging: false, chip: nil)
+        let y = try top(of: splitID, in: still)
+
+        // The chip's drag along its row: the same rows, the split's row where it was.
+        var chip = SplitPaneChipDrag(splitID: splitID, tabID: tabs[0].id)
+        XCTAssertTrue(chip.holdsRowsInPlace)
+        XCTAssertFalse(SidebarDragLayout.opensDropAreas(dragging: splitID, chipDrag: chip))
+        XCTAssertEqual(rows(dragging: true, chip: chip), still)
+        chip.destination = 2
+        XCTAssertEqual(try top(of: splitID, in: rows(dragging: true, chip: chip)), y, "the row a chip is dragged along does not move")
+
+        // Off the row: no place among the chips, and the drop rows open. The one after Pinned is 10 pt.
+        chip.leaveRow()
+        XCTAssertTrue(chip.hasLeftRow)
+        XCTAssertNil(chip.destination)
+        XCTAssertNil(chip.boundary(in: try XCTUnwrap(store.split(withID: splitID))))
+        XCTAssertTrue(SidebarDragLayout.opensDropAreas(dragging: splitID, chipDrag: chip))
+        XCTAssertEqual(try top(of: splitID, in: rows(dragging: true, chip: chip)), y + SidebarListHeights().sectionEnd)
+
+        // A row's own drag opens them as it begins; no drag opens nothing, whatever is left of a chip's.
+        XCTAssertTrue(SidebarDragLayout.opensDropAreas(dragging: splitID, chipDrag: nil))
+        XCTAssertEqual(try top(of: splitID, in: rows(dragging: true, chip: nil)), y + SidebarListHeights().sectionEnd)
+        XCTAssertFalse(SidebarDragLayout.opensDropAreas(dragging: nil, chipDrag: nil))
+        XCTAssertFalse(SidebarDragLayout.opensDropAreas(dragging: nil, chipDrag: chip))
+        // Another row's drag is not held by a chip drag left over from this split.
+        let fresh = SplitPaneChipDrag(splitID: splitID, tabID: tabs[0].id)
+        XCTAssertTrue(SidebarDragLayout.opensDropAreas(dragging: tabs[1].id, chipDrag: fresh))
+    }
+
     // MARK: Saved and synced
 
     func testAMoveIsSavedAndSyncedAsAnEditOfTheSplit() throws {

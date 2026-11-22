@@ -76,7 +76,9 @@ struct SidebarView: View {
             // A swipe over the favorites pages the spaces under them too.
             VStack(spacing: 0) {
                 // Arc shows no favorites row, and no divider, until there are favorites.
-                if hasFavorites || draggedItemID != nil {
+                // A drag opens it as a place to drop, but not a pane chip's along its own
+                // row: the rows under it must not move from under the pointer.
+                if hasFavorites || model.sidebarOpensDropAreas(dragging: draggedItemID) {
                     FavoritesRowView(model: model, draggedTabID: $draggedItemID, dropState: $dropState)
                         .padding(.horizontal, SidebarMetrics.rowInset)
                     if hasFavorites {
@@ -225,6 +227,7 @@ private struct SidebarSpacePage: View, Equatable {
     var body: some View {
         let showsThemeEditor = model.themePopoverSpaceID == spaceID && model.isKeyBrowserWindow(window)
         SidebarListTable(model: model, spaceID: spaceID, tint: model.themeColor(in: window),
+                         opensDropAreas: model.sidebarOpensDropAreas(dragging: draggedItemID),
                          draggedItemID: $draggedItemID, dropState: $dropState)
         // Edit Theme Color hangs the editor under the header
         // (ARC-RECORDING-ANALYSIS.md §2.1). It is presented from here, over

@@ -14,7 +14,8 @@ enum SplitRowMetrics {
 /// §8): one row on the tab pitch. Unnamed, its panes sit side by side as
 /// chips; named or given an icon, it reads "<icon> <name>" like a tab, and
 /// double-click renames it there. A chip dragged onto another chip's place
-/// reorders the panes; the insertion line shows where it lands.
+/// reorders the panes; the insertion line shows where it lands. Dragged off
+/// the row, the chip takes the whole split with it.
 struct SplitRowView<Menu: View>: View {
     let split: SplitViewItem
     let isSelected: Bool
@@ -39,6 +40,10 @@ struct SplitRowView<Menu: View>: View {
     var paneDropBoundary: Int? = nil
     /// The pointer went on or off a pane's chip.
     var onHoverPane: (Tab.ID, Bool) -> Void = { _, _ in }
+    /// A drag began on a pane's chip: what it carries. With it each chip is
+    /// a drag source of its own, so the drag image is that chip alone. The
+    /// whole row's image covered the other chips and the insertion line.
+    var onDragPane: ((Tab.ID) -> NSItemProvider)? = nil
     /// The split's menu; a chip passes its pane for the pane's own items.
     @ViewBuilder let menu: (Tab.ID?) -> Menu
 
@@ -143,6 +148,7 @@ struct SplitRowView<Menu: View>: View {
                     onRename: { onRenamePane(tab.id) },
                     onHover: { onHoverPane(tab.id, $0) }
                 )
+                .modifier(PaneChipDragSource(provider: onDragPane.map { begin in { begin(tab.id) } }))
                 .contextMenu { menu(tab.id) }
                 .overlay(alignment: .leading) { paneInsertionLine(at: index, edge: .leading) }
                 .overlay(alignment: .trailing) { paneInsertionLine(at: index, edge: .trailing) }
@@ -155,17 +161,14 @@ struct SplitRowView<Menu: View>: View {
 
     /// The sidebar's insertion line, upright: the dragged pane lands in the
     /// gap it marks. Every boundary but the last is drawn on the leading
-    /// edge of the chip after it.
+    /// edge of the chip after it. It is the row insertion line's weight and
+    /// colour and the row's height, taller than the chip it stands beside.
     @ViewBuilder
     private func paneInsertionLine(at index: Int, edge: HorizontalEdge) -> some View {
         let boundary = edge == .leading ? index : index + 1
         if paneDropBoundary == boundary, edge == .leading || index == split.tabs.count - 1 {
-            Capsule()
-                .fill(Color.accentColor)
-                .frame(width: 2)
-                .padding(.vertical, 4)
+            SidebarInsertionLine(axis: .vertical)
                 .offset(x: edge == .leading ? -2 : 2)
-                .allowsHitTesting(false)
         }
     }
 
@@ -179,6 +182,19 @@ struct SplitRowView<Menu: View>: View {
         .buttonStyle(.plain)
         .help(help)
         .accessibilityLabel(help)
+    }
+}
+
+/// Makes a pane's chip a drag source when the row gives it something to carry.
+private struct PaneChipDragSource: ViewModifier {
+    let provider: (() -> NSItemProvider)?
+
+    func body(content: Content) -> some View {
+        if let provider {
+            content.onDrag(provider)
+        } else {
+            content
+        }
     }
 }
 
