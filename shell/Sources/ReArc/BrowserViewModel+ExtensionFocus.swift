@@ -74,9 +74,7 @@ extension BrowserViewModel {
             if let target, target != store.activeSpaceID { store.selectSpace(target) }
             selectTab(id)
         } else {
-            // As PiP's back-to-tab: coming to the tab is not a switch away from it.
-            autoPiPEnteredTabIDs.remove(id)
-            showTab(id)
+            revealTab(id)
         }
         return .onScreen
     }

@@ -204,6 +204,13 @@ final class EngineHost {
         return engines.map { (key, engine) in (key.tabID, key.profileID, engine) }
     }
 
+    /// The sidebar tab `engine` shows; nil for an engine of no tab (a peek, a
+    /// Little Arc, a private window) or none at all.
+    func tabID(showing engine: AnyObject?) -> Tab.ID? {
+        guard let engine else { return nil }
+        return allTabEngines().first { ($0.2 as AnyObject) === engine }?.0
+    }
+
     /// Drops cached engines for the given tab ids (all profile contexts).
     func evictEngines(forTabIDs ids: [Tab.ID]) {
         let idSet = Set(ids)

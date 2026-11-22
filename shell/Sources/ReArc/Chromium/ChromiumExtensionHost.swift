@@ -267,7 +267,7 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
                     model.requestLittleArcWindow(record.id)
                 }
             } else {
-                guard let id = model.engineHost.allTabEngines().first(where: { ($0.2 as AnyObject) === engine })?.0 else {
+                guard let id = model.engineHost.tabID(showing: engine) else {
                     return decline(request, "tab \(tab) is not a sidebar tab")
                 }
                 let showing = model.extensionActivatedTab(id)
@@ -348,7 +348,7 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
         guard let model else { return declineLink(event, "no browser model") }
         let store = model.store
         let source = runtime.engine(forTab: event.openerTabID)
-        let sourceTab = source.flatMap { engine in model.engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0 }
+        let sourceTab = model.engineHost.tabID(showing: source)
         let placement = LinkOpenPlacement.resolve(disposition: event.disposition, littleArcKeysHeld: model.takeLittleArcClick(),
                                                   sourceTab: sourceTab)
         func inProfile(_ space: UUID) -> Bool {

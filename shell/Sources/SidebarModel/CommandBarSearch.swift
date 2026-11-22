@@ -150,6 +150,12 @@ public enum CommandBarSearch {
                 if let named { titles.insert(named) }
                 return true
             }
+            /// The first `tabLimit` of `entries` not listed yet, as Switch to Tab rows.
+            func appendTabs(_ entries: [TabIndex.Entry]) {
+                for entry in entries.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
+                    output.append(TabIndex.row(entry))
+                }
+            }
             // What the typed text is: an address to open, or words to search.
             let current = live.flatMap { $0.applies(to: query) ? $0 : nil }
             let resolved: URL?
@@ -185,20 +191,14 @@ public enum CommandBarSearch {
                 output.append(openRow(url))
                 let typedKey = VisitHistory.key(for: url)
                 let exact = typedKey == nil ? [] : (ranked.first + ranked.later).filter { $0.historyKey == typedKey }
-                for entry in exact.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
-                    output.append(TabIndex.row(entry))
-                }
-                for entry in ranked.first.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
-                    output.append(TabIndex.row(entry))
-                }
+                appendTabs(exact)
+                appendTabs(ranked.first)
                 // Now the typed page counts as listed, for history and suggestions.
                 _ = isNew(url, title: url.host() ?? url.absoluteString)
             } else {
                 let firstTabs = ranked.first.filter { completedHost == nil || Self.plainHost($0.tab.url) == completedHost }
                 let laterFirst = ranked.first.filter { completedHost != nil && Self.plainHost($0.tab.url) != completedHost }
-                for entry in firstTabs.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
-                    output.append(TabIndex.row(entry))
-                }
+                appendTabs(firstTabs)
                 if let completed, let inlineCompletion, !firstTabs.contains(where: { Self.plainHost($0.tab.url) == completedHost }),
                    isNew(completed, title: inlineCompletion) {
                     output.append(Result(
@@ -209,9 +209,7 @@ public enum CommandBarSearch {
                         destinationURL: completed
                     ))
                 }
-                for entry in laterFirst.prefix(tabLimit) where isNew(entry.tab.url, title: entry.tab.displayTitle) {
-                    output.append(TabIndex.row(entry))
-                }
+                appendTabs(laterFirst)
                 if let url = direct, url.host() != completed?.host(), isNew(url, title: url.host() ?? url.absoluteString) {
                     output.append(openRow(url))
                 }

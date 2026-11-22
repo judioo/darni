@@ -194,8 +194,8 @@ else
   plutil -remove ReArcReleaseVerification "$PLIST" 2>/dev/null || true
 fi
 
-# The executable keeps its name; the two names people see (menu bar, Dock, Finder's Get Info,
-# and Sparkle's User-Agent "Darni/<version> Sparkle/<version>") are Darni.
+# The executable keeps its name; the name in the menu bar is Darni. The name Finder, the Dock
+# and Spotlight show, and the one Sparkle uses, are set below.
 plutil -replace CFBundleExecutable -string ReArc "$PLIST"
 plutil -replace CFBundleName -string Darni "$PLIST"
 # Finder, the Dock, Launchpad and Spotlight show an app's localized CFBundleDisplayName only

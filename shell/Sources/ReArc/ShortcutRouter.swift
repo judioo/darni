@@ -140,6 +140,20 @@ final class ShortcutRouter {
         }
         return false
     }
+
+    /// A SwiftUI field that asked for the keyboard as it appeared: it can be
+    /// outside the window still, and a focused page then keeps the keyboard.
+    /// While the key window's page holds it, `refocus` asks again, every
+    /// 0.03 s and at most `attempts` times. It never runs while the field has
+    /// the keyboard, so typing in the field is never interrupted. The command
+    /// bar and Little Darni's space picker.
+    static func reclaimFocusFromPage(attempts: Int = 5, refocus: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+            guard attempts > 0, isWebContent(NSApp.keyWindow?.firstResponder) else { return }
+            refocus()
+            reclaimFocusFromPage(attempts: attempts - 1, refocus: refocus)
+        }
+    }
 }
 
 extension BrowserViewModel {
