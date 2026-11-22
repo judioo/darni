@@ -477,24 +477,7 @@ struct ProfilesSettingsPane: View {
                 Button("Edit…") { editor = ProfileEditorRequest(profile: profile) }
             }
         }
-        if let search = model.activeSearchEngineSettings {
-            SettingsGroup {
-                SettingsLabeledRow(label: "Search engine") {
-                    SettingsPopUp(label: "Search engine", selection: Binding(
-                        get: { search.defaultEngine(for: profile.id) ?? "" },
-                        set: { model.setDefaultSearchEngine($0, for: profile.id) }
-                    ), options: search.engines(for: profile.id).map { ($0.id, $0.name) })
-                    .disabled(!search.isEditable(for: profile.id))
-                }
-                if model.canOpenBrowserPage(.searchSettings) {
-                    SettingsLabeledRow(label: "Manage search") { Button("Search Settings…") { open(.searchSettings, in: profile) } }
-                }
-            }
-        } else if model.canOpenBrowserPage(.searchSettings) {
-            SettingsGroup {
-                SettingsLabeledRow(label: "Search engine") { Button("Search Settings…") { open(.searchSettings, in: profile) } }
-            }
-        }
+        ProfileSearchEngineGroup(model: model, profile: profile)
         SettingsGroup {
             SettingsLabeledRow(label: "Archive tabs after",
                                info: "Today tabs you haven't opened in this long move to the Archive. Pinned tabs and Favorites stay. Each profile has its own setting.") {
@@ -503,9 +486,7 @@ struct ProfilesSettingsPane: View {
                     set: { model.store.setAutoArchiveThreshold($0, for: profile.id) }
                 ), options: AutoArchiveThreshold.options)
             }
-            if model.canOpenBrowserPage(.downloadSettings) {
-                SettingsLabeledRow(label: "Download location") { Button("Download Settings…") { open(.downloadSettings, in: profile) } }
-            }
+            DownloadLocationRow(downloads: model.downloads)
         }
         ArchivedSpacesGroup(model: model, profileID: profile.id)
         // Arc's icons and colours.

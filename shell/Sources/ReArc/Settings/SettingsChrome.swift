@@ -85,6 +85,8 @@ struct SettingsPopUp<Value: Hashable>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .accessibilityLabel(label)
+        // The label replaces the title the pop-up shows: VoiceOver reads the choice as its value.
+        .accessibilityValue(options.first { $0.value == selection }?.title ?? "")
     }
 }
 

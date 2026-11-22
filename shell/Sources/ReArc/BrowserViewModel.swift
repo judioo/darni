@@ -2149,7 +2149,7 @@ final class BrowserViewModel {
     }
 
     /// The WebKit search preference (provider and suggestions); nil on
-    /// Chromium, whose default search lives in chrome://settings/search.
+    /// Chromium, whose default search is each profile's own (`searchEngineSettings`).
     var webKitSearchPreference: SearchProviderPreference? {
         get {
             _ = searchProviderRevision
@@ -2348,6 +2348,8 @@ final class BrowserViewModel {
             importBookmarksFile()
         case .importFromBrowser:
             showBrowserImport()
+        case .showSettings(let pane):
+            showSettings(pane)
         case .reinstallExtensions:
             startPendingExtensionReinstall()
         case .pickElementToEdit:

@@ -2,7 +2,7 @@ import Foundation
 
 /// The command bar's default web search (Chromium `TemplateURL`). On
 /// Chromium it comes from the profile's TemplateURLService through
-/// `ReArcSearchGetDefaultProvider` (ABI 1.26, chrome://settings/search
+/// `ReArcSearchGetDefaultProvider` (ABI 1.26; Settings › Profiles
 /// changes it); on WebKit it is the shell preference (`SearchProviderPreference`).
 public struct SearchProvider: Codable, Hashable, Sendable {
     public var id: String
@@ -107,7 +107,7 @@ public struct SearchProvider: Codable, Hashable, Sendable {
 }
 
 /// WebKit's search settings, remembered in user defaults. Chromium keeps
-/// its own in the profile (chrome://settings/search).
+/// its own in each profile (Settings › Profiles' search engine pop-up).
 public struct SearchProviderPreference: Equatable, Sendable {
     public static let providerKey = "ReArcSearchProvider"
     public static let suggestionsKey = "ReArcSearchSuggestions"

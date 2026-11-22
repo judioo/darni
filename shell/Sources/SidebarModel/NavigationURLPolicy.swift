@@ -62,6 +62,15 @@ public enum NavigationURLPolicy {
         }
     }
 
+    /// A page the shell opens of its own accord (a menu item, a Settings row,
+    /// a prompt's link, the engine's "Manage…" address), as opposed to an
+    /// address the person entered: what `allows` admits, except the stock
+    /// settings pages Darni has replaced with its own UI
+    /// (`BrowserInternalPage.isReplacedStockSettings`).
+    public static func allowsShellRoute(_ url: URL, engine: EngineSchemes) -> Bool {
+        allows(url, engine: engine) && !BrowserInternalPage.isReplacedStockSettings(url)
+    }
+
     /// A web page from outside ReArc's own UI: an import (Arc, browsers,
     /// bookmark files) or a synced tab (RC-0.1.0-602 T-07). http or https
     /// with a host and no user name or password; never `data:`, `file:`,

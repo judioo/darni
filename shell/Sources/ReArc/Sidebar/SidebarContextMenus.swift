@@ -457,7 +457,7 @@ struct SpaceProfileMenu: View {
 /// group in `spaceID`, the list's space.
 enum SidebarEmptySpaceMenu {
     static func menu(model: BrowserViewModel, spaceID: Space.ID) -> NSMenu {
-        let menu = NSMenu()
+        let menu = NSMenu.darniContextMenu()
         menu.addItem(ClosureMenuItem("New Tab") { model.newTab() })
         menu.addItem(ClosureMenuItem("New Folder") { model.newFolder() })
         if model.tabGroupsEnabled {

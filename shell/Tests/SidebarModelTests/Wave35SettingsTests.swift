@@ -312,7 +312,7 @@ final class Wave35SettingsTests: XCTestCase {
     // MARK: Chromium settings pages
 
     func testSettingsWindowPagesAreSettingsSubpages() {
-        for page: BrowserInternalPage in [.searchSettings, .downloadSettings, .payments, .notifications, .privacy, .clearBrowsingData] {
+        for page: BrowserInternalPage in [.payments, .notifications, .privacy, .clearBrowsingData] {
             XCTAssertEqual(page.url.host(), "settings", page.rawValue)
             XCTAssertTrue(page.isAvailable(engine: .chromium), page.rawValue)
             XCTAssertFalse(page.isAvailable(engine: []), page.rawValue)

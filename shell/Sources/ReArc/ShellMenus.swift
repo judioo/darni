@@ -83,14 +83,17 @@ struct ShellMenuItem: Identifiable {
     /// shifted shortcut by its shifted character with Shift left out of the
     /// mask ("C" + ⌘ for ⇧⌘C, "+" + ⌃ for ⌃⇧=), as Arc's nib stores them; a
     /// lowercase key with an explicit Shift never matches a real key press.
+    /// A digit is the exception: it keeps its key and an explicit Shift
+    /// ("2" + ⇧⌘ for Capture), which the menu shows as ⇧⌘2, like macOS's own
+    /// ⇧⌘3–5, and not as ⌘@. AppKit matches it: with ⌘ held a real ⇧2 press
+    /// reports "2" as its characters.
     var appKitKeyEquivalent: (key: String, mask: NSEvent.ModifierFlags) {
         Self.appKitKeyEquivalent(menuKeyEquivalent, modifiers)
     }
 
-    /// US-layout shifted characters, for `appKitKeyEquivalent`.
+    /// US-layout shifted characters, for `appKitKeyEquivalent`. No digits: ⇧⌘2 stays "2" with Shift.
     private static let shiftedCharacters: [Character: Character] = [
-        "`": "~", "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
-        "-": "_", "=": "+", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?",
+        "`": "~", "-": "_", "=": "+", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?",
     ]
 
     static func appKitKeyEquivalent(_ key: String, _ modifiers: NSEvent.ModifierFlags) -> (key: String, mask: NSEvent.ModifierFlags) {
@@ -101,7 +104,7 @@ struct ShellMenuItem: Identifiable {
         } else if let mapped = shiftedCharacters[character] {
             shifted = mapped
         } else {
-            return (key, modifiers)  // Tab, Delete, arrows, function keys keep an explicit Shift.
+            return (key, modifiers)  // Digits, Tab, Delete, arrows and function keys keep an explicit Shift.
         }
         return (String(shifted), modifiers.subtracting(.shift))
     }
