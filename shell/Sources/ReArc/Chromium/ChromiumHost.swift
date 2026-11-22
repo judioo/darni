@@ -378,7 +378,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         // the engine has reported its capabilities, so there the check was always false
         // and Settings › Profiles had no search engine pop-up on an ordinary launch.
         if runtime.capabilities.searchEngines {
-            model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
+            model.searchEngineSettings = ChromiumSearchEngineSettings(source: runtime)
         }
         model.presentAirTrafficControl = { [weak self] in self?.presentAirTrafficControl() }
         if runtime.capabilities.perfMetrics {
