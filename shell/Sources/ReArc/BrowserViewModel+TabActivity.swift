@@ -191,10 +191,18 @@ extension BrowserViewModel {
     func showToast(_ message: String, systemImage: String, keycaps: [String] = [], action: ShellToast.Action? = nil,
                    placement: ShellToast.Placement = .corner, duration: TimeInterval = ShellToast.defaultDuration) {
         let toast = ShellToast(message: message, systemImage: systemImage, keycaps: keycaps, action: action, placement: placement)
-        withAnimation(ShellToast.inAnimation) { self.toast = toast }
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-            guard let self, self.toast?.id == toast.id else { return }
-            withAnimation(ShellToast.outAnimation) { self.toast = nil }
+        runToast(toast, for: duration, show: { [weak self] in self?.toast = $0 }, shown: { [weak self] in self?.toast })
+    }
+
+    /// A toast's life in one slot: in, and out again after `duration` unless a
+    /// newer toast took the slot meanwhile. `show` sets the slot (nil clears
+    /// it) and `shown` reads it. The browser windows' toast and a Little Darni
+    /// window's (`showLittleArcToast`) both live this way.
+    func runToast(_ toast: ShellToast, for duration: TimeInterval, show: @escaping (ShellToast?) -> Void, shown: @escaping () -> ShellToast?) {
+        withAnimation(ShellToast.inAnimation) { show(toast) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            guard shown()?.id == toast.id else { return }
+            withAnimation(ShellToast.outAnimation) { show(nil) }
         }
     }
 

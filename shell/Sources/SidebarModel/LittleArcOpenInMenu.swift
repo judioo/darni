@@ -157,11 +157,11 @@ public enum LittleArcOpenInMenu {
         }
         /// `fixedHeader` is said whatever else is listed.
         var groups: [(id: Profile.ID, profile: Profile, fixedHeader: String?, entries: [Entry])] = []
-        let listed = store.listedProfiles
-        for profile in listed.filter({ $0.id == own }) + listed.filter({ $0.id != own }) {
-            let spaces = store.spaces(listedIn: profile.id)
+        // The list Move to Profile is made from, with the window's own profile first.
+        let listed = store.listedSpacesByProfile()
+        for (profile, spaces) in listed.filter({ $0.profile.id == own }) + listed.filter({ $0.profile.id != own }) {
             guard inContainer, profile.id == own else {
-                if !spaces.isEmpty { groups.append((profile.id, profile, nil, entries(spaces))) }
+                groups.append((profile.id, profile, nil, entries(spaces)))
                 continue
             }
             let inside = spaces.filter { $0.profileID == window.profileID }

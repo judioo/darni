@@ -204,7 +204,11 @@ enum LibraryColumnMetrics {
 /// The search, the tray's folder and Clear row, then every download in an
 /// AppKit table (`DownloadsLibraryTable`, perf-8). The page reads only the
 /// table's emptiness, so a transfer's progress redraws one cell, not the page.
-private struct LibraryDownloadsPage: View {
+struct LibraryDownloadsPage: View {
+    /// The footer link to the engine's own downloads page (`chrome://downloads`).
+    /// It is named for what it opens, not for the engine.
+    static let enginePageLinkTitle = "Open Downloads Page"
+
     let model: BrowserViewModel
     @State private var query = ""
     @State private var table = DownloadsTableState()
@@ -235,7 +239,7 @@ private struct LibraryDownloadsPage: View {
             }
             .onAppear { model.downloads.loadEngineHistory() }
             if BrowserInternalPage.downloads.isAvailable(engine: model.engineHost.navigationSchemes) {
-                Button("Open Chromium’s Downloads Page") {
+                Button(Self.enginePageLinkTitle) {
                     model.openBrowserPage(.downloads)
                     model.closeLibrary()
                 }
@@ -252,6 +256,10 @@ private struct LibraryDownloadsPage: View {
 /// with the easels it is on. Click to preview; the menu copies it, adds it
 /// to an easel, opens its page or deletes it.
 struct LibraryMediaPage: View {
+    /// With no capture yet: where captures come from, by the commands' own names.
+    static let emptyDescription = "Captures from \(CaptureCommandTitle.fullPage), \(CaptureCommandTitle.visibleArea) "
+        + "and the capture tools collect here."
+
     let model: BrowserViewModel
     @State private var filter: LibraryMediaFilter = .all
     @State private var query = ""
@@ -271,8 +279,8 @@ struct LibraryMediaPage: View {
                 .labelsHidden()
                 .controlSize(.small)
                 Menu {
-                    Button("Capture Visible Area") { captureFromLibrary(.visible) }
-                    Button("Capture Full Page") { captureFromLibrary(.fullPage) }
+                    Button(CaptureCommandTitle.visibleArea) { captureFromLibrary(.visible) }
+                    Button(CaptureCommandTitle.fullPage) { captureFromLibrary(.fullPage) }
                 } label: {
                     Image(systemName: "camera")
                 }
@@ -289,9 +297,7 @@ struct LibraryMediaPage: View {
                 ContentUnavailableView(
                     model.store.captures.isEmpty ? "No captures yet" : "No matches",
                     systemImage: "photo.on.rectangle.angled",
-                    description: Text(model.store.captures.isEmpty
-                        ? "Captures from Capture Page, Capture Visible Area and the capture tools collect here."
-                        : "Try another search or filter.")
+                    description: Text(model.store.captures.isEmpty ? Self.emptyDescription : "Try another search or filter.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

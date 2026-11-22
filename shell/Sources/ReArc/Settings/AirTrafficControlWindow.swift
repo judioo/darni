@@ -1,4 +1,5 @@
 import AppKit
+import SidebarModel
 import SwiftUI
 
 /// The Air Traffic Control window of the Chromium shell. It is wide enough for
@@ -8,7 +9,8 @@ import SwiftUI
 /// scroll bar covered the bin buttons).
 enum AirTrafficControlWindow {
     static let title = "Air Traffic Control"
-    static let autosaveName = "AirTrafficControl"
+    /// Only the frame is remembered (a launch on `REARC_DATA_DIR` keeps its own).
+    static let autosaveName = ShellDataLocation.isOverridden ? "ReArcAirTrafficControl.isolated" : "ReArcAirTrafficControl"
     static let defaultContentSize = NSSize(width: 880, height: 480)
     static let minContentSize = NSSize(width: AirTrafficControlView.minWidth, height: AirTrafficControlView.minHeight)
 

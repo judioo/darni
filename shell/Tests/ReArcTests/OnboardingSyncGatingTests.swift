@@ -19,7 +19,12 @@ struct OnboardingSyncGatingTests {
         let server = InMemorySyncServer()
         let coordinator = SidebarSyncCoordinator(transport: server.transport(account: "fixture"), stateStore: InMemorySyncStateStore(), deviceID: "A")
         let scheduler = SidebarSyncScheduler(coordinator: coordinator)
-        scheduler.sleeper = { _ in try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        // Edits, retries and "Sync now" run at once; only the poll loop waits (until stopped).
+        // A sleeper that held every delay for an hour stalled the test whenever an edit's
+        // push reached the scheduler after it started: its debounce replaced the pending cycle.
+        scheduler.sleeper = { delay in
+            if delay >= SidebarSyncScheduler.pollInterval { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        }
         let model = BrowserViewModel(persistence: SidebarFilePersistence(fileURL: folder.appendingPathComponent("sidebar.json")), syncEngine: scheduler, faviconStore: FaviconStore(directory: nil))
         #expect(model.isFirstRun)
         model.beginFirstRunOnboarding()
@@ -59,7 +64,12 @@ struct OnboardingSyncGatingTests {
 
         let coordinator = SidebarSyncCoordinator(transport: server.transport(account: "fixture"), stateStore: InMemorySyncStateStore(), deviceID: "A")
         let scheduler = SidebarSyncScheduler(coordinator: coordinator)
-        scheduler.sleeper = { _ in try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        // Edits, retries and "Sync now" run at once; only the poll loop waits (until stopped).
+        // A sleeper that held every delay for an hour stalled the test whenever an edit's
+        // push reached the scheduler after it started: its debounce replaced the pending cycle.
+        scheduler.sleeper = { delay in
+            if delay >= SidebarSyncScheduler.pollInterval { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        }
         let model = BrowserViewModel(persistence: SidebarFilePersistence(fileURL: folder.appendingPathComponent("sidebar.json")), syncEngine: scheduler, faviconStore: FaviconStore(directory: nil))
         model.finishFirstRunOnboarding()
         _ = model.store.addTab(kind: .pinned, title: "Just imported", url: URL(string: "https://mine.invalid")!)
@@ -98,7 +108,12 @@ struct OnboardingSyncGatingTests {
         let coordinator = SidebarSyncCoordinator(transport: server.transport(account: "fixture"), stateStore: InMemorySyncStateStore(), deviceID: "A")
         coordinator.stallTimeout = 0.1
         let scheduler = SidebarSyncScheduler(coordinator: coordinator)
-        scheduler.sleeper = { _ in try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        // Edits, retries and "Sync now" run at once; only the poll loop waits (until stopped).
+        // A sleeper that held every delay for an hour stalled the test whenever an edit's
+        // push reached the scheduler after it started: its debounce replaced the pending cycle.
+        scheduler.sleeper = { delay in
+            if delay >= SidebarSyncScheduler.pollInterval { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        }
         let model = BrowserViewModel(persistence: SidebarFilePersistence(fileURL: folder.appendingPathComponent("sidebar.json")), syncEngine: scheduler, faviconStore: FaviconStore(directory: nil))
         model.finishFirstRunOnboarding()
         let gate = Gate()

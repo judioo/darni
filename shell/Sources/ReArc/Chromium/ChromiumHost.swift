@@ -378,7 +378,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         // the engine has reported its capabilities, so there the check was always false
         // and Settings › Profiles had no search engine pop-up on an ordinary launch.
         if runtime.capabilities.searchEngines {
-            model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
+            model.searchEngineSettings = ChromiumSearchEngineSettings(source: runtime)
         }
         model.presentAirTrafficControl = { [weak self] in self?.presentAirTrafficControl() }
         if runtime.capabilities.perfMetrics {
@@ -1498,11 +1498,10 @@ extension BrowserViewModel {
         if event.disposition == 1 || event.disposition == 2, takeLittleArcClick() {
             return adoptChromiumLittleArc(event, profileKey: profileKey, url: url)
         }
+        // The tab whose page opened this one by script, when the engine names it.
+        let opener = engineHost.tabID(showing: ChromiumRuntime.shared.engine(forTab: event.openerTabID))
         var space: Space.ID?
         if case .persistent(let owner) = profileKey {
-            let opener = ChromiumRuntime.shared.engine(forTab: event.openerTabID).flatMap { engine in
-                engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0
-            }
             guard let target = store.space(forNewTabIn: owner, preferring: opener.flatMap(store.spaceContaining(tabID:))) else {
                 ChromiumLog.info("not adopting tab \(event.tabID): its profile has no space")
                 return false
@@ -1534,21 +1533,16 @@ extension BrowserViewModel {
         engineHost.adopt(engine, for: tab, profileID: profileID)
         observeFavicon(of: engine, tabID: tab.id)
         // Back with nothing behind it returns to the tab whose link opened this one.
-        let scriptOpener = ChromiumRuntime.shared.engine(forTab: event.openerTabID).flatMap { engine in
-            engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0
-        }
         let linkSource = event.disposition == 1 ? shownTab.flatMap { shown in
             self.profileID(for: shown) == profileID ? shown.id : nil
         } : nil
-        if let opener = scriptOpener ?? linkSource {
+        if let opener = opener ?? linkSource {
             tabOpeners.record(tab.id, openedBy: opener)
         }
         // Background-tab disposition stays unselected; the rest take focus in the sidebar,
-        // in their own space (as link opens do).
-        if event.disposition != 2 {
-            if let space, space != store.activeSpaceID { store.selectSpace(space) }
-            selectTab(tab.id)
-        }
+        // in their own space (as link opens do), which comes on screen unless pages and
+        // extensions have been passing the window between them (`ExtensionFocusGate`).
+        if event.disposition != 2 { selectPageOpenedTab(tab.id, in: space) }
         return true
     }
 

@@ -49,14 +49,42 @@ struct DownloadLocationRow: View {
     static let label = "Download location"
 
     var body: some View {
-        SettingsLabeledRow(label: Self.label, detail: "The same folder for every profile.") {
+        DownloadLocationRowContent(folderName: DownloadLocationText.folderName(downloads.directory)) { downloads.chooseDirectory() }
+    }
+}
+
+/// The row for a folder's name, in the 341 pt box beside the profile list
+/// (`ProfilesSettingsPane.detailWidth`). The row did not fit there: its
+/// label (the 174 pt detail line), "Downloads" and the button came to some
+/// 40 pt more than the box, and the stack took it from the button, which
+/// read "Chan…". Now the button and the folder's name keep their own widths
+/// and go first, the detail line is short enough to stay on one line beside
+/// "Downloads", and a long name is shortened in the middle (its tooltip has
+/// it whole) so that the label keeps its line.
+struct DownloadLocationRowContent: View {
+    let folderName: String
+    let choose: () -> Void
+
+    static let changeTitle = "Change…"
+    static let detail = "Shared by every profile."
+    /// The most the folder's name takes: beside it and the button, "Download
+    /// location" still has its 112 pt in the 341 pt box.
+    static let folderNameMaxWidth: CGFloat = 88
+
+    var body: some View {
+        SettingsLabeledRow(label: DownloadLocationRow.label, detail: Self.detail) {
             HStack(spacing: 8) {
-                Text(DownloadLocationText.folderName(downloads.directory))
+                Text(folderName)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button("Change…") { downloads.chooseDirectory() }
+                    .frame(maxWidth: Self.folderNameMaxWidth)
+                    .fixedSize()
+                    .help(folderName)
+                Button(Self.changeTitle, action: choose)
+                    .fixedSize()
             }
+            .layoutPriority(1)
         }
     }
 }

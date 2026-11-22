@@ -34,14 +34,22 @@ extension SplitViewItem {
     /// The two moves of `tabID`, towards the first pane then towards the
     /// last; none for a tab that is not a pane of this split.
     public func paneMoves(for tabID: Tab.ID) -> [SplitPaneMove] {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return [] }
+        guard tabs.contains(where: { $0.id == tabID }) else { return [] }
         return [-1, 1].map { offset in
             SplitPaneMove(
                 offset: offset,
                 title: SplitPaneMove.title(offset: offset, orientation: orientation),
-                isEnabled: tabs.indices.contains(index + offset)
+                isEnabled: canMovePane(tabID, by: offset)
             )
         }
+    }
+
+    /// Whether pane `tabID` can go `offset` places along the split: it is a
+    /// pane, the offset is not 0, and the place is not past either end. The
+    /// one rule for the menus' items and the store's move.
+    public func canMovePane(_ tabID: Tab.ID, by offset: Int) -> Bool {
+        guard offset != 0, let index = tabs.firstIndex(where: { $0.id == tabID }) else { return false }
+        return tabs.indices.contains(index + offset)
     }
 
     /// How a menu names the split, as its sidebar row reads: its name (or
@@ -70,11 +78,30 @@ public struct SplitPaneChipDrag: Equatable, Sendable {
     /// The place the pane takes if it is dropped now; nil over its own chip
     /// and off the row.
     public var destination: Int?
+    /// The pointer has been off the split's row since the drag began. From
+    /// then on the drag is a row's like any other, and the sidebar opens
+    /// its drop areas for it.
+    public var hasLeftRow: Bool
 
-    public init(splitID: SplitViewItem.ID, tabID: Tab.ID, destination: Int? = nil) {
+    public init(splitID: SplitViewItem.ID, tabID: Tab.ID, destination: Int? = nil, hasLeftRow: Bool = false) {
         self.splitID = splitID
         self.tabID = tabID
         self.destination = destination
+        self.hasLeftRow = hasLeftRow
+    }
+
+    /// Along its own row the chip is dragged over rows that stay where they
+    /// are: the sidebar's drop areas (`SidebarDragLayout`) wait until the
+    /// pointer leaves the row. Opening them as the drag began moved the row
+    /// down from under a pointer that had not moved, and a drag straight
+    /// along the row reordered nothing (found on screen 2026-11-22).
+    public var holdsRowsInPlace: Bool { !hasLeftRow }
+
+    /// The pointer left the split's row: no place there any more, and the
+    /// rows are free to make room.
+    public mutating func leaveRow() {
+        hasLeftRow = true
+        destination = nil
     }
 
     /// The chips share the row's width equally, so the chip under the
@@ -106,6 +133,22 @@ public struct SplitPaneChipDrag: Equatable, Sendable {
         guard splitID == split.id, let destination,
               let source = split.tabs.firstIndex(where: { $0.id == tabID }), destination != source else { return nil }
         return Self.boundary(from: source, to: destination)
+    }
+}
+
+/// The room the sidebar makes for a drag. While one is under way it shows
+/// drop areas that are not there otherwise: the Favorites row's end zone
+/// above the list (18 pt, 34 with no favorites yet) and a drop row after
+/// each section (`SidebarListRow.sectionEnd`, 10 pt or the "Drop here to
+/// pin" placeholder). Each one moves every row under it down.
+public enum SidebarDragLayout {
+    /// Whether those areas are open for the drag of the row `dragged`: for
+    /// any drag, except a pane chip's while it is still along its own row.
+    /// A chip drag of another split (one left over) holds nothing.
+    public static func opensDropAreas(dragging dragged: UUID?, chipDrag: SplitPaneChipDrag?) -> Bool {
+        guard let dragged else { return false }
+        if let chipDrag, chipDrag.splitID == dragged, chipDrag.holdsRowsInPlace { return false }
+        return true
     }
 }
 
@@ -145,9 +188,7 @@ extension SidebarStore {
     }
 
     public func canMoveSplitPane(splitID: SplitViewItem.ID, tabID: Tab.ID, by offset: Int) -> Bool {
-        guard offset != 0, let split = split(withID: splitID),
-              let from = split.tabs.firstIndex(where: { $0.id == tabID }) else { return false }
-        return split.tabs.indices.contains(from + offset)
+        split(withID: splitID)?.canMovePane(tabID, by: offset) ?? false
     }
 
     // MARK: - Add to Split View

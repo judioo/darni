@@ -334,8 +334,3 @@ final class LittleArcSpacePickerLookTests: XCTestCase {
         var parts: [LittleArcLayout.Part: CGRect] = [:]
     }
 }
-
-/// Never constrained onto a screen, never ordered in.
-private final class OffscreenWindow: NSWindow {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
-}

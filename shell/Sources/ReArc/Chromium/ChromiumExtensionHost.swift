@@ -262,36 +262,48 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
             if engine.role == .littleArc, let record = store.littleArcLiveWindows.first(where: {
                 model.engineHost.existingLittleArcEngine($0.id, profileID: $0.profileID) === engine
             }) {
-                model.requestLittleArcWindow(record.id)
+                // Its one tab is its active tab already; the window comes forward only for the user.
+                if case .follow = model.programMayShow(littleArc: record, source: .extensionRequest) {
+                    model.requestLittleArcWindow(record.id)
+                }
             } else {
-                model.revealTab(showing: engine)
+                guard let id = model.engineHost.tabID(showing: engine) else {
+                    return decline(request, "tab \(tab) is not a sidebar tab")
+                }
+                let showing = model.extensionActivatedTab(id)
+                if showing != .onScreen { ChromiumLog.info("extension tab request \(request.id): tab \(tab) not brought forward (\(showing))") }
             }
-            reconcileWindows()
-            runtime.respondExtensionTabRequest(request.id, tab: tab)
+            answerActive(request, tab: tab)
         case .newTab(let space):
+            if let refusal = model.extensionTabRefusal(for: request, in: space) { return decline(request, refusal) }
             guard let (tabID, tab) = adoptBlankTab(profile: request.profileID, in: space, model: model) else {
                 return decline(request, "tab creation failed")
             }
-            if request.active {
-                if space != store.activeSpaceID { store.selectSpace(space) }
-                model.selectTab(tab.id)
+            model.noteExtensionOpenedTab(tab.id, for: request, in: space)
+            guard request.active else {
+                reconcileWindows()
+                runtime.respondExtensionTabRequest(request.id, tab: tabID)
+                return
             }
-            reconcileWindows()
-            runtime.respondExtensionTabRequest(request.id, tab: tabID)
+            let showing = model.extensionActivatedTab(tab.id, newlyOpened: true)
+            if showing != .onScreen { ChromiumLog.info("extension tab request \(request.id): new tab \(tabID) not brought forward (\(showing))") }
+            answerActive(request, tab: tabID)
         case .backgroundTab(let space):
+            if let refusal = model.extensionTabRefusal(for: request, in: space) { return decline(request, refusal) }
             guard let (tabID, tab) = adoptBlankTab(profile: request.profileID, in: space, model: model, atBottom: true) else {
                 return decline(request, "tab creation failed")
             }
+            model.noteExtensionOpenedTab(tab.id, for: request, in: space)
             reconcileWindows()
             ChromiumLog.info("extension \(request.extensionID) tab request \(request.id) opened in the background (import install)")
             if runtime.respondExtensionTabRequestInBackground(request.id, tab: tabID) != .rearcOK {
-                // Refused: answer as before, with the tab shown if it asked.
+                // Refused: answer as before, with the tab active in its space if it asked.
                 if request.active {
-                    if space != store.activeSpaceID { store.selectSpace(space) }
-                    model.selectTab(tab.id)
-                    reconcileWindows()
+                    model.extensionActivatedTab(tab.id, newlyOpened: true)
+                    answerActive(request, tab: tabID)
+                } else {
+                    runtime.respondExtensionTabRequest(request.id, tab: tabID)
                 }
-                runtime.respondExtensionTabRequest(request.id, tab: tabID)
             }
         case .littleArc:
             guard let tabID = runtime.createBlankTab(profile: request.profileID, role: .littleArc) else { return decline(request, "tab creation failed") }
@@ -336,7 +348,7 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
         guard let model else { return declineLink(event, "no browser model") }
         let store = model.store
         let source = runtime.engine(forTab: event.openerTabID)
-        let sourceTab = source.flatMap { engine in model.engineHost.allTabEngines().first { ($0.2 as AnyObject) === engine }?.0 }
+        let sourceTab = model.engineHost.tabID(showing: source)
         let placement = LinkOpenPlacement.resolve(disposition: event.disposition, littleArcKeysHeld: model.takeLittleArcClick(),
                                                   sourceTab: sourceTab)
         func inProfile(_ space: UUID) -> Bool {
@@ -395,6 +407,20 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
     private func declineLink(_ event: ChromiumLinkOpenEvent, _ reason: String) {
         ChromiumLog.info("link open \(event.requestID) declined: \(reason)")
         runtime.respondLinkOpen(event.requestID, tab: 0)
+    }
+
+    /// Answers a request for an active tab. The engine takes the answer only
+    /// when it was told the tab is its window's active one: on screen, or the
+    /// selected tab of a space that is not (`ExtensionFocusGate`). A tab that
+    /// could be neither is declined, so the extension's call fails at once
+    /// instead of waiting out the engine's 30 s.
+    @MainActor
+    private func answerActive(_ request: ExtensionTabRequest, tab: UInt64) {
+        reconcileWindows()
+        guard !request.active || reporter.reported[tab]?.active == true else {
+            return decline(request, "tab \(tab) is not its window's active tab")
+        }
+        if runtime.respondExtensionTabRequest(request.id, tab: tab) != .rearcOK { decline(request, "the engine refused tab \(tab)") }
     }
 
     private func decline(_ request: ExtensionTabRequest, _ reason: String) {

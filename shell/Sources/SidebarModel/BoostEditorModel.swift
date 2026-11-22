@@ -288,6 +288,20 @@ public enum BoostQuickActions {
     }
 }
 
+/// The stylesheet a new boost starts with: one comment, so the editor's
+/// code pane is not empty. People read it there, so it says Darni. Boosts
+/// made before the rename hold "ReArc boost"; they are left as saved, and
+/// both read as an untouched boost.
+public enum BoostStarterCSS {
+    public static let text = "/* Darni boost */\n"
+    static let comments: Set<String> = ["/* Darni boost */", "/* ReArc boost */"]
+
+    /// The stylesheet is still the starter alone: nothing written yet.
+    public static func isStarter(_ css: String) -> Bool {
+        comments.contains(css.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 /// In-memory editor draft; persistence only on explicit save.
 public struct BoostEditorDraft: Equatable, Sendable {
     public var packageID: UUID

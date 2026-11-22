@@ -63,7 +63,7 @@ struct BoostEditorDrawerView: View {
         .onAppear {
             cssText = draft.customCSS
             showsCSS = !draft.customCSS.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && draft.customCSS.trimmingCharacters(in: .whitespacesAndNewlines) != "/* ReArc boost */"
+                && !BoostStarterCSS.isStarter(draft.customCSS)
         }
         .onChange(of: draft.customCSS) { _, new in
             if cssText != new { cssText = new }

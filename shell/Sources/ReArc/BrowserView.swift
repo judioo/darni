@@ -307,15 +307,12 @@ struct BrowserView: View {
         } message: {
             Text(model.pendingDeletionMessage.message)
         }
-        .alert(spaceProfileChangeText.title, isPresented: Binding(
-            get: { model.pendingSpaceProfileChange != nil && isKeyWindowSheetOwner },
-            set: { if !$0 { model.pendingSpaceProfileChange = nil } }
-        )) {
-            Button("Cancel", role: .cancel) { model.pendingSpaceProfileChange = nil }
-            Button(spaceProfileChangeText.action) { model.confirmSpaceProfileChange() }
-        } message: {
-            Text(spaceProfileChangeText.message)
-        }
+        .modifier(SessionCrossingAlert(
+            text: model.pendingSpaceProfileChange.map(model.spaceProfileChangeMessage),
+            isPresented: { model.pendingSpaceProfileChange != nil && isKeyWindowSheetOwner },
+            cancel: { model.pendingSpaceProfileChange = nil },
+            confirm: { model.confirmSpaceProfileChange() }
+        ))
         .alert("Rename Profile", isPresented: Binding(
             get: { model.pendingProfileRenameID != nil && isKeyWindowSheetOwner },
             set: { if !$0 { model.pendingProfileRenameID = nil } }
@@ -381,10 +378,6 @@ struct BrowserView: View {
     /// This window shows a page in HTML fullscreen: only the page, edge to edge.
     private var isPageFullscreen: Bool {
         model.isHTMLFullscreen(in: windowID)
-    }
-
-    private var spaceProfileChangeText: (title: String, message: String, action: String) {
-        model.pendingSpaceProfileChange.map(model.spaceProfileChangeMessage) ?? ("", "", "")
     }
 
 
@@ -812,9 +805,11 @@ private struct ProfileMoveAlert: ViewModifier {
 }
 
 /// The one question asked before a page changes session, on the window it is
-/// asked of: Move to Profile for tabs, and Little Darni's Open in for a space
-/// of another profile or container. `isPresented` is read from the model each
-/// time it is asked, so an answer given elsewhere takes the alert down.
+/// asked of: Move to Profile for tabs, Change Profile for a space and its tabs
+/// (here and in the space editor), and Little Darni's Open in for a space of
+/// another profile or container. Cancel and one action, with the three texts
+/// from the model. `isPresented` is read from the model each time it is asked,
+/// so an answer given elsewhere takes the alert down.
 struct SessionCrossingAlert: ViewModifier {
     let text: (title: String, message: String, action: String)?
     let isPresented: () -> Bool

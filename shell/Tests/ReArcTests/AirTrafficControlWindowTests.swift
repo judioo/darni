@@ -55,9 +55,8 @@ final class AirTrafficControlWindowTests: XCTestCase {
 
     /// SwiftUI builds its accessibility tree only for a client that asked.
     private func withAccessibility(_ host: NSView, _ body: () throws -> Void) rethrows {
-        let assistive = [NSAccessibility.Attribute(rawValue: "AXManualAccessibility"), NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")]
-        for attribute in assistive { (NSApplication.shared as NSObject).accessibilitySetValue(true, forAttribute: attribute) }
-        defer { for attribute in assistive { (NSApplication.shared as NSObject).accessibilitySetValue(false, forAttribute: attribute) } }
+        AccessibilityTree.setAssistiveClient(true)
+        defer { AccessibilityTree.setAssistiveClient(false) }
         _ = host.accessibilityChildren()
         settle(host)
         try body()
@@ -156,18 +155,7 @@ final class AirTrafficControlWindowTests: XCTestCase {
         view.window!.convertToScreen(view.convert(view.bounds, to: nil))
     }
 
-    private static func elements(labelled label: String, in root: Any, depth: Int = 0) -> [AnyObject] {
-        let node = root as AnyObject
-        guard depth < 16 else { return [] }
-        var found: [AnyObject] = (node.accessibilityLabel?() as String?) == label ? [node] : []
-        for child in (node.accessibilityChildren?() as [Any]?) ?? [] {
-            found += elements(labelled: label, in: child, depth: depth + 1)
-        }
-        return found
+    private static func elements(labelled label: String, in root: Any) -> [AnyObject] {
+        AccessibilityTree.elements(labelled: label, in: root)
     }
-}
-
-/// Never constrained onto a screen, never ordered in.
-private final class OffscreenWindow: NSWindow {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

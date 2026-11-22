@@ -79,16 +79,8 @@ struct TabContextMenu: View {
                     }
                 }
             }
-            // The profile's spaces, its containers' too: a move into another session asks first (`moveEntry`).
-            let otherSpaces = store.spaceContaining(tabID: tab.id).map(store.spaceMoveDestinations(from:)) ?? []
-            if !otherSpaces.isEmpty {
-                Menu("Move to Space") {
-                    ForEach(otherSpaces) { space in
-                        Button(model.spaceMenuTitle(space)) { model.moveTab(tab.id, toSpace: space.id) }
-                    }
-                }
-            }
             if let spaceID = store.spaceContaining(tabID: tab.id) {
+                MoveToSpaceMenu(model: model, spaceID: spaceID) { model.moveTab(tab.id, toSpace: $0) }
                 MoveToProfileMenu(model: model, ids: [tab.id], spaceID: spaceID)
             }
         }
@@ -139,14 +131,7 @@ struct FolderContextMenu: View {
         Button("New Folder Inside") { model.newFolder(parentFolderID: folder.id) }
         if let spaceID = store.spaceContaining(entryID: folder.id) {
             // The folder goes whole: its tabs, its folders and their order (`moveEntries`).
-            let otherSpaces = store.spaceMoveDestinations(from: spaceID)
-            if !otherSpaces.isEmpty {
-                Menu("Move to Space") {
-                    ForEach(otherSpaces) { space in
-                        Button(model.spaceMenuTitle(space)) { model.moveItems([folder.id], toSpace: space.id) }
-                    }
-                }
-            }
+            MoveToSpaceMenu(model: model, spaceID: spaceID) { model.moveItems([folder.id], toSpace: $0) }
             MoveToProfileMenu(model: model, ids: [folder.id], spaceID: spaceID)
         }
         Divider()
@@ -285,14 +270,7 @@ struct SelectionContextMenu: View {
                 if !outline.isEmpty { Divider() }
                 Button("New Folder with Selection") { model.newFolder(withSelection: ids) }
             }
-            let otherSpaces = store.spaceMoveDestinations(from: spaceID)
-            if !otherSpaces.isEmpty {
-                Menu("Move to Space") {
-                    ForEach(otherSpaces) { space in
-                        Button(model.spaceMenuTitle(space)) { model.moveItems(ids, toSpace: space.id) }
-                    }
-                }
-            }
+            MoveToSpaceMenu(model: model, spaceID: spaceID) { model.moveItems(ids, toSpace: $0) }
             MoveToProfileMenu(model: model, ids: ids, spaceID: spaceID)
         }
         Divider()
@@ -305,6 +283,26 @@ struct SelectionContextMenu: View {
         if hasSplit || tabs.isEmpty || closeTitle != "Archive Tabs" {
             Button(closeTitle) { model.closeItems(ids) }
                 .disabled(tabs.isEmpty && !hasSplit)
+        }
+    }
+}
+
+/// Move to Space ▸: the other spaces of the row's profile, its containers'
+/// too (`spaceMoveDestinations`). A move into another session asks first
+/// (`moveEntry`). `move` is the row's own move: a tab, a folder or a selection.
+struct MoveToSpaceMenu: View {
+    let model: BrowserViewModel
+    let spaceID: Space.ID
+    let move: (Space.ID) -> Void
+
+    var body: some View {
+        let destinations = model.store.spaceMoveDestinations(from: spaceID)
+        if !destinations.isEmpty {
+            Menu("Move to Space") {
+                ForEach(destinations) { space in
+                    Button(model.spaceMenuTitle(space)) { move(space.id) }
+                }
+            }
         }
     }
 }

@@ -59,51 +59,60 @@ def rebrand_strings_text(text: str) -> str:
     return "".join(out)
 
 
-def rebrand_strings_file(path: Path) -> bool:
+def plist_format(raw: bytes):
+    """The form a property list file is in, to write it back the same."""
+    return plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
+
+
+def edit_strings_file(path: Path, edit_plist, edit_text) -> bool:
+    """Rewrites an InfoPlist.strings in the form it has; True when it changed.
+
+    The engine writes these files in more than one form, so every change to one is given
+    twice: `edit_plist` changes the dictionary of a binary or XML property list in place,
+    and `edit_text` returns the new text of an old-style .strings file (UTF-8 or UTF-16).
+    The one place that reads, tells the forms apart and writes."""
     raw = path.read_bytes()
     if raw.startswith(b"bplist") or raw.lstrip().startswith(b"<?xml"):
-        fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
         data = plistlib.loads(raw)
-        changed = {k: renamed(v) for k, v in data.items()
-                   if NAMED_KEY.match(k) and isinstance(v, str) and renamed(v) != v}
-        if not changed:
+        before = dict(data)
+        edit_plist(data)
+        if data == before:
             return False
-        data.update(changed)
-        path.write_bytes(plistlib.dumps(data, fmt=fmt))
+        path.write_bytes(plistlib.dumps(data, fmt=plist_format(raw)))
         return True
     encoding = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
     text = raw.decode(encoding)
-    new = rebrand_strings_text(text)
+    new = edit_text(text)
     if new == text:
         return False
     path.write_bytes(new.encode(encoding))
     return True
 
 
-def set_display_name(path: Path) -> bool:
-    """The app's localized CFBundleDisplayName is Darni in this locale (bundle-chromium.sh: the
-    Info.plist's own is ReArc, the file name of every updated copy, so macOS shows this one)."""
-    raw = path.read_bytes()
-    if raw.startswith(b"bplist") or raw.lstrip().startswith(b"<?xml"):
-        fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
-        data = plistlib.loads(raw)
-        if data.get("CFBundleDisplayName") == NAME:
-            return False
-        data["CFBundleDisplayName"] = NAME
-        path.write_bytes(plistlib.dumps(data, fmt=fmt))
-        return True
-    encoding = "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
-    text = raw.decode(encoding)
+def rebrand_plist(data: dict) -> None:
+    for key, value in data.items():
+        if NAMED_KEY.match(key) and isinstance(value, str):
+            data[key] = renamed(value)
+
+
+def rebrand_strings_file(path: Path) -> bool:
+    return edit_strings_file(path, rebrand_plist, rebrand_strings_text)
+
+
+def set_display_name_text(text: str) -> str:
+    """Old-style .strings text with the one line CFBundleDisplayName = Darni, at its end."""
     lines = [line for line in text.splitlines(keepends=True)
              if not ((m := LINE.match(line)) and m.group(2) == "CFBundleDisplayName")]
     new = "".join(lines)
     if new and not new.endswith("\n"):
         new += "\n"
-    new += f'"CFBundleDisplayName" = "{NAME}";\n'
-    if new == text:
-        return False
-    path.write_bytes(new.encode(encoding))
-    return True
+    return new + f'"CFBundleDisplayName" = "{NAME}";\n'
+
+
+def set_display_name(path: Path) -> bool:
+    """The app's localized CFBundleDisplayName is Darni in this locale (bundle-chromium.sh: the
+    Info.plist's own is ReArc, the file name of every updated copy, so macOS shows this one)."""
+    return edit_strings_file(path, lambda data: data.update(CFBundleDisplayName=NAME), set_display_name_text)
 
 
 def rebrand_alert_helper(helper: Path, icns: Path) -> None:
@@ -115,24 +124,22 @@ def rebrand_alert_helper(helper: Path, icns: Path) -> None:
     shutil.copyfile(icns, resources / "app.icns")
     info_path = helper / "Contents/Info.plist"
     raw = info_path.read_bytes()
-    fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
     info = plistlib.loads(raw)
     info.pop("CFBundleIconName", None)
     info["CFBundleIconFile"] = "app.icns"
-    info_path.write_bytes(plistlib.dumps(info, fmt=fmt))
+    info_path.write_bytes(plistlib.dumps(info, fmt=plist_format(raw)))
 
 
 def rename_helper(helper: Path) -> bool:
     """CFBundleName "ReArc Helper (GPU)" becomes "Darni Helper (GPU)"; nothing else changes."""
     info_path = helper / "Contents/Info.plist"
     raw = info_path.read_bytes()
-    fmt = plistlib.FMT_BINARY if raw.startswith(b"bplist") else plistlib.FMT_XML
     info = plistlib.loads(raw)
     name = info.get("CFBundleName")
     if not isinstance(name, str) or not name.startswith(ENGINE_SHORT_NAME + " "):
         return False
     info["CFBundleName"] = NAME + name[len(ENGINE_SHORT_NAME):]
-    info_path.write_bytes(plistlib.dumps(info, fmt=fmt))
+    info_path.write_bytes(plistlib.dumps(info, fmt=plist_format(raw)))
     return True
 
 

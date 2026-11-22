@@ -26,7 +26,12 @@ struct ProfilesICloudSyncTests {
 
     private func model(_ coordinator: SidebarSyncCoordinator) -> (BrowserViewModel, SidebarSyncScheduler) {
         let scheduler = SidebarSyncScheduler(coordinator: coordinator)
-        scheduler.sleeper = { _ in try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        // Edits, retries and "Sync now" run at once; only the poll loop waits (until stopped).
+        // A sleeper that held every delay for an hour stalled the test whenever an edit's
+        // push reached the scheduler after it started: its debounce replaced the pending cycle.
+        scheduler.sleeper = { delay in
+            if delay >= SidebarSyncScheduler.pollInterval { try? await Task.sleep(nanoseconds: 3_600_000_000_000) }
+        }
         let model = BrowserViewModel(persistence: SidebarFilePersistence(fileURL: folder.appendingPathComponent("sidebar.json")),
                                      syncEngine: scheduler, faviconStore: FaviconStore(directory: nil))
         model.finishFirstRunOnboarding()
@@ -400,6 +405,26 @@ struct ProfilesICloudSyncTests {
     }
 
     /// Sync on: Put in iCloud is a sync now; the profile is then in iCloud.
+    /// An edit's push already queued when Put in iCloud runs (the order a busy
+    /// main actor gives the import's own edits): the edit's debounce replaces
+    /// the immediate cycle, and the upload still happens. With a sleeper that
+    /// held every delay for an hour this stalled, which is how
+    /// `putInICloudWithSyncOnSyncsNow` failed only in the full run.
+    @Test func putInICloudSyncsWithAnEditAlreadyQueued() async throws {
+        let (model, scheduler) = model(coordinator("A", on: true))
+        defer { close(model, scheduler) }
+        let akilu = importArc(into: model.store)
+        model.checkCloudSidebar()
+        await settle { model.cloudDetection != nil && !model.isCheckingCloud }
+        scheduler.start()
+        // An edit of the import, its push already queued when Put in iCloud runs, as under load.
+        scheduler.push([SidebarJournalEntry(sequence: 1, timestamp: Date(), deviceID: UUID(), mutation: .upsertItem(id: UUID()))])
+        model.putInICloud(akilu)
+        await settle { model.syncDetails?.phase == .upToDate }
+        #expect(model.syncDetails?.phase == .upToDate, "phase \(String(describing: model.syncDetails?.phase))")
+        #expect(model.cloudPresence(of: akilu) == .inICloud)
+    }
+
     @Test func putInICloudWithSyncOnSyncsNow() async throws {
         let (model, scheduler) = model(coordinator("A", on: true))
         defer { close(model, scheduler) }

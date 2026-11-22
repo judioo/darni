@@ -312,15 +312,17 @@ struct LittleArcSpacePickerView: View {
     }
 
     /// The search field takes the keyboard as the panel opens. A focused page
-    /// keeps it otherwise, as it would keep it from the command bar
-    /// (`CommandBarOverlay.reclaimFocusFromPage`): ask again while it does.
-    private func focusSearch(attempts: Int = 5) {
-        if let window = NSApp.keyWindow, ShortcutRouter.isWebContent(window.firstResponder) { window.makeFirstResponder(nil) }
-        searchFocused = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-            guard attempts > 0, ShortcutRouter.isWebContent(NSApp.keyWindow?.firstResponder) else { return }
+    /// keeps it otherwise, as it would keep it from the command bar: ask again
+    /// while it does (`ShortcutRouter.reclaimFocusFromPage`).
+    private func focusSearch() {
+        func take() {
+            if let window = NSApp.keyWindow, ShortcutRouter.isWebContent(window.firstResponder) { window.makeFirstResponder(nil) }
+            searchFocused = true
+        }
+        take()
+        ShortcutRouter.reclaimFocusFromPage {
             searchFocused = false
-            DispatchQueue.main.async { focusSearch(attempts: attempts - 1) }
+            DispatchQueue.main.async { take() }
         }
     }
 }
