@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
-# The performance check before a release (docs/PERFORMANCE-CHIP.md §7).
+# The weekly performance check (docs/PERFORMANCE-CHIP.md §7). Owner, 2026-11-22: the
+# performance metric is collated once a week and is not part of the release cycle; a release
+# never waits for it. (The /compare feature comparison is a different thing and still runs
+# with every release, from the monorepo's own scripts.)
 #
-# Usage: scripts/perf-check.sh --build NNNN [--released] [--compare [--browsers LIST]]
-#          [--halt RULES] [--confirm FILE] [--runs N] [--no-speedometer] [--arc-quit-allowed] [--quit-owner-darni]
-#          [--data DIR] [--no-commit] [--no-guards] [--gate-only FILE]
+# Usage: scripts/perf-check.sh --weekly [--remeasure] [options]
+#        scripts/perf-check.sh --build NNNN [--released] [options]
+#   options: [--compare [--browsers LIST]] [--halt RULES] [--confirm FILE] [--runs N] [--no-speedometer]
+#            [--arc-quit-allowed] [--quit-owner-darni] [--data DIR] [--no-commit] [--no-guards] [--gate-only FILE]
 #
+#   --weekly         measures the newest released build: the highest v0.1.0-NNNN tag. If that
+#                    build is already in the data folder (no release since the last weekly run),
+#                    it says so and measures nothing, unless --remeasure (a second session of the
+#                    same build, for calibration; the earlier file stays in git history)
+#                    Every week it also measures the rotation: the five /compare browsers measured
+#                    longest ago (python3 -m darni_perf rotation), as a comparison session that
+#                    feeds comparison/latest.json; --no-rotation skips it
+#   --check-due      with --weekly: only say what a run would do and exit (0 nothing due, 10 due);
+#                    touches nothing, needs no screen. The weekly scheduled task uses it.
+#   --arc-baseline   the one-off Arc run: Arc alone, saved as baselines/arc.json for good (needs
+#                    --arc-quit-allowed and a fair Arc profile: docs/PERFORMANCE-CHIP.md §5)
 #   --build NNNN     measures shell/dist/rcNNNN/Darni.app, through a QA copy made once at
 #                    shell/dist/perf-NNNN/Darni.app (ReArcReleaseVerification, re-signed), on a
 #                    fresh REARC_DATA_DIR per run
@@ -31,12 +46,17 @@ REPO="$(cd "$SHELL_DIR/.." && pwd)"
 PERF="$REPO/perf"
 DATA="${DARNI_PERF_DATA:-$HOME/.t3/worktrees/rearc-monorepo/perf-data/data/performance}"
 COMPARE_BROWSERS="darni,chrome,brave,helium,cra,ardia,zen,orion,arc,dia,safari"
-BUILD="" RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
+BUILD="" WEEKLY=0 REMEASURE=0 CHECK_DUE=0 ROTATE=1 ARC_BASELINE=0 RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
 die() { echo "perf-check: $*" >&2; exit 2; }
 refuse() { echo "perf-check: refusing to run: $*" >&2; exit 75; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build) BUILD="$2"; shift ;;
+    --weekly) WEEKLY=1 ;;
+    --remeasure) REMEASURE=1 ;;
+    --check-due) CHECK_DUE=1 ;;
+    --no-rotation) ROTATE=0 ;;
+    --arc-baseline) ARC_BASELINE=1 ;;
     --released) RELEASED=1 ;;
     --compare) COMPARE=1 ;;
     --browsers) BROWSERS="$2"; shift ;;
@@ -50,33 +70,67 @@ while [[ $# -gt 0 ]]; do
     --no-commit) COMMIT=0 ;;
     --no-guards) GUARDS=0 ;;
     --gate-only) GATE_ONLY="$2"; shift ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
 done
-[[ $BUILD =~ ^[0-9]+$ ]] || die "--build NNNN is required"
 [[ -d $DATA || $COMMIT == 0 ]] || die "no data folder $DATA (make the perf-data worktree, or pass --data)"
+py() { (cd "$PERF" && python3 -m darni_perf "$@"); }
+DO_DARNI=1 DO_ROTATION=0
+if [[ $WEEKLY == 1 ]]; then
+  [[ -z $BUILD ]] || die "--weekly picks the build itself; drop --build"
+  TAG="$(git -C "$REPO" tag --list 'v0.1.0-*' --sort=-v:refname | head -n 1)"
+  BUILD="${TAG#v0.1.0-}"
+  [[ $BUILD =~ ^[0-9]+$ ]] || die "no released build: no v0.1.0-NNNN tag"
+  RELEASED=1
+  if [[ -f $DATA/builds/$BUILD.json && $REMEASURE == 0 ]]; then
+    DO_DARNI=0
+    echo "perf-check: Darni $BUILD ($TAG), the newest release, is already measured ($(sed -n 's/.*"measured_at": "\([^"]*\)".*/\1/p' "$DATA/builds/$BUILD.json" | head -n 1)); no release since."
+  else
+    echo "perf-check: due: Darni $BUILD ($TAG), the newest release"
+  fi
+  if [[ $ROTATE == 1 ]]; then
+    WEEK="$(py rotation --data "$DATA" --json | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)["week"]))')"
+    [[ -z $WEEK ]] || { DO_ROTATION=1; echo "perf-check: due: this week's rotation: $WEEK"; py rotation --data "$DATA" | tail -n 2; }
+  fi
+  if [[ $DO_DARNI == 0 && $DO_ROTATION == 0 ]]; then
+    echo "perf-check: nothing to measure this week (--remeasure to measure Darni $BUILD again)"
+    exit 0
+  fi
+  [[ $CHECK_DUE == 0 ]] || exit 10
+fi
+[[ $CHECK_DUE == 0 ]] || die "--check-due goes with --weekly"
+if [[ $ARC_BASELINE == 1 ]]; then
+  [[ $ARC == 1 ]] || die "--arc-baseline needs --arc-quit-allowed (the owner's leave to quit and relaunch Arc)"
+  DO_DARNI=0
+  BUILD="${BUILD:-arc}"
+fi
+[[ $BUILD =~ ^[0-9]+$ || $ARC_BASELINE == 1 ]] || die "--build NNNN, --weekly or --arc-baseline is required"
 mkdir -p "$DATA"
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 OUT="$SHELL_DIR/bench/results/perf/$STAMP-$BUILD"   # git-ignored
 mkdir -p "$OUT"
-py() { (cd "$PERF" && python3 -m darni_perf "$@"); }
+VERDICT=0 RESULT=""
 
 if [[ -z $GATE_ONLY ]]; then
-  SOURCE="$SHELL_DIR/dist/rc$BUILD/Darni.app"
-  QA="$SHELL_DIR/dist/perf-$BUILD/Darni.app"
-  [[ -d $SOURCE || -d $QA ]] || die "no build at $SOURCE"
-  if [[ ! -d $QA ]]; then
-    echo "perf-check: QA copy of $BUILD -> $QA"
-    mkdir -p "$(dirname "$QA")"
-    ditto "$SOURCE" "$QA"
-    plutil -insert ReArcReleaseVerification -bool true "$QA/Contents/Info.plist"
-    REARC_ICLOUD_ENVIRONMENT=Production "$SHELL_DIR/scripts/sign-release.sh" "$QA" >"$OUT/sign.log" 2>&1 \
-      || { rm -rf "$QA"; die "signing the QA copy failed (see $OUT/sign.log)"; }
+  MEASURE=(--runs "$RUNS" --data "$DATA")
+  if [[ $DO_DARNI == 1 ]]; then
+    SOURCE="$SHELL_DIR/dist/rc$BUILD/Darni.app"
+    QA="$SHELL_DIR/dist/perf-$BUILD/Darni.app"
+    [[ -d $SOURCE || -d $QA ]] || die "no build at $SOURCE"
+    if [[ ! -d $QA ]]; then
+      echo "perf-check: QA copy of $BUILD -> $QA"
+      mkdir -p "$(dirname "$QA")"
+      ditto "$SOURCE" "$QA"
+      plutil -insert ReArcReleaseVerification -bool true "$QA/Contents/Info.plist"
+      REARC_ICLOUD_ENVIRONMENT=Production "$SHELL_DIR/scripts/sign-release.sh" "$QA" >"$OUT/sign.log" 2>&1 \
+        || { rm -rf "$QA"; die "signing the QA copy failed (see $OUT/sign.log)"; }
+    fi
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :ReArcReleaseVerification' "$QA/Contents/Info.plist" 2>/dev/null)" == true ]] \
+      || die "$QA is not a QA copy (no ReArcReleaseVerification): a shipped bundle refuses REARC_DATA_DIR"
+    MEASURE+=(--darni-app "$QA")
   fi
-  [[ "$(/usr/libexec/PlistBuddy -c 'Print :ReArcReleaseVerification' "$QA/Contents/Info.plist" 2>/dev/null)" == true ]] \
-    || die "$QA is not a QA copy (no ReArcReleaseVerification): a shipped bundle refuses REARC_DATA_DIR"
 
   # The probe (arc-vs-rearc probe): built from this checkout; Package.resolved is kept as it was.
   RESOLVED="$SHELL_DIR/Package.resolved"
@@ -94,51 +148,71 @@ if [[ -z $GATE_ONLY ]]; then
     bench_guards
   fi
 
-  MEASURE=(--runs "$RUNS" --darni-app "$QA")
-  RELEASE_FLAG=()
-  [[ $RELEASED == 0 ]] || RELEASE_FLAG=(--released)
   [[ $SPEEDOMETER == 1 ]] || MEASURE+=(--no-speedometer --speedometer-reason "${DARNI_PERF_SPEEDOMETER_REASON:-Speedometer was not run in this session}")
   [[ $ARC == 0 ]] || MEASURE+=(--arc-quit-allowed)
   [[ $OWNER_DARNI == 0 ]] || MEASURE+=(--quit-owner-darni)
-  RESULT="$OUT/build-$BUILD.json"
-  set +e
-  py measure --kind build --id "$BUILD" --browsers darni ${RELEASE_FLAG[@]+"${RELEASE_FLAG[@]}"} "${MEASURE[@]}" --out "$RESULT"
-  STATUS=$?
-  set -e
-  [[ $STATUS == 0 ]] || { echo "perf-check: the measurement ended with $STATUS; nothing gated or committed" >&2; exit "$STATUS"; }
-  if [[ $COMPARE == 1 ]]; then
+  if [[ $DO_DARNI == 1 ]]; then
+    RELEASE_FLAG=()
+    [[ $RELEASED == 0 ]] || RELEASE_FLAG=(--released)
+    RESULT="$OUT/build-$BUILD.json"
     set +e
-    py measure --kind comparison --id "$(date +%Y-%m-%d)-$BUILD" --browsers "${BROWSERS:-$COMPARE_BROWSERS}" "${MEASURE[@]}" \
-      --out "$OUT/comparison.json"
+    py measure --kind build --id "$BUILD" --browsers darni ${RELEASE_FLAG[@]+"${RELEASE_FLAG[@]}"} "${MEASURE[@]}" --out "$RESULT"
+    STATUS=$?
+    set -e
+    [[ $STATUS == 0 ]] || { echo "perf-check: the measurement ended with $STATUS; nothing gated or committed" >&2; exit "$STATUS"; }
+  fi
+  SESSION="" SESSION_ID=""
+  if [[ $ARC_BASELINE == 1 ]]; then
+    SESSION="arc" SESSION_ID="arc-baseline-$(date +%Y-%m-%d)"
+  elif [[ $DO_ROTATION == 1 ]]; then
+    SESSION="rotation" SESSION_ID="$(date +%Y-%m-%d)-rotation"
+  elif [[ $COMPARE == 1 ]]; then
+    SESSION="${BROWSERS:-$COMPARE_BROWSERS}" SESSION_ID="$(date +%Y-%m-%d)-$BUILD"
+  fi
+  if [[ -n $SESSION ]]; then
+    set +e
+    py measure --kind comparison --id "$SESSION_ID" --browsers "$SESSION" "${MEASURE[@]}" --out "$OUT/comparison.json"
     CSTATUS=$?
     set -e
-    [[ $CSTATUS == 0 ]] || echo "perf-check: the comparison ended with $CSTATUS; the build is still gated" >&2
+    [[ $CSTATUS == 0 ]] || echo "perf-check: the comparison session ended with $CSTATUS" >&2
   fi
 else
   RESULT="$GATE_ONLY"
   [[ -f $RESULT ]] || die "no result $RESULT"
 fi
 
-GATE_ARGS=(--data "$DATA" --result "$RESULT")
-[[ ! -f $DATA/thresholds.json ]] || GATE_ARGS+=(--thresholds "$DATA/thresholds.json")
-[[ -z $HALT ]] || GATE_ARGS+=(--halt "$HALT")
-[[ -z $CONFIRM ]] || GATE_ARGS+=(--confirm "$CONFIRM")
-set +e
-py gate "${GATE_ARGS[@]}" | tee "$OUT/gate.txt"
-VERDICT=${PIPESTATUS[0]}
-set -e
-[[ $VERDICT != 2 ]] || exit 2
-if [[ -f $OUT/comparison.json ]]; then
-  py compare --data "$DATA" --result "$OUT/comparison.json" | tee "$OUT/comparison.txt"
+if [[ -n $RESULT ]]; then
+  GATE_ARGS=(--data "$DATA" --result "$RESULT")
+  [[ ! -f $DATA/thresholds.json ]] || GATE_ARGS+=(--thresholds "$DATA/thresholds.json")
+  [[ -z $HALT ]] || GATE_ARGS+=(--halt "$HALT")
+  [[ -z $CONFIRM ]] || GATE_ARGS+=(--confirm "$CONFIRM")
+  set +e
+  py gate "${GATE_ARGS[@]}" | tee "$OUT/gate.txt"
+  VERDICT=${PIPESTATUS[0]}
+  set -e
+  [[ $VERDICT != 2 ]] || exit 2
 fi
+WHAT=()
+[[ -z $RESULT ]] || WHAT+=("Darni $BUILD measured, gate $(sed -n '1s/^gate: \([A-Z_]*\).*/\1/p' "$OUT/gate.txt" | tr 'A-Z' 'a-z')")
+if [[ -f $OUT/comparison.json ]]; then
+  if [[ $ARC_BASELINE == 1 ]]; then
+    py baseline --data "$DATA" --result "$OUT/comparison.json"
+    WHAT+=("the Arc baseline")
+  else
+    py compare --data "$DATA" --result "$OUT/comparison.json" | tee "$OUT/comparison.txt"
+    WHAT+=("comparison $SESSION_ID")
+  fi
+fi
+py index --data "$DATA" >/dev/null
+[[ ! -f $DATA/baselines/arc.json ]] || py score --data "$DATA" | tee "$OUT/score.txt" || true
 py chart --data "$DATA" --out "$OUT/chart.html"
 
-if [[ $COMMIT == 1 ]]; then
+if [[ $COMMIT == 1 && ${#WHAT[@]} -gt 0 ]]; then
   WORKTREE="$(git -C "$DATA" rev-parse --show-toplevel)"
   [[ "$(git -C "$WORKTREE" branch --show-current)" == perf-data ]] || die "$WORKTREE is not on perf-data: not committed"
   git -C "$WORKTREE" add -- "$DATA"
   if ! git -C "$WORKTREE" diff --cached --quiet; then
-    git -C "$WORKTREE" commit -q -m "performance: Darni $BUILD measured, gate $(sed -n '1s/^gate: \([A-Z_]*\).*/\1/p' "$OUT/gate.txt" | tr 'A-Z' 'a-z')$([[ -f $OUT/comparison.json ]] && echo ", with a comparison")" \
+    git -C "$WORKTREE" commit -q -m "performance: $(IFS=';'; echo "${WHAT[*]}" | sed 's/;/; /g')" \
       -m "Generated by shell/scripts/perf-check.sh in the Darni repo." -m "Co-Authored-By: ${DARNI_PERF_COAUTHOR:-Claude Fable 5.2 <noreply@anthropic.com>}"
     echo "perf-check: committed on perf-data in $WORKTREE (not pushed)"
   fi
