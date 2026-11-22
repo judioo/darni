@@ -202,6 +202,11 @@ func realRun(_ options: Options) async -> Int32 {
     return status
 }
 
+// `probe …`: one measurement for the performance check (ProbeCommand, docs/PERFORMANCE-CHIP.md).
+if CommandLine.arguments.dropFirst().first == "probe" {
+    exit(await Probe.main(Array(CommandLine.arguments.dropFirst(2))))
+}
+
 let options: Options
 do {
     guard let parsed = try Options.parse(Array(CommandLine.arguments.dropFirst())) else {
