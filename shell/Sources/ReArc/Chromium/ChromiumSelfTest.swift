@@ -6103,6 +6103,9 @@ extension ChromiumSelfTest {
         loadShellTab(model, tab, engine, try XUnwrap(URL(string: "\(base)/a"), "address"))
         try await wait("extension flood: tab A", timeout: 20) { engine.pageTitle == Self.titleA && !engine.isLoading }
         let space = store.activeSpace
+        // The page view can still be on its way back into the window after the previous
+        // step's profile switch (RC run 2026-11-22 23:21 read it at once and found none).
+        try await wait("extension flood: tab A's page in a window", timeout: 15) { engine.leaseHolder?.window != nil }
         guard let browserWindow = engine.leaseHolder?.window else { throw Failure(description: "extension flood: tab A is in no window") }
         try await waitAsync("extension flood: the flood fixture's action", timeout: 20) {
             controller.refresh(engine, scale: 2)
