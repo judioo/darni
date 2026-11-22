@@ -48,10 +48,8 @@ enum Build1164TestSupport {
     /// Every label, title, value and help text (a tooltip) in a view's accessibility tree.
     static func accessibilityTexts<V: View>(of view: V, size: NSSize) -> [String] {
         hosted(view, size: size) { host, _ in
-            // SwiftUI builds its accessibility tree only for a client that asked.
-            let assistive = [NSAccessibility.Attribute(rawValue: "AXManualAccessibility"), NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")]
-            for attribute in assistive { (NSApplication.shared as NSObject).accessibilitySetValue(true, forAttribute: attribute) }
-            defer { for attribute in assistive { (NSApplication.shared as NSObject).accessibilitySetValue(false, forAttribute: attribute) } }
+            AccessibilityTree.setAssistiveClient(true)
+            defer { AccessibilityTree.setAssistiveClient(false) }
             _ = host.accessibilityChildren()
             settle(host)
             var found: [String] = []
@@ -71,8 +69,4 @@ enum Build1164TestSupport {
             return found
         }
     }
-}
-
-private final class OffscreenWindow: NSWindow {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
