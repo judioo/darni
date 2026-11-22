@@ -97,7 +97,7 @@ struct DownloadsTrayHeader: View {
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Saved to \(downloads.directory.path)")
+            .help(DownloadLocationText.savedTo(downloads.directory))
             Button("Clear") { downloads.clearFinished() }
                 .buttonStyle(.borderless)
                 .font(.caption)
@@ -236,7 +236,7 @@ struct DownloadRowView: View {
         // Arc: a click opens the file; drag it out to Finder or another app.
         .onTapGesture { if record.hasFileOnDisk { downloads.perform(.open, on: record.id) } }
         .onDrag { record.hasFileOnDisk ? DownloadDrag.provider(for: record.targetPath) : NSItemProvider() }
-        .contextMenu { DownloadContextMenu(records: [record], downloads: downloads) }
+        .downloadMenu(for: record, downloads: downloads)
         .help(record.url)
     }
 
@@ -326,27 +326,60 @@ struct DownloadRowView: View {
     }
 }
 
-/// A download's menu (`DownloadMenu`) for SwiftUI rows: the tray and the
-/// bottom bar's recent downloads. Library › Downloads builds the same one
-/// as an NSMenu.
-struct DownloadContextMenu: View {
-    let records: [DownloadRecord]
-    let downloads: DownloadsController
+/// A download's menu (`DownloadMenu`), the same in the tray, the bottom
+/// bar's recent downloads and Library › Downloads: Darni's items alone. As a
+/// SwiftUI `contextMenu` macOS put "Ask Siri" at its head (a row offers its
+/// file for dragging), so it is an `NSMenu` that allows no system items.
+enum DownloadRowMenu {
+    static func menu(for records: [DownloadRecord], downloads: DownloadsController) -> NSMenu {
+        let menu = NSMenu.darniContextMenu()
+        for item in items(for: records, downloads: downloads) { menu.addItem(item) }
+        return menu
+    }
 
-    var body: some View {
+    /// The sections with a separator between them; several rows get the actions that apply to each.
+    static func items(for records: [DownloadRecord], downloads: DownloadsController) -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
         let ids = records.map(\.id)
-        let sections = DownloadMenu.sections(for: records, isWarned: downloads.needsDecision)
-        ForEach(Array(sections.enumerated()), id: \.offset) { index, section in
-            if index > 0 { Divider() }
-            ForEach(section, id: \.item) { entry in
-                Button(entry.item.title(count: records.count)) {
-                    downloads.perform(entry.item, on: ids) { moved in
+        for (index, section) in DownloadMenu.sections(for: records, isWarned: downloads.needsDecision).enumerated() {
+            if index > 0 { items.append(.separator()) }
+            for entry in section {
+                let item = ClosureMenuItem(entry.item.title(count: records.count)) { [weak downloads] in
+                    downloads?.perform(entry.item, on: ids) { moved in
                         if moved == 0 { NSSound.beep() }
                     }
                 }
-                .disabled(!entry.isEnabled)
+                item.isEnabled = entry.isEnabled
+                items.append(item)
             }
         }
+        return items
+    }
+}
+
+/// The menu's actions for VoiceOver's actions rotor, which a SwiftUI
+/// `contextMenu` gave a row for free.
+private struct DownloadMenuActions: View {
+    let record: DownloadRecord
+    let downloads: DownloadsController
+
+    var body: some View {
+        let entries = DownloadMenu.sections(for: [record], isWarned: downloads.needsDecision).flatMap { $0 }.filter(\.isEnabled)
+        ForEach(entries, id: \.item) { entry in
+            Button(entry.item.title(count: 1)) {
+                downloads.perform(entry.item, on: [record.id]) { moved in
+                    if moved == 0 { NSSound.beep() }
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    /// A SwiftUI download row's right-click menu (`DownloadRowMenu`).
+    func downloadMenu(for record: DownloadRecord, downloads: DownloadsController) -> some View {
+        darniContextMenu { DownloadRowMenu.menu(for: [record], downloads: downloads) }
+            .accessibilityActions { DownloadMenuActions(record: record, downloads: downloads) }
     }
 }
 

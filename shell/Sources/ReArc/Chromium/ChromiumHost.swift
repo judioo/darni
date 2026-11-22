@@ -356,9 +356,6 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                 ChromiumLog.trace("selection \(describe(old)) -> \(describe(new)) from \(callers.joined(separator: " < "))")
             }
         }
-        if runtime.capabilities.searchEngines {
-            model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
-        }
         // Before startup's first reading of 1Password's connection.
         model.onePasswordHelperPath = runtime.onePasswordHelperPath
     }
@@ -376,6 +373,12 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             precondition(early === model)
         } else {
             adopt(model)
+        }
+        // Here, at ready, and not in `adopt`: the cached window adopts the model before
+        // the engine has reported its capabilities, so there the check was always false
+        // and Settings › Profiles had no search engine pop-up on an ordinary launch.
+        if runtime.capabilities.searchEngines {
+            model.searchEngineSettings = ChromiumSearchEngineSettings(runtime: runtime)
         }
         model.presentAirTrafficControl = { [weak self] in self?.presentAirTrafficControl() }
         if runtime.capabilities.perfMetrics {
@@ -1206,7 +1209,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         app.addItem(target.item("About Darni", "") { [weak self] in self?.presentAbout() })
         if let updates = AppUpdater.shared.makeMenuItem() { app.addItem(updates) }
         app.addItem(.separator())
-        // ReArc's own window; Chromium's settings pages open from its buttons.
+        // ReArc's own window; the Chromium settings pages Darni has no screen for yet
+        // open from its buttons and from here (docs/STOCK-SETTINGS-ROUTES.md).
         app.addItem(target.item("Settings…", ",") { model.showSettings() })
         if runtime.capabilities.navigationExtended {
             app.addItem(target.item("Clear Browsing Data…", "\u{8}", [.command, .shift]) {

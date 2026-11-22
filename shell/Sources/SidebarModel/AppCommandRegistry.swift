@@ -65,6 +65,8 @@ public enum AppCommandAction: Equatable, Hashable {
     /// Arc `openLibrary` (nil: the last page) and its View menu pages.
     case openLibrary(LibrarySection?)
     case openBrowserPage(BrowserInternalPage)
+    /// Darni's own Settings window on a pane.
+    case showSettings(SettingsPane)
     case viewPageSource
     case goBack
     case goForward
@@ -262,7 +264,7 @@ public struct AppCommand: Equatable, Identifiable {
         case .newBoostForSite:
             guard let tab = store.selectedTab else { return false }
             return BoostScopeMatcher.urlIsEligibleForBoosts(tab.url)
-        case .manageBoosts, .importBoosts, .importBookmarksFile, .importFromBrowser:
+        case .manageBoosts, .importBoosts, .importBookmarksFile, .importFromBrowser, .showSettings:
             return true
         case .reinstallExtensions:
             return context.pendingExtensionReinstall != nil
@@ -858,14 +860,16 @@ public enum AppCommandRegistry {
                 title: "Search Engine Settings",
                 keywords: ["search", "engine", "google", "default", "settings"],
                 minQueryLength: 3,
-                action: .openBrowserPage(.searchSettings)
+                // Darni's own: Settings › Profiles' Search engine pop-up.
+                action: .showSettings(.profiles)
             ),
             AppCommand(
                 id: "download-settings",
                 title: "Download Settings",
                 keywords: ["download", "location", "folder", "settings"],
                 minQueryLength: 3,
-                action: .openBrowserPage(.downloadSettings)
+                // Darni's own: Settings › Profiles' Download location row.
+                action: .showSettings(.profiles)
             ),
             AppCommand(
                 id: "payment-settings",

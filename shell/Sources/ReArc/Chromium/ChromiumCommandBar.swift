@@ -241,13 +241,13 @@ final class ChromiumCommandBarServices: CommandBarServices {
         return fallback.searchProvider(for: profileID)
     }
 
-    /// chrome://settings/search may have changed the default since the last read.
+    /// Settings › Profiles may have changed the default since the last read.
     func commandBarWillOpen(profileID: Profile.ID) {
         providerUnavailable.remove(profileID)
         refreshSearchProvider(for: profileID)
     }
 
-    /// Re-reads the profile's default search (it changes in chrome://settings/search).
+    /// Re-reads the profile's default search (it changes in Settings › Profiles).
     func refreshSearchProvider(for profileID: Profile.ID, completion: (() -> Void)? = nil) {
         guard capabilities.searchAutocomplete, providerRequests.insert(profileID).inserted else { return }
         runtime.withEngineProfile(.persistent(profileID)) { [weak self] engineID in

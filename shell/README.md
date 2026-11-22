@@ -127,12 +127,20 @@ did against that engine.
   navigation requests all use the same policy, with the schemes taken from
   `EngineHost.navigationSchemes`. On WebKit, `chrome://` and `view-source:`
   are not admitted.
-- **Settings routing.** On the Chromium path the browser settings entry
-  points open Chromium WebUI in a single reused tab (`BrowserInternalPage`).
-  They are the app menu's Settings… (⌘,), Clear Browsing Data… (⇧⌘⌫) and
-  About Chromium Engine items, and the command-bar commands Settings,
-  Privacy and Security Settings, Site Settings, Clear Browsing Data… and
-  About Chromium Engine. View > View Page Source (⌥⌘U) and the matching
+- **Settings routing.** Settings… (⌘,) is Darni's own window. For the
+  jobs it has no screen for yet, the Chromium path opens a page of
+  Chromium's stock settings in a single reused tab (`BrowserInternalPage`):
+  the app menu's Clear Browsing Data… (⇧⌘⌫), Settings › Profiles' data
+  rows, Advanced's More Settings…, the site panel's Site Settings…, and the
+  command-bar commands Settings, Privacy and Security Settings, Site
+  Settings and Clear Browsing Data…. Each such route is listed with its
+  reason in `docs/STOCK-SETTINGS-ROUTES.md` and in `StockSettingsRouteTests`,
+  where an unlisted one fails. The default search engine and the download
+  location are Darni's own rows in Settings › Profiles: the shell never
+  opens Chromium's pages for them (`NavigationURLPolicy.allowsShellRoute`),
+  and the commands Search Engine Settings and Download Settings open that
+  pane. About Chromium Engine (app menu and command) opens Chromium's
+  version page the same way. View > View Page Source (⌥⌘U) and the matching
   command open `view-source:` for the selected tab. All of these are hidden
   or disabled when `navigation_extended` is off. View > History (⌘Y),
   Downloads (⌥⌘L), Passwords and Extensions, and the matching command-bar

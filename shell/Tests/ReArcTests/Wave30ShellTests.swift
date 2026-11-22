@@ -199,7 +199,6 @@ final class Wave30ShellTests: XCTestCase {
             ("G", "G", [.command, .shift], 5, "Find Previous"),
             ("+", "+", [.control, .shift], 24, "Add Split View"),
             ("_", "_", [.control, .shift], 27, "Close this Split Pane"),
-            ("@", "@", [.command, .shift], 19, "Capture"),
             ("K", "K", [.command, .shift], 40, "Clear Unpinned Tabs"),
             ("L", "L", [.command, .shift], 37, "View Library"),
             ("+", "+", [.command, .shift], 24, "Zoom In"),
@@ -213,6 +212,18 @@ final class Wave30ShellTests: XCTestCase {
             XCTAssertTrue(menu.performKeyEquivalent(with: event), title)
             XCTAssertEqual(target.hits, [title])
         }
+        // A shifted digit keeps its key and Shift (⇧⌘2 for Capture, shown as ⇧⌘2): AppKit matches it by
+        // the key pressed, which only an event the keyboard made carries (a CGEvent, never posted).
+        target.hits = []
+        if let keyboard = CGEvent(keyboardEventSource: nil, virtualKey: 19, keyDown: true) {
+            keyboard.flags = [.maskCommand, .maskShift]
+            XCTAssertTrue(NSEvent(cgEvent: keyboard).map(menu.performKeyEquivalent(with:)) ?? false, "Capture")
+            XCTAssertEqual(target.hits, ["Capture"])
+        } else {
+            XCTFail("no keyboard event")
+        }
+        XCTAssertEqual(ShellMenuItem.appKitKeyEquivalent("2", [.command, .shift]).key, "2")
+        XCTAssertEqual(ShellMenuItem.appKitKeyEquivalent("2", [.command, .shift]).mask, [.command, .shift])
         XCTAssertEqual(ShellMenuItem.appKitKeyEquivalent("c", [.command, .shift]).key, "C")
         XCTAssertEqual(ShellMenuItem.appKitKeyEquivalent("c", [.command, .shift]).mask, .command)
         XCTAssertEqual(ShellMenuItem.appKitKeyEquivalent("\u{8}", [.command, .shift]).mask, [.command, .shift], "Delete keeps Shift")

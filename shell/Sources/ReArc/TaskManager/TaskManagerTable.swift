@@ -79,13 +79,11 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         table.dataSource = self
         table.delegate = self
         // A right-click on the header: Chrome's column chooser.
-        let menu = NSMenu()
-        menu.autoenablesItems = false
+        let menu = NSMenu.darniContextMenu()
         menu.delegate = self
         table.headerView?.menu = menu
         // A row: double-click or Show Tab brings a tab or a frame's tab forward.
-        let rowMenu = NSMenu()
-        rowMenu.autoenablesItems = false
+        let rowMenu = NSMenu.darniContextMenu()
         rowMenu.delegate = self
         table.menu = rowMenu
         table.target = self

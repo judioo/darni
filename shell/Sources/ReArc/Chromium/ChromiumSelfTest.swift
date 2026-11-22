@@ -1486,6 +1486,7 @@ final class ChromiumSelfTest {
         }
         try await shortcutChecks(model: model, store: store, tab: tabA, engine: engineA, base: base, window: first)
         try await settingsWindowChecks(model: model, shell: shell, window: first)
+        try await searchEngineChecks(model: model, store: store)
         try await wave33UIChecks(model: model, store: store, tab: tabA, engine: engineA, other: tabB, window: first)
         try await pinnedLifecycleChecks(model: model, store: store, home: tabA, homeEngine: engineA, window: first)
         try await mediaStripElsewhereChecks(model: model, store: store, home: tabA, homeEngine: engineA, window: first)
@@ -6419,6 +6420,95 @@ extension ChromiumSelfTest {
     @MainActor
     private func moveMouse(to point: NSPoint, in window: NSWindow) {
         ShellInput.moveMouse(to: point, in: window)
+    }
+
+    /// Settings › Profiles' Search engine pop-up, through the model the pop-up
+    /// draws from (`ProfileSearchEngineRow`) and the call its binding makes.
+    /// The shell installs the engine's list at ready; each profile lists its
+    /// own engines with its default; choosing one makes it that profile's
+    /// default in the engine, read back with a fresh `ReArcSearchListEngines`
+    /// and not from the pop-up's copy, while a second profile keeps its own;
+    /// the first profile's default is put back. The stock settings pages
+    /// Darni has replaced (search, downloads) open from no shell route.
+    @MainActor
+    private func searchEngineChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        // The stock settings pages Darni has replaced, asked for by address as the shell's own routes ask.
+        let tabsBefore = store.displayTabs().map(\.id)
+        for path in BrowserInternalPage.replacedStockSettingsPaths.sorted() {
+            let replaced = try XUnwrap(URL(string: "chrome://\(BrowserInternalPage.stockSettingsHost)\(path)"), "replaced settings address")
+            model.openPageInNewTab(replaced, title: "Settings")
+            try check(store.displayTabs().map(\.id) == tabsBefore, "the shell opened \(replaced.absoluteString) as a tab")
+        }
+        try check(!BrowserInternalPage.allCases.contains { BrowserInternalPage.isReplacedStockSettings($0.url) },
+                  "a shell page is a stock settings page Darni has replaced")
+
+        guard runtime.capabilities.searchEngines else {
+            try check(model.searchEngineSettings == nil, "a search engine list without search_engines")
+            log("ABI-GAP search_engines not advertised: Settings › Profiles has no search engine pop-up")
+            return
+        }
+        try check(model.searchEngineSettings is ChromiumSearchEngineSettings,
+                  "the shell did not install the engine's search engine list at ready: the pop-up has no source")
+        let homeSpace = store.activeSpace
+        let homeTab = store.selectedTab
+        let home = homeSpace.profileID
+        let other = store.addProfile(name: "Search Engine Other")
+        store.selectSpace(homeSpace.id)
+        func row(_ profile: Profile.ID) -> ProfileSearchEngineRow? { ProfileSearchEngineRow(model: model, profileID: profile) }
+        /// The engine's own answer for the profile's default, never the pop-up's copy.
+        func engineDefault(_ profile: Profile.ID) async -> SearchEngineChoices.Engine? {
+            await withCheckedContinuation { continuation in
+                runtime.searchEngines(for: profile) { continuation.resume(returning: $0?.current) }
+            }
+        }
+        try await wait("the search engine lists of both profiles", timeout: 25) {
+            [home, other.id].allSatisfy { (row($0)?.options.count ?? 0) > 1 && row($0)?.selection != nil }
+        }
+        guard let homeRow = row(home), let otherRow = row(other.id), let original = homeRow.selection,
+              let otherBefore = await engineDefault(other.id) else {
+            throw Failure(description: "search engines: no list or default for one of the profiles")
+        }
+        try check(homeRow.isEditable && otherRow.isEditable, "search engines: the pop-up cannot change the default")
+        try check(otherRow.selection == String(otherBefore.id), "search engines: the pop-up shows \(otherRow.selection ?? "-") for the second "
+                  + "profile, the engine has \(otherBefore.id)")
+        // An engine that is neither profile's default now, so that a change in the wrong profile would show.
+        guard let pick = homeRow.options.first(where: { $0.id != original && $0.name != otherBefore.name })
+            ?? homeRow.options.first(where: { $0.id != original }) else {
+            throw Failure(description: "search engines: only one engine to choose (\(homeRow.options.map(\.name)))")
+        }
+        let provider = model.searchProvider
+        // As the pop-up's binding sets it.
+        model.setDefaultSearchEngine(pick.id, for: home)
+        try await wait("the pop-up shows the chosen engine") { row(home)?.selection == pick.id }
+        let homeAfter = await engineDefault(home)
+        try check(homeAfter.map { String($0.id) } == pick.id && homeAfter?.name == pick.name,
+                  "search engines: chose \(pick.name) (\(pick.id)), the engine's default is \(homeAfter?.name ?? "-") (\(homeAfter?.id ?? 0))")
+        let otherAfter = await engineDefault(other.id)
+        try check(otherAfter?.id == otherBefore.id && otherAfter?.name == otherBefore.name && row(other.id)?.selection == otherRow.selection,
+                  "search engines: the second profile's default changed with the first's (\(otherBefore.name) -> \(otherAfter?.name ?? "-"))")
+
+        // Back as it was: the steps after this one search through the first profile's default.
+        model.setDefaultSearchEngine(original, for: home)
+        try await waitAsync("the first profile's default search put back", timeout: 15) {
+            await engineDefault(home).map { String($0.id) } == original
+        }
+        if let services = model.commandBarServices as? ChromiumCommandBarServices {
+            services.refreshSearchProvider(for: home)
+            try await wait("the command bar's search provider as before", timeout: 10) {
+                model.searchProvider.searchTemplate == provider.searchTemplate
+            }
+        }
+        try check(model.deleteProfile(other.id, deletingSpaces: true) == nil, "search engines: the extra profile could not be deleted")
+        if let homeTab {
+            model.selectTab(homeTab.id)
+            try await wait("search engines: the first tab shown again", timeout: 15) {
+                store.selectedTab?.id == homeTab.id && store.activeSpaceID == homeSpace.id
+            }
+        }
+        log("PASS search engine pop-up (Settings › Profiles): the engine's list installed at ready; \(homeRow.options.count) engines in the "
+            + "first profile, \(otherRow.options.count) in a second; choosing \(pick.name) made it the first profile's default in the "
+            + "engine (ReArcSearchListEngines), the second kept \(otherBefore.name); default put back; no shell route opens Chromium's "
+            + "search or download settings pages")
     }
 
     /// Wave 35 (ARC-RECORDING-2026-11-06 §6.4 item 9): ⌘, opens ReArc's own

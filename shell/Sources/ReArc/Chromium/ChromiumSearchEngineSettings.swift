@@ -30,8 +30,8 @@ final class ChromiumSearchEngineSettings: SearchEngineSettings {
     }
 
     /// Chromium's default-list engines (`ShowInDefaultList`). Site searches
-    /// the person adds in chrome://settings/searchEngines are not in that
-    /// list (ABI 1.46 has no call for them).
+    /// a profile holds beyond those are not in that list (ABI 1.46 has no
+    /// call for them).
     func siteSearchEngines(for profileID: Profile.ID) -> [SiteSearchEngine] {
         list(for: profileID)?.siteSearchEngines() ?? []
     }
