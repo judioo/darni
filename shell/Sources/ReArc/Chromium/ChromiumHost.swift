@@ -683,10 +683,10 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         }
     }
 
-    func presentLittleArcWindow(_ id: LittleArcWindow.ID) {
+    func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {
         MainActor.assumeIsolated {
             if let existing = window(forLittleArc: id) {
-                existing.makeKeyAndOrderFront(nil)
+                showLittleArcWindow(existing, inFront: inFront)
                 return
             }
             guard let model, !terminating else { return }
@@ -705,9 +705,17 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             }
             cascade(window, offset: 40)
             track(window, .littleArc(id))
-            window.makeKeyAndOrderFront(nil)
+            showLittleArcWindow(window, inFront: inFront)
             DispatchQueue.main.async { [weak self] in self?.prepareLittleArcWindow() }
         }
+    }
+
+    /// In front and key, or behind the app's frontmost window without taking
+    /// the keyboard (a window an extension made by itself, FX-02).
+    @MainActor
+    private func showLittleArcWindow(_ window: NSWindow, inFront: Bool) {
+        LittleArcWindowOrdering.show(window, inFront: inFront,
+                                     behind: LittleArcWindowOrdering.frontWindow(among: NSApp.orderedWindows, except: window))
     }
 
     @MainActor
@@ -1546,10 +1554,18 @@ extension BrowserViewModel {
         return true
     }
 
+    /// The profile a Little Arc for contents of `profileKey` takes.
+    func littleArcProfile(for profileKey: ChromiumProfileKey?) -> Profile.ID {
+        if case .persistent(let owner) = profileKey { return owner }
+        return store.activeProfileID
+    }
+
     /// The contents keep their BrowserContext, so the Little Arc takes the opener's profile.
-    func adoptChromiumLittleArc(_ event: ChromiumTabEvent, profileKey: ChromiumProfileKey?, url: URL) -> Bool {
-        var profileID = store.activeProfileID
-        if case .persistent(let owner) = profileKey { profileID = owner }
+    /// `extensionID`: an extension made the window (`windows.create`), so it comes to the
+    /// front only when the user started it (`presentExtensionLittleArc`).
+    func adoptChromiumLittleArc(_ event: ChromiumTabEvent, profileKey: ChromiumProfileKey?, url: URL,
+                                madeByExtension extensionID: String? = nil) -> Bool {
+        let profileID = littleArcProfile(for: profileKey)
         let record = store.createLittleArcWindow(url: url, title: event.title.flatMap { $0.isEmpty ? nil : $0 }, profileID: profileID)
         let engine = ChromiumEngine(
             runtime: ChromiumRuntime.shared,
@@ -1561,7 +1577,13 @@ extension BrowserViewModel {
             role: .littleArc
         )
         engineHost.adoptLittleArc(engine, id: record.id, profileID: profileID)
-        requestLittleArcWindow(record.id)
+        if let extensionID {
+            if case .stay(let refusal) = presentExtensionLittleArc(record, by: extensionID) {
+                ChromiumLog.info("extension \(extensionID) window \(record.id.uuidString.prefix(8)) opened behind: \(refusal.rawValue)")
+            }
+        } else {
+            requestLittleArcWindow(record.id)
+        }
         loadLittleArcIfNeeded(record.id)
         littleArcAdoptions += 1
         return true

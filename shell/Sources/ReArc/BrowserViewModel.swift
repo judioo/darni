@@ -283,8 +283,12 @@ final class BrowserViewModel {
     @ObservationIgnored var extensionFocusGate = ExtensionFocusGate()
     /// The blank tabs each extension opened and never used.
     @ObservationIgnored var extensionBlankTabs = ExtensionBlankTabs()
+    /// How often each extension asked for a new tab or window lately.
+    @ObservationIgnored var extensionTabRate = ExtensionTabRate()
     /// Each loop breaker trip, for the log and the self-test.
     @ObservationIgnored var extensionFocusLog: [String] = []
+    /// Each burst the rate cap stopped, for the log and the self-test.
+    @ObservationIgnored var extensionTabRateLog: [String] = []
     @ObservationIgnored let pendingExtensionReinstallURL: URL
     /// Bumped by the Site Controls command; the key window's URL field opens its panel.
     var siteControlCenterRequest = 0
@@ -1749,9 +1753,13 @@ final class BrowserViewModel {
         littleArcOpenRequests = []
     }
 
-    func requestLittleArcWindow(_ id: LittleArcWindow.ID) {
+    /// Shows a Little Darni window. `inFront` false is for a window a program
+    /// made that may not take the keyboard (`presentExtensionLittleArc`): it
+    /// opens behind the window in front. SwiftUI's scenes cannot open one that
+    /// way; no engine that runs under them has extensions.
+    func requestLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool = true) {
         if let windowPresenter {
-            windowPresenter.presentLittleArcWindow(id)
+            windowPresenter.presentLittleArcWindow(id, inFront: inFront)
         } else {
             littleArcOpenRequests.append(id)
         }

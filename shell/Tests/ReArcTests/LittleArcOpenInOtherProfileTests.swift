@@ -15,7 +15,7 @@ struct LittleArcOpenInOtherProfileTests {
     private final class Presenter: BrowserWindowPresenting {
         var focused: [SidebarWindowID] = []
         var presented: [LittleArcWindow.ID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID) { presented.append(id) }
+        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) { presented.append(id) }
         func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
         func presentPrivateWindow(_ window: PrivateWindowModel) {}
         func focusBrowserWindow(_ id: SidebarWindowID) { focused.append(id) }

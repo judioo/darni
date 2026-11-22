@@ -129,6 +129,138 @@ final class ExtensionFocusGateTests: XCTestCase {
         XCTAssertEqual(gate.trips, 0)
     }
 
+    // MARK: New windows (windows.create)
+
+    func testANewWindowNeedsTheUsersInputLikeAnyOtherMove() {
+        var gate = ExtensionFocusGate()
+        XCTAssertEqual(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: true, newWindow: true, at: at(0)),
+                       .stay(.noUserInput))
+        gate.noteUserInput(at: at(1))
+        XCTAssertEqual(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: false, newWindow: true, at: at(1.1)),
+                       .stay(.otherProfile))
+        XCTAssertEqual(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: true, newWindow: true, at: at(1.2)), .follow)
+        XCTAssertEqual(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: true, newWindow: true, at: at(1.3)),
+                       .stay(.noUserInput), "one input pays for one window")
+    }
+
+    func testTheLoopBreakerCountsNewWindows() {
+        var gate = ExtensionFocusGate()
+        var verdicts: [ExtensionFocusGate.Verdict] = []
+        // The user keeps clicking and an extension answers each click with a new window in front.
+        for step in 0..<6 {
+            let now = at(Double(step))
+            gate.noteUserInput(at: now)
+            verdicts.append(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: true, newWindow: true,
+                                        at: now.addingTimeInterval(0.1)))
+        }
+        XCTAssertEqual(verdicts, [.follow, .follow, .follow, .follow, .stay(.loop), .stay(.loop)],
+                       "the first window is the way out, \(ExtensionFocusGate.loopReturns) more count as returns, then it holds")
+        XCTAssertEqual(gate.trips, 1)
+        XCTAssertTrue(gate.isPaused(at: at(30)))
+        // While it holds, nothing else a program asks for moves the window either.
+        gate.noteUserInput(at: at(30))
+        XCTAssertEqual(gate.decide(from: a, to: b, source: .extensionRequest, sameProfile: true, at: at(30.1)), .stay(.loop))
+    }
+
+    func testNewWindowsAndReturnsToASpaceAddUp() {
+        var gate = ExtensionFocusGate()
+        func click(_ second: Double) { gate.noteUserInput(at: at(second)) }
+        let first = UUID(), second = UUID()
+        click(0)
+        XCTAssertEqual(gate.decide(from: a, to: first, source: .extensionRequest, sameProfile: true, newWindow: true, at: at(0.1)), .follow)
+        click(1)
+        XCTAssertEqual(gate.decide(from: first, to: a, source: .extensionRequest, sameProfile: true, at: at(1.1)), .follow, "return 1")
+        click(2)
+        XCTAssertEqual(gate.decide(from: a, to: second, source: .extensionRequest, sameProfile: true, newWindow: true, at: at(2.1)), .follow,
+                       "return 2: a second new window")
+        click(3)
+        XCTAssertEqual(gate.decide(from: second, to: a, source: .extensionRequest, sameProfile: true, at: at(3.1)), .follow, "return 3")
+        click(4)
+        XCTAssertEqual(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: true, newWindow: true, at: at(4.1)), .stay(.loop))
+    }
+
+    func testNewWindowsNowAndThenAreNoLoop() {
+        var gate = ExtensionFocusGate()
+        for step in 0..<12 {
+            let now = at(Double(step) * (ExtensionFocusGate.loopWindow / 3))
+            gate.noteUserInput(at: now)
+            XCTAssertEqual(gate.decide(from: a, to: UUID(), source: .extensionRequest, sameProfile: true, newWindow: true,
+                                       at: now.addingTimeInterval(0.1)), .follow)
+        }
+        XCTAssertEqual(gate.trips, 0)
+    }
+
+    // MARK: The rate cap
+
+    private let profile = UUID()
+
+    func testAnExtensionOpensUpToTheCapAtOnceAndNoMore() {
+        var rate = ExtensionTabRate()
+        for index in 0..<ExtensionTabRate.limit {
+            XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(Double(index) * 0.01)), .open, "request \(index + 1) is under the cap")
+        }
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(0.2)), .decline(firstOfBurst: true))
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(0.3)), .decline(firstOfBurst: false), "one toast for the burst")
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(0.4)), .decline(firstOfBurst: false))
+    }
+
+    func testTheCapIsPerExtensionAndPerProfile() {
+        var rate = ExtensionTabRate()
+        for _ in 0...ExtensionTabRate.limit { _ = rate.ask(by: "ext", in: profile, at: at(0)) }
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(0.1)), .decline(firstOfBurst: false))
+        XCTAssertEqual(rate.ask(by: "another", in: profile, at: at(0.1)), .open, "another extension has its own count")
+        let other = UUID()
+        XCTAssertEqual(rate.ask(by: "ext", in: other, at: at(0.1)), .open, "so has its copy in another profile")
+        // And each gets its own toast.
+        for _ in 1..<ExtensionTabRate.limit { XCTAssertEqual(rate.ask(by: "ext", in: other, at: at(0.2)), .open) }
+        XCTAssertEqual(rate.ask(by: "ext", in: other, at: at(0.3)), .decline(firstOfBurst: true))
+    }
+
+    func testTheCapResetsAfterTheWindow() {
+        var rate = ExtensionTabRate()
+        for _ in 0..<ExtensionTabRate.limit { XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(0)), .open) }
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(1)), .decline(firstOfBurst: true))
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(ExtensionTabRate.window - 0.1)), .decline(firstOfBurst: false),
+                       "not yet: the burst is still inside the window")
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(ExtensionTabRate.window + 0.5)), .open,
+                       "the burst is older than the window: only the two declined requests are counted now")
+        // Quiet for the window: it may open a full burst again, and going over is said again.
+        let later = 1 + 2 * ExtensionTabRate.window
+        for index in 0..<ExtensionTabRate.limit {
+            XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(later + Double(index) * 0.01)), .open)
+        }
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(later + 0.5)), .decline(firstOfBurst: true), "a new burst, a new toast")
+    }
+
+    func testAClientThatKeepsRetryingStaysDeclined() {
+        var rate = ExtensionTabRate()
+        var opened = 0, toasts = 0
+        // The flood of 2026-11-22 with an address in the call: 4.4 requests a second for 142 s.
+        for step in 0..<628 {
+            switch rate.ask(by: "ext", in: profile, at: at(Double(step) * 142 / 628)) {
+            case .open: opened += 1
+            case .decline(let first): if first { toasts += 1 }
+            }
+        }
+        XCTAssertEqual(opened, ExtensionTabRate.limit, "declined requests count too: a retry does not earn the next tab")
+        XCTAssertEqual(toasts, 1)
+        // It stops; the window later it is an ordinary extension again.
+        XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(142 + ExtensionTabRate.window + 0.1)), .open)
+    }
+
+    func testTabsOpenedNowAndThenAreNeverDeclined() {
+        var rate = ExtensionTabRate()
+        // Just under the cap for ever: one tab every 1.1 s.
+        for step in 0..<200 {
+            XCTAssertEqual(rate.ask(by: "ext", in: profile, at: at(Double(step) * (ExtensionTabRate.window / Double(ExtensionTabRate.limit) + 0.1))), .open)
+        }
+        // A few tabs at each of the user's clicks, every few seconds.
+        var bursts = ExtensionTabRate()
+        for click in 0..<20 {
+            for index in 0..<4 { XCTAssertEqual(bursts.ask(by: "ext", in: profile, at: at(Double(click) * 5 + Double(index) * 0.05)), .open) }
+        }
+    }
+
     // MARK: Blank tabs
 
     func testAnExtensionHoldsOnlySoManyUnusedBlankTabs() {

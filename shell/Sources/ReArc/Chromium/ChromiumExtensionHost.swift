@@ -306,10 +306,17 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
                 }
             }
         case .littleArc:
+            // windows.create counts towards the extension's tab rate cap, and its window comes to
+            // the front only when the user started it (FX-02): the engine asks for every window as
+            // an active one, whatever `focused` the extension gave.
+            let profileKey = runtime.profileKey(forEngineProfile: request.profileID)
+            if let refusal = model.extensionWindowRefusal(for: request, profile: model.littleArcProfile(for: profileKey)) {
+                return decline(request, refusal)
+            }
             guard let tabID = runtime.createBlankTab(profile: request.profileID, role: .littleArc) else { return decline(request, "tab creation failed") }
             let event = ChromiumTabEvent.created(profileID: request.profileID, tabID: tabID, url: "about:blank")
-            _ = model.adoptChromiumLittleArc(event, profileKey: runtime.profileKey(forEngineProfile: request.profileID),
-                                             url: URL(string: "about:blank")!)
+            _ = model.adoptChromiumLittleArc(event, profileKey: profileKey, url: URL(string: "about:blank")!,
+                                             madeByExtension: request.extensionID)
             reconcileWindows()
             runtime.respondExtensionTabRequest(request.id, tab: tabID)
         }

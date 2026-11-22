@@ -150,7 +150,10 @@ protocol PageZoomRefreshing: AnyObject {
 /// model when the app runs without SwiftUI scenes (the Chromium path owns its
 /// NSWindows).
 protocol BrowserWindowPresenting: AnyObject {
-    func presentLittleArcWindow(_ id: LittleArcWindow.ID)
+    /// `inFront`: key and frontmost. Otherwise the window opens behind the
+    /// one in front and takes neither the keyboard nor the app forward; one
+    /// that is open already stays where it is (`LittleArcWindowOrdering`).
+    func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool)
     func dismissLittleArcWindow(_ id: LittleArcWindow.ID)
     func presentPrivateWindow(_ window: PrivateWindowModel)
     /// A tab's DevTools in their own window (popped out from the docked pane).

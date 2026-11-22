@@ -30,6 +30,8 @@ struct ShellToast: Equatable, Identifiable {
         case openSettings(SettingsPane)
         /// "Undo": runs the model's `toastUndo` for this toast (Tidy Tabs, Tidy Downloads).
         case undo
+        /// "Show": runs the model's `toastUndo` for this toast too (a window an extension opened behind this one).
+        case show
     }
 
     /// Arc's toasts stayed 4.6 s and 5.0 s.
@@ -171,10 +173,11 @@ extension BrowserViewModel {
         }
     }
 
-    /// A toast whose Undo runs `undo`, once, while that toast is up.
-    func showUndoToast(_ message: String, systemImage: String, duration: TimeInterval = ShellToast.defaultDuration + 3,
-                       undo: @escaping () -> Void) {
-        showToast(message, systemImage: systemImage, action: .undo, duration: duration)
+    /// A toast whose Undo runs `undo`, once, while that toast is up. `action`
+    /// names the button: Undo, or Show.
+    func showUndoToast(_ message: String, systemImage: String, action: ShellToast.Action = .undo,
+                       duration: TimeInterval = ShellToast.defaultDuration + 3, undo: @escaping () -> Void) {
+        showToast(message, systemImage: systemImage, action: action, duration: duration)
         if let id = toast?.id { toastUndo = (id, undo) }
     }
 
