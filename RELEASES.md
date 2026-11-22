@@ -24,6 +24,35 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1122.1229 — 2026-11-22
+
+**New**
+- Split View panes can be put in a different order. Move Pane Left and Move Pane Right (Up and
+  Down when the panes are stacked) are in the pane's split menu, in the menu of a pane's chip in
+  the sidebar, in the View menu and in the command bar. You can also drag a pane's chip along
+  the split's row in the sidebar. A pane keeps its width and its page when it moves.
+- Add to Split View in a tab's menu adds the tab, or the selected tabs, to a split in the same
+  space, up to four panes.
+- Separate Page from Split View is now in the View menu, as in Arc, and takes the pane you are
+  using out of its split. The split view items moved from the Tabs menu to the View menu.
+- Settings › Profiles has a Download location row, to choose the folder for downloads.
+
+**Fixes**
+- An extension installed in more than one profile could make Darni switch between spaces
+  without stopping, and fill Today with blank tabs. This happened when the Claude extension
+  connected to Claude Code. An extension now selects a tab in its own space without bringing
+  that space forward. The space on screen changes only after you click or type in Darni. If
+  pages or extensions keep switching spaces, Darni stops following them for a minute and
+  says so.
+- The search engine choice in Settings › Profiles was missing when Darni had started normally.
+  It is always there now, and it lists every engine, also after you change it.
+- The Air Traffic Control window is wider, can be resized and keeps its size. Long space and
+  profile names show in full, and the bin button of a rule is never under the scroll bar.
+- File › Capture shows its shortcut as ⇧⌘2.
+- The menu of a download in the sidebar no longer starts with "Ask Siri", and its tooltip shows
+  the file's folder, not the whole path.
+- Some labels said "Chromium" or "ReArc". They say Darni now, or name what they do.
+
 ## Darni 2026.1121.1164 — 2026-11-21
 
 **Fixes**
