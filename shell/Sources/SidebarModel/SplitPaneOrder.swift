@@ -34,14 +34,22 @@ extension SplitViewItem {
     /// The two moves of `tabID`, towards the first pane then towards the
     /// last; none for a tab that is not a pane of this split.
     public func paneMoves(for tabID: Tab.ID) -> [SplitPaneMove] {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return [] }
+        guard tabs.contains(where: { $0.id == tabID }) else { return [] }
         return [-1, 1].map { offset in
             SplitPaneMove(
                 offset: offset,
                 title: SplitPaneMove.title(offset: offset, orientation: orientation),
-                isEnabled: tabs.indices.contains(index + offset)
+                isEnabled: canMovePane(tabID, by: offset)
             )
         }
+    }
+
+    /// Whether pane `tabID` can go `offset` places along the split: it is a
+    /// pane, the offset is not 0, and the place is not past either end. The
+    /// one rule for the menus' items and the store's move.
+    public func canMovePane(_ tabID: Tab.ID, by offset: Int) -> Bool {
+        guard offset != 0, let index = tabs.firstIndex(where: { $0.id == tabID }) else { return false }
+        return tabs.indices.contains(index + offset)
     }
 
     /// How a menu names the split, as its sidebar row reads: its name (or
@@ -145,9 +153,7 @@ extension SidebarStore {
     }
 
     public func canMoveSplitPane(splitID: SplitViewItem.ID, tabID: Tab.ID, by offset: Int) -> Bool {
-        guard offset != 0, let split = split(withID: splitID),
-              let from = split.tabs.firstIndex(where: { $0.id == tabID }) else { return false }
-        return split.tabs.indices.contains(from + offset)
+        split(withID: splitID)?.canMovePane(tabID, by: offset) ?? false
     }
 
     // MARK: - Add to Split View
