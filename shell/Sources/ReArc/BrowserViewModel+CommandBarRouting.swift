@@ -143,6 +143,8 @@ extension BrowserViewModel {
         guard tabSwitcherMonitor == nil else { return }
         tabSwitcherMonitor = ShellKeyMonitor(handle: { [weak self] event in
             guard let self else { return event }
+            // A key or a button going down is the user's: an extension may follow it (`ExtensionFocusGate`).
+            if [.keyDown, .leftMouseDown, .rightMouseDown].contains(event.type) { self.noteUserInput() }
             // A click outside an open Peek's card closes it and goes no further.
             if self.handlePeekMouse(event) { return nil }
             if event.type != .leftMouseDown, event.type.isMouse { return event }

@@ -278,6 +278,13 @@ final class BrowserViewModel {
     @ObservationIgnored var heldExtensionToast: HeldExtensionToast?
     /// An import's extensions, whose own tabs open in the background.
     @ObservationIgnored var quietExtensionInstalls = QuietExtensionInstalls()
+    /// Whether an extension or a page may change the space on screen, and the
+    /// loop breaker behind it (`BrowserViewModel+ExtensionFocus`).
+    @ObservationIgnored var extensionFocusGate = ExtensionFocusGate()
+    /// The blank tabs each extension opened and never used.
+    @ObservationIgnored var extensionBlankTabs = ExtensionBlankTabs()
+    /// Each loop breaker trip, for the log and the self-test.
+    @ObservationIgnored var extensionFocusLog: [String] = []
     @ObservationIgnored let pendingExtensionReinstallURL: URL
     /// Bumped by the Site Controls command; the key window's URL field opens its panel.
     var siteControlCenterRequest = 0

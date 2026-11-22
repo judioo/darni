@@ -5316,6 +5316,9 @@ enum SelfTestExtensionFixture {
     static let popupName = "ReArc selftest popup"
     static let popupTitle = "ReArc selftest action"
     static let clickName = "ReArc selftest click"
+    static let frontName = "ReArc selftest front"
+    /// How long the front fixture runs after a click on its action.
+    static let frontRun: TimeInterval = 15
     static let popupSize = CGSize(width: 320, height: 180)
 
     /// Writes the fixtures into a fresh temp directory; their paths for `--load-extension`.
@@ -5326,6 +5329,7 @@ enum SelfTestExtensionFixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("rearc-selftest-extensions-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let popup = root.appendingPathComponent("popup"), click = root.appendingPathComponent("click")
+        let front = root.appendingPathComponent("front")
         func file(_ dir: URL, _ name: String, _ text: String) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try? Data(text.utf8).write(to: dir.appendingPathComponent(name))
@@ -5363,7 +5367,36 @@ enum SelfTestExtensionFixture {
         """)
         file(click, "page.html", "<!doctype html><title>ext-page</title><script src=\"page.js\"></script>")
         file(click, "page.js", "document.title = 'ext-page' + decodeURIComponent(location.hash.slice(1));")
-        return [popup, click]
+        file(front, "manifest.json", """
+        {"name":"\(frontName)","version":"1.0","manifest_version":3,"background":{"service_worker":"bg.js"},"action":{"default_title":"\(frontName)"}}
+        """)
+        // Wants its tab in front, as an automation extension does for a tab its client asked for
+        // (owner's report 2026-11-22): for `frontRun` seconds after a click on its action, whenever
+        // no window of its profile is focused it opens a blank tab in its window and makes it the
+        // active one. Loaded into every profile, as an extension installed in two profiles is.
+        file(front, "bg.js", """
+        let timer = null, left = 0, busy = false;
+        async function tick() {
+          if (--left <= 0) { clearInterval(timer); timer = null; }
+          if (busy) return;
+          busy = true;
+          try {
+            const wins = await chrome.windows.getAll();
+            if (!wins.some((w) => w.focused)) {
+              const win = await chrome.windows.getLastFocused({windowTypes: ['normal']});
+              const tab = await chrome.tabs.create({windowId: win.id, url: 'chrome://newtab', active: false});
+              await chrome.tabs.update(tab.id, {active: true});
+            }
+          } catch (e) {}
+          busy = false;
+        }
+        chrome.action.onClicked.addListener(() => {
+          if (timer) return;
+          left = \(Int(frontRun * 4));
+          timer = setInterval(tick, 250);
+        });
+        """)
+        return [popup, click, front]
     }
 
     private static func png(_ size: Int) -> Data {
@@ -5432,6 +5465,7 @@ extension ChromiumSelfTest {
             log("PASS Settings › Advanced password leak switch reads the profile's value (off in the self-test)")
         }
         try await extensionChecks(model: model, store: store, shell: shell, tab: tab, engine: engine)
+        try await extensionFocusChecks(model: model, store: store, shell: shell, tab: tab, engine: engine, base: base)
         try await autofillChecks(model: model, store: store, tab: tab, engine: engine, base: base, window: window)
         try await httpAuthChecks(model: model, tab: tab, engine: engine, base: base)
         try await linkOpenChecks(model: model, store: store, tab: tab, engine: engine, base: base, window: window)
@@ -5876,6 +5910,125 @@ extension ChromiumSelfTest {
         model.deleteTab(created.id)
         model.selectTab(tab.id)
         controller.togglePin(popupAction.id)
+    }
+
+    // MARK: Extensions in two profiles do not pass the window between them
+
+    /// Owner's report 2026-11-22: the same extension in two profiles, each
+    /// copy bringing its own tab forward when it saw no focused window, made
+    /// the window switch between the two profiles' spaces for as long as it
+    /// ran and left two blank tabs behind at each switch. Here the front
+    /// fixture runs in two profiles for `frontRun` seconds with nobody at the
+    /// keyboard: the space on screen must not change, the copy that is not on
+    /// screen gets its tab as its own window's active tab and no more than
+    /// `ExtensionBlankTabs.limit` blank tabs, and the copy on screen opens none.
+    /// Then the user's own switch to the other space, and the same the other
+    /// way round.
+    @MainActor
+    private func extensionFocusChecks(model: BrowserViewModel, store: SidebarStore, shell: ChromiumShell, tab: Tab,
+                                      engine: ChromiumEngine, base: String) async throws {
+        let capabilities = runtime.capabilities
+        guard capabilities.extensionActions, capabilities.extensionWindows, capabilities.profiles, let host = shell.extensionHost else {
+            log("ABI-GAP extension_windows or profiles not advertised (ABI minor \(minorText)): extensions in two profiles are not exercised")
+            return
+        }
+        let controller = model.extensions
+        let frontName = SelfTestExtensionFixture.frontName
+        func frontAction(_ engine: ChromiumEngine, timeout: TimeInterval) async -> ExtensionActionItem? {
+            var found: ExtensionActionItem?
+            _ = await eventuallyAsync(timeout: timeout) {
+                controller.refresh(engine, scale: 2)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                found = controller.actions(for: engine).first { $0.name == frontName }
+                return found != nil
+            }
+            return found
+        }
+        model.selectTab(tab.id)
+        let homeSpace = store.activeSpace
+        guard let homeFront = await frontAction(engine, timeout: 20) else {
+            throw Failure(description: "extension focus: the front fixture has no action in the first profile")
+        }
+
+        // A second profile with one space and one open page: a copy needs a window with an active tab.
+        let other = store.addProfile(name: "Extension Focus Other")
+        let otherSpace = try XUnwrap(store.spaces(in: other.id).first, "the second profile's space")
+        let otherTab = store.addTab(kind: .today, title: "other", url: try XUnwrap(URL(string: "\(base)/a?focus=1"), "address"), in: otherSpace.id)
+        model.selectSpace(otherSpace.id)
+        model.selectTab(otherTab.id)
+        let otherEngine = try shellEngine(model, otherTab)
+        try await wait("extension focus: the second profile's page", timeout: 25) { otherEngine.pageTitle == Self.titleA && !otherEngine.isLoading }
+        let otherFront = await frontAction(otherEngine, timeout: 15)
+
+        let before = Set((store.displayTabs(in: homeSpace.id) + store.displayTabs(in: otherSpace.id)).map(\.id))
+        func added(_ space: Space.ID) -> [Tab] { store.displayTabs(in: space).filter { !before.contains($0.id) } }
+        func watch(_ seconds: TimeInterval, on space: Space, _ label: String) async throws {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                try check(store.activeSpaceID == space.id, "extension focus: \(label): the space on screen changed by itself to "
+                          + "'\(store.activeSpace.name)' (\(added(homeSpace.id).count) + \(added(otherSpace.id).count) new tabs)")
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        /// The copy whose space is not on screen: its tab is its own window's active tab, in the engine too, and the window is not focused.
+        func checkHiddenCopy(_ space: Space, _ label: String) throws -> Int {
+            let tabs = added(space.id)
+            try check(!tabs.isEmpty && tabs.count <= ExtensionBlankTabs.limit && tabs.allSatisfy { $0.url.absoluteString == "about:blank" },
+                      "extension focus: \(label): \(tabs.count) new tabs in '\(space.name)' (at most \(ExtensionBlankTabs.limit) blank ones expected)")
+            guard let selected = store.selectedTab(inSpace: space.id), tabs.contains(where: { $0.id == selected.id }) else {
+                throw Failure(description: "extension focus: \(label): the extension's tab is not its own space's selected tab")
+            }
+            host.reconcileWindows()
+            let (status, state) = runtime.extensionState(tab: try shellEngine(model, selected).tabID)
+            try check(status == .rearcOK && state.active && !state.focused && state.window_id == host.windowID(forSpace: space.id),
+                      "extension focus: \(label): the engine has the tab as \(status.rearcName) \(state)")
+            return tabs.count
+        }
+
+        // Nobody at the keyboard: an earlier step's synthesized click must not count for this one.
+        model.extensionFocusGate = ExtensionFocusGate()
+        let logged = model.extensionFocusLog.count
+        let armed = Date()
+        controller.run(homeFront.id, for: engine, anchor: nil)
+        if let otherFront { controller.run(otherFront.id, for: otherEngine, anchor: nil) }
+
+        // The second profile's space is on screen: the first profile's copy sees no focused window.
+        try await wait("extension focus: the first profile's copy opened its tab", timeout: 10) { !added(homeSpace.id).isEmpty }
+        try await watch(4, on: otherSpace, "first profile's copy running")
+        let homeCount = try checkHiddenCopy(homeSpace, "first profile's copy")
+        try check(added(otherSpace.id).isEmpty, "extension focus: the copy on screen opened \(added(otherSpace.id).count) tab(s) though its window is focused")
+
+        // The user's own switch; now the second profile's copy is the one that sees no focused window.
+        model.selectSpace(homeSpace.id)
+        try check(store.activeSpaceID == homeSpace.id, "extension focus: the user's own switch did not happen")
+        var otherCount = 0
+        if otherFront != nil {
+            try await wait("extension focus: the second profile's copy opened its tab", timeout: 8) { !added(otherSpace.id).isEmpty }
+            try await watch(3, on: homeSpace, "second profile's copy running")
+            otherCount = try checkHiddenCopy(otherSpace, "second profile's copy")
+        } else {
+            try await watch(3, on: homeSpace, "after the user's switch")
+        }
+
+        // Until both copies have stopped, and a moment more: nothing moves and nothing piles up.
+        let remaining = SelfTestExtensionFixture.frontRun + 1.5 - Date().timeIntervalSince(armed)
+        if remaining > 0 { try await watch(remaining, on: homeSpace, "to the end of the run") }
+        let finalHome = added(homeSpace.id).count, finalOther = added(otherSpace.id).count
+        try await watch(1, on: homeSpace, "after the run")
+        try check(added(homeSpace.id).count == finalHome && added(otherSpace.id).count == finalOther
+                  && finalHome <= ExtensionBlankTabs.limit && finalOther <= ExtensionBlankTabs.limit,
+                  "extension focus: tabs kept arriving (\(homeCount) -> \(added(homeSpace.id).count), \(otherCount) -> \(added(otherSpace.id).count))")
+        try check(model.extensionFocusLog.count == logged, "extension focus: the loop breaker had to step in: \(model.extensionFocusLog.suffix(1))")
+
+        for created in added(homeSpace.id) { model.deleteTab(created.id) }
+        try check(model.deleteProfile(other.id, deletingSpaces: true) == nil, "extension focus: the extra profile could not be deleted")
+        model.selectTab(tab.id)
+        try await wait("extension focus: the first tab shown again", timeout: 15) { store.selectedTab?.id == tab.id && store.activeSpaceID == homeSpace.id }
+        log("PASS extensions in two profiles (owner's report 2026-11-22): the front fixture ran \(Int(SelfTestExtensionFixture.frontRun)) s in "
+            + (otherFront == nil ? "the first profile only (NOTE: --load-extension did not load it into the second)" : "both profiles")
+            + " with no input; the space on screen never changed by itself; the copy not on screen got its tab as its window's active "
+            + "tab (not focused) and \(finalHome) blank tab(s) in the first profile, \(finalOther) in the second (limit "
+            + "\(ExtensionBlankTabs.limit)); the copy on screen opened none; the user's own switch worked; loop breaker not needed")
     }
 
     // MARK: Autofill suggestions (ABI 1.34) and save offers (1.37)

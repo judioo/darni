@@ -1544,11 +1544,9 @@ extension BrowserViewModel {
             tabOpeners.record(tab.id, openedBy: opener)
         }
         // Background-tab disposition stays unselected; the rest take focus in the sidebar,
-        // in their own space (as link opens do).
-        if event.disposition != 2 {
-            if let space, space != store.activeSpaceID { store.selectSpace(space) }
-            selectTab(tab.id)
-        }
+        // in their own space (as link opens do), which comes on screen unless pages and
+        // extensions have been passing the window between them (`ExtensionFocusGate`).
+        if event.disposition != 2 { selectPageOpenedTab(tab.id, in: space) }
         return true
     }
 
