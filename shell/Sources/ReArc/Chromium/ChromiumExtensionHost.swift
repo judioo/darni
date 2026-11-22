@@ -267,7 +267,7 @@ final class ChromiumExtensionHost: ExtensionToolbarBackend {
                     model.requestLittleArcWindow(record.id)
                 }
             } else {
-                guard let id = model.engineHost.allTabEngines().first(where: { ($0.2 as AnyObject) === engine })?.0 else {
+                guard let id = model.engineHost.tabID(showing: engine) else {
                     return decline(request, "tab \(tab) is not a sidebar tab")
                 }
                 let showing = model.extensionActivatedTab(id)
