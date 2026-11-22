@@ -153,10 +153,8 @@ final class SiteControlsExtensionPinTests: XCTestCase {
             settle()
         }
         settle()
-        // SwiftUI builds its accessibility tree only for a client that asked.
-        let assistive = [NSAccessibility.Attribute(rawValue: "AXManualAccessibility"), NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface")]
-        for attribute in assistive { (NSApplication.shared as NSObject).accessibilitySetValue(true, forAttribute: attribute) }
-        defer { for attribute in assistive { (NSApplication.shared as NSObject).accessibilitySetValue(false, forAttribute: attribute) } }
+        AccessibilityTree.setAssistiveClient(true)
+        defer { AccessibilityTree.setAssistiveClient(false) }
         _ = host.accessibilityChildren()
         settle()
         XCTAssertNotNil(Self.element(labelled: "Unpin Passwords", in: host), "a pinned tile always has its pin button")
@@ -174,14 +172,8 @@ final class SiteControlsExtensionPinTests: XCTestCase {
         XCTAssertTrue(controller.pins.pinnedIDs.isEmpty)
     }
 
-    private static func element(labelled label: String, in root: Any, depth: Int = 0) -> AnyObject? {
-        let node = root as AnyObject
-        guard depth < 12 else { return nil }
-        if (node.accessibilityLabel?() as String?) == label { return node }
-        for child in (node.accessibilityChildren?() as [Any]?) ?? [] {
-            if let found = element(labelled: label, in: child, depth: depth + 1) { return found }
-        }
-        return nil
+    private static func element(labelled label: String, in root: Any) -> AnyObject? {
+        AccessibilityTree.element(labelled: label, in: root, maxDepth: 12)
     }
 
     /// The whole panel, for a look beside Arc's.
@@ -272,9 +264,4 @@ final class SiteControlsExtensionPinTests: XCTestCase {
         }
         return image.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) }?.representation(using: .png, properties: [:])
     }
-}
-
-/// Never constrained onto a screen, never ordered in.
-private final class OffscreenWindow: NSWindow {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

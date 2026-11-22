@@ -146,8 +146,3 @@ final class Wave33LookSnapshotTests: XCTestCase {
         var body: some View { SpaceStyleEditor(theme: $theme) }
     }
 }
-
-/// Never constrained onto a screen, never ordered in.
-private final class OffscreenWindow: NSWindow {
-    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
-}
