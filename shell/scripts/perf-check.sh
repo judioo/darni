@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# The performance check before a release (docs/PERFORMANCE-CHIP.md §7).
+# The weekly performance check (docs/PERFORMANCE-CHIP.md §7). Owner, 2026-11-22: the
+# performance metric is collated once a week and is not part of the release cycle; a release
+# never waits for it. (The /compare feature comparison is a different thing and still runs
+# with every release, from the monorepo's own scripts.)
 #
-# Usage: scripts/perf-check.sh --build NNNN [--released] [--compare [--browsers LIST]]
-#          [--halt RULES] [--confirm FILE] [--runs N] [--no-speedometer] [--arc-quit-allowed] [--quit-owner-darni]
-#          [--data DIR] [--no-commit] [--no-guards] [--gate-only FILE]
+# Usage: scripts/perf-check.sh --weekly [--remeasure] [options]
+#        scripts/perf-check.sh --build NNNN [--released] [options]
+#   options: [--compare [--browsers LIST]] [--halt RULES] [--confirm FILE] [--runs N] [--no-speedometer]
+#            [--arc-quit-allowed] [--quit-owner-darni] [--data DIR] [--no-commit] [--no-guards] [--gate-only FILE]
 #
+#   --weekly         measures the newest released build: the highest v0.1.0-NNNN tag. If that
+#                    build is already in the data folder (no release since the last weekly run),
+#                    it says so and measures nothing, unless --remeasure (a second session of the
+#                    same build, for calibration; the earlier file stays in git history)
 #   --build NNNN     measures shell/dist/rcNNNN/Darni.app, through a QA copy made once at
 #                    shell/dist/perf-NNNN/Darni.app (ReArcReleaseVerification, re-signed), on a
 #                    fresh REARC_DATA_DIR per run
@@ -31,12 +39,14 @@ REPO="$(cd "$SHELL_DIR/.." && pwd)"
 PERF="$REPO/perf"
 DATA="${DARNI_PERF_DATA:-$HOME/.t3/worktrees/rearc-monorepo/perf-data/data/performance}"
 COMPARE_BROWSERS="darni,chrome,brave,helium,cra,ardia,zen,orion,arc,dia,safari"
-BUILD="" RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
+BUILD="" WEEKLY=0 REMEASURE=0 RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0
 die() { echo "perf-check: $*" >&2; exit 2; }
 refuse() { echo "perf-check: refusing to run: $*" >&2; exit 75; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build) BUILD="$2"; shift ;;
+    --weekly) WEEKLY=1 ;;
+    --remeasure) REMEASURE=1 ;;
     --released) RELEASED=1 ;;
     --compare) COMPARE=1 ;;
     --browsers) BROWSERS="$2"; shift ;;
@@ -50,13 +60,25 @@ while [[ $# -gt 0 ]]; do
     --no-commit) COMMIT=0 ;;
     --no-guards) GUARDS=0 ;;
     --gate-only) GATE_ONLY="$2"; shift ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
 done
-[[ $BUILD =~ ^[0-9]+$ ]] || die "--build NNNN is required"
 [[ -d $DATA || $COMMIT == 0 ]] || die "no data folder $DATA (make the perf-data worktree, or pass --data)"
+if [[ $WEEKLY == 1 ]]; then
+  [[ -z $BUILD ]] || die "--weekly picks the build itself; drop --build"
+  TAG="$(git -C "$REPO" tag --list 'v0.1.0-*' --sort=-v:refname | head -n 1)"
+  BUILD="${TAG#v0.1.0-}"
+  [[ $BUILD =~ ^[0-9]+$ ]] || die "no released build: no v0.1.0-NNNN tag"
+  RELEASED=1
+  if [[ -f $DATA/builds/$BUILD.json && $REMEASURE == 0 ]]; then
+    echo "perf-check: Darni $BUILD ($TAG), the newest release, is already measured ($(sed -n 's/.*"measured_at": "\([^"]*\)".*/\1/p' "$DATA/builds/$BUILD.json" | head -n 1)); no release since. Nothing to measure this week (--remeasure to measure it again)."
+    exit 0
+  fi
+  echo "perf-check: weekly run: Darni $BUILD ($TAG)"
+fi
+[[ $BUILD =~ ^[0-9]+$ ]] || die "--build NNNN or --weekly is required"
 mkdir -p "$DATA"
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 OUT="$SHELL_DIR/bench/results/perf/$STAMP-$BUILD"   # git-ignored
