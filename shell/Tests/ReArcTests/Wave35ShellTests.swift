@@ -8,12 +8,7 @@ import XCTest
 /// and the router, the Links switches on the engines, Little Arc's periodic
 /// archive, Warn before quitting and the Profiles and Advanced rows.
 final class Wave35ShellTests: XCTestCase {
-    private final class Presenter: BrowserWindowPresenting {
-        var dismissed: [LittleArcWindow.ID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) { dismissed.append(id) }
-        func presentPrivateWindow(_ window: PrivateWindowModel) {}
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     private func makeModel() -> BrowserViewModel {
         let store = SidebarStore(spaces: [Space(name: "Main", sortRank: "a")])

@@ -285,6 +285,16 @@ final class BrowserViewModel {
     @ObservationIgnored var extensionBlankTabs = ExtensionBlankTabs()
     /// How often each extension asked for a new tab or window lately.
     @ObservationIgnored var extensionTabRate = ExtensionTabRate()
+    /// The Little Darni windows extensions opened behind the window in front
+    /// that the user has not brought forward yet, oldest first
+    /// (`extensionWindowNotice`).
+    var extensionWindowsBehind: [ExtensionWindowBehind] = []
+    /// The Dock icon has bounced for them since the user was last at Darni.
+    @ObservationIgnored var extensionWindowAttentionRequested = false
+    /// Whether Darni is the active app, and the Dock icon's single bounce
+    /// (`noteExtensionWindowBehind`). Tests put their own here.
+    @ObservationIgnored var appIsActive: () -> Bool = { NSApp?.isActive ?? true }
+    @ObservationIgnored var requestDockAttention: () -> Void = { _ = NSApp?.requestUserAttention(.informationalRequest) }
     /// Each loop breaker trip, for the log and the self-test.
     @ObservationIgnored var extensionFocusLog: [String] = []
     /// Each burst the rate cap stopped, for the log and the self-test.
@@ -412,6 +422,8 @@ final class BrowserViewModel {
             // Focus in and out counts as use, so a window in use never looks idle to the auto-archive.
             guard keyLittleArcID != oldValue else { return }
             for id in [oldValue, keyLittleArcID].compactMap({ $0 }) { store.touchLittleArcWindow(id: id) }
+            // A window an extension opened behind is no longer behind (`extensionWindowNotice`).
+            if let keyLittleArcID { extensionWindowCameForward(keyLittleArcID) }
         }
     }
     /// A Little Arc whose address field should start editing (⌘L, New Little Arc Window).

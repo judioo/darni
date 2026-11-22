@@ -246,7 +246,7 @@ final class ReleaseLaunchSecurityTests: XCTestCase {
         let feature = ChromiumLaunchArguments.persistedProfileFeatures
         let disabled = ChromiumLaunchArguments.disabledEngineFeatures
         XCTAssertTrue(feature.contains("PrepopulatedEnginesMigration") && feature.contains("ApplySearchEngineTypeMigration"))
-        XCTAssertEqual(disabled, "--disable-features=SafeBrowsingLocalListsUseSBv5,LazyBrowserInterfaceBroker")
+        XCTAssertEqual(disabled, "--disable-features=SafeBrowsingLocalListsUseSBv5,LazyBrowserInterfaceBroker,PreemptiveSodaDownload")
         // Development, the bundle release.sh is verifying, and the shipped bundle.
         for (isRelease, isShipped) in [(false, false), (true, false), (true, true)] {
             for argv in [["ReArc"], ["ReArc", "--enable-features=Other", "--disable-features=PrepopulatedEnginesMigration"]] {
@@ -261,6 +261,26 @@ final class ReleaseLaunchSecurityTests: XCTestCase {
         }
         XCTAssertEqual(Array(ChromiumLaunchArguments.engineArguments(["ReArc"], defaultUserDataDir: { "/d" }, keychain: .devMock,
                                                                      isRelease: false).suffix(2)), [feature, disabled])
+    }
+
+    /// The testing config turns on `PreemptiveSodaDownload`: a new profile then fetches the speech
+    /// recognition library and a language pack (about 440 MB with the component cache) a few
+    /// seconds after its first start, for a Live Caption nobody asked for. The performance check
+    /// of 1164 measured the fetch as idle CPU (2026-11-22). Every launch turns it off, in the
+    /// one `--disable-features` Chromium keeps.
+    func testNoLaunchFetchesSpeechModelsNobodyAskedFor() throws {
+        XCTAssertTrue(ChromiumLaunchArguments.disabledEngineFeatureNames.contains("PreemptiveSodaDownload"))
+        for (isRelease, isShipped) in [(false, false), (true, false), (true, true)] {
+            let launch = ChromiumLaunchArguments.engineArguments(["ReArc", "--disable-features=Other"], defaultUserDataDir: { "/data" },
+                                                                 keychain: .system, isRelease: isRelease, isShipped: isShipped)
+            for arguments in [launch, ChromiumLaunchArguments.benchArguments(launch), ChromiumLaunchArguments.selfTestArguments(launch)] {
+                let last = try XCTUnwrap(arguments.last { $0.hasPrefix("--disable-features=") })
+                let features = last.dropFirst("--disable-features=".count).split(separator: ",").map(String.init)
+                XCTAssertTrue(features.contains("PreemptiveSodaDownload"), "release \(isRelease), shipped \(isShipped): \(last)")
+                // Nothing turns it back on: an --enable-features naming it would win over the testing config's own.
+                XCTAssertFalse(arguments.contains { $0.hasPrefix("--enable-features=") && $0.contains("PreemptiveSodaDownload") })
+            }
+        }
     }
 
     /// The self-test adds its own `--disable-features` after the launch's, which replaces it

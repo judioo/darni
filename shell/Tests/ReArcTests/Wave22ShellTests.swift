@@ -442,14 +442,7 @@ final class Wave22ShellTests: XCTestCase {
         XCTAssertEqual(model.store.littleArcLiveWindows.last?.url.path, "/little")
     }
 
-    private final class WindowPresenter: BrowserWindowPresenting {
-        var browserWindows = 0
-        var privateWindows: [PrivateWindowModel] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
-        func presentPrivateWindow(_ window: PrivateWindowModel) { privateWindows.append(window) }
-        func presentBrowserWindow() { browserWindows += 1 }
-    }
+    private typealias WindowPresenter = RecordingWindowPresenter
 
     /// Arc's other link destinations: a new window showing the link in front, a
     /// private window of the page's profile, and the default engine's image search.

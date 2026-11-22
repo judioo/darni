@@ -6,13 +6,7 @@ import SidebarModel
 /// brings that window forward, so another window can't take the key on close.
 @MainActor
 final class LittleArcOpenInTests: XCTestCase {
-    private final class Presenter: BrowserWindowPresenting {
-        var focused: [SidebarWindowID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
-        func presentPrivateWindow(_ window: PrivateWindowModel) {}
-        func focusBrowserWindow(_ id: SidebarWindowID) { focused.append(id) }
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     func testOpenInFocusesTheLastKeyBrowserWindowOnItsSpace() {
         let store = SidebarStore(spaces: [Space(name: "One")])

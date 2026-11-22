@@ -383,6 +383,10 @@ first visit. The engine is built with the testing config again, and the shell pa
 `--disable-features=SafeBrowsingLocalListsUseSBv5` (`ChromiumLaunchArguments.disabledEngineFeatures`).
 Since 2026-11-14 that list also turns off `LazyBrowserInterfaceBroker`, a security mitigation
 for CVE-2026-121035 that changes no stored data.
+Since 2026-11-22 it also turns off `PreemptiveSodaDownload`, which the testing config turns on:
+with it a new profile fetched the speech recognition library and a language pack at its first
+start, with Live Caption off. It changes no stored data: a profile that has the library keeps it
+until Chromium's unused timer (30 days) removes it, and Live Caption fetches it when turned on.
 
 The rule: a build is safe for an existing profile only when every engine feature that was on
 when the profile was written is still on. Never change the engine's feature set, a GN flag that

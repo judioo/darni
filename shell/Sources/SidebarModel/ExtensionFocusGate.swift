@@ -133,6 +133,13 @@ public struct ExtensionFocusGate: Equatable, Sendable {
     }
 }
 
+/// One extension in one profile: what the tab rate cap and the blank tab cap
+/// count by. Two profiles' copies of an extension are counted apart.
+struct ExtensionInProfile: Hashable, Sendable {
+    let extensionID: String
+    let profile: UUID
+}
+
 /// How fast an extension may ask for new tabs and windows.
 ///
 /// `ExtensionBlankTabs` stops the one form of the 2026-11-22 flood that was
@@ -171,13 +178,10 @@ public struct ExtensionTabRate: Equatable, Sendable {
         var lastDeclined: Date?
     }
 
-    private var recent: [String: Recent] = [:]
+    private var recent: [ExtensionInProfile: Recent] = [:]
 
     public init() {}
 
-    private static func key(_ extensionID: String, _ profile: UUID) -> String {
-        "\(extensionID)|\(profile.uuidString)"
-    }
 
     private static func isRecent(_ date: Date, at now: Date) -> Bool {
         date <= now && now.timeIntervalSince(date) < window
@@ -191,7 +195,7 @@ public struct ExtensionTabRate: Equatable, Sendable {
             entry.value.asked.last.map { Self.isRecent($0, at: now) } ?? false
                 || entry.value.lastDeclined.map { Self.isRecent($0, at: now) } ?? false
         }
-        let key = Self.key(extensionID, profile)
+        let key = ExtensionInProfile(extensionID: extensionID, profile: profile)
         var entry = recent[key] ?? Recent()
         entry.asked.removeAll { !Self.isRecent($0, at: now) }
         defer { recent[key] = entry }
@@ -221,25 +225,22 @@ public struct ExtensionTabRate: Equatable, Sendable {
 public struct ExtensionBlankTabs: Equatable, Sendable {
     public static let limit = 6
 
-    private var tabs: [String: [UUID]] = [:]
+    private var tabs: [ExtensionInProfile: [UUID]] = [:]
 
     public init() {}
 
-    private static func key(_ extensionID: String, _ profile: UUID) -> String {
-        "\(extensionID)|\(profile.uuidString)"
-    }
 
     /// How many of the extension's blank tabs are still unused. `stillBlank`
     /// says whether a sidebar tab is open and shows no page yet; the rest are forgotten.
     public mutating func unused(for extensionID: String, in profile: UUID, stillBlank: (UUID) -> Bool) -> Int {
-        let key = Self.key(extensionID, profile)
+        let key = ExtensionInProfile(extensionID: extensionID, profile: profile)
         let open = (tabs[key] ?? []).filter(stillBlank)
         tabs[key] = open.isEmpty ? nil : open
         return open.count
     }
 
     public mutating func opened(_ tab: UUID, by extensionID: String, in profile: UUID) {
-        tabs[Self.key(extensionID, profile), default: []].append(tab)
+        tabs[ExtensionInProfile(extensionID: extensionID, profile: profile), default: []].append(tab)
     }
 }
 

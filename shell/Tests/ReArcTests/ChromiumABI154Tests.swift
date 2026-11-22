@@ -13,15 +13,7 @@ final class ChromiumABI154Tests: XCTestCase {
         func closeDevTools(frontendTabID: UInt64) { closed.append(frontendTabID) }
     }
 
-    private final class Presenter: BrowserWindowPresenting {
-        var devTools: [String] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) {}
-        func presentPrivateWindow(_ window: PrivateWindowModel) {}
-        func presentDevToolsWindow(for tabID: Tab.ID) { devTools.append("present") }
-        func dismissDevToolsWindow(for tabID: Tab.ID) { devTools.append("dismiss") }
-        func focusBrowserWindow(_ id: SidebarWindowID) {}
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     private func makeModel() -> BrowserViewModel {
         let store = SidebarStore(spaces: [Space(name: "Main", sortRank: "a")])

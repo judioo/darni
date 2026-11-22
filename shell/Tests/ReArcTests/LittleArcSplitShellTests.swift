@@ -5,14 +5,7 @@ import SidebarModel
 
 @MainActor
 struct LittleArcSplitShellTests {
-    private final class Presenter: BrowserWindowPresenting {
-        var focused: [SidebarWindowID] = []
-        var dismissed: [LittleArcWindow.ID] = []
-        func presentLittleArcWindow(_ id: LittleArcWindow.ID, inFront: Bool) {}
-        func dismissLittleArcWindow(_ id: LittleArcWindow.ID) { dismissed.append(id) }
-        func presentPrivateWindow(_ window: PrivateWindowModel) {}
-        func focusBrowserWindow(_ id: SidebarWindowID) { focused.append(id) }
-    }
+    private typealias Presenter = RecordingWindowPresenter
 
     @Test func usesTheLiveURLAndLastBrowserWindow() throws {
         let store = SidebarStore(spaces: [Space(name: "One")])

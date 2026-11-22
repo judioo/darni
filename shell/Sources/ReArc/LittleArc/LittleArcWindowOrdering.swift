@@ -7,8 +7,8 @@ import AppKit
 /// (`BrowserViewModel.presentExtensionLittleArc`) is put on screen directly
 /// behind the app's frontmost window: it is neither key nor main, nothing is
 /// ordered front and the app is not activated, so what the user was typing
-/// into keeps the keyboard. The Window menu, Mission Control and the toast's
-/// Show button reach it.
+/// into keeps the keyboard. The Window menu, Mission Control and the notice's
+/// Show button reach it (`BrowserViewModel.extensionWindowNotice`).
 enum LittleArcWindowOrdering {
     /// `front` is the window a background one goes behind (`frontWindow`);
     /// with none it goes to the back. A window already on screen is left
