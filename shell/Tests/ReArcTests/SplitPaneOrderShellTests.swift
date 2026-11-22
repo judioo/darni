@@ -46,14 +46,15 @@ final class SplitPaneOrderShellTests: XCTestCase {
 
     // MARK: View menu
 
-    func testTheViewMenuHasArcsSplitItems() {
+    func testTheViewMenuHasArcsSplitItems() throws {
         let model = makeModel()
         let view = titles(ShellMenus.viewPageAndSplit(model))
         // Arc's View menu, docs/observations/arc/live-menu-keybindings.tsv lines 78-80.
         for title in ["Add Split View", "Close this Split Pane", "Separate Page from Split View", "Move Pane Left", "Move Pane Right"] {
             XCTAssertTrue(view.contains(title), "View menu lacks \(title)")
         }
-        XCTAssertLessThan(view.firstIndex(of: "Close this Split Pane")!, view.firstIndex(of: "Separate Page from Split View")!, "Arc's order")
+        XCTAssertLessThan(try XCTUnwrap(view.firstIndex(of: "Close this Split Pane")),
+                          try XCTUnwrap(view.firstIndex(of: "Separate Page from Split View")), "Arc's order")
         XCTAssertFalse(view.contains("Separate from Split View"), "the menu bar uses Arc's menu wording")
 
         // They are in View only: the Tabs menu's groups no longer carry them.

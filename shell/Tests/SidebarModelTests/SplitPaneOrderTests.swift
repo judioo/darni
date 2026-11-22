@@ -45,6 +45,7 @@ final class SplitPaneOrderTests: XCTestCase {
         let moves = try XCTUnwrap(store.split(withID: splitID)).paneMoves(for: tabs[1].id)
         XCTAssertEqual(moves.map(\.title), ["Move Pane Up", "Move Pane Down"])
         XCTAssertEqual(moves.map(\.isEnabled), [true, true])
+        guard moves.count == 2 else { return }
 
         XCTAssertTrue(store.moveSplitPane(splitID: splitID, tabID: tabs[1].id, by: moves[0].offset))
         XCTAssertEqual(order(store, splitID), ["B", "A", "C"], "Up is towards the first pane")
