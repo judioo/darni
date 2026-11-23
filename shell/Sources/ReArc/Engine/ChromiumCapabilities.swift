@@ -76,6 +76,7 @@ struct ChromiumCapabilities: Equatable {
     static let hostSitesFeature = "host_sites"
     static let sitePermissionsFeature = "site_permissions"
     static let webAuthnPromptsFeature = "webauthn_prompts"
+    static let displayCaptureFeature = "display_capture"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -141,6 +142,7 @@ struct ChromiumCapabilities: Equatable {
         webAuthnPromptsFeature: 68,
         contentBlockingHostsFeature: 69,
         hostSitesFeature: 69,
+        displayCaptureFeature: 70,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -296,6 +298,10 @@ struct ChromiumCapabilities: Equatable {
     /// The steps of a passkey or security key request, for the shell's own
     /// sheet (ABI 1.68). Without it such a request shows nothing and times out.
     var passkeyPrompts: Bool
+    /// A page's request to share a tab, a window or the screen
+    /// (`getDisplayMedia`), for the shell's own sheet, and the call that ends
+    /// a share (ABI 1.70). Without it the request fails at once, as before.
+    var screenSharing: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -366,6 +372,8 @@ struct ChromiumCapabilities: Equatable {
         hostSites = adopted(Self.hostSitesFeature)
         sitePermissions = adopted(Self.sitePermissionsFeature)
         passkeyPrompts = adopted(Self.webAuthnPromptsFeature)
+        // What is shared shows from media_capture: without it there would be no bar and no Stop.
+        screenSharing = mediaCapture && adopted(Self.displayCaptureFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -457,6 +465,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.hostSitesFeature, hostSites),
             (Self.sitePermissionsFeature, sitePermissions),
             (Self.webAuthnPromptsFeature, passkeyPrompts),
+            (Self.displayCaptureFeature, screenSharing),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),

@@ -57,7 +57,7 @@ private let snapshotCallback: ReArcSnapshotCallback = { context, status, _, gene
 /// engine profile is open (named profiles open asynchronously); commands
 /// issued earlier wait for it.
 @Observable
-final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding, PageFullscreenControlling, LiveVideoProviding, MediaCaptureProviding, SiteAccessProviding {
+final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding, PageFullscreenControlling, LiveVideoProviding, MediaCaptureProviding, ScreenShareProviding, SiteAccessProviding {
     let profileContext: EngineProfileContext
     /// Only a Peek's changes, to `.tab`, when it is expanded (`retag(as:)`).
     @ObservationIgnored private(set) var role: EngineRole
@@ -580,8 +580,25 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
     func handleMediaCapture(_ event: ChromiumMediaCaptureEvent) {
         guard event.tabID == tabID, event.state != mediaCapture else { return }
         mediaCaptureSubject.send(event.state)
+        // The bar over the page while it shares, for every kind of page (a tab, a peek, a small window).
+        pagePrompts.stopScreenShareAction = { [weak self] in self?.stopScreenShare() }
+        pagePrompts.screenShareCaptureChanged(event.state.isCapturingDisplay)
         // Camera, microphone and screen use change here, not on the site permission channel.
         siteAccess.refresh()
+    }
+
+    // MARK: Screen sharing (ABI 1.70)
+
+    var screenShareTargetID: UInt64? {
+        tabID != 0 && !isDiscarded && !isCrashed ? tabID : nil
+    }
+
+    /// `ReArcTabStopDisplayCapture`: the page's shares end and its tracks
+    /// fire "ended"; `media_capture` then reports the stream gone.
+    @discardableResult
+    func stopScreenShare() -> Bool {
+        guard tabID != 0 else { return false }
+        return ChromiumScreenShareChannel.stop(tab: tabID) == .rearcOK
     }
 
     /// `ReArcTabSetCaptureMuted`: asks the page to turn its camera or microphone

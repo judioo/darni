@@ -121,6 +121,29 @@ final class LoopbackFixtureServer {
         });
         </script></body></html>
         """,
+        // A button that asks to share a tab, a window or the screen with its sound (getDisplayMedia
+        // needs the click's user activation). window.shareState: idle, pending, live:<surface>:<audio
+        // tracks>, ended, error:<name>; window.shareFrames counts the shared picture's frames.
+        "/share": """
+        <!doctype html><html><head><title>share-ready</title></head><body style="margin:0;font:24px -apple-system">
+        <button id="go" style="position:absolute;left:0;top:0;width:400px;height:300px">share</button><script>
+        window.shareState = 'idle'; window.shareFrames = 0;
+        function ask() {
+          window.shareState = 'pending'; window.shareFrames = 0;
+          navigator.mediaDevices.getDisplayMedia({video: true, audio: true}).then(function (stream) {
+            window.shareStream = stream;
+            var track = stream.getVideoTracks()[0];
+            track.addEventListener('ended', function () { window.shareState = 'ended'; });
+            var video = document.createElement('video');
+            video.muted = true; video.srcObject = stream;
+            video.requestVideoFrameCallback(function count() { window.shareFrames++; video.requestVideoFrameCallback(count); });
+            video.play();
+            window.shareState = 'live:' + track.getSettings().displaySurface + ':' + stream.getAudioTracks().length;
+          }, function (error) { window.shareState = 'error:' + error.name; });
+        }
+        document.getElementById('go').onclick = ask;
+        </script></body></html>
+        """,
         // Three printed pages; the title records beforeprint/afterprint around window.print().
         "/print": """
         <!doctype html><html><head><title>print-ready</title><style>div{height:900px;break-after:page}</style></head>
