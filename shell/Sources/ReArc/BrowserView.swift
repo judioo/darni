@@ -20,8 +20,11 @@ struct BrowserView: View {
     private let initialSpaceID: Space.ID?
     /// This window's space paging (swipe and animated switches).
     @State private var pager = SpacePagerController()
-    /// The sidebar item being dragged, if any (content edges then offer split drop zones).
-    @State private var draggedItemID: UUID?
+    /// The sidebar item being dragged, as this window sees it: its own
+    /// drag, or one from another window that has come over it. The drag is
+    /// the model's (`sidebarDrag`), so a drop in any window finds its row.
+    private var draggedItemID: UUID? { model.sidebarDragItem(in: windowID) }
+    private var draggedItem: Binding<UUID?> { model.sidebarDragBinding(in: windowID) }
     @State private var isNativeFullscreen = false
     @AppStorage(ToolbarURLPreference.key) private var urlInToolbar = ToolbarURLPreference.defaultValue
     @AppStorage(AutoHideAddressBarPreference.key) private var autoHideAddressBar = AutoHideAddressBarPreference.defaultValue
@@ -45,7 +48,7 @@ struct BrowserView: View {
                     .zIndex(model.sidebarMorph(in: windowID).map { $0.isNarrowing ? 0 : 1 } ?? 0)
                 if model.isSidebarVisible(in: windowID) || model.isSidebarSliding(in: windowID), !isPageFullscreen {
                     let width = model.sidebarWidth(in: windowID)
-                    SidebarView(model: model, draggedItemID: $draggedItemID)
+                    SidebarView(model: model, draggedItemID: draggedItem)
                         .offset(x: CGFloat(placement.sidebarOffset(reveal: model.sidebarReveal(in: windowID), width: Double(width),
                                                                    growth: model.sidebarGrowth(in: windowID))))
                 }
@@ -67,7 +70,7 @@ struct BrowserView: View {
                 let edge = placement.side.edge
                 HStack(spacing: 0) {
                     if edge == .trailing { Spacer(minLength: 0) }
-                    SidebarView(model: model, draggedItemID: $draggedItemID)
+                    SidebarView(model: model, draggedItemID: draggedItem)
                         .background(SpaceThemeBackground(model: model, window: windowID, pager: pager))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .shadow(color: .black.opacity(0.25), radius: 12, x: 2 * CGFloat(placement.inward))
@@ -148,7 +151,7 @@ struct BrowserView: View {
         // transition either way (COMMAND-BAR §10, 2026-11-12 recordings).
         .frame(minWidth: Self.minimumSize.width, minHeight: Self.minimumSize.height)
         .background(
-            DragSessionEndMonitor(isActive: draggedItemID != nil) { draggedItemID = nil }
+            DragSessionEndMonitor(isActive: draggedItemID != nil) { model.endSidebarDrag() }
                 .frame(width: 0, height: 0)
         )
         // Wherever the drag ended (a drop, or let go over nothing), a pane chip's drag ends with it.
@@ -497,9 +500,12 @@ struct BrowserView: View {
                     }
                 }
                 .overlay {
-                    if let dragged = draggedItemID, model.canDropToSplit(dragged, in: windowID) {
+                    // Only for a drag that began in this window: on another window's
+                    // page a sidebar drag drops nothing, as before.
+                    if let dragged = draggedItemID, model.sidebarDragBegan(in: windowID),
+                       model.canDropToSplit(dragged, in: windowID) {
                         ContentSplitDropZone(draggedItemID: dragged, accent: model.themeColor(in: windowID)) { id, edge in
-                            draggedItemID = nil
+                            model.endSidebarDrag()
                             return model.dropToSplit(id, edge: edge, in: windowID)
                         }
                     }

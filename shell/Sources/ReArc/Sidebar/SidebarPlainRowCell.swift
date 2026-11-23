@@ -433,17 +433,17 @@ final class SidebarPlainRowCell: NSView {
         updateKeepAlive()
     }
 
-    // MARK: Links dragged in from pages and other apps
+    // MARK: Links dragged in from pages and other apps, rows from other windows
 
     /// A drag that reaches a plain row makes every visible row live, so the
     /// SwiftUI rows' drop targets take the drag from the next move on.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        controller?.noteExternalDrag()
+        controller?.noteExternalDrag(sender.draggingPasteboard)
         return []
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        controller?.noteExternalDrag()
+        controller?.noteExternalDrag(sender.draggingPasteboard)
         return []
     }
 

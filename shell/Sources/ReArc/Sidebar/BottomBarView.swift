@@ -377,6 +377,8 @@ private struct SpaceIconButton: View {
     @Binding var draggedSpaceID: Space.ID?
     @State private var isTargeted = false
 
+    /// The window this icon is in (its drop delegate reads it).
+    @Environment(\.sidebarWindow) var window
     @Environment(\.themeChrome) private var chrome
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -416,7 +418,7 @@ private struct SpaceIconButton: View {
             draggedSpaceID = space.id
             return SidebarDragPayload.itemProvider(for: space.id)
         }
-        .onDrop(of: [.plainText], delegate: SpaceIconDropDelegate(icon: self, isTargeted: $isTargeted))
+        .onDrop(of: [.plainText, SidebarDragPayload.contentType], delegate: SpaceIconDropDelegate(icon: self, isTargeted: $isTargeted))
     }
 
     /// A coloured circle has the current space's ring, so it keeps a badge.
@@ -474,17 +476,29 @@ private struct SpaceIconDropDelegate: DropDelegate {
     /// Spring-loading: a held drag switches to the space after this delay.
     static let springDelay: TimeInterval = 0.7
 
+    /// The dragged row: this window's own, or another window's drag over this icon.
+    /// A space icon being dragged is not a row.
+    private func draggedItem(_ info: DropInfo) -> UUID? {
+        guard icon.draggedSpaceID == nil else { return icon.draggedItemID }
+        return icon.model.sidebarDragItem(offered: icon.draggedItemID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+    }
+
     func validateDrop(info: DropInfo) -> Bool {
-        icon.draggedItemID != nil || icon.draggedSpaceID != nil
+        if SidebarDragPayload.hasItem(info) { icon.model.sidebarDragReached(icon.window) }
+        return draggedItem(info) != nil || icon.draggedSpaceID != nil
     }
 
     func dropEntered(info: DropInfo) {
         isTargeted = true
-        guard let dragged = icon.draggedItemID else { return }
+        // Spring-loading switches the key window's space (`selectSpace`), so it
+        // is for the key window's own icons. In another window a drop on the
+        // icon still moves the row to that space.
+        guard let dragged = draggedItem(info), icon.model.isKeyBrowserWindow(icon.window) else { return }
         let spaceID = icon.space.id
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.springDelay) { [model = icon.model] in
             // Still hovering the same drag over this icon: open the space.
-            guard isTargeted, icon.draggedItemID == dragged, model.store.activeSpaceID != spaceID else { return }
+            guard isTargeted, model.sidebarDragItem(offered: icon.draggedItemID, carriesSidebarItem: true) == dragged,
+                  model.store.activeSpaceID != spaceID else { return }
             model.selectSpace(spaceID)
         }
     }
@@ -497,6 +511,8 @@ private struct SpaceIconDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         isTargeted = false
+        // Read before the drag is cleared below.
+        let item = draggedItem(info)
         defer {
             icon.draggedItemID = nil
             icon.draggedSpaceID = nil
@@ -506,9 +522,9 @@ private struct SpaceIconDropDelegate: DropDelegate {
             withAnimation(.easeInOut(duration: 0.15)) { icon.model.moveSpace(space, toIndex: icon.index) }
             return true
         }
-        guard let item = icon.draggedItemID else { return false }
+        guard let item else { return false }
         withAnimation(.easeInOut(duration: 0.15)) {
-            // A selected row carries the window's whole selection.
+            // A selected row carries its window's whole selection.
             if let selection = icon.model.draggedSelection(item) {
                 icon.model.moveItems(selection, toSpace: icon.space.id)
             } else {
