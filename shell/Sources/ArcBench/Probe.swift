@@ -197,11 +197,26 @@ enum Probe {
         } else {
             guard app.terminate() else { throw Failure("pid \(pid) did not accept the quit request") }
         }
+        var lastPromptCheck = start
         while HostClock.now - start < timeout {
             if app.isTerminated || kill(pid, 0) != 0 {
                 return ["exited": true, "ms": (HostClock.now - start) * 1000, "via": viaMenu ? "menu" : "terminate"]
             }
+            // "Quit with 12 tabs?", unsaved work: never confirmed. Cancel it and say what it asked.
+            if HostClock.now - lastPromptCheck > 0.5 {
+                lastPromptCheck = HostClock.now
+                if let prompt = QuitPrompt.find(pid) {
+                    let cancelled = QuitPrompt.cancel(prompt)
+                    return ["ok": false, "exited": false, "prompt": QuitPrompt.text(prompt), "cancelled": cancelled,
+                            "error": "the app asked before quitting (\(QuitPrompt.text(prompt))): \(cancelled ? "cancelled" : "NOT cancelled, check by hand")"]
+                }
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        if let prompt = QuitPrompt.find(pid) {
+            let cancelled = QuitPrompt.cancel(prompt)
+            return ["ok": false, "exited": false, "prompt": QuitPrompt.text(prompt), "cancelled": cancelled,
+                    "error": "the app asked before quitting (\(QuitPrompt.text(prompt))): \(cancelled ? "cancelled" : "NOT cancelled, check by hand")"]
         }
         throw Failure("pid \(pid) was still running \(Int(timeout)) s after the quit request")
     }
@@ -251,6 +266,51 @@ enum Probe {
         let frames = await recorder.finish()
         return ["out": out.path, "frames": frames, "seconds": HostClock.now - started, "stopped_by": stopReason,
                 "size": [width, height], "display": display.displayID]
+    }
+}
+
+/// A dialog or sheet an app shows when asked to quit, found and cancelled over Accessibility.
+enum QuitPrompt {
+    static let cancelTitles = ["cancel", "don't quit", "do not quit", "keep open", "stay"]
+
+    /// The app's dialog windows and window sheets.
+    static func find(_ pid: pid_t) -> AXUIElement? {
+        for window in AX.windows(pid) {
+            let subrole = AX.value(window, kAXSubroleAttribute, as: String.self) ?? ""
+            if subrole == "AXDialog" || subrole == "AXSystemDialog" { return window }
+            if let sheet = AX.children(window).first(where: { AX.value($0, kAXRoleAttribute, as: String.self) == "AXSheet" }) {
+                return sheet
+            }
+        }
+        return nil
+    }
+
+    /// The prompt's words (its static texts), for the report.
+    static func text(_ element: AXUIElement) -> String {
+        var found: [String] = []
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 6, found.count < 6 else { return }
+            if AX.value(node, kAXRoleAttribute, as: String.self) == "AXStaticText",
+               let value = AX.value(node, kAXValueAttribute, as: String.self), !value.isEmpty {
+                found.append(value)
+            }
+            AX.children(node).forEach { walk($0, depth: depth + 1) }
+        }
+        walk(element, depth: 0)
+        return found.isEmpty ? (AX.title(element) ?? "a prompt") : found.joined(separator: " / ")
+    }
+
+    /// Presses the prompt's Cancel-like button, never anything else. False when there is none.
+    static func cancel(_ element: AXUIElement) -> Bool {
+        var buttons: [AXUIElement] = []
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 6 else { return }
+            if AX.value(node, kAXRoleAttribute, as: String.self) == "AXButton" { buttons.append(node) }
+            AX.children(node).forEach { walk($0, depth: depth + 1) }
+        }
+        walk(element, depth: 0)
+        guard let button = buttons.first(where: { cancelTitles.contains((AX.title($0) ?? "").lowercased()) }) else { return false }
+        return AX.press(button)
     }
 }
 
