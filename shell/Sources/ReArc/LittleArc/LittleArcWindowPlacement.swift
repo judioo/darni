@@ -23,12 +23,13 @@ enum LittleArcWindowPlacement {
               let screen = screen(for: remembered, among: screens) else { return nil }
         let size = NSSize(width: max(min(remembered.width, screen.width), min(minimumSize.width, screen.width)),
                           height: max(min(remembered.height, screen.height), min(minimumSize.height, screen.height)))
-        var frame = clamp(NSRect(origin: remembered.origin, size: size), into: screen)
+        // The browser windows' own clamp (`WindowPlacement`): fully on the screen, size first.
+        var frame = WindowPlacement.clamp(NSRect(origin: remembered.origin, size: size), into: screen)
         // Step off windows already at that spot, so one never hides another.
         var steps = 0
         while steps < 12, occupied.contains(where: { sameTopLeft($0, frame) }) {
             let next = NSRect(x: frame.minX + cascadeStep, y: frame.minY - cascadeStep, width: size.width, height: size.height)
-            let clamped = clamp(next, into: screen)
+            let clamped = WindowPlacement.clamp(next, into: screen)
             if sameTopLeft(clamped, frame) { break }
             frame = clamped
             steps += 1
@@ -42,15 +43,6 @@ enum LittleArcWindowPlacement {
         guard let best else { return nil }
         let shared = frame.intersection(best)
         return shared.width >= min(minimumOverlap, frame.width) && shared.height >= min(minimumOverlap, frame.height) ? best : nil
-    }
-
-    static func clamp(_ frame: NSRect, into screen: NSRect) -> NSRect {
-        var frame = frame
-        frame.size.width = min(frame.width, screen.width)
-        frame.size.height = min(frame.height, screen.height)
-        frame.origin.x = min(max(frame.minX, screen.minX), screen.maxX - frame.width)
-        frame.origin.y = min(max(frame.minY, screen.minY), screen.maxY - frame.height)
-        return frame
     }
 
     private static func overlap(_ a: NSRect, _ b: NSRect) -> CGFloat {
