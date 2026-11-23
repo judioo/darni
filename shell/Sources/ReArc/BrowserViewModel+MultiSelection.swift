@@ -223,7 +223,7 @@ extension BrowserViewModel {
     func confirmProfileMove() {
         defer { pendingProfileMove = nil }
         guard let move = pendingProfileMove else { return }
-        moveItemsToProfile(move.ids, toSpace: move.spaceID)
+        moveItemsToProfile(move.ids, toSpace: move.spaceID, placement: move.placement)
     }
 
     func profileMoveMessage(_ move: SidebarProfileMove) -> (title: String, message: String, action: String) {
@@ -243,16 +243,32 @@ extension BrowserViewModel {
     /// The rows move as Move to Space moves them (section, order, folder
     /// contents, split panes); then their pages change session as a space's
     /// do on Change Profile. The tab records carry nothing of the old profile.
-    func moveItemsToProfile(_ ids: [UUID], toSpace spaceID: Space.ID) {
+    /// A drop that was asked about lands at its `placement` instead.
+    func moveItemsToProfile(_ ids: [UUID], toSpace spaceID: Space.ID, placement: SidebarDropPlacement? = nil) {
         let carried = store.carriedTabIDs(ids)
         let live = Set(engineHost.allTabEngines().map(\.0))
-        takingFromTabGroups(ids) { [self] in
-            guard !store.moveEntries(ids, toSpace: spaceID).isEmpty else { return }
+        takingFromTabGroups(ids, to: placement.flatMap { store.parent(for: $0) }) { [self] in
+            let moved = placement.map { store.moveEntries(ids, to: $0) } ?? store.moveEntries(ids, toSpace: spaceID)
+            guard !moved.isEmpty else { return }
+            if case .intoFolder(let folderID) = placement { store.setFolderExpanded(folderID, true) }
             reloadTabsInTheirProfile(carried.compactMap { store.tab(withID: $0) }, live: live)
         }
     }
 
+    /// A drop that would take rows to another session (another profile, or a
+    /// container's space) is Move to Space with a place: it asks first, with
+    /// the same question, and the rows then land where they were dropped.
+    /// Another profile's favorites take no such drop, as Move to Space has
+    /// none. True: asked or refused, and nothing has moved.
+    func asksBeforeProfileDrop(_ ids: [UUID], to placement: SidebarDropPlacement) -> Bool {
+        guard let parent = store.parent(for: placement), store.crossesProfile(ids, to: parent) else { return false }
+        guard let spaceID = store.spaceID(of: parent) else { return true }
+        pendingProfileMove = SidebarProfileMove(ids: ids, spaceID: spaceID, placement: placement)
+        return true
+    }
+
     func moveItems(_ ids: [UUID], intoFolder folderID: UUID) {
+        if asksBeforeProfileDrop(ids, to: .intoFolder(folderID)) { return }
         takingFromTabGroups(ids) { [self] in
             guard !store.moveEntries(ids, intoFolder: folderID).isEmpty else { return }
             store.setFolderExpanded(folderID, true)
@@ -275,13 +291,19 @@ extension BrowserViewModel {
 
     // MARK: - Drag
 
-    /// The rows a drag of `id` in the key window carries: the whole
-    /// selection when `id` is in it, else nil (the row alone, as before).
-    /// Drops on another window, the page edge or a row's middle (stacking)
-    /// still take the dragged row alone.
+    /// The rows a drag of `id` carries: the whole selection of the window it
+    /// began in when `id` is in it, else nil (the row alone, as before). A
+    /// drop in another window carries them too. Drops on the page edge or a
+    /// row's middle (stacking) still take the dragged row alone.
     func draggedSelection(_ id: UUID) -> [UUID]? {
-        guard let ids = keySelectionIDs, ids.contains(id) else { return nil }
-        return ids
+        let selection: [UUID]?
+        if let drag = sidebarDrag, drag.itemID == id, let window = drag.sourceWindow {
+            selection = activeSelectionIDs(in: window)
+        } else {
+            selection = keySelectionIDs
+        }
+        guard let selection, selection.contains(id) else { return nil }
+        return selection
     }
 
     /// Reorder: the dragged selection lands before or after `targetID`.
@@ -290,6 +312,8 @@ extension BrowserViewModel {
     /// first; the move then follows the answer, and this returns true.
     @discardableResult
     func moveDraggedSelection(_ ids: [UUID], relativeTo targetID: UUID, after: Bool) -> Bool {
+        // The target among them: refused below, and the dragged row moves alone.
+        if !store.topmostEntries(ids).contains(targetID), asksBeforeProfileDrop(ids, to: .beside(targetID, after: after)) { return true }
         var moved = false
         let ran = takingFromTabGroups(ids, to: store.parent(of: targetID)) { [self] in
             guard let rows = store.moveEntries(ids, relativeTo: targetID, after: after), !rows.isEmpty else { return }
@@ -302,6 +326,7 @@ extension BrowserViewModel {
 
     /// After a section's last row (pins into Pinned, unpins into Today).
     func moveDraggedSelection(_ ids: [UUID], appendingTo destination: SidebarStore.ItemDestination) {
+        if asksBeforeProfileDrop(ids, to: .end(destination)) { return }
         takingFromTabGroups(ids, to: store.resolvedParent(destination)) { [self] in
             guard !store.moveEntries(ids, appendingTo: destination).isEmpty else { return }
             reconcileEngineOwnership()
