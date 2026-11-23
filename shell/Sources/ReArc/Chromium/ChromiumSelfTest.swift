@@ -1448,6 +1448,7 @@ final class ChromiumSelfTest {
         try await passkeyHiddenTabChecks(model: model, store: store, base: base)
         try await passkeyStaleSheetChecks(model: model, store: store, base: base)
         try await passkeyHiddenLittleArcChecks(model: model, shell: shell, store: store, base: base)
+        try await screenShareChecks(model: model, store: store, window: first, base: base)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
         } else {
@@ -1943,6 +1944,166 @@ final class ChromiumSelfTest {
             + "engine and content generation \(generation) kept, row dimmed); selecting B restored it as a new document "
             + "(\(documentBefore.map { "\($0.documentGeneration)" } ?? "?") -> "
             + "\(runtime.documentIdentity(tab: hiddenEngine.tabID).map { "\($0.documentGeneration)" } ?? "?"))")
+    }
+
+    // MARK: Screen sharing (ABI 1.70)
+
+    /// A page's getDisplayMedia(), end to end through the engine. Without a
+    /// user gesture nothing reaches the shell. With a click Darni's sheet
+    /// opens over the asking tab and lists it and the other loaded tab;
+    /// Cancel refuses the page; an answer the engine cannot take (a tab that
+    /// does not exist) leaves the request open; sharing the other tab gives
+    /// the page a live "browser" stream with sound and frames, the bar over
+    /// both tabs and the model's record, and Darni's Stop ends it; sharing
+    /// its own tab and stopping from the page clears the same state; a page
+    /// that navigates away takes its sheet with it. A window or the screen
+    /// is chosen in the macOS picker, which only a person may answer: this
+    /// step checks that they are offered and never opens that picker.
+    @MainActor
+    private func screenShareChecks(model: BrowserViewModel, store: SidebarStore, window: NSWindow, base: String) async throws {
+        guard ChromiumScreenShareChannel.calls != nil else {
+            let missing = ChromiumScreenShareCalls.missingSymbols
+            return log("ABI-GAP display_capture not advertised\(missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))"): "
+                + "a page's request to share a tab, a window or the screen fails at once")
+        }
+        let previous = store.selectedTab?.id
+        let otherURL = URL(string: "\(base)/a")!
+        let other = store.addTab(kind: .today, title: "Shared", url: otherURL)
+        _ = model.engineHost.engine(for: other, profileID: model.profileID(for: other))
+        let otherEngine = try shellEngine(model, other)
+        otherEngine.load(otherURL)
+        let shareURL = URL(string: "\(base)/share")!
+        let tab = store.addTab(kind: .today, title: "Share", url: shareURL)
+        _ = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let engine = try shellEngine(model, tab)
+        model.selectTab(tab.id)
+        engine.load(shareURL)
+        try await wait("share fixture", timeout: 20) { engine.pageTitle == "share-ready" && !engine.isLoading && engine.attachmentID != nil }
+        try await wait("the tab to share loaded", timeout: 20) { otherEngine.pageTitle == Self.titleA && !otherEngine.isLoading }
+        let prompts = engine.pagePrompts
+        let site = shareURL.host().map { "\($0):\(shareURL.port ?? 0)" } ?? ""
+        func state() async -> String { ((try? await engine.evaluate("window.shareState", in: .page)) as? String) ?? "" }
+        func frames() async -> Int { ((try? await engine.evaluate("window.shareFrames", in: .page)) as? NSNumber)?.intValue ?? -1 }
+        func cleanUp() async throws {
+            model.closeTab(tab.id)
+            model.closeTab(other.id)
+            try await wait("the sharing tabs closed") { store.tab(withID: tab.id) == nil && store.tab(withID: other.id) == nil }
+            if let previous { model.selectTab(previous) }
+        }
+
+        // 1. No gesture: the page is refused before anything reaches the shell.
+        let events = ChromiumScreenShareChannel.events
+        _ = try await engine.evaluate("ask(), true", in: .page)
+        try await waitAsync("the request without a gesture ends", timeout: 10) { await state() != "pending" }
+        let ungestured = await state()
+        try check(ungestured.hasPrefix("error:") && prompts.screenShare == nil && ChromiumScreenShareChannel.events == events,
+                  "without a gesture: \(ungestured), sheet \(prompts.screenShare != nil), "
+                      + "\(ChromiumScreenShareChannel.events - events) event(s)")
+
+        _ = await bringToFront(window, for: "screen sharing")
+        let button = try await cssCenter(of: "#go", in: engine)
+        func askByClick() async -> Bool {
+            for _ in 0 ..< 3 {
+                focus(window)
+                click(window, engine: engine, at: button)
+                if await eventually(timeout: 3, { prompts.screenShare != nil }) { return true }
+            }
+            return false
+        }
+        guard await askByClick() else {
+            log("NOTE screen sharing: the synthesized click produced no request (app active \(NSApp.isActive), key \(window.isKeyWindow), "
+                + "page \(await state())); the sheet, the share and Stop are not exercised in this run")
+            return try await cleanUp()
+        }
+
+        // 2. The sheet: who asks, what is offered, which tabs, nothing picked. Cancel refuses the page.
+        var sheet = try XUnwrap(prompts.screenShare, "the screen sharing sheet")
+        let request = sheet.request
+        let offered = sheet.candidates
+        let own = offered.first
+        let otherRow = offered.first { $0.tabID == other.id }
+        try check(request.site == site && request.wantsAudio && request.allowsCurrentTab && request.tabAudio,
+                  "request: site \(request.site) (expected \(site)), sound \(request.wantsAudio), own tab \(request.allowsCurrentTab)")
+        try check(own?.isCurrent == true && own?.tabID == tab.id && own?.engineTabID == engine.tabID && otherRow?.engineTabID == otherEngine.tabID,
+                  "tabs offered: \(offered.map { "\($0.engineTabID)\($0.isCurrent ? "*" : "")" }) (asking \(engine.tabID), other \(otherEngine.tabID))")
+        try check(prompts.screenShareSheetShown && prompts.screenShareSelection == nil && prompts.screenShareAnswer == nil && prompts.screenShareKind == .tab,
+                  "the sheet opened with selection \(String(describing: prompts.screenShareSelection)) kind \(prompts.screenShareKind)")
+        // macOS 15 and later: a window or the screen goes to the system picker and needs no Screen Recording permission.
+        if #available(macOS 15, *) {
+            try check(request.offersWindow && request.offersScreen && request.usesSystemPicker && request.screenRecording == .notNeeded,
+                      "window \(request.offersWindow) screen \(request.offersScreen) system picker \(request.usesSystemPicker) "
+                          + "screen recording \(request.screenRecording.rawValue)")
+        }
+        // An answer the engine cannot take leaves the request open.
+        let unknown = ChromiumScreenShareChannel.respond(sheet.id, .tab(UInt64.max - 1, audio: false))
+        try check(unknown != .rearcOK && prompts.screenShare?.id == sheet.id, "a tab that does not exist: \(unknown.rearcName)")
+        prompts.answerScreenShare(.cancel)
+        try await waitAsync("the cancelled request ends", timeout: 10) { await state() != "pending" }
+        let cancelled = await state()
+        try check(cancelled == "error:NotAllowedError" && prompts.screenShare == nil && !engine.mediaCapture.isCapturingDisplay,
+                  "after Cancel: \(cancelled)")
+        let late = ChromiumScreenShareChannel.respond(sheet.id, .cancel)
+        try check(late != .rearcOK, "an answer to a request that is over: \(late.rearcName)")
+
+        // 3. Share the other tab, with its sound: a live stream, the bars, the record; Darni's Stop ends it.
+        guard await askByClick() else { throw Failure(description: "the second click opened no sheet (page \(await state()))") }
+        sheet = try XUnwrap(prompts.screenShare, "the second sheet")
+        prompts.screenShareSelection = otherEngine.tabID
+        let answer = try XUnwrap(prompts.screenShareAnswer, "the answer for the other tab")
+        try check(answer == .tab(otherEngine.tabID, audio: true), "answer \(answer.logName)")
+        prompts.answerScreenShare(answer)
+        try await waitAsync("the other tab shared", timeout: 15) { await state().hasPrefix("live:") }
+        let live = await state()
+        try check(live == "live:browser:1", "the page's stream: \(live)")
+        try await wait("the engine reports the share", timeout: 10) { engine.mediaCapture.isCapturingDisplay && prompts.isSharingScreen }
+        try await wait("the model records the share", timeout: 10) { model.screenShares.isSharing(tab.id) }
+        let line = prompts.sharingLine { model.screenShareTitle(of: $0) } ?? ""
+        let otherTitle = store.tab(withID: other.id)?.displayTitle ?? ""
+        try check(line == "Sharing “\(otherTitle)” with \(site)", "the bar over the sharing tab: \(line)")
+        try check(otherEngine.pagePrompts.sharedBy == [ScreenShareViewer(capturer: tab.id, site: site)],
+                  "the bar over the shared tab: \(otherEngine.pagePrompts.sharedBy)")
+        try check(model.screenShareCards(in: model.store.keyWindowID).isEmpty, "a card for the tab on screen")
+        try await waitAsync("frames of the shared tab", timeout: 15) { await frames() > 0 }
+        let shownFrames = await frames()
+        let stops = ChromiumScreenShareChannel.stops
+        prompts.stopScreenShare()
+        try await waitAsync("Stop Sharing ends the page's track", timeout: 10) { await state() == "ended" }
+        try await wait("the engine reports the share over", timeout: 10) { !engine.mediaCapture.isCapturingDisplay && !prompts.isSharingScreen }
+        try check(ChromiumScreenShareChannel.stops == stops + 1 && prompts.sharingLine { _ in nil } == nil
+                      && otherEngine.pagePrompts.sharedBy.isEmpty && model.screenShares.isEmpty,
+                  "after Stop Sharing: bar \(prompts.sharingLine { _ in nil } ?? "none"), shared tab's bar \(otherEngine.pagePrompts.sharedBy), "
+                      + "record empty \(model.screenShares.isEmpty)")
+        try check(!engine.stopScreenShare(), "a second Stop found something to stop")
+
+        // 4. Share its own tab; the page stops it itself.
+        guard await askByClick() else { throw Failure(description: "the third click opened no sheet (page \(await state()))") }
+        prompts.screenShareSelection = engine.tabID
+        prompts.screenShareAudio = false
+        prompts.answerScreenShare(try XUnwrap(prompts.screenShareAnswer, "the answer for its own tab"))
+        try await waitAsync("its own tab shared", timeout: 15) { await state().hasPrefix("live:") }
+        let ownLive = await state()
+        try check(ownLive == "live:browser:0", "its own tab without sound: \(ownLive)")
+        try await wait("the bar for its own tab", timeout: 10) { prompts.sharingLine { _ in nil } == "Sharing this tab with \(site)" }
+        _ = try await engine.evaluate("window.shareStream.getTracks().forEach(function (t) { t.stop(); }), true", in: .page)
+        try await wait("the page's own stop clears the bar", timeout: 10) {
+            !engine.mediaCapture.isCapturingDisplay && !prompts.isSharingScreen && model.screenShares.isEmpty
+        }
+
+        // 5. A page that navigates away takes its sheet with it; nothing is answered for it.
+        guard await askByClick() else { throw Failure(description: "the fourth click opened no sheet (page \(await state()))") }
+        let answered = prompts.answered["screen_share"] ?? 0
+        engine.load(otherURL)
+        try await wait("the sheet goes with the page", timeout: 15) { prompts.screenShare == nil }
+        try check((prompts.answered["screen_share"] ?? 0) == answered && !engine.mediaCapture.isCapturingDisplay,
+                  "a withdrawn request was answered")
+
+        try await cleanUp()
+        log("PASS screen sharing (ABI 1.70): no gesture -> \(ungestured), no event; click -> sheet for \(site) offering tabs "
+            + "\(offered.map(\.engineTabID)), window \(request.offersWindow), screen \(request.offersScreen) (system picker "
+            + "\(request.usesSystemPicker), screen recording \(request.screenRecording.rawValue)); unknown tab -> \(unknown.rearcName), "
+            + "request kept; Cancel -> \(cancelled); other tab with sound -> \(live), \(shownFrames) frame(s), bars on both tabs, "
+            + "Stop Sharing -> ended; own tab -> \(ownLive), page stop clears the bar; navigation withdraws the sheet; "
+            + "last outcome \(ChromiumScreenShareChannel.lastOutcome)")
     }
 
     // MARK: Passkey requests from a tab that is not shown (ABI 1.68, security review PK-10)

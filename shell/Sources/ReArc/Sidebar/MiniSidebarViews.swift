@@ -632,8 +632,20 @@ struct MiniMediaColumn: View {
 
     var body: some View {
         let calls = model.callCards(in: window)
+        let shares = model.screenShareCards(in: window)
         let strips = model.mediaStrips(in: window).compactMap { model.mediaStripInfo(for: $0, in: window) }
         VStack(spacing: 4) {
+            ForEach(shares, id: \.self) { id in
+                if let tab = model.store.tab(withID: id) {
+                    MiniMediaTile(favicon: model.favicon(for: tab), token: tab.faviconToken,
+                                  badge: "rectangle.inset.filled.and.person.filled", badgeTint: .red,
+                                  help: "\(model.screenShareCardLine(for: id))\nBack to Tab", action: { model.showTab(id) }) {
+                        Button("Back to Tab") { model.showTab(id) }
+                        Button(ScreenShareText.stop) { model.stopScreenShare(of: id) }
+                    }
+                    .transition(MediaStackMotion.card(reduceMotion: reduceMotion))
+                }
+            }
             ForEach(calls, id: \.self) { id in
                 if let tab = model.store.tab(withID: id), let capture = model.captureStateByTab[id] {
                     MiniMediaTile(favicon: model.favicon(for: tab), token: tab.faviconToken,
@@ -667,7 +679,8 @@ struct MiniMediaColumn: View {
             }
         }
         .padding(.horizontal, CGFloat(MiniSidebarLayout.rowInset))
-        .padding(.bottom, calls.isEmpty && strips.isEmpty ? 0 : MediaStripMetrics.gap)
+        .padding(.bottom, calls.isEmpty && strips.isEmpty && shares.isEmpty ? 0 : MediaStripMetrics.gap)
+        .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: shares)
         .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: calls)
         .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: strips.map(\.id))
     }

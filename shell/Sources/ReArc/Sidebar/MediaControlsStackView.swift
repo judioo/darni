@@ -61,7 +61,22 @@ struct MediaControlsStackView: View {
         let live = model.sidebarLiveVideoTabID(in: window)
         let strips = model.mediaStrips(in: window).filter { $0 != live }
         let calls = model.callCards(in: window)
+        let shares = model.screenShareCards(in: window)
         VStack(spacing: MediaStripMetrics.gap) {
+            // What leaves the Mac comes first: a page that shares the screen, a window or a tab.
+            ForEach(shares, id: \.self) { id in
+                if let tab = model.store.tab(withID: id) {
+                    ScreenShareCardView(
+                        line: model.screenShareCardLine(for: id),
+                        favicon: model.favicon(for: tab),
+                        faviconToken: tab.faviconToken,
+                        isAlone: shares.count == 1 && calls.isEmpty,
+                        goToTab: { model.showTab(id) },
+                        stop: { model.stopScreenShare(of: id) }
+                    )
+                    .transition(MediaStackMotion.card(reduceMotion: reduceMotion))
+                }
+            }
             ForEach(calls, id: \.self) { id in
                 if let tab = model.store.tab(withID: id), let capture = model.captureStateByTab[id] {
                     CallCardView(
@@ -92,7 +107,8 @@ struct MediaControlsStackView: View {
             }
         }
         .padding(.horizontal, MediaStripMetrics.inset)
-        .padding(.bottom, live == nil && strips.isEmpty && calls.isEmpty ? 0 : MediaStripMetrics.gap)
+        .padding(.bottom, live == nil && strips.isEmpty && calls.isEmpty && shares.isEmpty ? 0 : MediaStripMetrics.gap)
+        .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: shares)
         .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: calls)
         .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: strips)
         .animation(SidebarMotion.spring(reduceMotion: reduceMotion), value: live)
