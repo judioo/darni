@@ -869,6 +869,8 @@ final class ChromiumRuntime {
         // ABI 1.67 and 1.68: what a site holds, and the steps of a passkey request, before any tab.
         registerSiteAccessChannel(context: context)
         registerPasskeyChannel(context: context)
+        // ABI 1.70: a page's request to share a tab, a window or the screen, before any tab.
+        registerScreenShareChannel(context: context)
         if capabilities.htmlFullscreen {
             typealias SetFullscreen2 = @convention(c) (ReArcFullscreenCallback2?, UnsafeMutableRawPointer?) -> Void
             if ReArcEngineHasFeature("fullscreen_origin"),

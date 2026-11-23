@@ -237,6 +237,10 @@ plutil -replace CFBundleURLTypes -json \
 # or location (TCC). Without them the request is denied silently.
 plutil -replace NSCameraUsageDescription -string "A website you allowed wants to use your camera." "$PLIST"
 plutil -replace NSMicrophoneUsageDescription -string "A website you allowed wants to use your microphone." "$PLIST"
+# Sharing the screen or a window with its sound records the Mac's audio (a CoreAudio tap, macOS
+# 14.2 and later). macOS asks the person itself the first time and shows this line; without the
+# key the share has no sound. Sharing a tab, with or without its sound, needs no key.
+plutil -replace NSAudioCaptureUsageDescription -string "A website you chose to share your screen with wants to include this Mac's sound." "$PLIST"
 plutil -replace NSLocationUsageDescription -string "A website you allowed wants to know your location." "$PLIST"
 plutil -replace NSLocationWhenInUseUsageDescription -string "A website you allowed wants to know your location." "$PLIST"
 # The app's icon instead of Chromium's (the file keeps the name ReArc.icns). CFBundleIconName (the AppIcon in Assets.car) wins

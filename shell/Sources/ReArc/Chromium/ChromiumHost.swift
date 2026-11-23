@@ -291,6 +291,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     private var launchSessionLoaded = false
     /// The browser window closed last: a window opened with none left goes there.
     private var lastClosedBrowserWindow: SavedBrowserWindow?
+    /// Where a Little Darni window was last left: the next one opens there.
+    let littleArcFrames: LittleArcFrameMemory
 
     /// AppKit's frame autosave name before the window session (read once, to
     /// migrate). A launch on `REARC_DATA_DIR` had its own.
@@ -303,6 +305,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         self.runtime = runtime
         self.autosavesFrames = autosavesFrames
         self.sessionFileURL = sessionFile ?? (autosavesFrames ? WindowSessionFile.defaultFileURL : nil)
+        self.littleArcFrames = LittleArcFrameMemory(defaults: autosavesFrames ? .standard : nil)
     }
 
     /// Loads the sidebar and names its first profile the owner of the startup
@@ -703,12 +706,39 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                     content: NSHostingView(rootView: LittleArcWindowView(model: model, windowID: id))
                 )
             }
-            cascade(window, offset: 40)
+            placeLittleArcWindow(window)
             track(window, .littleArc(id))
             showLittleArcWindow(window, inFront: inFront)
             DispatchQueue.main.async { [weak self] in self?.prepareLittleArcWindow() }
         }
     }
+
+    /// Where the last Little Darni window was left, stepped off any window
+    /// already there; with nothing remembered (or its screen gone), the cascade.
+    @MainActor
+    private func placeLittleArcWindow(_ window: NSWindow) {
+        let occupied = windows.values.compactMap { entry -> NSRect? in
+            if case .littleArc = entry.role, entry.window.isVisible { return entry.window.frame } else { return nil }
+        }
+        if let frame = LittleArcWindowPlacement.frame(remembered: littleArcFrames.frame,
+                                                      screens: NSScreen.screens.map(\.visibleFrame), occupied: occupied) {
+            window.setFrame(frame, display: false)
+        } else {
+            cascade(window, offset: 40)
+        }
+    }
+
+    private func rememberIfLittleArc(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              case .littleArc = windows[ObjectIdentifier(window)]?.role else { return }
+        MainActor.assumeIsolated {
+            if !window.inLiveResize { littleArcFrames.remember(window) }
+        }
+    }
+
+    func windowDidMove(_ notification: Notification) { rememberIfLittleArc(notification) }
+    func windowDidResize(_ notification: Notification) { rememberIfLittleArc(notification) }
+    func windowDidEndLiveResize(_ notification: Notification) { rememberIfLittleArc(notification) }
 
     /// In front and key, or behind the app's frontmost window without taking
     /// the keyboard (a window an extension made by itself, FX-02).
@@ -874,6 +904,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow,
               let entry = windows[ObjectIdentifier(window)] else { return }
+        if case .littleArc = entry.role, !terminating { MainActor.assumeIsolated { littleArcFrames.remember(window) } }
         if case .browser(let windowID) = entry.role, !terminating {
             MainActor.assumeIsolated {
                 lastClosedBrowserWindow = sessionRecorder?.record(window, isKey: false, space: model?.store.focusedSpace(in: windowID),

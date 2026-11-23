@@ -2,6 +2,44 @@ import AppKit
 import SidebarModel
 
 /// Where the page menu's Arc items and the prompts' links go (the browser view model).
+/// A tab Darni can offer to share (the screen sharing sheet's list).
+struct ScreenShareCandidate: Identifiable, Equatable {
+    /// The engine's number for the tab: the answer's target.
+    let engineTabID: UInt64
+    /// The sidebar tab; nil for a page that is none (a peek, a small window, a private window's page).
+    let tabID: UUID?
+    let title: String
+    let site: String
+    /// The asking page's own tab.
+    let isCurrent: Bool
+    var favicon: NSImage?
+    var faviconToken = ""
+
+    var id: UInt64 { engineTabID }
+
+    static func == (a: ScreenShareCandidate, b: ScreenShareCandidate) -> Bool {
+        a.engineTabID == b.engineTabID && a.tabID == b.tabID && a.title == b.title && a.site == b.site && a.isCurrent == b.isCurrent
+    }
+}
+
+/// A tab whose page shares this one: the bar over the shared tab names its site.
+struct ScreenShareViewer: Identifiable, Equatable {
+    let capturer: UUID
+    let site: String
+    var id: UUID { capturer }
+}
+
+/// What the screen sharing sheet and bars need from the browser view model.
+protocol ScreenShareRouting: AnyObject {
+    /// The tabs the page of `prompts` may share: its own first when `includeAsker`,
+    /// then the loaded tabs of its profile as the sidebar lists them.
+    func screenShareCandidates(for prompts: PagePromptCenter, asker: UInt64, includeAsker: Bool) -> [ScreenShareCandidate]
+    /// The page's request was answered with `share`, going to `site`.
+    func screenShareStarted(_ share: ScreenShare<UUID>, site: String, from prompts: PagePromptCenter)
+    /// Ends everything the tab's page shares.
+    func stopScreenShare(of capturer: UUID)
+}
+
 protocol PageLinkRouting: AnyObject {
     func openLinkInNewTab(_ url: URL, from prompts: PagePromptCenter)
     /// The link in front, in a new browser window.
@@ -77,6 +115,16 @@ final class PagePromptCenter {
         fileprivate let reply: (PasskeyAction) -> Bool
     }
 
+    /// A page's request to share a tab, a window or the screen (Chromium ABI
+    /// 1.70): what may be offered and the tabs Darni can share.
+    struct ScreenSharePrompt: Identifiable {
+        let id: UInt64
+        let request: ScreenShareRequest
+        var candidates: [ScreenShareCandidate]
+        /// True when the engine took the answer.
+        fileprivate let reply: (ScreenShareChoice) -> Bool
+    }
+
     /// What the suggestion list does with the engine (Chromium ABI 1.34).
     struct AutofillActions {
         enum AcceptOutcome { case accepted, busy, gone }
@@ -98,6 +146,10 @@ final class PagePromptCenter {
     @ObservationIgnored var role: EngineRole = .tab
     @ObservationIgnored weak var router: PageLinkRouting?
     @ObservationIgnored weak var sitePermissions: SitePermissionsController?
+    /// Who lists the tabs to share and records what is shared: the link
+    /// router when it can (the browser view model), or the one set here.
+    @ObservationIgnored weak var screenShareRouterOverride: ScreenShareRouting?
+    var screenShareRouter: ScreenShareRouting? { screenShareRouterOverride ?? (router as? ScreenShareRouting) }
 
     /// `SitePermissionStore` scope: the profile, or the private session.
     var permissionScope: String {
@@ -142,6 +194,42 @@ final class PagePromptCenter {
     /// the sheet's buttons but Cancel wait (the engine takes one answer per
     /// step; security review PK-06).
     private(set) var passkeyAwaitsStep = false
+    /// The screen sharing request this page is in.
+    private(set) var screenShare: ScreenSharePrompt? { didSet { if oldValue != nil, screenShare == nil { permissionUncovered() } } }
+    /// The sheet's state: the kind shown, the tab picked in its list, the sound box.
+    var screenShareKind: ScreenShareKind = .tab
+    /// Another row picked: Share waits again (`rearmScreenShareInput`).
+    var screenShareSelection: UInt64? { didSet { if screenShareSelection != oldValue { rearmScreenShareInput() } } }
+    var screenShareAudio = false
+    /// Share takes no click and no Return until this long after the sheet
+    /// appeared, its kind changed or another row was picked (security review
+    /// SS-01), as Chromium's InputEventActivationProtector does for its
+    /// dialogs. For a tab this sheet is the only gate (macOS asks nothing),
+    /// and a page asks on a click or a key: the person's next presses, meant
+    /// for the page, must not land on a row and then on Share.
+    static let screenShareInputDelay: TimeInterval = 0.5
+    /// When Share answers again, on the page's clock (`permissionClock`).
+    @ObservationIgnored private var screenShareReadyAt: TimeInterval = .infinity
+    /// For the sheet: Share is drawn as taking input. `answerScreenShare`
+    /// checks the clock itself, so a press already queued when this turns
+    /// true is still judged by its own time.
+    private(set) var screenShareInputEnabled = false
+    /// The engine refused the last answer (the tab went): said in the sheet.
+    private(set) var screenShareProblem: String?
+    /// The answer went to the engine and its outcome has not arrived: for a
+    /// window or the screen the macOS picker is open, and Darni's sheet is
+    /// out of its way.
+    private(set) var screenShareAwaitsOutcome = false
+    /// This page holds a live share stream (`media_capture`).
+    private(set) var isSharingScreen = false
+    /// What this page was answered with since its stream went live, for the bar's words.
+    private(set) var screenShareChosen: [ScreenShare<UUID>] = []
+    /// The site the shares went to (the asking frame's).
+    private(set) var screenShareSite = ""
+    /// Other tabs' pages that share this tab now (set by the browser model).
+    var sharedBy: [ScreenShareViewer] = []
+    /// Ends everything this page shares (set by the engine).
+    @ObservationIgnored var stopScreenShareAction: (() -> Void)?
     @ObservationIgnored private var certificateQueue: [ClientCertificate] = []
 
     @ObservationIgnored private var dialogQueue: [Dialog] = []
@@ -176,7 +264,12 @@ final class PagePromptCenter {
 
     /// A JavaScript dialog, sign-in or certificate sheet is drawn over the permission card.
     /// The card takes no input then, and its delay restarts once it is uncovered (F-04).
-    var permissionCovered: Bool { dialog != nil || httpAuth != nil || clientCertificate != nil || passkeySheetShown }
+    var permissionCovered: Bool {
+        dialog != nil || httpAuth != nil || clientCertificate != nil || passkeySheetShown || screenShareSheetShown
+    }
+
+    /// The screen sharing sheet is drawn (not while the macOS picker has the request).
+    var screenShareSheetShown: Bool { screenShare != nil && !screenShareAwaitsOutcome }
 
     /// The passkey sheet is drawn (not while macOS shows its own prompt for the request).
     var passkeySheetShown: Bool { passkey?.step.showsSheet == true }
@@ -486,6 +579,156 @@ final class PagePromptCenter {
         passkeyPinProblem = nil
     }
 
+    // MARK: Screen sharing (Chromium ABI 1.70)
+
+    /// The engine asks what `asker` (its number for this page's tab) may
+    /// share. One sheet per page: a second request takes it over and the
+    /// first is cancelled.
+    func presentScreenShare(id: UInt64, asker: UInt64, request: ScreenShareRequest, reply: @escaping (ScreenShareChoice) -> Bool) {
+        if let current = screenShare, current.id != id {
+            count(&cancelled, "screen_share")
+            screenShare = nil
+            _ = current.reply(.cancel)
+        }
+        let candidates = screenShareRouter?
+            .screenShareCandidates(for: self, asker: asker, includeAsker: request.allowsCurrentTab) ?? []
+        screenShareAwaitsOutcome = false
+        screenShareProblem = nil
+        screenShareKind = request.initialKind
+        // Nothing is ever picked for the person, whatever the page prefers: a key
+        // or click meant for the page must not be able to confirm a share.
+        screenShareSelection = nil
+        screenShareAudio = request.audioDefault(for: screenShareKind)
+        screenShare = ScreenSharePrompt(id: id, request: request, candidates: candidates, reply: reply)
+        rearmScreenShareInput()
+    }
+
+    /// Share may answer now: the sheet has been still for `screenShareInputDelay`.
+    var screenShareInputAllowed: Bool { screenShare != nil && permissionClock() >= screenShareReadyAt }
+
+    /// The sheet appeared or changed under the pointer: Share waits again.
+    private func rearmScreenShareInput() {
+        screenShareInputEnabled = false
+        guard screenShare != nil else {
+            screenShareReadyAt = .infinity
+            return
+        }
+        screenShareReadyAt = permissionClock() + Self.screenShareInputDelay
+        let deadline = screenShareReadyAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.screenShareInputDelay) { [weak self] in
+            guard let self, self.screenShare != nil, self.screenShareReadyAt == deadline else { return }
+            self.screenShareInputEnabled = self.screenShareInputAllowed
+        }
+    }
+
+    /// The sheet shows another kind: its sound box starts at that kind's default.
+    func selectScreenShareKind(_ kind: ScreenShareKind) {
+        guard let request = screenShare?.request, request.offers(kind), screenShareKind != kind else { return }
+        screenShareKind = kind
+        screenShareAudio = request.audioDefault(for: kind)
+        screenShareProblem = nil
+        rearmScreenShareInput()
+    }
+
+    /// The answer the sheet's Share button would send now; nil while it has none (no tab picked).
+    var screenShareAnswer: ScreenShareChoice? {
+        guard let current = screenShare, !screenShareAwaitsOutcome else { return nil }
+        let request = current.request
+        let audio = screenShareAudio && request.offersAudio(for: screenShareKind)
+        switch screenShareKind {
+        case .tab:
+            guard let id = screenShareSelection, current.candidates.contains(where: { $0.engineTabID == id }) else { return nil }
+            return .tab(id, audio: audio)
+        case .window:
+            return request.offersWindow && !request.needsScreenRecordingPermission ? .window(audio: audio) : nil
+        case .screen:
+            return request.offersScreen && !request.needsScreenRecordingPermission ? .screen(audio: audio) : nil
+        }
+    }
+
+    /// The sheet's buttons. Cancel ends the request at once, always. A share
+    /// is ignored while the sheet has just appeared or changed
+    /// (`screenShareInputDelay`), by click and by Return alike. Otherwise it
+    /// goes to the engine, and the request stays until its outcome arrives:
+    /// for a window or the screen the macOS picker opens then, and the person
+    /// may still cancel there. A refused answer leaves the sheet as it was.
+    func answerScreenShare(_ choice: ScreenShareChoice) {
+        guard let current = screenShare else { return }
+        if choice == .cancel {
+            count(&answered, "screen_share")
+            screenShare = nil
+            screenShareAwaitsOutcome = false
+            _ = current.reply(.cancel)
+            return
+        }
+        guard !screenShareAwaitsOutcome, screenShareInputAllowed else { return }
+        count(&answered, "screen_share")
+        if current.reply(choice) {
+            if screenShare?.id == current.id { screenShareAwaitsOutcome = true }
+        } else if screenShare?.id == current.id {
+            screenShareProblem = "That can't be shared right now."
+            if case .tab(let id, _) = choice {
+                screenShare?.candidates.removeAll { $0.engineTabID == id }
+                screenShareSelection = nil
+            }
+        }
+    }
+
+    /// The request is over: no reply. A share that began is recorded for the
+    /// bar over this page and told to the browser model.
+    func endScreenShare(id: UInt64, outcome: ScreenShareOutcome) {
+        guard let current = screenShare, current.id == id else { return }
+        if !screenShareAwaitsOutcome { count(&cancelled, "screen_share") }
+        screenShare = nil
+        screenShareAwaitsOutcome = false
+        screenShareProblem = nil
+        guard case .shared(let kind, let target, let audio) = outcome else { return }
+        let candidate = target.flatMap { id in current.candidates.first { $0.engineTabID == id } }
+        // A tab that is no sidebar tab (this page in a peek or a small window) has no id: the bar says "a tab".
+        let share = ScreenShare<UUID>(kind: kind, target: candidate?.isCurrent == true ? ownerTabID : candidate?.tabID, audio: audio)
+        screenShareChosen.append(share)
+        screenShareSite = current.request.site
+        screenShareRouter?.screenShareStarted(share, site: current.request.site, from: self)
+    }
+
+    /// `media_capture`: this page holds a share stream, or its last one ended.
+    func screenShareCaptureChanged(_ live: Bool) {
+        guard live != isSharingScreen else { return }
+        isSharingScreen = live
+        if !live {
+            screenShareChosen = []
+            screenShareSite = ""
+        }
+    }
+
+    /// The words of the bar over this page while it shares; nil when it
+    /// shares nothing. Another tab is "a tab", never its title: this bar sits
+    /// on the page that is in the call, and in a window or screen share the
+    /// people in the call see it (security review, note N-1). The sidebar's
+    /// card, beside the tab list, names the tab.
+    var sharingLine: String? {
+        guard isSharingScreen else { return nil }
+        var ledger = ScreenShareLedger<UUID>()
+        // Any id stands for this page: the ledger only needs to tell "this tab" from another.
+        let me = ownerTabID ?? Self.unlistedPage
+        screenShareChosen.forEach { ledger.noteChosen($0, by: me) }
+        ledger.captureChanged(me, isCapturingDisplay: true)
+        let summary = ledger.summary(of: me) { _ in nil }
+        return screenShareSite.isEmpty ? "Sharing \(summary)" : ScreenShareText.capturerLine(summary: summary, site: screenShareSite)
+    }
+
+    private static let unlistedPage = UUID()
+
+    /// The bar's Stop on the page that shares.
+    func stopScreenShare() {
+        stopScreenShareAction?()
+    }
+
+    /// The bar's Stop on a tab another tab's page shares.
+    func stopScreenShare(of viewer: ScreenShareViewer) {
+        screenShareRouter?.stopScreenShare(of: viewer.capturer)
+    }
+
     // MARK: Client certificates (Chromium ABI 1.41)
 
     func presentClientCertificate(_ request: ClientCertificateRequest, reply: @escaping (String?) -> Void) {
@@ -744,6 +987,11 @@ final class PagePromptCenter {
             clearPasskeyPin()
             _ = request.reply(.cancel)
         }
+        if let request = screenShare {
+            screenShare = nil
+            screenShareAwaitsOutcome = false
+            _ = request.reply(.cancel)
+        }
         hideAutofill()
         if let chooser = fileChooser {
             fileChooser = nil
@@ -760,7 +1008,8 @@ final class PagePromptCenter {
                                    ("autofill_save", autofillSave == nil ? 0 : 1),
                                    ("http_auth", (httpAuth == nil ? 0 : 1) + authQueue.count),
                                    ("client_certificate", (clientCertificate == nil ? 0 : 1) + certificateQueue.count),
-                                   ("passkey", passkey == nil ? 0 : 1)] where pending > 0 {
+                                   ("passkey", passkey == nil ? 0 : 1),
+                                   ("screen_share", screenShare == nil ? 0 : 1)] where pending > 0 {
             cancelled[channel, default: 0] += pending
         }
         dialog = nil
@@ -778,6 +1027,10 @@ final class PagePromptCenter {
         selectedCertificate = nil
         passkey = nil
         clearPasskeyPin()
+        screenShare = nil
+        screenShareAwaitsOutcome = false
+        screenShareCaptureChanged(false)
+        sharedBy = []
         hideAutofill()
         if let chooser = fileChooser {
             fileChooser = nil
@@ -788,7 +1041,7 @@ final class PagePromptCenter {
 
     var hasPendingPrompt: Bool {
         dialog != nil || permission != nil || password != nil || fileChooser != nil || autofillSave != nil || httpAuth != nil
-            || clientCertificate != nil || passkey != nil
+            || clientCertificate != nil || passkey != nil || screenShare != nil
     }
 
     private func count(_ counter: inout [String: Int], _ channel: String) {

@@ -10,3 +10,4 @@ signing.local.env
 /selftest-*.log
 /selftest-*.txt
 /swift-test.log
+.build-perf/

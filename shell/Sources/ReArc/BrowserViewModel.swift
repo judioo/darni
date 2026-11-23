@@ -72,6 +72,15 @@ final class BrowserViewModel {
     private var captureSubscriptions: [Tab.ID: AnyCancellable] = [:]
     /// Camera and microphone use per tab, for the call card (engines with `media_capture`).
     var captureStateByTab: [Tab.ID: MediaCaptureState] = [:]
+    /// What tabs' pages share now (a tab, a window, the screen), for the
+    /// sharing card and the bar over a shared tab (engines with `display_capture`).
+    var screenShares = ScreenShareLedger<Tab.ID>() {
+        didSet { if screenShares != oldValue { refreshScreenShareMarks() } }
+    }
+    /// The site each sharing tab's shares go to.
+    var screenShareSites: [Tab.ID: String] = [:]
+    /// Tabs whose page currently says "… is sharing this tab".
+    @ObservationIgnored var screenShareMarkedTabs: Set<Tab.ID> = []
 
     var mediaStateByTab: [Tab.ID: WebMediaState] = [:] {
         didSet {
@@ -1119,6 +1128,7 @@ final class BrowserViewModel {
         mediaStateByTab[id] = nil
         captureSubscriptions[id] = nil
         captureStateByTab[id] = nil
+        forgetScreenShares(of: id)
         tabMuteModel.markUserUnmuted(id)
         closeDevTools(for: id)
         engineHost.remove(id)
@@ -1133,6 +1143,7 @@ final class BrowserViewModel {
                 mediaStateByTab[tab.id] = nil
                 captureSubscriptions[tab.id] = nil
                 captureStateByTab[tab.id] = nil
+                forgetScreenShares(of: tab.id)
             }
         }
         store.closeSplit(splitID)
@@ -1449,6 +1460,7 @@ final class BrowserViewModel {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] state in
                     self?.captureStateByTab[tab.id] = state.isInCall ? state : nil
+                    self?.screenShareCaptureChanged(tab.id, live: state.isCapturingDisplay)
                 }
         }
     }
@@ -1510,6 +1522,7 @@ final class BrowserViewModel {
         for id in captureSubscriptions.keys where !liveTabIDs.contains(id) {
             captureSubscriptions[id] = nil
             captureStateByTab[id] = nil
+            forgetScreenShares(of: id)
         }
     }
 

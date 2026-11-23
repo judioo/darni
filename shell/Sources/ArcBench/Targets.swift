@@ -359,7 +359,9 @@ enum ReArcTarget {
 
     /// sidebar.json with two spaces of local pages (distinct colours, no
     /// animation, no caret), the first tab of the first space selected.
-    static func seed(_ directory: URL) throws {
+    /// `pageURL`, when given, names each tab's page (the performance check's local server)
+    /// instead of writing local files; the layout is the same.
+    static func seed(_ directory: URL, pageURL: ((_ index: Int, _ title: String) -> URL)? = nil) throws {
         let pages = directory.appendingPathComponent("pages", isDirectory: true)
         try FileManager.default.createDirectory(at: pages, withIntermediateDirectories: true)
         let colours = ["#1d4ed8", "#b91c1c", "#047857", "#7c3aed", "#c2410c", "#0e7490", "#be185d", "#4d7c0f", "#a16207", "#334155"]
@@ -380,15 +382,20 @@ enum ReArcTarget {
             var first: Tab.ID?
             for tabIndex in 0 ..< pinnedPerSpace + todayPerSpace {
                 let title = "Bench \(letter)\(tabIndex + 1)"
-                let file = pages.appendingPathComponent("\(letter)\(tabIndex + 1).html".lowercased())
-                let html = """
-                <!doctype html><html><head><meta charset="utf-8"><title>\(title)</title>
-                <style>html,body{margin:0;height:100%;background:\(colours[page % colours.count]);color:#fff;font:600 64px -apple-system,sans-serif}
-                body{display:flex;align-items:center;justify-content:center}</style></head><body>\(title)</body></html>
-                """
-                try html.write(to: file, atomically: true, encoding: .utf8)
+                let url: URL
+                if let pageURL {
+                    url = pageURL(page + 1, title)
+                } else {
+                    url = pages.appendingPathComponent("\(letter)\(tabIndex + 1).html".lowercased())
+                    let html = """
+                    <!doctype html><html><head><meta charset="utf-8"><title>\(title)</title>
+                    <style>html,body{margin:0;height:100%;background:\(colours[page % colours.count]);color:#fff;font:600 64px -apple-system,sans-serif}
+                    body{display:flex;align-items:center;justify-content:center}</style></head><body>\(title)</body></html>
+                    """
+                    try html.write(to: url, atomically: true, encoding: .utf8)
+                }
                 page += 1
-                let tab = store.addTab(kind: tabIndex < pinnedPerSpace ? .pinned : .today, title: title, url: file, in: spaceID)
+                let tab = store.addTab(kind: tabIndex < pinnedPerSpace ? .pinned : .today, title: title, url: url, in: spaceID)
                 if first == nil { first = tab.id }
             }
             if let first { firstTabs.append(first) }

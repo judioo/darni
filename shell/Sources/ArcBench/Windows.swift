@@ -37,21 +37,24 @@ enum WindowList {
 
     static func isBrowserSized(_ window: WindowInfo) -> Bool { window.bounds.width >= 800 && window.bounds.height >= 500 }
 
-    /// Polls until a layer-0 window appears that is not in `before` (or, with
-    /// `closing`, until `closing` leaves the list). Returns the host time of
-    /// the first poll that saw it and the mean poll period, or nil on timeout.
+    /// Polls until a browser-sized layer-0 window appears that is not in `before`
+    /// (or, with `closing`, until `closing` leaves the list). Returns the host time
+    /// of the first poll that saw it and the mean poll period, or nil on timeout.
+    /// Small windows are not counted: Cra's ⌘N also opens a 540×34 helper next to
+    /// its new window (2026-11-23), and the measure is the new browser window.
     static func waitForChange(pid: pid_t, before: Set<CGWindowID>, closing: CGWindowID?, timeout: Double)
         -> (time: Double, window: CGWindowID?, period: Double)? {
         let start = HostClock.now
         var polls = 0
         while HostClock.now - start < timeout {
-            let ids = Set(normal(pid: pid).map(\.id))
+            let windows = normal(pid: pid)
+            let ids = Set(windows.map(\.id))
             polls += 1
             let now = HostClock.now
             if let closing {
                 if !ids.contains(closing) { return (now, nil, (now - start) / Double(polls)) }
-            } else if let opened = ids.subtracting(before).first {
-                return (now, opened, (now - start) / Double(polls))
+            } else if let opened = windows.first(where: { !before.contains($0.id) && isBrowserSized($0) }) {
+                return (now, opened.id, (now - start) / Double(polls))
             }
             usleep(500)
         }

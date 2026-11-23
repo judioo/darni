@@ -19,7 +19,10 @@ enum Probe {
             StandardError.write("\(error)\n")
             return 2
         }
-        if case .window = command {} else {
+        switch command {
+        case .window, .seedDarni, .arcLayout:
+            break   // nothing on screen, no input
+        default:
             guard InputGuard.gateOpen else { return refuse("no input gate \(InputGuard.gate.path)") }
             guard !Session.screenLocked else { return refuse("the screen is locked") }
         }
@@ -38,6 +41,23 @@ enum Probe {
             case let .key(probe):
                 guard InputGuard.lockHeld else { return refuse("the input lock \(InputGuard.lock.path) is not held by the caller") }
                 return emit(try await key(probe))
+            case let .menuShortcuts(pid):
+                return emit(["items": menuShortcuts(pid)])
+            case let .seedDarni(data, base):
+                let folder = URL(fileURLWithPath: data, isDirectory: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try ReArcTarget.seed(folder) { index, _ in URL(string: "\(base)/p/tab?n=\(index)&run=keys")! }
+                return emit(["sidebar": folder.appendingPathComponent("sidebar.json").path, "spaces": ReArcTarget.spaces,
+                             "pinned_per_space": ReArcTarget.pinnedPerSpace, "today_per_space": ReArcTarget.todayPerSpace])
+            case let .arcLayout(space, file):
+                let path = file.map { URL(fileURLWithPath: $0) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(ArcSidebar.defaultPath)
+                let spaces = try ArcSidebar.spaces(from: Data(contentsOf: path))
+                guard let home = spaces.first(where: { $0.title == space }) else { throw Failure("Arc has no space named \(space)") }
+                let layout = SpaceLayout(home: home.index, count: spaces.count, tabNumbers: home.tabNumbers)
+                let toward = layout.arrowTowardNeighbour.map { $0 == .optionCommandLeft ? "opt+cmd+left" : "opt+cmd+right" }
+                return emit(["home": home.index, "count": spaces.count, "tab_numbers": home.tabNumbers,
+                             "toward_neighbour": toward ?? NSNull(), "back": toward.map { $0.hasSuffix("left") ? "opt+cmd+right" : "opt+cmd+left" } ?? NSNull()])
             case let .quit(pid, timeoutMs, viaMenu):
                 return emit(try await quit(pid: pid, timeout: Double(timeoutMs) / 1000, viaMenu: viaMenu))
             case let .record(pid, out, seconds, fps, stopFile):
@@ -180,6 +200,30 @@ enum Probe {
         }
     }
 
+    // MARK: menu shortcuts
+
+    /// Every menu item with a shortcut (menus read through Accessibility, never opened).
+    static func menuShortcuts(_ pid: pid_t) -> [[String: Any]] {
+        guard let bar = AX.value(AX.app(pid), kAXMenuBarAttribute, as: AXUIElement.self) else { return [] }
+        var found: [[String: Any]] = []
+        func walk(_ element: AXUIElement, menu: String, depth: Int) {
+            guard depth < 4 else { return }
+            for item in AX.children(element) {
+                let title = AX.title(item) ?? ""
+                let chord = MenuShortcut.chord(character: AX.value(item, kAXMenuItemCmdCharAttribute, as: String.self),
+                                               modifiers: AX.value(item, kAXMenuItemCmdModifiersAttribute, as: Int.self),
+                                               virtualKey: AX.value(item, kAXMenuItemCmdVirtualKeyAttribute, as: Int.self),
+                                               glyph: AX.value(item, kAXMenuItemCmdGlyphAttribute, as: Int.self))
+                if let chord, !title.isEmpty {
+                    found.append(["menu": menu, "title": title, "chord": chord])
+                }
+                for child in AX.children(item) { walk(child, menu: depth == 0 ? title : menu, depth: depth + 1) }
+            }
+        }
+        walk(bar, menu: "", depth: 0)
+        return found
+    }
+
     // MARK: quit
 
     /// The app's own quit (NSRunningApplication.terminate, as ⌘Q), then waits. Never forces.
@@ -197,11 +241,26 @@ enum Probe {
         } else {
             guard app.terminate() else { throw Failure("pid \(pid) did not accept the quit request") }
         }
+        var lastPromptCheck = start
         while HostClock.now - start < timeout {
             if app.isTerminated || kill(pid, 0) != 0 {
                 return ["exited": true, "ms": (HostClock.now - start) * 1000, "via": viaMenu ? "menu" : "terminate"]
             }
+            // "Quit with 12 tabs?", unsaved work: never confirmed. Cancel it and say what it asked.
+            if HostClock.now - lastPromptCheck > 0.5 {
+                lastPromptCheck = HostClock.now
+                if let prompt = QuitPrompt.find(pid) {
+                    let cancelled = QuitPrompt.cancel(prompt)
+                    return ["ok": false, "exited": false, "prompt": QuitPrompt.text(prompt), "cancelled": cancelled,
+                            "error": "the app asked before quitting (\(QuitPrompt.text(prompt))): \(cancelled ? "cancelled" : "NOT cancelled, check by hand")"]
+                }
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        if let prompt = QuitPrompt.find(pid) {
+            let cancelled = QuitPrompt.cancel(prompt)
+            return ["ok": false, "exited": false, "prompt": QuitPrompt.text(prompt), "cancelled": cancelled,
+                    "error": "the app asked before quitting (\(QuitPrompt.text(prompt))): \(cancelled ? "cancelled" : "NOT cancelled, check by hand")"]
         }
         throw Failure("pid \(pid) was still running \(Int(timeout)) s after the quit request")
     }
@@ -251,6 +310,51 @@ enum Probe {
         let frames = await recorder.finish()
         return ["out": out.path, "frames": frames, "seconds": HostClock.now - started, "stopped_by": stopReason,
                 "size": [width, height], "display": display.displayID]
+    }
+}
+
+/// A dialog or sheet an app shows when asked to quit, found and cancelled over Accessibility.
+enum QuitPrompt {
+    static let cancelTitles = ["cancel", "don't quit", "do not quit", "keep open", "stay"]
+
+    /// The app's dialog windows and window sheets.
+    static func find(_ pid: pid_t) -> AXUIElement? {
+        for window in AX.windows(pid) {
+            let subrole = AX.value(window, kAXSubroleAttribute, as: String.self) ?? ""
+            if subrole == "AXDialog" || subrole == "AXSystemDialog" { return window }
+            if let sheet = AX.children(window).first(where: { AX.value($0, kAXRoleAttribute, as: String.self) == "AXSheet" }) {
+                return sheet
+            }
+        }
+        return nil
+    }
+
+    /// The prompt's words (its static texts), for the report.
+    static func text(_ element: AXUIElement) -> String {
+        var found: [String] = []
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 6, found.count < 6 else { return }
+            if AX.value(node, kAXRoleAttribute, as: String.self) == "AXStaticText",
+               let value = AX.value(node, kAXValueAttribute, as: String.self), !value.isEmpty {
+                found.append(value)
+            }
+            AX.children(node).forEach { walk($0, depth: depth + 1) }
+        }
+        walk(element, depth: 0)
+        return found.isEmpty ? (AX.title(element) ?? "a prompt") : found.joined(separator: " / ")
+    }
+
+    /// Presses the prompt's Cancel-like button, never anything else. False when there is none.
+    static func cancel(_ element: AXUIElement) -> Bool {
+        var buttons: [AXUIElement] = []
+        func walk(_ node: AXUIElement, depth: Int) {
+            guard depth < 6 else { return }
+            if AX.value(node, kAXRoleAttribute, as: String.self) == "AXButton" { buttons.append(node) }
+            AX.children(node).forEach { walk($0, depth: depth + 1) }
+        }
+        walk(element, depth: 0)
+        guard let button = buttons.first(where: { cancelTitles.contains((AX.title($0) ?? "").lowercased()) }) else { return false }
+        return AX.press(button)
     }
 }
 

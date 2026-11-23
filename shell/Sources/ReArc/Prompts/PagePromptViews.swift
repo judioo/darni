@@ -63,8 +63,20 @@ private struct PagePromptOverlay: ViewModifier {
                     PasskeySheet(prompts: prompts, step: passkey.step)
                         .id(passkey.id)
                         .transition(.opacity)
+                } else if let share = prompts.screenShare, prompts.screenShareSheetShown {
+                    ScreenShareSheet(prompts: prompts, prompt: share)
+                        .id(share.id)
+                        .transition(.opacity)
                 }
             }
+            // What is shared now, over everything of the page but its sheets' dimming.
+            .overlay(alignment: .top) {
+                ScreenShareBars(prompts: prompts)
+                    .padding(.top, addressBarAutoHides ? CardToolbarView.height : 0)
+            }
+            .animation(.easeOut(duration: 0.14), value: prompts.screenShareSheetShown)
+            .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.isSharingScreen)
+            .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.sharedBy)
             .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.permission?.id)
             .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.password?.id)
             .animation(.spring(duration: 0.24, bounce: 0.12), value: prompts.autofillSave?.id)

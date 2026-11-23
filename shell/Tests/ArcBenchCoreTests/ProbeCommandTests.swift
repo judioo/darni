@@ -52,6 +52,17 @@ struct ProbeCommandTests {
         #expect(throws: ProbeCommand.UsageError.self) { try ProbeCommand.parse(["quit", "--pid", "42", "--via", "kill"]) }
     }
 
+    @Test func theKeyStageCommands() throws {
+        #expect(try ProbeCommand.parse(["menu-shortcuts", "--pid", "42"]) == .menuShortcuts(pid: 42))
+        #expect(try ProbeCommand.parse(["seed-darni", "--data", "/tmp/d", "--base", "http://127.0.0.1:5000"])
+            == .seedDarni(data: "/tmp/d", base: "http://127.0.0.1:5000"))
+        #expect(throws: ProbeCommand.UsageError.self) {
+            try ProbeCommand.parse(["seed-darni", "--data", "/tmp/d", "--base", "https://example.com"])
+        }
+        #expect(try ProbeCommand.parse(["arc-layout", "--space", "Demo"]) == .arcLayout(space: "Demo", file: nil))
+        #expect(try ProbeCommand.parse(["arc-layout", "--space", "Demo", "--file", "/tmp/s.json"]) == .arcLayout(space: "Demo", file: "/tmp/s.json"))
+    }
+
     @Test func frameAndRecord() throws {
         #expect(try ProbeCommand.parse(["frame", "--pid", "42", "--window", "7", "--rect", "40,60,1440,900"])
             == .frame(pid: 42, window: 7, rect: [40, 60, 1440, 900]))

@@ -825,7 +825,9 @@ extension BrowserViewModel {
     /// Archives idle Today tabs and drops their engines.
     func runAutoArchive() {
         // A tab with a media session or a call is in use, however long ago it was shown.
+        // So is a tab whose page shares something, and a tab that is being shared.
         let inUse = Set(mediaStateByTab.filter(\.value.hasSession).keys).union(captureStateByTab.keys)
+            .union(screenShares.capturers).union(screenShareMarkedTabs)
         let archived = store.autoArchiveIdleTodayTabs(sparing: inUse)
         guard !archived.isEmpty else { return }
         archived.forEach(releaseEngine(for:))
