@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
 ABI **1.70** (major remains 1 for existing hosts), bridge **0.81.0**, compiled Chromium **156.0.8078.109**
-(1.70 and bridge 0.81.0 are patch `tab/101`, overlay fd500c7ffb, built on 2026-11-23 in `out/ReArc-codecs-arm64`; see "Screen sharing". 1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
+(1.70 and bridge 0.81.0 are patch `tab/101`, overlay fe57d24b7e, built on 2026-11-23 in `out/ReArc-codecs-arm64`; see "Screen sharing". 1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2988,6 +2988,14 @@ or empty), `system_picker`, `screen_recording_permission` (`not_needed`, `grante
 the asking tab when `current_tab` is false: `invalid_argument` otherwise, `not_found` for a tab
 that does not exist, `invalid_state` for one whose page is not running. The share is the tab's
 page as it is drawn, whether or not a window shows it.
+
+**Only a page is shared** (security review SS-02, `security/PRE-screen-sharing.md`). The engine
+does not rely on what the host lists: the target must be contents the host shows as a page (a
+sidebar tab, a small window, a peek: Chromium's "tab contents" view type) whose main frame is on
+an `http`, `https` or `file` address. A hosted DevTools frontend or its toolbox (which shows the
+inspected page's storage, cookies and network data), an extension's popup or side panel, and a
+browser page (`chrome:`, `devtools:`, `chrome-extension:`, `about:blank`) are `invalid_argument`.
+The self-test asks for a DevTools frontend of the same profile and expects that answer.
 
 **A window or the screen** is chosen in the picker of macOS (`SCContentSharingPicker`), opened
 with `content::desktop_capture::OpenNativeScreenCapturePicker`, the call Chrome's own dialog

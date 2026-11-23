@@ -40,7 +40,14 @@ queue and its devices; its two pieces of UI become the host's.
 - A tab: the engine checks that it is a live tab of the asking tab's
   profile and browser context (and not the asking tab when the page
   excluded itself) and answers with its WebContentsMediaCaptureId, as
-  Chromium's picker does for a row of its tab list.
+  Chromium's picker does for a row of its tab list. It must also be a
+  page (IsShareablePage, security review SS-02 of
+  security/PRE-screen-sharing.md): contents with the "tab contents" view
+  type that are no hosted DevTools frontend or toolbox, whose main frame
+  is on an http, https or file address. A DevTools frontend shows the
+  inspected page's storage, cookies and network data; it, an extension's
+  popup or side panel and every browser page are refused with
+  invalid_argument, whatever the host's sheet listed.
 - A window or the screen: the engine opens the picker of macOS with
   content::desktop_capture::OpenNativeScreenCapturePicker, the call
   DelegatedSourceListCapturer makes for Chrome's dialog, and answers with
@@ -97,7 +104,8 @@ over scalars, no struct added or changed.
 
 Type-checked with the tree's clang (out/ReArc-codecs-arm64 flags,
 Chromium's plugins, -fsyntax-only) against overlay c7000854cf, then built
-in out/ReArc-codecs-arm64 (overlay fd500c7ffb, 2026-11-23): the framework
+in out/ReArc-codecs-arm64 (overlay fd500c7ffb, 2026-11-23; with SS-02 as
+a second overlay commit on it, see engine/patches/series): the framework
 exports the three functions. Not run: the self-test step ("screen
 sharing", ChromiumSelfTest.screenShareChecks) needs the screen.
 
@@ -190,10 +198,10 @@ index 8b2aa0b..8627a4e 100644
  #endif
 diff --git a/chrome/browser/rearc_bridge/rearc_display_capture.cc b/chrome/browser/rearc_bridge/rearc_display_capture.cc
 new file mode 100644
-index 0000000..f5fff93
+index 0000000..8d5235a
 --- /dev/null
 +++ b/chrome/browser/rearc_bridge/rearc_display_capture.cc
-@@ -0,0 +1,543 @@
+@@ -0,0 +1,573 @@
 +// Copyright 2026 The ReArc Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -232,6 +240,7 @@ index 0000000..f5fff93
 +#include "chrome/browser/media/webrtc/system_media_capture_permissions_mac.h"
 +#include "chrome/browser/rearc_bridge/engine_mode.h"
 +#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_devtools.h"
 +#include "chrome/browser/rearc_bridge/rearc_extension_windows.h"
 +#include "chrome/browser/rearc_bridge/tab_registry.h"
 +#include "chrome/browser/rearc_bridge/tab_session.h"
@@ -244,9 +253,12 @@ index 0000000..f5fff93
 +#include "content/public/browser/render_process_host.h"
 +#include "content/public/browser/web_contents.h"
 +#include "content/public/browser/web_contents_media_capture_id.h"
++#include "extensions/browser/view_type_utils.h"
++#include "extensions/common/mojom/view_type.mojom.h"
 +#include "media/base/media_switches.h"
 +#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 +#include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
++#include "url/gurl.h"
 +#include "url/origin.h"
 +#include "url/url_constants.h"
 +
@@ -335,6 +347,28 @@ index 0000000..f5fff93
 +    return DesktopMediaID::AudioType::kSystem;
 +  }
 +  return DesktopMediaID::AudioType::kNone;
++}
++
++// What a tab's page may be shared as a tab: contents the host shows as a
++// page (a sidebar tab, a small window, a peek: Chromium's "tab contents" view
++// type, which browserless_tab_helpers.cc gives every registry tab that is
++// nothing else) on a web or file address. Never a DevTools frontend or its
++// toolbox, which shows the inspected page's storage, cookies and network
++// data; never an extension's popup or side panel; never a browser page
++// (chrome:, devtools:, chrome-extension:, about:blank). The host's sheet
++// lists only its tabs, and the engine does not depend on that.
++bool IsShareablePage(content::WebContents* contents) {
++  if (IsHostedDevTools(contents) ||
++      extensions::GetViewType(contents) !=
++          extensions::mojom::ViewType::kTabContents) {
++    return false;
++  }
++  content::RenderFrameHost* main = contents->GetPrimaryMainFrame();
++  if (!main) {
++    return false;
++  }
++  const GURL& url = main->GetLastCommittedURL();
++  return url.SchemeIsHTTPOrHTTPS() || url.SchemeIsFile();
 +}
 +
 +void StopObserving(DesktopMediaID source) {
@@ -507,6 +541,10 @@ index 0000000..f5fff93
 +            asker->web_contents()->GetBrowserContext() ||
 +        target->profile_id() != profile_id_ ||
 +        (exclude_self_ && target_tab == tab_id_)) {
++      return REARC_INVALID_ARGUMENT;
++    }
++    // And a page only, whatever the host listed (security review SS-02).
++    if (!IsShareablePage(contents)) {
 +      return REARC_INVALID_ARGUMENT;
 +    }
 +    content::RenderFrameHost* main = contents->GetPrimaryMainFrame();
@@ -793,7 +831,7 @@ index 0000000..24e8f6c
 +
 +#endif  // CHROME_BROWSER_REARC_BRIDGE_REARC_DISPLAY_CAPTURE_H_
 diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
-index 152031d..faaa733 100644
+index 152031d..6a47419 100644
 --- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
 +++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
 @@ -42,7 +42,7 @@ enum {
@@ -805,7 +843,7 @@ index 152031d..faaa733 100644
  
  // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
  // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
-@@ -1982,6 +1982,83 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcTabCopyBlockedHosts(uint64_t tab_id,
+@@ -1982,6 +1982,87 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcTabCopyBlockedHosts(uint64_t tab_id,
  REARC_ENGINE_EXPORT ReArcStatus ReArcEngineCopySiteOfHost(const char* utf8_host,
                                                            char** json);
  
@@ -867,10 +905,14 @@ index 152031d..faaa733 100644
 +// and its outcome arrives as the phase 1 event. share_audio: with sound,
 +// where the request's json offers it for that kind (ignored otherwise).
 +// target_tab_id is read for choice 1 only. It must be a live tab of the
-+// asking tab's profile and browser context, and not the asking tab when
-+// "current_tab" is false: invalid_argument otherwise; a tab that does not
-+// exist: not_found; one whose page is not running (crashed or discarded):
-+// invalid_state. A kind the json did not offer, a second answer, an answer
++// asking tab's profile and browser context, not the asking tab when
++// "current_tab" is false, and a page: contents the host shows as a tab, a
++// small window or a peek, whose main frame is on an http, https or file
++// address. A DevTools frontend or its toolbox, an extension's popup or side
++// panel and a browser page (chrome:, devtools:, chrome-extension:,
++// about:blank) are never shared, whatever the host lists: invalid_argument
++// for all of these; a tab that does not exist: not_found; one whose page is
++// not running (crashed or discarded): invalid_state. A kind the json did not offer, a second answer, an answer
 +// while the picker of macOS is open, and a window or screen answer while
 +// "screen_recording_permission" is "missing": invalid_state. An unknown
 +// choice: invalid_argument. A request that is over: not_found. After a
