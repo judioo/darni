@@ -1095,6 +1095,43 @@ final class ChromiumSelfTest {
         try check(leases == 1, "\(label): tab \(engine.tabID) holds \(leases) live attachments")
     }
 
+    /// A new Little Darni window opens where the last one was left, on that
+    /// screen (owner, 2026-11-23: it always opened in the same place). One
+    /// opened while another sits there steps off it. The self-test's shell
+    /// keeps the place in memory, never in the user's defaults.
+    @MainActor
+    private func littleArcPlacementChecks(model: BrowserViewModel, shell: ChromiumShell, store: SidebarStore,
+                                          base: String) async throws {
+        let address = try XUnwrap(URL(string: "\(base)/a?placement=1"), "placement address")
+        let screen = try XUnwrap(NSScreen.screens.last?.visibleFrame, "a screen")
+        let target = NSRect(x: screen.maxX - 700, y: screen.minY + 40, width: 640, height: 480)
+
+        let first = model.openLittleArc(url: address)
+        let firstWindow = try XUnwrap(shell.window(forLittleArc: first.id), "the first Little Darni window")
+        firstWindow.setFrame(target, display: true)
+        try await wait("placement: the moved window's frame was remembered") { shell.littleArcFrames.frame == firstWindow.frame }
+        let left = firstWindow.frame
+        shell.dismissLittleArcWindow(first.id)
+        try await wait("placement: the first window closed") {
+            shell.window(forLittleArc: first.id) == nil && store.littleArcWindow(withID: first.id) == nil
+        }
+
+        let second = model.openLittleArc(url: address)
+        let secondWindow = try XUnwrap(shell.window(forLittleArc: second.id), "the second Little Darni window")
+        try check(secondWindow.frame == left,
+                  "placement: the next window opened at \(secondWindow.frame), not where the last was left (\(left))")
+        let third = model.openLittleArc(url: address)
+        let thirdWindow = try XUnwrap(shell.window(forLittleArc: third.id), "the third Little Darni window")
+        try check(thirdWindow.frame.minX > left.minX && thirdWindow.frame.maxY < left.maxY && thirdWindow.frame.size == left.size,
+                  "placement: a window opened over an open one did not step off it (\(thirdWindow.frame) over \(left))")
+        for id in [second.id, third.id] { shell.dismissLittleArcWindow(id) }
+        try await wait("placement: the windows closed") {
+            shell.window(forLittleArc: second.id) == nil && shell.window(forLittleArc: third.id) == nil
+        }
+        log("PASS Little Darni placement: moved to \(left) on screen \(NSScreen.screens.count - 1) of \(NSScreen.screens.count); "
+            + "the next opened there, one opened over it at \(thirdWindow.frame.origin)")
+    }
+
     /// Little Darni's Open in across profiles (owner reports 2026-11-20): a
     /// window in a profile with one space, while the browser window is on a
     /// profile with several. The main button names the browser window's
@@ -1416,6 +1453,7 @@ final class ChromiumSelfTest {
         log("PASS Little ReArc: own window with tab \(little.tabID) lease \(littleLease); closed (lease released: "
             + "\(little.attachmentID == nil)) and archived; app still running")
         try await littleArcOpenInOtherProfileChecks(model: model, shell: shell, store: store, base: base)
+        try await littleArcPlacementChecks(model: model, shell: shell, store: store, base: base)
 
         // Zoom commands: Cmd+= on the focused tab; Chromium's per-host zoom also
         // reaches a sibling same-host tab of the same profile.
