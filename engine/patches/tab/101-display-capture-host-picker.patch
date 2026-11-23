@@ -1,0 +1,966 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 screen sharing: getDisplayMedia asks the host what to share (ABI 1.70)
+
+The owner, in a Google Meet call on Darni 2026.1123.1255: "Present now"
+answers "Can't share your screen. Something went wrong when screen sharing."
+
+Why. navigator.mediaDevices.getDisplayMedia() reaches the tab's
+WebContentsDelegate as a media access request of the display types
+(DISPLAY_VIDEO_CAPTURE, with DISPLAY_AUDIO_CAPTURE when the page asks for
+sound). ReArcTabDelegate::RequestMediaAccessPermission (tab/038: "keep
+screen capture unsupported") gave everything but camera and microphone to
+content::WebContentsDelegate, whose answer is NOT_SUPPORTED, at once. No
+picker, no permission of macOS, nothing in TCC: the unified log of the
+failed attempt has camera and microphone requests only.
+
+What Chrome does. MediaCaptureDevicesDispatcher gives the request to
+DisplayMediaAccessHandler. The handler checks the display-capture
+permissions policy, the user gesture and that the page is visible, queues
+the request per tab, and asks a DesktopMediaPicker: a Views dialog on the
+browser window with tabs (TabDesktopMediaList, which walks Browser
+windows), windows and screens. On macOS 15 and later the last two are not
+lists: with UseSCContentSharingPicker the dialog hands over to the picker
+of macOS (SCContentSharingPicker), and what the person points at there
+needs no Screen Recording permission. While a share is live Chrome shows a
+tab-sharing infobar or an "is sharing your screen" window, both Views.
+
+What this patch does. The handler stays Chromium's, with its checks, its
+queue and its devices; its two pieces of UI become the host's.
+
+- rearc::MakeDisplayMediaAccessHandler (rearc_display_capture.cc) builds
+  the handler for the dispatcher: under the shell, with HostPickerFactory
+  and display_notification false; in a process without the shell, as
+  upstream. One line of media_capture_devices_dispatcher.cc calls it.
+- HostPicker is the DesktopMediaPicker. Show sends the host one JSON event
+  (ReArcEngineSetDisplayCaptureCallback, phase 0): who asks, whether sound
+  was asked for, which kinds may be offered. The host draws its own sheet
+  and answers with ReArcDisplayCaptureRespond: cancel, a tab of its own, a
+  window or the screen. The factory makes no source lists: the host knows
+  its tabs, and the engine never lists windows or draws their thumbnails.
+- A tab: the engine checks that it is a live tab of the asking tab's
+  profile and browser context (and not the asking tab when the page
+  excluded itself) and answers with its WebContentsMediaCaptureId, as
+  Chromium's picker does for a row of its tab list.
+- A window or the screen: the engine opens the picker of macOS with
+  content::desktop_capture::OpenNativeScreenCapturePicker, the call
+  DelegatedSourceListCapturer makes for Chrome's dialog, and answers with
+  the picker's source. The handler's own rule stays: below macOS 15 it
+  refuses such a choice without the Screen Recording permission, so the
+  request's JSON says whether the permission is needed and missing, and the
+  host explains and sends the person to System Settings instead of opening
+  a picker whose choice would be refused.
+- Every request the host was asked ends with one phase 1 event (shared,
+  cancelled, failed, withdrawn), so its sheet never outlives the request.
+  Nothing follows tab.closed. A new or cleared callback refuses what the
+  old host was asked.
+- The live share is already in media_capture (capturing_display, ABI
+  1.46). ReArcTabStopDisplayCapture ends a tab's shares through
+  MediaStreamCaptureIndicator::StopMediaCapturing(kDisplayMedia), the call
+  behind the Stop button of Chromium's own UI.
+- ReArcTabDelegate gives the dispatcher the requests the handler is for
+  (rearc::IsHostDisplayCaptureRequest: video of a tab, window or screen,
+  alone or with its sound). Audio alone, an extension's desktopCapture and
+  tabCapture streams and getAllScreensMedia stay refused, as before.
+  CheckMediaAccessPermission is unchanged.
+
+Who gets a sheet. Only a request from an http or https frame of a registry
+tab, and only while a host callback is set; anything else is refused with
+NOT_SUPPORTED, as before the patch. Chromium's rules still run first: no
+gesture, a page nobody sees (CAPTURE_FROM_BACKGROUND_PAGE_ON_MAC) or a
+frame without the display-capture permissions policy never reach the
+picker.
+
+Sound. A tab's sound is Chromium's own loopback of that tab. The sound of
+the Mac (with the screen, or with a window when the page asks for it) is a
+CoreAudio tap (macOS 14.2 and later): macOS asks the person itself the
+first time, and needs NSAudioCaptureUsageDescription in the app's
+Info.plist, which shell/scripts/bundle-chromium.sh now writes. The JSON
+says for each kind whether sound can go with it; the host decides whether
+to offer it.
+
+The feature. UseSCContentSharingPicker is off by default in Chromium and
+on in the field trial testing configuration, which ReArc engines keep
+(build-engine-release.sh). Every build since 500 has run with it: the log
+of the owner's call has -[SCContentSharingPicker setActive:] from
+VideoCaptureManager::DestroyControllerIfNoClients, which closes the native
+picker's session for any video device that stops, the camera included.
+rearc_engine_abi.mm now names the feature in --enable-features, so the
+picker does not depend on that configuration. The set of features that are
+on does not change, and nothing is written to a profile.
+
+State. Nothing is persisted: no preference, no content setting, no
+permission remembered. Chromium keeps no grant for getDisplayMedia; every
+request asks again.
+
+ABI 1.70, bridge 0.81.0, feature "display_capture". Three functions, JSON
+over scalars, no struct added or changed.
+
+Type-checked with the tree's clang (out/ReArc-codecs-arm64 flags,
+Chromium's plugins, -fsyntax-only) against overlay c7000854cf, then built
+in out/ReArc-codecs-arm64 (overlay fd500c7ffb, 2026-11-23): the framework
+exports the three functions. Not run: the self-test step ("screen
+sharing", ChromiumSelfTest.screenShareChecks) needs the screen.
+
+Touches: chrome/browser/media/webrtc/media_capture_devices_dispatcher.cc
+(first ReArc hunk in that file), chrome/browser/BUILD.gn, chrome/app/
+framework.{exports,order}, and the bridge's tab_delegate.cc,
+rearc_engine_abi.{h,mm}, rearc_engine_entry_mac.mm, rearc_abi_internal.h,
+rearc_services_abi.cc. New: rearc_display_capture.{cc,h}.
+
+Last rebased: 2026-11-23 onto Chromium 156.0.8078.109 (overlay c7000854cf).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index d4487c4..3dc7e43 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -56,6 +56,9 @@ _ReArcTabRevokeSiteDevice
+ _ReArcEngineSetSitePermissionsChangedCallback
+ _ReArcEngineSetWebAuthnCallback
+ _ReArcWebAuthnRespond
++_ReArcEngineSetDisplayCaptureCallback
++_ReArcDisplayCaptureRespond
++_ReArcTabStopDisplayCapture
+ _ReArcEngineSetEarlyWindowCallback
+ _ReArcEngineSetMediaCaptureCallback
+ _ReArcTabGetMediaCapture
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 7c36e18..c64f290 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -63,6 +63,9 @@ _ReArcTabRevokeSiteDevice
+ _ReArcEngineSetSitePermissionsChangedCallback
+ _ReArcEngineSetWebAuthnCallback
+ _ReArcWebAuthnRespond
++_ReArcEngineSetDisplayCaptureCallback
++_ReArcDisplayCaptureRespond
++_ReArcTabStopDisplayCapture
+ _ReArcTabCopyBlockedHosts
+ _ReArcEngineCopySiteOfHost
+ _ReArcEngineSetEarlyWindowCallback
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 397eba3..0c1f164 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1494,6 +1494,8 @@ source_set("core") {
+       "rearc_bridge/rearc_site_permissions.cc",
+       "rearc_bridge/rearc_webauthn.cc",
+       "rearc_bridge/rearc_webauthn.h",
++      "rearc_bridge/rearc_display_capture.cc",
++      "rearc_bridge/rearc_display_capture.h",
+       "rearc_bridge/rearc_fullscreen.cc",
+       "rearc_bridge/rearc_fullscreen.h",
+       "rearc_bridge/rearc_key_equivalents.cc",
+diff --git a/chrome/browser/media/webrtc/media_capture_devices_dispatcher.cc b/chrome/browser/media/webrtc/media_capture_devices_dispatcher.cc
+index 9757afe..3109947 100644
+--- a/chrome/browser/media/webrtc/media_capture_devices_dispatcher.cc
++++ b/chrome/browser/media/webrtc/media_capture_devices_dispatcher.cc
+@@ -23,6 +23,7 @@
+ #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
+ #include "chrome/browser/media/webrtc/permission_bubble_media_access_handler.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/rearc_bridge/rearc_display_capture.h"
+ #include "chrome/common/chrome_switches.h"
+ #include "chrome/common/pref_names.h"
+ #include "components/pref_registry/pref_registry_syncable.h"
+@@ -83,8 +84,8 @@ MediaCaptureDevicesDispatcher::MediaCaptureDevicesDispatcher()
+         std::make_unique<DisplayMediaAccessHandler>());
+   }
+ #elif !BUILDFLAG(IS_ANDROID)
+-  media_access_handlers_.push_back(
+-      std::make_unique<DisplayMediaAccessHandler>());
++  // ReArc: under the shell the handler's picker asks the host (ABI 1.70).
++  media_access_handlers_.push_back(rearc::MakeDisplayMediaAccessHandler());
+ #endif
+ 
+ #if BUILDFLAG(ENABLE_EXTENSIONS)
+diff --git a/chrome/browser/rearc_bridge/rearc_abi_internal.h b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+index 8b2aa0b..8627a4e 100644
+--- a/chrome/browser/rearc_bridge/rearc_abi_internal.h
++++ b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+@@ -55,5 +55,8 @@ void ABIDetachSitePermissions(uint64_t tab_id);
+ // ABI 1.68 WebAuthn steps (rearc_webauthn.cc): the tab's requests end for
+ // the host; Chromium ends the requests themselves with the page.
+ void ABICancelWebAuthn(uint64_t tab_id);
++// ABI 1.70 screen sharing (rearc_display_capture.cc): the host hears no more
++// of the tab's open requests; Chromium drops them with the tab.
++void ABICancelDisplayCapture(uint64_t tab_id);
+ }  // namespace rearc
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_display_capture.cc b/chrome/browser/rearc_bridge/rearc_display_capture.cc
+new file mode 100644
+index 0000000..f5fff93
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_display_capture.cc
+@@ -0,0 +1,543 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/rearc_bridge/rearc_display_capture.h"
++
++#include <pthread.h>
++
++#include <map>
++#include <optional>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/check.h"
++#include "base/feature_list.h"
++#include "base/functional/bind.h"
++#include "base/json/json_writer.h"
++#include "base/location.h"
++#include "base/mac/mac_util.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/task/bind_post_task.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/types/expected.h"
++#include "base/values.h"
++#include "chrome/browser/media/media_access_handler.h"
++#include "chrome/browser/media/webrtc/desktop_media_list.h"
++#include "chrome/browser/media/webrtc/desktop_media_picker.h"
++#include "chrome/browser/media/webrtc/desktop_media_picker_factory.h"
++#include "chrome/browser/media/webrtc/display_media_access_handler.h"
++#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
++#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
++#include "chrome/browser/media/webrtc/system_media_capture_permissions_mac.h"
++#include "chrome/browser/rearc_bridge/engine_mode.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_extension_windows.h"
++#include "chrome/browser/rearc_bridge/tab_registry.h"
++#include "chrome/browser/rearc_bridge/tab_session.h"
++#include "content/public/browser/browser_task_traits.h"
++#include "content/public/browser/browser_thread.h"
++#include "content/public/browser/desktop_capture.h"
++#include "content/public/browser/desktop_media_id.h"
++#include "content/public/browser/media_stream_request.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/render_process_host.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_media_capture_id.h"
++#include "media/base/media_switches.h"
++#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
++#include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
++#include "url/origin.h"
++#include "url/url_constants.h"
++
++namespace rearc {
++namespace {
++
++using blink::mojom::MediaStreamRequestResult;
++using blink::mojom::MediaStreamType;
++using content::DesktopMediaID;
++
++class HostPicker;
++
++ReArcDisplayCaptureCallback host = nullptr;
++void* host_context = nullptr;
++uint64_t epoch = 0, next_id = 1;
++
++std::map<uint64_t, raw_ptr<HostPicker>>& Pickers() {
++  static base::NoDestructor<std::map<uint64_t, raw_ptr<HostPicker>>> pickers;
++  return *pickers;
++}
++
++void Deliver(uint64_t expected,
++             uint64_t request_id,
++             uint64_t tab_id,
++             uint32_t phase,
++             std::string json) {
++  if (!host || expected != epoch) {
++    return;
++  }
++  // Nothing after tab.closed: the host's sheet went with the tab.
++  if (!TabRegistry::Get().FindSession(tab_id)) {
++    return;
++  }
++  host(host_context, request_id, tab_id, phase, json.c_str());
++}
++
++std::string Json(base::DictValue dict) {
++  return base::WriteJson(dict).value_or("{}");
++}
++
++// A window or a screen is chosen in the picker of macOS
++// (SCContentSharingPicker): the person points at it in a window of the
++// system's, and macOS takes that as the permission to record it, once. The
++// engine never lists the windows and never reads a pixel of one to draw a
++// choice. NativeScreenCapturePickerMac exists only with the feature, on
++// macOS 14 and later, and the content layer CHECKs that it does before it
++// opens it.
++bool HasSystemPicker() {
++  return base::FeatureList::IsEnabled(media::kUseSCContentSharingPicker) &&
++         base::mac::MacOSMajorVersion() >= 14;
++}
++
++// Chromium asks for the Screen Recording permission of macOS only where the
++// system picker does not confer it (before macOS 15). Reading it shows no
++// prompt (CGPreflightScreenCaptureAccess).
++const char* ScreenRecordingPermission() {
++  if (!system_media_permissions::ScreenCaptureNeedsSystemLevelPermissions()) {
++    return "not_needed";
++  }
++  return system_media_permissions::CheckSystemScreenCapturePermission() ==
++                 system_permission_settings::SystemPermission::kAllowed
++             ? "granted"
++             : "missing";
++}
++
++// What Chromium's picker offers for the sound of a window
++// (GetWindowCaptureAudioType, desktop_media_picker_views.cc): what the page
++// asked for, where macOS can record it.
++DesktopMediaID::AudioType WindowAudioType(
++    const DesktopMediaPicker::Params& params) {
++  using Preference = blink::mojom::WindowAudioPreference;
++  if (!params.request_audio ||
++      params.window_audio_preference == Preference::kExclude) {
++    return DesktopMediaID::AudioType::kNone;
++  }
++  const bool system = media::IsMacCatapSystemLoopbackCaptureSupported();
++  if (params.window_audio_preference == Preference::kWindow) {
++    if (media::IsApplicationLoopbackCaptureSupported()) {
++      return DesktopMediaID::AudioType::kApplication;
++    }
++    if (system) {
++      return DesktopMediaID::AudioType::kSystem;
++    }
++  }
++  if (params.window_audio_preference == Preference::kSystem && system) {
++    return DesktopMediaID::AudioType::kSystem;
++  }
++  return DesktopMediaID::AudioType::kNone;
++}
++
++void StopObserving(DesktopMediaID source) {
++  content::GetIOThreadTaskRunner({})->PostTask(
++      FROM_HERE,
++      base::BindOnce(&content::desktop_capture::CloseNativeScreenCapturePicker,
++                     source));
++}
++
++// One getDisplayMedia request's choice, asked of the host. Chromium's handler
++// owns it for as long as the request waits, and destroys it when the request
++// is answered, when its page goes and when its tab closes.
++class HostPicker : public DesktopMediaPicker {
++ public:
++  explicit HostPicker(const content::MediaStreamRequest* request)
++      : id_(next_id++) {
++    if (request) {
++      process_id_ = request->render_process_id;
++      frame_id_ = request->render_frame_id;
++      this_tab_ =
++          request->video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB;
++      exclude_self_ = request->exclude_self_browser_surface;
++      exclude_screen_ = request->exclude_monitor_type_surfaces;
++    }
++    Pickers()[id_] = this;
++  }
++
++  ~HostPicker() override {
++    Pickers().erase(id_);
++    if (asked_ && !done_.is_null() && !detached_) {
++      ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 1u,
++                             Json(base::DictValue().Set("outcome",
++                                                        "withdrawn"))));
++    }
++    // An open system picker must not go on watching for this request.
++    if (system_source_ && !chosen_) {
++      StopObserving(DesktopMediaID(system_type_, *system_source_));
++    }
++  }
++
++  // DesktopMediaPicker. The handler's source lists are empty (see the
++  // factory): the host knows its tabs, and macOS shows the windows and
++  // screens.
++  void Show(const Params& params,
++            std::vector<std::unique_ptr<DesktopMediaList>> source_lists,
++            DoneCallback done_callback) override {
++    CHECK(pthread_main_np());
++    done_ = std::move(done_callback);
++    params_ = params;
++    content::RenderFrameHost* frame =
++        content::RenderFrameHost::FromID(process_id_, frame_id_);
++    TabSession* session = ExtensionSession(params.web_contents);
++    // Only a web page in a tab of the host gets the host's sheet, which names
++    // who asks. Without a host nobody can answer.
++    if (!host || !session || !frame ||
++        !frame->GetLastCommittedOrigin().GetURL().SchemeIsHTTPOrHTTPS()) {
++      return FinishLater(base::unexpected(MediaStreamRequestResult::NOT_SUPPORTED));
++    }
++    tab_id_ = session->tab_id();
++    profile_id_ = session->profile_id();
++    const bool system_picker = HasSystemPicker();
++    screen_ = system_picker && !exclude_screen_;
++    window_ = system_picker;
++    window_audio_ = WindowAudioType(params);
++    screen_audio_ = params.request_audio && !params.exclude_system_audio &&
++                    media::IsMacCatapSystemLoopbackCaptureSupported();
++    const char* prefer = "";
++    if (this_tab_) {
++      prefer = "current_tab";
++    } else {
++      switch (params.preferred_display_surface) {
++        case blink::mojom::PreferredDisplaySurface::BROWSER:
++          prefer = "tab";
++          break;
++        case blink::mojom::PreferredDisplaySurface::WINDOW:
++          prefer = "window";
++          break;
++        case blink::mojom::PreferredDisplaySurface::MONITOR:
++          prefer = "screen";
++          break;
++        case blink::mojom::PreferredDisplaySurface::NO_PREFERENCE:
++          break;
++      }
++    }
++    base::DictValue json;
++    json.Set("origin", frame->GetLastCommittedOrigin().Serialize());
++    json.Set("top_origin", params.web_contents->GetPrimaryMainFrame()
++                               ->GetLastCommittedOrigin()
++                               .Serialize());
++    json.Set("profile_id", base::NumberToString(profile_id_));
++    json.Set("content_generation",
++             base::NumberToString(session->content_generation()));
++    json.Set("audio", params.request_audio);
++    json.Set("current_tab", !exclude_self_);
++    json.Set("window", window_);
++    json.Set("screen", screen_);
++    json.Set("tab_audio", params.request_audio);
++    json.Set("window_audio",
++             window_ && window_audio_ != DesktopMediaID::AudioType::kNone);
++    json.Set("screen_audio", screen_ && screen_audio_);
++    json.Set("prefer", prefer);
++    json.Set("system_picker", system_picker);
++    json.Set("screen_recording_permission", ScreenRecordingPermission());
++    asked_ = true;
++    ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 0u,
++                           Json(std::move(json))));
++  }
++
++  uint64_t tab_id() const { return tab_id_; }
++  bool waiting() const { return asked_ && !done_.is_null(); }
++
++  // The tab is closing: the host hears no more of this request. Chromium's
++  // handler drops it with the tab's WebContents.
++  void Detach() { detached_ = true; }
++
++  // The host that was asked is gone.
++  void Abandon() {
++    detached_ = true;
++    Finish(base::unexpected(MediaStreamRequestResult::NOT_SUPPORTED), nullptr);
++  }
++
++  ReArcStatus Respond(uint32_t choice, uint64_t target_tab, bool share_audio) {
++    if (!waiting() || system_open_) {
++      return REARC_INVALID_STATE;
++    }
++    switch (choice) {
++      case 0:
++        Finish(base::unexpected(
++                   MediaStreamRequestResult::PERMISSION_DENIED_BY_USER),
++               "cancelled");
++        return REARC_OK;
++      case 1:
++        return ShareTab(target_tab, share_audio);
++      case 2:
++      case 3: {
++        const bool screen = choice == 3;
++        if (!(screen ? screen_ : window_)) {
++          return REARC_INVALID_STATE;
++        }
++        // Chromium's handler refuses the choice afterwards without the
++        // permission, where it is needed: the host says so first instead.
++        if (std::string(ScreenRecordingPermission()) == "missing") {
++          return REARC_INVALID_STATE;
++        }
++        OpenSystemPicker(screen ? DesktopMediaID::TYPE_SCREEN
++                                : DesktopMediaID::TYPE_WINDOW,
++                         share_audio);
++        return REARC_OK;
++      }
++      default:
++        return REARC_INVALID_ARGUMENT;
++    }
++  }
++
++ private:
++  using Result = DesktopMediaPicker::DoneCallbackArgumentType;
++
++  ReArcStatus ShareTab(uint64_t target_tab, bool share_audio) {
++    TabSession* asker = TabRegistry::Get().FindSession(tab_id_);
++    TabSession* target = TabRegistry::Get().FindSession(target_tab);
++    content::WebContents* contents = target ? target->web_contents() : nullptr;
++    if (!asker || !asker->web_contents() || !contents ||
++        contents->IsBeingDestroyed()) {
++      return REARC_NOT_FOUND;
++    }
++    // A tab of the same profile and the same kind of session only (Chromium's
++    // picker lists no other), and not the asking tab when its page excluded
++    // itself.
++    if (contents->GetBrowserContext() !=
++            asker->web_contents()->GetBrowserContext() ||
++        target->profile_id() != profile_id_ ||
++        (exclude_self_ && target_tab == tab_id_)) {
++      return REARC_INVALID_ARGUMENT;
++    }
++    content::RenderFrameHost* main = contents->GetPrimaryMainFrame();
++    if (!main || !main->IsRenderFrameLive() || contents->IsCrashed()) {
++      return REARC_INVALID_STATE;
++    }
++    DesktopMediaID media(
++        DesktopMediaID::TYPE_WEB_CONTENTS, DesktopMediaID::kNullId,
++        content::WebContentsMediaCaptureId(
++            main->GetProcess()->GetDeprecatedID(), main->GetRoutingID()));
++    media.audio_share = share_audio && params_.request_audio;
++    base::DictValue json;
++    json.Set("outcome", "shared");
++    json.Set("kind", "tab");
++    json.Set("target_tab", base::NumberToString(target_tab));
++    json.Set("audio", media.audio_share);
++    Finish(media, std::move(json));
++    return REARC_OK;
++  }
++
++  void OpenSystemPicker(DesktopMediaID::Type type, bool share_audio) {
++    system_open_ = true;
++    system_type_ = type;
++    system_audio_ = share_audio;
++    auto runner = base::SequencedTaskRunner::GetCurrentDefault();
++    auto weak = weak_factory_.GetWeakPtr();
++    // The id of the picker's session arrives first. A request that went in
++    // the meantime must still let go of it.
++    auto created = base::BindPostTask(
++        runner, base::BindOnce(
++                    [](base::WeakPtr<HostPicker> picker,
++                       DesktopMediaID::Type type, DesktopMediaID::Id source) {
++                      if (picker) {
++                        picker->system_source_ = source;
++                      } else {
++                        StopObserving(DesktopMediaID(type, source));
++                      }
++                    },
++                    weak, type));
++    auto selected = base::BindPostTask(
++        runner, base::BindOnce(&HostPicker::OnSystemChoice, weak));
++    auto cancelled = base::BindPostTask(
++        runner,
++        base::BindOnce(&HostPicker::OnSystemEnd, weak,
++                       MediaStreamRequestResult::PERMISSION_DENIED_BY_USER,
++                       "cancelled"));
++    auto failed = base::BindPostTask(
++        runner, base::BindOnce(&HostPicker::OnSystemEnd, weak,
++                               MediaStreamRequestResult::NOT_SUPPORTED,
++                               "failed"));
++    content::GetIOThreadTaskRunner({})->PostTask(
++        FROM_HERE,
++        base::BindOnce(&content::desktop_capture::OpenNativeScreenCapturePicker,
++                       type, std::move(created), std::move(selected),
++                       std::move(cancelled), std::move(failed)));
++  }
++
++  void OnSystemChoice(webrtc::DesktopCapturer::Source source) {
++    chosen_ = true;
++    const bool screen = system_type_ == DesktopMediaID::TYPE_SCREEN;
++    DesktopMediaID media(system_type_, source.id);
++    if (screen) {
++      media.audio_share = system_audio_ && screen_audio_;
++    } else {
++      media.audio_share =
++          system_audio_ && window_audio_ != DesktopMediaID::AudioType::kNone;
++      media.window_audio_type = window_audio_;
++    }
++    base::DictValue json;
++    json.Set("outcome", "shared");
++    json.Set("kind", screen ? "screen" : "window");
++    json.Set("audio", media.audio_share);
++    Finish(media, std::move(json));
++  }
++
++  void OnSystemEnd(MediaStreamRequestResult result, const char* outcome) {
++    Finish(base::unexpected(result), outcome);
++  }
++
++  void FinishLater(Result result) {
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(
++            [](base::WeakPtr<HostPicker> picker, Result result) {
++              if (picker) {
++                picker->Finish(std::move(result), nullptr);
++              }
++            },
++            weak_factory_.GetWeakPtr(), std::move(result)));
++  }
++
++  void Finish(Result result, const char* outcome) {
++    Finish(std::move(result),
++           outcome ? base::DictValue().Set("outcome", outcome)
++                   : base::DictValue());
++  }
++
++  // The answer for Chromium's handler, which destroys this picker with it:
++  // nothing may follow the callback.
++  void Finish(Result result, base::DictValue outcome) {
++    if (done_.is_null()) {
++      return;
++    }
++    if (asked_ && !detached_ && !outcome.empty()) {
++      ABIPost(base::BindOnce(&Deliver, epoch, id_, tab_id_, 1u,
++                             Json(std::move(outcome))));
++    }
++    std::move(done_).Run(std::move(result));
++  }
++
++  const uint64_t id_;
++  int process_id_ = 0, frame_id_ = 0;
++  bool this_tab_ = false, exclude_self_ = false, exclude_screen_ = false;
++  uint64_t tab_id_ = 0, profile_id_ = 0;
++  Params params_;
++  DoneCallback done_;
++  bool asked_ = false, detached_ = false;
++  bool window_ = false, screen_ = false, screen_audio_ = false;
++  DesktopMediaID::AudioType window_audio_ = DesktopMediaID::AudioType::kNone;
++  bool system_open_ = false, system_audio_ = false, chosen_ = false;
++  DesktopMediaID::Type system_type_ = DesktopMediaID::TYPE_NONE;
++  std::optional<DesktopMediaID::Id> system_source_;
++  base::WeakPtrFactory<HostPicker> weak_factory_{this};
++};
++
++class HostPickerFactory : public DesktopMediaPickerFactory {
++ public:
++  HostPickerFactory() = default;
++  std::unique_ptr<DesktopMediaPicker> CreatePicker(
++      const content::MediaStreamRequest* request) override {
++    return std::make_unique<HostPicker>(request);
++  }
++  // No list: Chromium's tab list walks Browser windows, which a bridge
++  // process has none of, and its window and screen lists either draw
++  // thumbnails (which needs the Screen Recording permission) or stand for the
++  // system picker, which HostPicker opens itself.
++  std::vector<std::unique_ptr<DesktopMediaList>> CreateMediaList(
++      const std::vector<DesktopMediaList::Type>& types,
++      content::WebContents* web_contents,
++      DesktopMediaList::WebContentsFilter includable_web_contents_filter)
++      override {
++    return {};
++  }
++};
++
++}  // namespace
++
++std::unique_ptr<MediaAccessHandler> MakeDisplayMediaAccessHandler() {
++  if (!IsEngineEmbeddedMode()) {
++    return std::make_unique<DisplayMediaAccessHandler>();
++  }
++  return std::make_unique<DisplayMediaAccessHandler>(
++      std::make_unique<HostPickerFactory>(), /*display_notification=*/false);
++}
++
++bool IsHostDisplayCaptureRequest(const content::MediaStreamRequest& request) {
++  return (request.video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE ||
++          request.video_type ==
++              MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB) &&
++         (request.audio_type == MediaStreamType::NO_SERVICE ||
++          request.audio_type == MediaStreamType::DISPLAY_AUDIO_CAPTURE);
++}
++
++void ABICancelDisplayCapture(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  for (auto& [id, picker] : Pickers()) {
++    if (picker->tab_id() == tab_id) {
++      picker->Detach();
++    }
++  }
++}
++
++}  // namespace rearc
++
++void ReArcEngineSetDisplayCaptureCallback(ReArcDisplayCaptureCallback callback,
++                                          void* context) {
++  CHECK(pthread_main_np());
++  // A host that goes takes its sheets with it: what it was asked is refused.
++  // Refusing ends a picker, so walk a copy of the ids.
++  std::vector<uint64_t> ids;
++  for (const auto& [id, picker] : rearc::Pickers()) {
++    if (picker->waiting()) {
++      ids.push_back(id);
++    }
++  }
++  ++rearc::epoch;
++  rearc::host = callback;
++  rearc::host_context = context;
++  for (uint64_t id : ids) {
++    auto it = rearc::Pickers().find(id);
++    if (it != rearc::Pickers().end()) {
++      it->second->Abandon();
++    }
++  }
++}
++
++ReArcStatus ReArcDisplayCaptureRespond(uint64_t request_id,
++                                       uint32_t choice,
++                                       uint64_t target_tab_id,
++                                       bool share_audio) {
++  CHECK(pthread_main_np());
++  auto it = rearc::Pickers().find(request_id);
++  if (it == rearc::Pickers().end()) {
++    return REARC_NOT_FOUND;
++  }
++  return it->second->Respond(choice, target_tab_id, share_audio);
++}
++
++ReArcStatus ReArcTabStopDisplayCapture(uint64_t tab_id) {
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab_id, &session)) {
++    return status;
++  }
++  content::WebContents* contents = session->web_contents();
++  MediaStreamCaptureIndicator* indicator =
++      MediaCaptureDevicesDispatcher::GetInstance()
++          ->GetMediaStreamCaptureIndicator()
++          .get();
++  if (!contents ||
++      !(indicator->IsCapturingTab(contents) ||
++        indicator->IsCapturingWindow(contents) ||
++        indicator->IsCapturingDisplay(contents))) {
++    return REARC_INVALID_STATE;
++  }
++  // As the Stop button of Chromium's own sharing UI: the streams end and the
++  // page's tracks fire "ended".
++  indicator->StopMediaCapturing(
++      contents, MediaStreamCaptureIndicator::MediaType::kDisplayMedia);
++  return REARC_OK;
++}
+diff --git a/chrome/browser/rearc_bridge/rearc_display_capture.h b/chrome/browser/rearc_bridge/rearc_display_capture.h
+new file mode 100644
+index 0000000..24e8f6c
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_display_capture.h
+@@ -0,0 +1,49 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_REARC_BRIDGE_REARC_DISPLAY_CAPTURE_H_
++#define CHROME_BROWSER_REARC_BRIDGE_REARC_DISPLAY_CAPTURE_H_
++
++#include <memory>
++
++class MediaAccessHandler;
++
++namespace content {
++struct MediaStreamRequest;
++}  // namespace content
++
++namespace rearc {
++
++// Screen sharing (display_capture, ABI 1.70).
++//
++// navigator.mediaDevices.getDisplayMedia() reaches the tab's
++// WebContentsDelegate as a media access request of the display types. Chrome
++// answers it in DisplayMediaAccessHandler, which asks a DesktopMediaPicker
++// what to share (a Views dialog on the browser window) and then shows what is
++// shared in Views UI of its own (the tab-sharing infobar, the "is sharing
++// your screen" window). A bridge tab has no browser window, and until this
++// patch its delegate refused the display types, so a page's request failed at
++// once with NotSupportedError.
++//
++// The handler stays Chromium's: the permissions-policy check, the user
++// activation check, the rule that a page nobody sees gets no picker, the
++// request queue of a tab, the devices of the answer and the capture
++// indicator's bookkeeping. Only its two pieces of UI are the host's.
++//
++// The handler for MediaCaptureDevicesDispatcher. Under the ReArc shell
++// (IsEngineEmbeddedMode) it is Chromium's DisplayMediaAccessHandler with a
++// picker that asks the host and without Chromium's sharing notification UI;
++// otherwise Chromium's own, unchanged.
++std::unique_ptr<MediaAccessHandler> MakeDisplayMediaAccessHandler();
++
++// A request the tab delegate gives to the dispatcher for the handler above:
++// video of a tab, window or screen, with or without its audio. Anything else
++// of the display and tab capture families (audio alone, an extension's
++// desktopCapture and tabCapture streams, every screen at once) stays refused,
++// as before.
++bool IsHostDisplayCaptureRequest(const content::MediaStreamRequest& request);
++
++}  // namespace rearc
++
++#endif  // CHROME_BROWSER_REARC_BRIDGE_REARC_DISPLAY_CAPTURE_H_
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 152031d..faaa733 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 69, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 70, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -1982,6 +1982,83 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcTabCopyBlockedHosts(uint64_t tab_id,
+ REARC_ENGINE_EXPORT ReArcStatus ReArcEngineCopySiteOfHost(const char* utf8_host,
+                                                           char** json);
+ 
++// Screen sharing (display_capture, ABI 1.70): navigator.mediaDevices
++// .getDisplayMedia() of a page in a registry tab. Chromium's handler
++// (DisplayMediaAccessHandler) still decides whether the page may ask at all
++// (permissions policy, a user gesture, a page that is visible) and builds the
++// streams; what to share is asked of the host instead of Chromium's Views
++// picker, and Chromium's own sharing bar and "is sharing your screen" window
++// are not shown: the host draws what is shared from media_capture's
++// capturing_display and ends it with ReArcTabStopDisplayCapture. Before this
++// channel the tab's delegate refused the request (NotSupportedError).
++//
++// phase 0: request_id of tab_id asks; json says what may be offered. The host
++// shows its sheet over that tab and answers with ReArcDisplayCaptureRespond.
++// phase 1: the request is over; close the sheet, no reply. json has
++// "outcome": "shared" (with "kind": "tab", "window" or "screen", "audio":
++// the share carries sound, and for a tab "target_tab"), "cancelled" (the
++// person, in the host's sheet or in the picker of macOS), "failed" (the
++// picker of macOS could not open) or "withdrawn" (the page went or asked
++// again, or its frame navigated). Every request the host was asked ends with
++// exactly one phase 1 event, except a request of a tab that closes: nothing
++// follows tab.closed. Without a callback, for a page that is no registry tab
++// and for an asking frame that is no http or https page, the request is
++// refused (NotSupportedError) and the host hears nothing.
++//
++// json is a UTF-8 object; a host ignores keys it does not know. 64-bit
++// numbers are decimal strings.
++//   "origin": the asking frame; "top_origin": the tab's page (they differ for
++//     a frame of another site). "profile_id", "content_generation".
++//   "audio": the page asked for sound too. "tab_audio", "window_audio",
++//     "screen_audio": sound can go with that kind of share (a tab's own
++//     sound; for a window or the screen the sound of the Mac or of the
++//     window's app, which macOS asks the person about itself the first time).
++//   "current_tab": the asking tab itself may be shared (false: the page
++//     excluded it). "window", "screen": that kind may be shared (false for a
++//     screen the page excluded, and for both where macOS has no picker).
++//   "prefer": what the page would like offered first: "current_tab", "tab",
++//     "window", "screen" or "".
++//   "system_picker": a window or the screen is chosen in the picker of macOS
++//     (SCContentSharingPicker), which opens after the host's answer; the
++//     engine lists no windows and reads none.
++//   "screen_recording_permission": "not_needed" (macOS 15 and later: the
++//     choice in the system's picker is the permission), "granted" or
++//     "missing" (macOS 14 without Screen Recording allowed for the app: the
++//     host explains and sends the person to System Settings; a window or
++//     screen answer is invalid_state until it is granted).
++typedef void (*ReArcDisplayCaptureCallback)(void* context,
++                                            uint64_t request_id,
++                                            uint64_t tab_id,
++                                            uint32_t phase,
++                                            const char* json);
++// Replacing or clearing the callback refuses the requests it was asked.
++REARC_ENGINE_EXPORT void ReArcEngineSetDisplayCaptureCallback(
++    ReArcDisplayCaptureCallback callback, void* context);
++// The person's answer. choice: 0 cancel (the page gets NotAllowedError); 1
++// share the registry tab target_tab_id (its page as it is drawn, whether or
++// not a window shows it); 2 a window, 3 the screen: the picker of macOS opens
++// and its outcome arrives as the phase 1 event. share_audio: with sound,
++// where the request's json offers it for that kind (ignored otherwise).
++// target_tab_id is read for choice 1 only. It must be a live tab of the
++// asking tab's profile and browser context, and not the asking tab when
++// "current_tab" is false: invalid_argument otherwise; a tab that does not
++// exist: not_found; one whose page is not running (crashed or discarded):
++// invalid_state. A kind the json did not offer, a second answer, an answer
++// while the picker of macOS is open, and a window or screen answer while
++// "screen_recording_permission" is "missing": invalid_state. An unknown
++// choice: invalid_argument. A request that is over: not_found. After a
++// refused answer the request is still open.
++REARC_ENGINE_EXPORT ReArcStatus ReArcDisplayCaptureRespond(uint64_t request_id,
++                                                           uint32_t choice,
++                                                           uint64_t target_tab_id,
++                                                           bool share_audio);
++// Ends everything tab_id's page shares (tabs, windows, screens and their
++// sound), as the Stop button of Chromium's sharing bar: the page's tracks
++// fire "ended". Camera and microphone are untouched. A tab that shares
++// nothing: invalid_state. media_capture reports capturing_display false
++// afterwards.
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabStopDisplayCapture(uint64_t tab_id);
++
+ #ifdef __cplusplus
+ }  // extern "C"
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 70b173e..46eeb9f 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -995,6 +995,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "host_sites" ||
+          std::string(feature) == "site_permissions" ||
+          std::string(feature) == "webauthn_prompts" ||
++         std::string(feature) == "display_capture" ||
+          std::string(feature) == "early_window" ||
+          std::string(feature) == "media_capture" ||
+          std::string(feature) == "search_engines" ||
+@@ -1079,7 +1080,10 @@ int ReArcEngineRun(int argc, const char* const* argv) {
+   }
+   std::vector<std::string> args;
+   bool profile = false;
+-  std::string enabled_features = "WebContentsDiscard";
++  // UseSCContentSharingPicker: a window or screen to share is chosen in the
++  // picker of macOS (rearc_display_capture.cc). Named here so a release does
++  // not depend on the field trial testing configuration having it on.
++  std::string enabled_features = "WebContentsDiscard,UseSCContentSharingPicker";
+   for (int i = 0; i < argc; ++i) {
+     if (!argv[i]) {
+       return -REARC_INVALID_ARGUMENT;
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index d26be2a..cde8363 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.80.0";
++  return "0.81.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_services_abi.cc b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+index 24a7044..7733278 100644
+--- a/chrome/browser/rearc_bridge/rearc_services_abi.cc
++++ b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+@@ -1248,6 +1248,7 @@ void ABIDetachServices(uint64_t id) {
+   ABICancelContextMenu(id);
+   ABICancelPermissions(id);
+   ABICancelWebAuthn(id);
++  ABICancelDisplayCapture(id);
+   ABICancelFileChooser(id);
+   ABICancelJavaScriptDialogs(id);
+   ABIDetachFind(id);
+diff --git a/chrome/browser/rearc_bridge/tab_delegate.cc b/chrome/browser/rearc_bridge/tab_delegate.cc
+index 8f51b0d..e2bf370 100644
+--- a/chrome/browser/rearc_bridge/tab_delegate.cc
++++ b/chrome/browser/rearc_bridge/tab_delegate.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/rearc_bridge/tab_delegate.h"
+ #include "chrome/browser/rearc_bridge/rearc_devtools.h"
++#include "chrome/browser/rearc_bridge/rearc_display_capture.h"
+ #include "chrome/browser/rearc_bridge/rearc_file_chooser.h"
+ #include "chrome/browser/rearc_bridge/rearc_drop_policy.h"
+ #include "chrome/browser/rearc_bridge/rearc_fullscreen.h"
+@@ -164,8 +165,11 @@ ReArcTabDelegate::GetJavaScriptDialogManager(content::WebContents* source) {
+ void ReArcTabDelegate::RequestMediaAccessPermission(content::WebContents* contents,
+     const content::MediaStreamRequest& request, content::MediaResponseCallback callback) {
+   using Type = blink::mojom::MediaStreamType;
+-  if ((request.audio_type != Type::NO_SERVICE && request.audio_type != Type::DEVICE_AUDIO_CAPTURE) ||
+-      (request.video_type != Type::NO_SERVICE && request.video_type != Type::DEVICE_VIDEO_CAPTURE)) {
++  // getDisplayMedia (a tab, a window or a screen) goes to Chromium's handler
++  // too since ABI 1.70; its picker is the host's (rearc_display_capture.cc).
++  if (!rearc::IsHostDisplayCaptureRequest(request) &&
++      ((request.audio_type != Type::NO_SERVICE && request.audio_type != Type::DEVICE_AUDIO_CAPTURE) ||
++       (request.video_type != Type::NO_SERVICE && request.video_type != Type::DEVICE_VIDEO_CAPTURE))) {
+     content::WebContentsDelegate::RequestMediaAccessPermission(contents, request, std::move(callback));
+     return;
+   }

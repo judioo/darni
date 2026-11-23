@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
-ABI **1.69** (major remains 1 for existing hosts), bridge **0.80.0**, compiled Chromium **156.0.8078.109**
-(1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
+ABI **1.70** (major remains 1 for existing hosts), bridge **0.81.0**, compiled Chromium **156.0.8078.109**
+(1.70 and bridge 0.81.0 are patch `tab/101`, overlay fd500c7ffb, built on 2026-11-23 in `out/ReArc-codecs-arm64`; see "Screen sharing". 1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -205,7 +205,7 @@ Advertised features: `native_view`, `navigation`, `navigation_extended`, `media_
 `pip_embedded` (1.43), `perf_metrics` (1.44), `early_window` (1.45),
 `media_capture` and `search_engines` (1.46) and `extension_side_panels`
 (1.47); later ones are named in their sections (`site_permissions` 1.67,
-`webauthn_prompts` 1.68). `pip_control`, `pip_native`
+`webauthn_prompts` 1.68, `display_capture` 1.70). `pip_control`, `pip_native`
 and `script_opener` remain unadvertised names. Unknown optional operations are unsupported.
 
 | Function | Semantics |
@@ -2952,6 +2952,72 @@ bundle (2026-11-19, a throwaway data folder, a local page that asks on a timer):
 another app's window and from a minimised window were each refused in 2 to 42 ms with the log
 line; with the window back the same `get` opened the sheet, and it stayed open when the app was
 hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.
+
+## Screen sharing (ABI 1.70, bridge 0.81.0)
+
+Feature `display_capture`, patch `tab/101`. A page's `navigator.mediaDevices.getDisplayMedia()`
+reaches the tab's `WebContentsDelegate` as a media access request of the display types. Until
+this patch the bridge's delegate refused them (`tab/038`), so the page got `NotSupportedError`
+at once: Google Meet's "Can't share your screen". Chrome answers the request in
+`DisplayMediaAccessHandler`, whose picker is a Views dialog on the browser window and whose
+"sharing" UI (the tab-sharing infobar, the "is sharing your screen" window) is Views too.
+
+The handler stays Chromium's, with its rules and its devices. Its picker asks the host, and its
+sharing UI is not shown: the host draws what is shared.
+
+| Function | Semantics |
+|---|---|
+| `ReArcEngineSetDisplayCaptureCallback(callback, context)` | `callback(context, request_id, tab_id, phase, json)`. phase 0: the page of `tab_id` asks; the host shows its sheet over that tab. phase 1: the request is over (`"outcome"`: `shared`, `cancelled`, `failed`, `withdrawn`); the host closes the sheet. Replacing or clearing the callback refuses what the old host was asked. |
+| `ReArcDisplayCaptureRespond(request, choice, target_tab, share_audio)` | 0 cancel; 1 share the registry tab `target_tab`; 2 a window; 3 the screen. For 2 and 3 the engine opens the picker of macOS, and its outcome is the phase 1 event. |
+| `ReArcTabStopDisplayCapture(tab)` | Ends everything the tab's page shares; the page's tracks fire `ended`. `invalid_state` when it shares nothing. |
+
+**What still decides before the host is asked** (all Chromium's, unchanged): the frame has the
+`display-capture` permissions policy; the request carries a user gesture; the page is visible
+(`CAPTURE_FROM_BACKGROUND_PAGE_ON_MAC` otherwise); enterprise capture policy. The bridge adds:
+a host callback is set, the page is a registry tab, and the asking frame is an http or https
+page. Anything else is refused with `NOT_SUPPORTED` and the host hears nothing.
+
+**The request's JSON** (phase 0): `origin` (the asking frame), `top_origin` (the tab's page),
+`profile_id`, `content_generation`, `audio` (the page asked for sound), `current_tab` (the asking
+tab may be shared), `window`, `screen` (that kind may be offered), `tab_audio`, `window_audio`,
+`screen_audio` (sound can go with that kind), `prefer` (`current_tab`, `tab`, `window`, `screen`
+or empty), `system_picker`, `screen_recording_permission` (`not_needed`, `granted`, `missing`).
+
+**A tab** is one of the host's own: the engine has no tab list (Chromium's walks Browser windows).
+`target_tab` must be a live registry tab of the asking tab's profile and browser context, and not
+the asking tab when `current_tab` is false: `invalid_argument` otherwise, `not_found` for a tab
+that does not exist, `invalid_state` for one whose page is not running. The share is the tab's
+page as it is drawn, whether or not a window shows it.
+
+**A window or the screen** is chosen in the picker of macOS (`SCContentSharingPicker`), opened
+with `content::desktop_capture::OpenNativeScreenCapturePicker`, the call Chrome's own dialog
+makes. The engine lists no windows and draws no thumbnails, so nothing is read from the screen
+before the person points at it. On macOS 15 and later that choice is the permission and
+`screen_recording_permission` is `not_needed`. On macOS 14 Chromium's handler refuses a window or
+screen without the Screen Recording permission; the JSON says `missing`, a window or screen answer
+is `invalid_state`, and the host explains and sends the person to System Settings.
+
+**Sound.** A tab's sound is Chromium's loopback of that tab. The Mac's sound (with the screen, or
+with a window when the page asks for it) is a CoreAudio tap: macOS asks the person itself the
+first time, and the app's `Info.plist` needs `NSAudioCaptureUsageDescription`
+(`shell/scripts/bundle-chromium.sh`).
+
+**While sharing.** `media_capture` reports `capturing_display` for the sharing tab, as before.
+The host knows what was chosen from the phase 1 event and shows it while that flag is true.
+
+**Nothing is stored.** No preference, content setting or grant: every request asks again.
+
+**Not covered.** An extension's `chrome.desktopCapture` and `chrome.tabCapture` streams,
+`getAllScreensMedia` and audio alone stay refused by the delegate, as before.
+
+**The feature flag.** `UseSCContentSharingPicker` is off by default in Chromium and on in the
+field trial testing configuration, which ReArc engines keep. `ReArcEngineRun` now names it in
+`--enable-features`, so the system picker does not depend on that configuration. The features
+that are on do not change.
+
+Tests: `engine/tests/check_abi170_imports.py` (layouts, three functions, one callback type, Swift
+adoption); the shell's `ScreenShareTests` and `ScreenShareShellTests`; self-test step "screen
+sharing" (`ChromiumSelfTest.screenShareChecks`).
 
 ## Blocked hosts (ABI 1.69, bridge 0.79.0)
 
