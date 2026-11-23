@@ -480,11 +480,11 @@ private struct SpaceIconDropDelegate: DropDelegate {
     /// A space icon being dragged is not a row.
     private func draggedItem(_ info: DropInfo) -> UUID? {
         guard icon.draggedSpaceID == nil else { return icon.draggedItemID }
-        return icon.model.sidebarDragItem(offered: icon.draggedItemID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+        return SidebarDragPayload.draggedItem(info, local: icon.draggedItemID, model: icon.model)
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        if SidebarDragPayload.hasItem(info) { icon.model.sidebarDragReached(icon.window) }
+        SidebarDragPayload.noteOffered(info, in: icon.window, model: icon.model)
         return draggedItem(info) != nil || icon.draggedSpaceID != nil
     }
 

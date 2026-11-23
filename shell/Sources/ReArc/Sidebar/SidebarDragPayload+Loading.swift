@@ -9,6 +9,21 @@ extension SidebarDragPayload {
         info.hasItemsConforming(to: [contentType])
     }
 
+    /// The row a sidebar drop target is offered: its window's own drag
+    /// (`local`), else the drag under way in another window, when the drop
+    /// carries the sidebar's type (`BrowserViewModel.sidebarDragItem(offered:carriesSidebarItem:)`).
+    @MainActor
+    static func draggedItem(_ info: DropInfo, local: UUID?, model: BrowserViewModel) -> UUID? {
+        model.sidebarDragItem(offered: local, carriesSidebarItem: hasItem(info))
+    }
+
+    /// A drop target of `window` is offered a drag: when it is a sidebar drag,
+    /// that window's sidebar opens for it (`BrowserViewModel.sidebarDragReached`).
+    @MainActor
+    static func noteOffered(_ info: DropInfo, in window: SidebarWindowID?, model: BrowserViewModel) {
+        if hasItem(info) { model.sidebarDragReached(window) }
+    }
+
     /// A sidebar drag the model does not know (`BrowserViewModel.sidebarDrag`
     /// is how a drop target in any window learns the dragged row): its id is
     /// read from the drag. Only a drag that carries the sidebar's type is

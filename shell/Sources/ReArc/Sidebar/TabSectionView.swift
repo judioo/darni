@@ -313,7 +313,7 @@ struct SidebarRowDropDelegate: DropDelegate {
     /// The dragged row: this window's own, or the drag that began in another
     /// window and is now over this row (`BrowserViewModel.sidebarDrag`).
     private func draggedItem(_ info: DropInfo) -> UUID? {
-        model.sidebarDragItem(offered: draggedItemID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+        SidebarDragPayload.draggedItem(info, local: draggedItemID, model: model)
     }
 
     /// A split's own row under the drag of one of its pane chips: the place
@@ -363,7 +363,7 @@ struct SidebarRowDropDelegate: DropDelegate {
 
     func validateDrop(info: DropInfo) -> Bool {
         // A drag from another window is over this one: its sidebar opens for the drop.
-        if SidebarDragPayload.hasItem(info) { model.sidebarDragReached(window) }
+        SidebarDragPayload.noteOffered(info, in: window, model: model)
         return draggedItemID != nil || SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info)
     }
 
@@ -507,11 +507,11 @@ struct SectionEndDropZone: View {
 
         /// The dragged row: this window's own, or another window's drag over this zone.
         private func draggedItem(_ info: DropInfo) -> UUID? {
-            zone.model.sidebarDragItem(offered: zone.draggedItemID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+            SidebarDragPayload.draggedItem(info, local: zone.draggedItemID, model: zone.model)
         }
 
         func validateDrop(info: DropInfo) -> Bool {
-            if SidebarDragPayload.hasItem(info) { zone.model.sidebarDragReached(zone.window) }
+            SidebarDragPayload.noteOffered(info, in: zone.window, model: zone.model)
             return zone.draggedItemID != nil || SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info)
         }
 
