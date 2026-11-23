@@ -27,7 +27,6 @@ final class ScreenShareShellTests: XCTestCase {
         var asked: [(asker: UInt64, includeAsker: Bool)] = []
         var started: [(share: ScreenShare<UUID>, site: String)] = []
         var stopped: [UUID] = []
-        var titles: [UUID: String] = [:]
 
         func screenShareCandidates(for prompts: PagePromptCenter, asker: UInt64, includeAsker: Bool) -> [ScreenShareCandidate] {
             asked.append((asker, includeAsker))
@@ -35,20 +34,25 @@ final class ScreenShareShellTests: XCTestCase {
         }
         func screenShareStarted(_ share: ScreenShare<UUID>, site: String, from prompts: PagePromptCenter) { started.append((share, site)) }
         func stopScreenShare(of capturer: UUID) { stopped.append(capturer) }
-        func screenShareTitle(of tab: UUID) -> String? { titles[tab] }
     }
 
     private let meetTab = UUID(), docsTab = UUID()
 
+    /// The page's clock, moved by the test: Share waits half a second on it (SS-01).
+    private final class Clock { var now: TimeInterval = 1000 }
+    private let clock = Clock()
+
+    /// The sheet has been still long enough for Share to answer.
+    private func settle() { clock.now += PagePromptCenter.screenShareInputDelay }
+
     private func makePrompts(_ router: Router) -> PagePromptCenter {
-        let prompts = PagePromptCenter()
+        let prompts = PagePromptCenter(permissionClock: { [clock] in clock.now })
         prompts.ownerTabID = meetTab
         prompts.screenShareRouterOverride = router
         router.candidates = [
             ScreenShareCandidate(engineTabID: 7, tabID: meetTab, title: "Meet", site: "meet.example", isCurrent: true),
             ScreenShareCandidate(engineTabID: 9, tabID: docsTab, title: "Quarterly plan", site: "docs.example", isCurrent: false),
         ]
-        router.titles = [meetTab: "Meet", docsTab: "Quarterly plan"]
         return prompts
     }
 
@@ -80,26 +84,28 @@ final class ScreenShareShellTests: XCTestCase {
         prompts.screenShareSelection = 9
         XCTAssertEqual(prompts.screenShareAnswer, .tab(9, audio: true))
 
+        settle()
         prompts.answerScreenShare(.tab(9, audio: true))
         prompts.answerScreenShare(.tab(9, audio: true))
         XCTAssertEqual(replies, [.tab(9, audio: true)], "one answer per request")
         XCTAssertFalse(prompts.screenShareSheetShown, "the sheet is out of the way")
         XCTAssertNotNil(prompts.screenShare, "the request is open until the engine says how it ended")
-        XCTAssertNil(prompts.sharingLine { _ in nil }, "nothing is shared before the stream is live")
+        XCTAssertNil(prompts.sharingLine, "nothing is shared before the stream is live")
 
         prompts.endScreenShare(id: 1, outcome: .shared(.tab, targetTab: 9, audio: true))
         XCTAssertNil(prompts.screenShare)
         XCTAssertEqual(router.started.map(\.share), [ScreenShare(kind: .tab, target: docsTab, audio: true)])
         XCTAssertEqual(router.started.map(\.site), ["meet.example"])
-        XCTAssertNil(prompts.sharingLine { _ in nil }, "still not live")
+        XCTAssertNil(prompts.sharingLine, "still not live")
 
         prompts.screenShareCaptureChanged(true)
-        XCTAssertEqual(prompts.sharingLine { router.screenShareTitle(of: $0) }, "Sharing “Quarterly plan” with meet.example")
+        XCTAssertEqual(prompts.sharingLine, "Sharing a tab with meet.example",
+                       "the bar over the page in the call names no other tab: a screen share would show its title (N-1)")
         prompts.stopScreenShare()
         XCTAssertEqual(stops, 1)
 
         prompts.screenShareCaptureChanged(false)
-        XCTAssertNil(prompts.sharingLine { _ in nil })
+        XCTAssertNil(prompts.sharingLine)
         XCTAssertEqual(prompts.screenShareChosen, [], "the share ended with its stream")
     }
 
@@ -110,10 +116,11 @@ final class ScreenShareShellTests: XCTestCase {
         XCTAssertNil(prompts.screenShareSelection, "even a page that asks for its own tab gets nothing picked for the person")
         XCTAssertNil(prompts.screenShareAnswer)
         prompts.screenShareSelection = 7
+        settle()
         prompts.answerScreenShare(.tab(7, audio: false))
         prompts.endScreenShare(id: 1, outcome: .shared(.tab, targetTab: 7, audio: false))
         prompts.screenShareCaptureChanged(true)
-        XCTAssertEqual(prompts.sharingLine { _ in "Meet" }, "Sharing this tab with meet.example")
+        XCTAssertEqual(prompts.sharingLine, "Sharing this tab with meet.example")
     }
 
     func testAWindowOrTheScreenIsHandedToTheSystemPicker() {
@@ -125,6 +132,7 @@ final class ScreenShareShellTests: XCTestCase {
         XCTAssertFalse(prompts.screenShareAudio, "the whole Mac's sound is not ticked for the person")
         XCTAssertEqual(prompts.screenShareAnswer, .screen(audio: false))
         prompts.screenShareAudio = true
+        settle()
         prompts.answerScreenShare(prompts.screenShareAnswer!)
         XCTAssertEqual(replies, [.screen(audio: true)])
         XCTAssertFalse(prompts.screenShareSheetShown, "Darni's sheet is gone while the macOS picker is open")
@@ -134,7 +142,120 @@ final class ScreenShareShellTests: XCTestCase {
         XCTAssertNil(prompts.screenShare)
         XCTAssertTrue(router.started.isEmpty)
         prompts.screenShareCaptureChanged(false)
-        XCTAssertNil(prompts.sharingLine { _ in nil })
+        XCTAssertNil(prompts.sharingLine)
+    }
+
+    // MARK: Share waits for a still sheet (security review SS-01)
+
+    func testShareIsIgnoredForHalfASecondAfterTheSheetAppears() {
+        let router = Router()
+        let prompts = makePrompts(router)
+        var replies: [ScreenShareChoice] = []
+        prompts.presentScreenShare(id: 1, asker: 7, request: request) { replies.append($0); return true }
+        // The page asked on a click; the sheet came up under the pointer. The kind is "screen" at once.
+        prompts.selectScreenShareKind(.screen)
+        clock.now += 0.2
+        XCTAssertFalse(prompts.screenShareInputAllowed)
+        XCTAssertFalse(prompts.screenShareInputEnabled, "the button is drawn as not taking input")
+        prompts.answerScreenShare(.screen(audio: false))
+        XCTAssertEqual(replies, [], "a click or Return 200 ms after the sheet changed does nothing")
+        XCTAssertTrue(prompts.screenShareSheetShown, "and the sheet stays as it was")
+        XCTAssertNil(prompts.answered["screen_share"])
+
+        clock.now += 0.299
+        prompts.answerScreenShare(.screen(audio: false))
+        XCTAssertEqual(replies, [], "499 ms: still ignored")
+
+        clock.now += 0.001
+        XCTAssertTrue(prompts.screenShareInputAllowed)
+        prompts.answerScreenShare(.screen(audio: false))
+        XCTAssertEqual(replies, [.screen(audio: false)], "500 ms after the last change it answers")
+    }
+
+    func testShareWaitsFromTheSheetsAppearanceWithNothingElseChanging() {
+        let router = Router()
+        let prompts = makePrompts(router)
+        var replies: [ScreenShareChoice] = []
+        // The page prefers the screen: the sheet opens on a kind that has an answer at once.
+        let prefersScreen = ScreenShareRequest(origin: "https://meet.example", preference: .screen)
+        prompts.presentScreenShare(id: 1, asker: 7, request: prefersScreen) { replies.append($0); return true }
+        XCTAssertEqual(prompts.screenShareAnswer, .screen(audio: false))
+        prompts.answerScreenShare(.screen(audio: false))
+        clock.now += 0.4
+        prompts.answerScreenShare(.screen(audio: false))
+        XCTAssertEqual(replies, [], "a Return typed into the page as the sheet appears opens nothing")
+        clock.now += 0.1
+        prompts.answerScreenShare(.screen(audio: false))
+        XCTAssertEqual(replies, [.screen(audio: false)])
+    }
+
+    func testPickingAnotherRowMakesShareWaitAgain() {
+        let router = Router()
+        let prompts = makePrompts(router)
+        var replies: [ScreenShareChoice] = []
+        prompts.presentScreenShare(id: 1, asker: 7, request: request) { replies.append($0); return true }
+        settle()
+        XCTAssertTrue(prompts.screenShareInputAllowed, "a still sheet takes input")
+
+        // A double click whose second half lands on a row, or ↓ then Return.
+        prompts.screenShareSelection = 9
+        XCTAssertFalse(prompts.screenShareInputAllowed)
+        prompts.answerScreenShare(.tab(9, audio: true))
+        XCTAssertEqual(replies, [], "Return right after the row was picked does nothing")
+
+        clock.now += 0.3
+        prompts.screenShareSelection = 7
+        clock.now += 0.3
+        prompts.answerScreenShare(.tab(7, audio: true))
+        XCTAssertEqual(replies, [], "the wait starts again with each other row: 300 ms after the second one")
+
+        prompts.screenShareSelection = 7
+        clock.now += 0.2
+        prompts.answerScreenShare(.tab(7, audio: true))
+        XCTAssertEqual(replies, [.tab(7, audio: true)], "picking the same row again changes nothing and does not restart the wait")
+    }
+
+    func testChangingTheKindMakesShareWaitAgain() {
+        let router = Router()
+        let prompts = makePrompts(router)
+        var replies: [ScreenShareChoice] = []
+        prompts.presentScreenShare(id: 1, asker: 7, request: request) { replies.append($0); return true }
+        settle()
+        prompts.selectScreenShareKind(.window)
+        prompts.answerScreenShare(.window(audio: false))
+        XCTAssertEqual(replies, [])
+        prompts.selectScreenShareKind(.window)
+        settle()
+        prompts.answerScreenShare(.window(audio: false))
+        XCTAssertEqual(replies, [.window(audio: false)])
+    }
+
+    func testCancelNeverWaits() {
+        let router = Router()
+        let prompts = makePrompts(router)
+        var replies: [ScreenShareChoice] = []
+        prompts.presentScreenShare(id: 1, asker: 7, request: request) { replies.append($0); return true }
+        prompts.answerScreenShare(.cancel)
+        XCTAssertEqual(replies, [.cancel], "refusing is always possible, at once")
+        XCTAssertFalse(prompts.screenShareInputAllowed, "no request, nothing to answer")
+    }
+
+    func testEveryNewRequestStartsItsOwnWait() {
+        let router = Router()
+        let prompts = makePrompts(router)
+        var replies: [ScreenShareChoice] = []
+        prompts.presentScreenShare(id: 1, asker: 7, request: request) { _ in true }
+        settle()
+        prompts.answerScreenShare(.cancel)
+        // The page asks again at once: the time the first sheet was up does not count for the second.
+        prompts.presentScreenShare(id: 2, asker: 7, request: ScreenShareRequest(origin: "https://meet.example", preference: .window)) {
+            replies.append($0); return true
+        }
+        prompts.answerScreenShare(.window(audio: false))
+        XCTAssertEqual(replies, [])
+        settle()
+        prompts.answerScreenShare(.window(audio: false))
+        XCTAssertEqual(replies, [.window(audio: false)])
     }
 
     func testSoundNotOfferedForAKindIsNeverSent() {
@@ -199,6 +320,7 @@ final class ScreenShareShellTests: XCTestCase {
         let prompts = makePrompts(router)
         prompts.presentScreenShare(id: 1, asker: 7, request: request) { _ in false }
         prompts.screenShareSelection = 9
+        settle()
         prompts.answerScreenShare(.tab(9, audio: false))
         XCTAssertTrue(prompts.screenShareSheetShown, "the engine refused: the sheet stays")
         XCTAssertNotNil(prompts.screenShareProblem)
@@ -264,7 +386,7 @@ final class ScreenShareShellTests: XCTestCase {
         let router = Router()
         let prompts = makePrompts(router)
         prompts.screenShareCaptureChanged(true)
-        XCTAssertEqual(prompts.sharingLine { _ in nil }, "Sharing your screen or a window")
+        XCTAssertEqual(prompts.sharingLine, "Sharing your screen or a window")
     }
 
     func testTheBarOverASharedTabStopsTheSharersShares() {
@@ -317,7 +439,6 @@ final class ScreenShareShellTests: XCTestCase {
         model.screenShareCaptureChanged(meet.id, live: true)
         XCTAssertEqual(docsEngine.pagePrompts.sharedBy, [ScreenShareViewer(capturer: meet.id, site: "meet.test")])
         XCTAssertEqual(model.screenShareCardLine(for: meet.id), "Sharing “Plan” with meet.test")
-        XCTAssertEqual(model.screenShareTitle(of: docs.id), "Plan")
 
         model.screenShareCaptureChanged(meet.id, live: false)
         XCTAssertEqual(docsEngine.pagePrompts.sharedBy, [], "the bar goes when the stream ends")

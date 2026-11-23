@@ -84,10 +84,6 @@ extension BrowserViewModel: ScreenShareRouting {
         screenShareMarkedTabs = Set(viewers.keys)
     }
 
-    func screenShareTitle(of tab: UUID) -> String? {
-        store.tab(withID: tab)?.displayTitle
-    }
-
     // MARK: Stop
 
     /// Ends everything the tab's page shares, as its own Stop would. The

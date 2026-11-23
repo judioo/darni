@@ -1952,7 +1952,9 @@ final class ChromiumSelfTest {
     /// user gesture nothing reaches the shell. With a click Darni's sheet
     /// opens over the asking tab and lists it and the other loaded tab;
     /// Cancel refuses the page; an answer the engine cannot take (a tab that
-    /// does not exist) leaves the request open; sharing the other tab gives
+    /// does not exist, a DevTools frontend: security review SS-02) leaves the
+    /// request open; Share is ignored while the sheet has just changed
+    /// (SS-01); sharing the other tab gives
     /// the page a live "browser" stream with sound and frames, the bar over
     /// both tabs and the model's record, and Darni's Stop ends it; sharing
     /// its own tab and stopping from the page clears the same state; a page
@@ -2037,6 +2039,28 @@ final class ChromiumSelfTest {
         // An answer the engine cannot take leaves the request open.
         let unknown = ChromiumScreenShareChannel.respond(sheet.id, .tab(UInt64.max - 1, audio: false))
         try check(unknown != .rearcOK && prompts.screenShare?.id == sheet.id, "a tab that does not exist: \(unknown.rearcName)")
+        // The engine shares pages only, whatever it is asked (SS-02): the other tab's DevTools
+        // frontend is a tab of the same profile, shows that page's storage and network data,
+        // and is refused. The sheet never lists it.
+        var devTools = "no DevTools in this engine"
+        if runtime.capabilities.devTools {
+            try check(model.openDevTools(for: other.id) == nil, "Developer Tools refused for the other tab")
+            try await wait("the other tab's DevTools frontend", timeout: 20) {
+                ((model.devToolsEngine(for: other.id) as? ChromiumEngine)?.tabID ?? 0) != 0
+            }
+            let frontend = try XUnwrap(model.devToolsEngine(for: other.id) as? ChromiumEngine, "the frontend engine")
+            try check(frontend.engineProfileID == otherEngine.engineProfileID && !offered.contains { $0.engineTabID == frontend.tabID },
+                      "frontend \(frontend.tabID) profile \(frontend.engineProfileID), offered \(offered.map(\.engineTabID))")
+            let refused = ChromiumScreenShareChannel.respond(sheet.id, .tab(frontend.tabID, audio: false))
+            try check(refused == ReArcStatus(REARC_INVALID_ARGUMENT) && prompts.screenShare?.id == sheet.id
+                          && !engine.mediaCapture.isCapturingDisplay,
+                      "a DevTools frontend as the tab to share: \(refused.rearcName) (expected invalid_argument), "
+                          + "request kept \(prompts.screenShare?.id == sheet.id)")
+            let frontendTab = frontend.tabID
+            model.closeDevTools(for: other.id)
+            try await wait("the frontend closed", timeout: 10) { !runtime.devToolsFrontends.contains(frontendTab) }
+            devTools = "DevTools frontend \(frontendTab) -> \(refused.rearcName)"
+        }
         prompts.answerScreenShare(.cancel)
         try await waitAsync("the cancelled request ends", timeout: 10) { await state() != "pending" }
         let cancelled = await state()
@@ -2051,15 +2075,23 @@ final class ChromiumSelfTest {
         prompts.screenShareSelection = otherEngine.tabID
         let answer = try XUnwrap(prompts.screenShareAnswer, "the answer for the other tab")
         try check(answer == .tab(otherEngine.tabID, audio: true), "answer \(answer.logName)")
+        // Share right after the row was picked is ignored (SS-01): nothing goes to the engine.
+        let repliesBefore = ChromiumScreenShareChannel.replies
         prompts.answerScreenShare(answer)
+        try check(ChromiumScreenShareChannel.replies == repliesBefore && prompts.screenShareSheetShown && !prompts.screenShareInputAllowed,
+                  "Share at once after picking a row: \(ChromiumScreenShareChannel.replies - repliesBefore) answer(s) sent, "
+                      + "sheet shown \(prompts.screenShareSheetShown)")
+        try await wait("Share takes input once the sheet is still", timeout: 5) { prompts.screenShareInputAllowed && prompts.screenShareInputEnabled }
+        prompts.answerScreenShare(answer)
+        try check(ChromiumScreenShareChannel.replies == repliesBefore + 1, "Share after the wait sent no answer")
         try await waitAsync("the other tab shared", timeout: 15) { await state().hasPrefix("live:") }
         let live = await state()
         try check(live == "live:browser:1", "the page's stream: \(live)")
         try await wait("the engine reports the share", timeout: 10) { engine.mediaCapture.isCapturingDisplay && prompts.isSharingScreen }
         try await wait("the model records the share", timeout: 10) { model.screenShares.isSharing(tab.id) }
-        let line = prompts.sharingLine { model.screenShareTitle(of: $0) } ?? ""
-        let otherTitle = store.tab(withID: other.id)?.displayTitle ?? ""
-        try check(line == "Sharing “\(otherTitle)” with \(site)", "the bar over the sharing tab: \(line)")
+        // The bar over the page in the call names no other tab (a screen share would show it).
+        let line = prompts.sharingLine ?? ""
+        try check(line == "Sharing a tab with \(site)", "the bar over the sharing tab: \(line)")
         try check(otherEngine.pagePrompts.sharedBy == [ScreenShareViewer(capturer: tab.id, site: site)],
                   "the bar over the shared tab: \(otherEngine.pagePrompts.sharedBy)")
         try check(model.screenShareCards(in: model.store.keyWindowID).isEmpty, "a card for the tab on screen")
@@ -2069,9 +2101,9 @@ final class ChromiumSelfTest {
         prompts.stopScreenShare()
         try await waitAsync("Stop Sharing ends the page's track", timeout: 10) { await state() == "ended" }
         try await wait("the engine reports the share over", timeout: 10) { !engine.mediaCapture.isCapturingDisplay && !prompts.isSharingScreen }
-        try check(ChromiumScreenShareChannel.stops == stops + 1 && prompts.sharingLine { _ in nil } == nil
+        try check(ChromiumScreenShareChannel.stops == stops + 1 && prompts.sharingLine == nil
                       && otherEngine.pagePrompts.sharedBy.isEmpty && model.screenShares.isEmpty,
-                  "after Stop Sharing: bar \(prompts.sharingLine { _ in nil } ?? "none"), shared tab's bar \(otherEngine.pagePrompts.sharedBy), "
+                  "after Stop Sharing: bar \(prompts.sharingLine ?? "none"), shared tab's bar \(otherEngine.pagePrompts.sharedBy), "
                       + "record empty \(model.screenShares.isEmpty)")
         try check(!engine.stopScreenShare(), "a second Stop found something to stop")
 
@@ -2079,11 +2111,12 @@ final class ChromiumSelfTest {
         guard await askByClick() else { throw Failure(description: "the third click opened no sheet (page \(await state()))") }
         prompts.screenShareSelection = engine.tabID
         prompts.screenShareAudio = false
+        try await wait("Share takes input for its own tab", timeout: 5) { prompts.screenShareInputAllowed }
         prompts.answerScreenShare(try XUnwrap(prompts.screenShareAnswer, "the answer for its own tab"))
         try await waitAsync("its own tab shared", timeout: 15) { await state().hasPrefix("live:") }
         let ownLive = await state()
         try check(ownLive == "live:browser:0", "its own tab without sound: \(ownLive)")
-        try await wait("the bar for its own tab", timeout: 10) { prompts.sharingLine { _ in nil } == "Sharing this tab with \(site)" }
+        try await wait("the bar for its own tab", timeout: 10) { prompts.sharingLine == "Sharing this tab with \(site)" }
         _ = try await engine.evaluate("window.shareStream.getTracks().forEach(function (t) { t.stop(); }), true", in: .page)
         try await wait("the page's own stop clears the bar", timeout: 10) {
             !engine.mediaCapture.isCapturingDisplay && !prompts.isSharingScreen && model.screenShares.isEmpty
@@ -2101,7 +2134,8 @@ final class ChromiumSelfTest {
         log("PASS screen sharing (ABI 1.70): no gesture -> \(ungestured), no event; click -> sheet for \(site) offering tabs "
             + "\(offered.map(\.engineTabID)), window \(request.offersWindow), screen \(request.offersScreen) (system picker "
             + "\(request.usesSystemPicker), screen recording \(request.screenRecording.rawValue)); unknown tab -> \(unknown.rearcName), "
-            + "request kept; Cancel -> \(cancelled); other tab with sound -> \(live), \(shownFrames) frame(s), bars on both tabs, "
+            + "\(devTools), request kept; Cancel -> \(cancelled); Share at once after picking a row ignored, taken after "
+            + "\(Int(PagePromptCenter.screenShareInputDelay * 1000)) ms; other tab with sound -> \(live), \(shownFrames) frame(s), bars on both tabs, "
             + "Stop Sharing -> ended; own tab -> \(ownLive), page stop clears the bar; navigation withdraws the sheet; "
             + "last outcome \(ChromiumScreenShareChannel.lastOutcome)")
     }

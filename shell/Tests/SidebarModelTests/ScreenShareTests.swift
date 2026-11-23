@@ -54,6 +54,15 @@ final class ScreenShareTests: XCTestCase {
         XCTAssertEqual(ScreenShareRequest(origin: "http://127.0.0.1:8123").site, "127.0.0.1:8123", "a port is part of who asks")
     }
 
+    func testAPageThatAskedForItsOwnTabIsSaidSo() {
+        let asked = ScreenShareRequest(origin: "https://slides.example", preference: .currentTab)
+        XCTAssertEqual(asked.preferenceNote, "slides.example asked to share its own tab.")
+        XCTAssertNil(ScreenShareRequest(origin: "https://slides.example", preference: .tab).preferenceNote)
+        XCTAssertNil(ScreenShareRequest(origin: "https://slides.example").preferenceNote)
+        XCTAssertNil(ScreenShareRequest(origin: "https://slides.example", allowsCurrentTab: false, preference: .currentTab).preferenceNote,
+                     "a page cannot ask for its own tab and exclude it")
+    }
+
     func testOnlyATabsOwnSoundStartsTicked() {
         let request = ScreenShareRequest(origin: "https://a.example", wantsAudio: true, tabAudio: true, windowAudio: true, screenAudio: true)
         XCTAssertTrue(request.audioDefault(for: .tab))

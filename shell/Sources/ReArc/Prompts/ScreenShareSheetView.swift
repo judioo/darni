@@ -33,6 +33,14 @@ struct ScreenShareSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let note = request.preferenceNote {
+                // The page asked for its own tab; everything else is still the person's to choose.
+                Label(note, systemImage: "info.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("screenSharePreferenceNote")
+            }
             HStack(spacing: 6) {
                 ForEach(ScreenShareKind.allCases, id: \.self) { kind in
                     if request.offers(kind) {
@@ -61,18 +69,24 @@ struct ScreenShareSheet: View {
                     .accessibilityIdentifier("screenShareCancel")
                 if showsPermissionNote {
                     Button(ScreenShareText.openSettings) {
+                        // The same wait as Share: it leaves Darni and makes macOS ask.
+                        guard prompts.screenShareInputAllowed else { return }
                         prompts.answerScreenShare(.cancel)
                         ScreenRecordingSettings.open()
                     }
                     .buttonStyle(PromptButtonStyle(prominent: true, large: true))
+                    .disabled(!prompts.screenShareInputEnabled)
                     .accessibilityIdentifier("screenShareOpenSettings")
                 } else {
+                    // Return and a click both end in answerScreenShare, which ignores them for
+                    // half a second after the sheet appeared or changed (SS-01); the button is
+                    // drawn disabled for that time, so a press that does nothing looks like one.
                     Button(shareTitle) {
                         if let answer = prompts.screenShareAnswer { prompts.answerScreenShare(answer) }
                     }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(PromptButtonStyle(prominent: true, large: true))
-                    .disabled(prompts.screenShareAnswer == nil)
+                    .disabled(prompts.screenShareAnswer == nil || !prompts.screenShareInputEnabled)
                     .accessibilityIdentifier("screenShareConfirm")
                 }
             }
@@ -252,14 +266,14 @@ private struct ScreenShareTabRow: View {
 /// another tab's page shares ("meet.google.com is sharing this tab"), each
 /// with Stop Sharing. Darni's own, in place of Chromium's sharing bar and its
 /// "is sharing your screen" window. A shared tab's stream is the page's own
-/// picture, so the bar is never in it.
+/// picture, so the bar is never in it; a window or screen share shows it, so
+/// the bar over the sharing page names no other tab's title.
 struct ScreenShareBars: View {
     let prompts: PagePromptCenter
 
     var body: some View {
-        let router = prompts.screenShareRouter
         VStack(spacing: 6) {
-            if let line = prompts.sharingLine(titleOf: { router?.screenShareTitle(of: $0) }) {
+            if let line = prompts.sharingLine {
                 ScreenShareBar(text: line, identifier: "screenShareBar") { prompts.stopScreenShare() }
             }
             ForEach(prompts.sharedBy) { viewer in

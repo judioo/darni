@@ -112,6 +112,12 @@ public struct ScreenShareRequest: Equatable, Sendable {
         embeddingSite.map { "\(site) is a frame inside \($0)." }
     }
 
+    /// The page asked for its own tab (`preferCurrentTab`). The sheet still
+    /// offers everything else, the person's choice, and says what was asked.
+    public var preferenceNote: String? {
+        preference == .currentTab && allowsCurrentTab ? "\(site) asked to share its own tab." : nil
+    }
+
     /// Sound can go with this kind of share.
     public func offersAudio(for kind: ScreenShareKind) -> Bool {
         switch kind {

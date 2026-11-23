@@ -38,8 +38,6 @@ protocol ScreenShareRouting: AnyObject {
     func screenShareStarted(_ share: ScreenShare<UUID>, site: String, from prompts: PagePromptCenter)
     /// Ends everything the tab's page shares.
     func stopScreenShare(of capturer: UUID)
-    /// The tab's title as the sidebar shows it, for the bar's words.
-    func screenShareTitle(of tab: UUID) -> String?
 }
 
 protocol PageLinkRouting: AnyObject {
@@ -200,8 +198,22 @@ final class PagePromptCenter {
     private(set) var screenShare: ScreenSharePrompt? { didSet { if oldValue != nil, screenShare == nil { permissionUncovered() } } }
     /// The sheet's state: the kind shown, the tab picked in its list, the sound box.
     var screenShareKind: ScreenShareKind = .tab
-    var screenShareSelection: UInt64?
+    /// Another row picked: Share waits again (`rearmScreenShareInput`).
+    var screenShareSelection: UInt64? { didSet { if screenShareSelection != oldValue { rearmScreenShareInput() } } }
     var screenShareAudio = false
+    /// Share takes no click and no Return until this long after the sheet
+    /// appeared, its kind changed or another row was picked (security review
+    /// SS-01), as Chromium's InputEventActivationProtector does for its
+    /// dialogs. For a tab this sheet is the only gate (macOS asks nothing),
+    /// and a page asks on a click or a key: the person's next presses, meant
+    /// for the page, must not land on a row and then on Share.
+    static let screenShareInputDelay: TimeInterval = 0.5
+    /// When Share answers again, on the page's clock (`permissionClock`).
+    @ObservationIgnored private var screenShareReadyAt: TimeInterval = .infinity
+    /// For the sheet: Share is drawn as taking input. `answerScreenShare`
+    /// checks the clock itself, so a press already queued when this turns
+    /// true is still judged by its own time.
+    private(set) var screenShareInputEnabled = false
     /// The engine refused the last answer (the tab went): said in the sheet.
     private(set) var screenShareProblem: String?
     /// The answer went to the engine and its outcome has not arrived: for a
@@ -588,6 +600,25 @@ final class PagePromptCenter {
         screenShareSelection = nil
         screenShareAudio = request.audioDefault(for: screenShareKind)
         screenShare = ScreenSharePrompt(id: id, request: request, candidates: candidates, reply: reply)
+        rearmScreenShareInput()
+    }
+
+    /// Share may answer now: the sheet has been still for `screenShareInputDelay`.
+    var screenShareInputAllowed: Bool { screenShare != nil && permissionClock() >= screenShareReadyAt }
+
+    /// The sheet appeared or changed under the pointer: Share waits again.
+    private func rearmScreenShareInput() {
+        screenShareInputEnabled = false
+        guard screenShare != nil else {
+            screenShareReadyAt = .infinity
+            return
+        }
+        screenShareReadyAt = permissionClock() + Self.screenShareInputDelay
+        let deadline = screenShareReadyAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.screenShareInputDelay) { [weak self] in
+            guard let self, self.screenShare != nil, self.screenShareReadyAt == deadline else { return }
+            self.screenShareInputEnabled = self.screenShareInputAllowed
+        }
     }
 
     /// The sheet shows another kind: its sound box starts at that kind's default.
@@ -596,6 +627,7 @@ final class PagePromptCenter {
         screenShareKind = kind
         screenShareAudio = request.audioDefault(for: kind)
         screenShareProblem = nil
+        rearmScreenShareInput()
     }
 
     /// The answer the sheet's Share button would send now; nil while it has none (no tab picked).
@@ -614,10 +646,12 @@ final class PagePromptCenter {
         }
     }
 
-    /// The sheet's buttons. Cancel ends the request at once. A share goes to
-    /// the engine, and the request stays until its outcome arrives: for a
-    /// window or the screen the macOS picker opens then, and the person may
-    /// still cancel there. A refused answer leaves the sheet as it was.
+    /// The sheet's buttons. Cancel ends the request at once, always. A share
+    /// is ignored while the sheet has just appeared or changed
+    /// (`screenShareInputDelay`), by click and by Return alike. Otherwise it
+    /// goes to the engine, and the request stays until its outcome arrives:
+    /// for a window or the screen the macOS picker opens then, and the person
+    /// may still cancel there. A refused answer leaves the sheet as it was.
     func answerScreenShare(_ choice: ScreenShareChoice) {
         guard let current = screenShare else { return }
         if choice == .cancel {
@@ -627,7 +661,7 @@ final class PagePromptCenter {
             _ = current.reply(.cancel)
             return
         }
-        guard !screenShareAwaitsOutcome else { return }
+        guard !screenShareAwaitsOutcome, screenShareInputAllowed else { return }
         count(&answered, "screen_share")
         if current.reply(choice) {
             if screenShare?.id == current.id { screenShareAwaitsOutcome = true }
@@ -667,15 +701,19 @@ final class PagePromptCenter {
         }
     }
 
-    /// The words of the bar over this page while it shares; nil when it shares nothing.
-    func sharingLine(titleOf: (UUID) -> String?) -> String? {
+    /// The words of the bar over this page while it shares; nil when it
+    /// shares nothing. Another tab is "a tab", never its title: this bar sits
+    /// on the page that is in the call, and in a window or screen share the
+    /// people in the call see it (security review, note N-1). The sidebar's
+    /// card, beside the tab list, names the tab.
+    var sharingLine: String? {
         guard isSharingScreen else { return nil }
         var ledger = ScreenShareLedger<UUID>()
         // Any id stands for this page: the ledger only needs to tell "this tab" from another.
         let me = ownerTabID ?? Self.unlistedPage
         screenShareChosen.forEach { ledger.noteChosen($0, by: me) }
         ledger.captureChanged(me, isCapturingDisplay: true)
-        let summary = ledger.summary(of: me, titleOf: titleOf)
+        let summary = ledger.summary(of: me) { _ in nil }
         return screenShareSite.isEmpty ? "Sharing \(summary)" : ScreenShareText.capturerLine(summary: summary, site: screenShareSite)
     }
 
