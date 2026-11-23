@@ -44,12 +44,13 @@ struct FavoritesRowView: View {
                         return SidebarDragPayload.itemProvider(for: tab.id)
                     }
                     .onDrop(
-                        of: [.plainText],
+                        of: [.plainText, SidebarDragPayload.contentType],
                         delegate: FavoriteDropDelegate(
                             targetTab: tab,
                             tileWidth: layout.tileWidth,
                             stacks: layout.stacksVertically,
                             model: model,
+                            window: window,
                             draggedTabID: $draggedTabID,
                             dropState: $dropState
                         )
@@ -71,7 +72,7 @@ struct FavoritesRowView: View {
             }
         }
         .onDrop(of: SidebarURLDropLoader.acceptedTypes, delegate: FavoriteAreaDropDelegate(
-            model: model, profileID: profileID, draggedTabID: $draggedTabID, dropState: $dropState
+            model: model, profileID: profileID, window: window, draggedTabID: $draggedTabID, dropState: $dropState
         ))
     }
 
@@ -89,24 +90,31 @@ struct FavoritesRowView: View {
 private struct FavoriteAreaDropDelegate: DropDelegate {
     let model: BrowserViewModel
     let profileID: Profile.ID
+    /// The window this strip is in.
+    var window: SidebarWindowID? = nil
     @Binding var draggedTabID: UUID?
     @Binding var dropState: SidebarDropState?
 
+    /// The dragged tab: this window's own, or another window's drag over this strip.
+    private func draggedItem(_ info: DropInfo) -> UUID? {
+        model.sidebarDragItem(offered: draggedTabID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+    }
+
     func validateDrop(info: DropInfo) -> Bool {
-        if let draggedTabID {
-            guard case .tab = model.store.entry(withID: draggedTabID) else { return false }
-            return true
-        }
+        if SidebarDragPayload.hasItem(info) { model.sidebarDragReached(window) }
+        if let dragged = draggedItem(info) { return model.canDropOnFavorites(dragged, of: profileID) }
         return SidebarURLDropLoader.hasLinks(info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: validateDrop(info: info) ? (draggedTabID == nil ? .copy : .move) : .forbidden)
+        DropProposal(operation: validateDrop(info: info) ? (draggedItem(info) == nil ? .copy : .move) : .forbidden)
     }
 
     func performDrop(info: DropInfo) -> Bool {
         guard validateDrop(info: info) else { return false }
-        defer { draggedTabID = nil; dropState = nil }
+        // Read before the drag is cleared below.
+        let draggedTabID = draggedItem(info)
+        defer { self.draggedTabID = nil; dropState = nil }
         if let draggedTabID {
             let count = model.store.favorites(in: profileID).filter { $0.id != draggedTabID }.count
             model.moveItem(draggedTabID, to: .favorites(profileID), index: count)
@@ -124,13 +132,29 @@ private struct FavoriteDropDelegate: DropDelegate {
     /// One tile per row (the mini sidebar): above or below, not beside.
     var stacks = false
     let model: BrowserViewModel
+    /// The window this tile is in.
+    var window: SidebarWindowID? = nil
     @Binding var draggedTabID: UUID?
     @Binding var dropState: SidebarDropState?
 
-    /// Only plain tabs can become favorites (SidebarStore.moveItem rules).
-    private func accepts() -> Bool {
-        guard let draggedTabID, draggedTabID != targetTab.id,
-              case .tab = model.store.entry(withID: draggedTabID) else { return false }
+    /// The dragged tab: this window's own, or another window's drag over this tile.
+    private func draggedItem(_ info: DropInfo) -> UUID? {
+        model.sidebarDragItem(offered: draggedTabID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+    }
+
+    /// Only plain tabs can become favorites (SidebarStore.moveItem rules),
+    /// and only of the strip's own profile (`canDropOnFavorites`).
+    private func accepts(_ info: DropInfo) -> Bool {
+        guard let dragged = draggedItem(info), dragged != targetTab.id else { return false }
+        guard let profileID = model.store.favoriteOwner(of: targetTab.id) else {
+            if case .tab = model.store.entry(withID: dragged) { return true }
+            return false
+        }
+        return model.canDropOnFavorites(dragged, of: profileID)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        if SidebarDragPayload.hasItem(info) { model.sidebarDragReached(window) }
         return true
     }
 
@@ -140,7 +164,7 @@ private struct FavoriteDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard accepts() else { return DropProposal(operation: .forbidden) }
+        guard accepts(info) else { return DropProposal(operation: .forbidden) }
         let state = SidebarDropState(targetID: targetTab.id, position: position(info))
         if dropState != state { dropState = state }
         SidebarDropHaptics.positionChanged(to: state)
@@ -152,11 +176,13 @@ private struct FavoriteDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        // Read before the drag is cleared below.
+        let draggedTabID = draggedItem(info)
         defer {
-            draggedTabID = nil
+            self.draggedTabID = nil
             dropState = nil
         }
-        guard accepts(), let draggedTabID else { return false }
+        guard accepts(info), let draggedTabID else { return false }
         withAnimation(.easeInOut(duration: 0.15)) {
             model.moveItem(draggedTabID, relativeTo: targetTab.id, after: position(info) == .after)
         }

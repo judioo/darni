@@ -350,9 +350,12 @@ final class SidebarListController: NSObject, NSTableViewDataSource, NSTableViewD
         }
     }
 
-    /// A link or file dragged over a plain row from a page or another app.
-    /// The rows stay live until the button comes up.
-    func noteExternalDrag() {
+    /// A link or file dragged over a plain row from a page or another app,
+    /// or a row dragged in from another window's sidebar (`pasteboard` then
+    /// carries the sidebar's type, and this window's sidebar opens for the
+    /// drop). The rows stay live until the button comes up.
+    func noteExternalDrag(_ pasteboard: NSPasteboard? = nil) {
+        if let pasteboard, SidebarDragPayload.isSidebarDrag(pasteboard) { model.sidebarDragReached(context.window) }
         guard !externalDrag else { return }
         externalDrag = true
         syncPlainCells()

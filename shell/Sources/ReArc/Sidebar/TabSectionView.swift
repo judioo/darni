@@ -238,6 +238,7 @@ struct SidebarDropRow<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     @State private var size = CGSize(width: 0, height: 28)
+    @Environment(\.sidebarWindow) private var window
 
     var body: some View {
         content()
@@ -259,6 +260,7 @@ struct SidebarDropRow<Content: View>: View {
                     rowHeight: size.height,
                     rowWidth: size.width,
                     model: model,
+                    window: window,
                     draggedItemID: $draggedItemID,
                     dropState: $dropState
                 )
@@ -303,14 +305,22 @@ struct SidebarRowDropDelegate: DropDelegate {
     let rowHeight: CGFloat
     var rowWidth: CGFloat = 0
     let model: BrowserViewModel
+    /// The window this row is in.
+    var window: SidebarWindowID? = nil
     @Binding var draggedItemID: UUID?
     @Binding var dropState: SidebarDropState?
+
+    /// The dragged row: this window's own, or the drag that began in another
+    /// window and is now over this row (`BrowserViewModel.sidebarDrag`).
+    private func draggedItem(_ info: DropInfo) -> UUID? {
+        model.sidebarDragItem(offered: draggedItemID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+    }
 
     /// A split's own row under the drag of one of its pane chips: the place
     /// the pane would take there (nil over its own chip). Any other drag
     /// over any other row is nil, and goes on as a row drag.
     private func paneDestination(for info: DropInfo) -> Int? {
-        guard draggedItemID == target.id, case .split(let split) = target else { return nil }
+        guard draggedItem(info) == target.id, case .split(let split) = target else { return nil }
         return model.splitPaneChipDestination(
             in: split,
             x: info.location.x - SplitRowMetrics.chipsLeading,
@@ -319,17 +329,18 @@ struct SidebarRowDropDelegate: DropDelegate {
     }
 
     private func position(for info: DropInfo) -> SidebarDropPosition? {
+        let draggedItemID = draggedItem(info)
         if draggedItemID == nil, SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info) {
-            // Another window’s item or an external link lands next to this row.
+            // An external link, or a sidebar drag the model does not know, lands next to this row.
             return info.location.y / max(rowHeight, 1) < 0.5 ? .before : .after
         }
         guard let draggedItemID, draggedItemID != target.id,
-              let dragged = model.store.entry(withID: draggedItemID) else { return nil }
+              let draggedEntry = model.store.entry(withID: draggedItemID) else { return nil }
         let fraction = info.location.y / max(rowHeight, 1)
         switch target {
         case .folder(let folder):
             let canEnter: Bool
-            switch dragged {
+            switch draggedEntry {
             case .tab: canEnter = true
             case .folder(let moving): canEnter = !SidebarTree.contains(folder.id, in: moving.children)
             case .split, .easel, .tabGroup: canEnter = false
@@ -351,10 +362,13 @@ struct SidebarRowDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        draggedItemID != nil || SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info)
+        // A drag from another window is over this one: its sidebar opens for the drop.
+        if SidebarDragPayload.hasItem(info) { model.sidebarDragReached(window) }
+        return draggedItemID != nil || SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        let draggedItemID = draggedItem(info)
         if draggedItemID == target.id, case .split(let split) = target {
             // The row under its own drag: a pane chip over another chip's place, or nothing.
             let destination = paneDestination(for: info)
@@ -384,13 +398,15 @@ struct SidebarRowDropDelegate: DropDelegate {
         // and the sidebar's drop areas open, as for any row's drag.
         if case .split(let split) = target {
             model.splitPaneChipDragMoved(to: nil, in: split)
-            if draggedItemID == target.id { model.splitPaneChipDragLeftRow() }
+            if draggedItem(info) == target.id { model.splitPaneChipDragLeftRow() }
         }
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        // Read before the drag is cleared below.
+        let draggedItemID = draggedItem(info)
         defer {
-            draggedItemID = nil
+            self.draggedItemID = nil
             dropState = nil
             _ = SidebarGroupingDwell.isReady(over: nil)
             model.sidebarDragEnded()
@@ -448,6 +464,7 @@ struct SectionEndDropZone: View {
 
     @State private var isTargeted = false
     @Environment(\.isMiniSidebar) private var isMini
+    @Environment(\.sidebarWindow) fileprivate var window
 
     var body: some View {
         ZStack {
@@ -488,29 +505,45 @@ struct SectionEndDropZone: View {
         let zone: SectionEndDropZone
         @Binding var isTargeted: Bool
 
+        /// The dragged row: this window's own, or another window's drag over this zone.
+        private func draggedItem(_ info: DropInfo) -> UUID? {
+            zone.model.sidebarDragItem(offered: zone.draggedItemID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+        }
+
         func validateDrop(info: DropInfo) -> Bool {
-            zone.draggedItemID != nil || SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info)
+            if SidebarDragPayload.hasItem(info) { zone.model.sidebarDragReached(zone.window) }
+            return zone.draggedItemID != nil || SidebarDragPayload.hasItem(info) || SidebarURLDropLoader.hasLinks(info)
         }
 
         func dropEntered(info: DropInfo) {
             isTargeted = true
             zone.dropState = nil
-            if zone.draggedItemID != nil { SidebarDropHaptics.enteredSectionEnd() }
+            if draggedItem(info) != nil { SidebarDropHaptics.enteredSectionEnd() }
+        }
+
+        /// Another profile's favorites take no drop (`asksBeforeProfileDrop`
+        /// refuses the move): the zone says so instead of accepting it.
+        private func refuses(_ id: UUID?) -> Bool {
+            guard let id, case .favorites(let profileID) = zone.model.store.resolvedParent(zone.destination) else { return false }
+            return zone.model.store.crossesProfile([id], to: .favorites(profileID))
         }
 
         func dropUpdated(info: DropInfo) -> DropProposal? {
             if zone.draggedItemID == nil, !SidebarDragPayload.hasItem(info) {
                 return DropProposal(operation: SidebarURLDropLoader.hasLinks(info) ? .copy : .forbidden)
             }
-            return DropProposal(operation: .move)
+            return DropProposal(operation: refuses(draggedItem(info)) ? .forbidden : .move)
         }
 
         func dropExited(info: DropInfo) { isTargeted = false }
 
         func performDrop(info: DropInfo) -> Bool {
             isTargeted = false
+            // Read before the drag is cleared below.
+            let dragged = draggedItem(info)
             defer { zone.draggedItemID = nil }
-            guard let dragged = zone.draggedItemID else {
+            if refuses(dragged) { return false }
+            guard let dragged else {
                 let model = zone.model, destination = zone.destination
                 if SidebarDragPayload.hasItem(info) {
                     return SidebarDragPayload.load(info) { id in

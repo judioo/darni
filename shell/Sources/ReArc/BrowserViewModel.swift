@@ -381,6 +381,10 @@ final class BrowserViewModel {
     var splitPaneChipDrag: SplitPaneChipDrag?
     /// The pane chip under the pointer: a drag that begins there may reorder the panes.
     @ObservationIgnored var hoveredSplitPaneChip: (splitID: SplitViewItem.ID, tabID: Tab.ID)?
+    /// The sidebar drag under way, for every window (`BrowserViewModel+SidebarDrag`).
+    var sidebarDrag: SidebarDragSession?
+    /// Watches which window the pointer is over while a sidebar drag is under way.
+    @ObservationIgnored var sidebarDragPointerWatch: Timer?
     /// Today tabs archived by the last Clear, for Undo.
     var lastClearedTabIDs: [Tab.ID] = []
     var archiveFilter = LibraryArchiveFilter()

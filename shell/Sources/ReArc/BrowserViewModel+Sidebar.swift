@@ -59,6 +59,9 @@ enum TabCloseKind: Equatable {
 struct SidebarProfileMove: Equatable {
     var ids: [UUID]
     var spaceID: Space.ID
+    /// A drop's place in that space; nil for Move to Space, which keeps each
+    /// row's section (the end of Pinned, the top of Today).
+    var placement: SidebarDropPlacement?
 }
 
 /// Change Profile of a space, waiting for confirmation (Arc ConfirmInterProfileMove).
@@ -456,6 +459,7 @@ extension BrowserViewModel {
     /// A drag that takes a tab group's last tab out asks first
     /// (`takingFromTabGroups`); a move inside the group does not.
     func moveItem(_ id: UUID, relativeTo targetID: UUID, after: Bool) {
+        if asksBeforeProfileDrop([id], to: .beside(targetID, after: after)) { return }
         let kind = store.kind(of: id)
         takingFromTabGroups([id], to: store.parent(of: targetID)) { [self] in
             guard store.moveItem(id, relativeTo: targetID, after: after) else { return }
@@ -466,6 +470,7 @@ extension BrowserViewModel {
     }
 
     func moveItem(_ id: UUID, to destination: SidebarStore.ItemDestination, index: Int) {
+        if asksBeforeProfileDrop([id], to: .at(destination, index: index)) { return }
         let kind = store.kind(of: id)
         takingFromTabGroups([id], to: store.resolvedParent(destination)) { [self] in
             guard store.moveItem(id, to: destination, index: index) else { return }
@@ -515,6 +520,7 @@ extension BrowserViewModel {
 
     /// Drop onto a folder row: append to the folder and open it.
     func moveItem(_ id: UUID, intoFolder folderID: UUID) {
+        if asksBeforeProfileDrop([id], to: .intoFolder(folderID)) { return }
         let count = store.folder(withID: folderID)?.children.count ?? 0
         let kind = store.kind(of: id)
         takingFromTabGroups([id]) { [self] in
