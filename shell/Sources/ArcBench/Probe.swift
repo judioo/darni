@@ -19,7 +19,10 @@ enum Probe {
             StandardError.write("\(error)\n")
             return 2
         }
-        if case .window = command {} else {
+        switch command {
+        case .window, .seedDarni, .arcLayout:
+            break   // nothing on screen, no input
+        default:
             guard InputGuard.gateOpen else { return refuse("no input gate \(InputGuard.gate.path)") }
             guard !Session.screenLocked else { return refuse("the screen is locked") }
         }
@@ -38,6 +41,23 @@ enum Probe {
             case let .key(probe):
                 guard InputGuard.lockHeld else { return refuse("the input lock \(InputGuard.lock.path) is not held by the caller") }
                 return emit(try await key(probe))
+            case let .menuShortcuts(pid):
+                return emit(["items": menuShortcuts(pid)])
+            case let .seedDarni(data, base):
+                let folder = URL(fileURLWithPath: data, isDirectory: true)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try ReArcTarget.seed(folder) { index, _ in URL(string: "\(base)/p/tab?n=\(index)&run=keys")! }
+                return emit(["sidebar": folder.appendingPathComponent("sidebar.json").path, "spaces": ReArcTarget.spaces,
+                             "pinned_per_space": ReArcTarget.pinnedPerSpace, "today_per_space": ReArcTarget.todayPerSpace])
+            case let .arcLayout(space, file):
+                let path = file.map { URL(fileURLWithPath: $0) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(ArcSidebar.defaultPath)
+                let spaces = try ArcSidebar.spaces(from: Data(contentsOf: path))
+                guard let home = spaces.first(where: { $0.title == space }) else { throw Failure("Arc has no space named \(space)") }
+                let layout = SpaceLayout(home: home.index, count: spaces.count, tabNumbers: home.tabNumbers)
+                let toward = layout.arrowTowardNeighbour.map { $0 == .optionCommandLeft ? "opt+cmd+left" : "opt+cmd+right" }
+                return emit(["home": home.index, "count": spaces.count, "tab_numbers": home.tabNumbers,
+                             "toward_neighbour": toward ?? NSNull(), "back": toward.map { $0.hasSuffix("left") ? "opt+cmd+right" : "opt+cmd+left" } ?? NSNull()])
             case let .quit(pid, timeoutMs, viaMenu):
                 return emit(try await quit(pid: pid, timeout: Double(timeoutMs) / 1000, viaMenu: viaMenu))
             case let .record(pid, out, seconds, fps, stopFile):
@@ -178,6 +198,30 @@ enum Probe {
             }
             return result
         }
+    }
+
+    // MARK: menu shortcuts
+
+    /// Every menu item with a shortcut (menus read through Accessibility, never opened).
+    static func menuShortcuts(_ pid: pid_t) -> [[String: Any]] {
+        guard let bar = AX.value(AX.app(pid), kAXMenuBarAttribute, as: AXUIElement.self) else { return [] }
+        var found: [[String: Any]] = []
+        func walk(_ element: AXUIElement, menu: String, depth: Int) {
+            guard depth < 4 else { return }
+            for item in AX.children(element) {
+                let title = AX.title(item) ?? ""
+                let chord = MenuShortcut.chord(character: AX.value(item, kAXMenuItemCmdCharAttribute, as: String.self),
+                                               modifiers: AX.value(item, kAXMenuItemCmdModifiersAttribute, as: Int.self),
+                                               virtualKey: AX.value(item, kAXMenuItemCmdVirtualKeyAttribute, as: Int.self),
+                                               glyph: AX.value(item, kAXMenuItemCmdGlyphAttribute, as: Int.self))
+                if let chord, !title.isEmpty {
+                    found.append(["menu": menu, "title": title, "chord": chord])
+                }
+                for child in AX.children(item) { walk(child, menu: depth == 0 ? title : menu, depth: depth + 1) }
+            }
+        }
+        walk(bar, menu: "", depth: 0)
+        return found
     }
 
     // MARK: quit

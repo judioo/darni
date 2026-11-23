@@ -144,7 +144,7 @@ if [[ -z $GATE_ONLY ]]; then
   # The probe (arc-vs-rearc probe): built from this checkout; Package.resolved is kept as it was.
   RESOLVED="$SHELL_DIR/Package.resolved"
   cp "$RESOLVED" "$OUT/Package.resolved.bak"
-  swift build --package-path "$SHELL_DIR" -c release --product arc-vs-rearc >"$OUT/probe-build.log" 2>&1 \
+  swift build --package-path "$SHELL_DIR" -c release --build-path "$SHELL_DIR/.build-perf" --product arc-vs-rearc >"$OUT/probe-build.log" 2>&1 \
     || { cp "$OUT/Package.resolved.bak" "$RESOLVED"; die "building the probe failed (see $OUT/probe-build.log)"; }
   cp "$OUT/Package.resolved.bak" "$RESOLVED"
 

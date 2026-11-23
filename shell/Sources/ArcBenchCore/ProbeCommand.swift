@@ -19,6 +19,14 @@ import Foundation
 ///     probe quit --pid PID [--timeout-ms MS] [--via menu]
 ///         asks that one process to quit (as ⌘Q does) and waits for it to exit; never forces.
 ///         `--via menu` presses the app menu's own "Quit …" item over Accessibility instead
+///     probe menu-shortcuts --pid PID
+///         every menu item with a keyboard shortcut: menu, title, chord (read only, no input)
+///     probe seed-darni --data DIR --base URL
+///         a Darni data folder's sidebar.json: two spaces of two pinned and three Today tabs of
+///         BASE/p/tab pages (the key-press stage's layout); no app is started
+///     probe arc-layout --space TITLE [--file PATH]
+///         Arc's spaces from its sidebar file: the space's place, the ⌘n numbers of plain tabs,
+///         the neighbour (read only)
 ///     probe record --pid PID --out FILE.mp4 [--seconds S] [--fps N] [--stop-file PATH]
 ///         records only that app's windows on the display it is on, until S seconds, the
 ///         stop file appears, SIGINT/SIGTERM, or the input gate goes
@@ -33,6 +41,9 @@ public enum ProbeCommand: Equatable, Sendable {
     case key(KeyProbe)
     case record(pid: Int32, out: String, seconds: Double, fps: Int, stopFile: String?)
     case quit(pid: Int32, timeoutMs: Int, viaMenu: Bool)
+    case menuShortcuts(pid: Int32)
+    case seedDarni(data: String, base: String)
+    case arcLayout(space: String, file: String?)
 
     public enum KeyMeasure: String, Equatable, Sendable { case frames, newWindow = "new-window", none }
 
@@ -127,8 +138,16 @@ public enum ProbeCommand: Equatable, Sendable {
             guard via == "terminate" || via == "menu" else { throw UsageError("probe quit: --via terminate or menu") }
             command = .quit(pid: try int("pid", 1 ... Int32.max), timeoutMs: try int("timeout-ms", 1000 ... 120_000, default: 20000),
                             viaMenu: via == "menu")
+        case "menu-shortcuts":
+            command = .menuShortcuts(pid: try int("pid", 1 ... Int32.max))
+        case "seed-darni":
+            let base = try take("base")
+            guard base.hasPrefix("http://127.0.0.1:") else { throw UsageError("probe seed-darni: --base must be the local test server (http://127.0.0.1:PORT)") }
+            command = .seedDarni(data: try take("data"), base: base)
+        case "arc-layout":
+            command = .arcLayout(space: try take("space"), file: values.removeValue(forKey: "file"))
         default:
-            throw UsageError("probe: unknown command \(verb) (launch, window, frame, key, quit, record)")
+            throw UsageError("probe: unknown command \(verb) (launch, window, frame, key, quit, record, menu-shortcuts, seed-darni, arc-layout)")
         }
         if let extra = values.keys.sorted().first { throw UsageError("probe \(verb): unknown option --\(extra)") }
         return command
