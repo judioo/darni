@@ -173,6 +173,8 @@ if [[ -z $GATE_ONLY ]]; then
   fi
   SESSION="" SESSION_ID=""
   if [[ $ARC_BASELINE == 1 ]]; then
+    # Arc on the owner's real profile (owner, 2026-11-23): darni_perf/arc.py has the rules.
+    MEASURE+=(--arc-owner-profile)
     SESSION="arc" SESSION_ID="arc-baseline-$(date +%Y-%m-%d)"
   elif [[ $DO_ROTATION == 1 ]]; then
     SESSION="rotation" SESSION_ID="$(date +%Y-%m-%d)-rotation"
