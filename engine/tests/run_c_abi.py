@@ -237,6 +237,9 @@ class Fixture(BaseHTTPRequestHandler):
         elif self.path in THEME_PAGES:
             body = THEME_PAGES[self.path]
             mime = "text/html"
+        elif self.path.startswith("/capture"):
+            body = CAPTURE_PAGE
+            mime = "text/html"
         else:
             body = b'''<!doctype html><html><head><link rel="icon" href="/favicon.png"><script>
 const pageWorld = typeof rearcSecret === 'undefined';
@@ -519,6 +522,45 @@ NO_OUTSIDE_NETWORK = [
 ]
 
 
+# Screen sharing (c_abi_display_capture_host.mm): one page for both sides. As the shared tab it
+# counts what a share may not change (visibilitychange) and what it may (its size, its frames);
+# as the asking tab it asks, plays the stream and counts the frames that arrive.
+CAPTURE_PAGE = b"""<!doctype html><html><head><title>capture-ready</title></head>
+<body style="margin:0;background:#2a6"><div id="box" style="width:50px;height:50px;background:#fff"></div>
+<video id="v" muted autoplay playsinline style="width:200px"></video><script>
+var changes = 0, raf = 0, ticks = 0, resizes = 0;
+var share = {share: 'idle', frames: 0, audio: 0, surface: '', size: ''};
+document.addEventListener('visibilitychange', function () { changes++; });
+addEventListener('resize', function () { resizes++; });
+(function frame() { raf++; requestAnimationFrame(frame); })();
+setInterval(function () { ticks++; document.getElementById('box').style.marginLeft = (ticks % 20) * 5 + 'px'; }, 200);
+function ask(audio) {
+  share = {share: 'pending', frames: 0, audio: 0, surface: '', size: ''};
+  navigator.mediaDevices.getDisplayMedia({video: true, audio: audio, selfBrowserSurface: 'include'}).then(function (stream) {
+    var track = stream.getVideoTracks()[0], now = share;
+    track.addEventListener('ended', function () { now.share = 'ended'; });
+    now.audio = stream.getAudioTracks().length;
+    now.surface = track.getSettings().displaySurface;
+    document.getElementById('v').srcObject = stream;
+    var reader = new MediaStreamTrackProcessor({track: track}).readable.getReader();
+    (function pump() {
+      reader.read().then(function (result) {
+        if (result.done) return;
+        now.frames++; now.size = result.value.displayWidth + 'x' + result.value.displayHeight;
+        result.value.close(); pump();
+      }, function () {});
+    })();
+    now.share = 'live';
+  }, function (error) { share.share = 'error:' + error.name + ':' + error.message; });
+  return true;
+}
+function state() {
+  return Object.assign({w: innerWidth, h: innerHeight, dpr: devicePixelRatio, hidden: document.hidden,
+                        visibility: document.visibilityState, changes: changes, raf: raf, ticks: ticks, resizes: resizes}, share);
+}
+</script></body></html>"""
+
+
 def quiet_local_state(user_data_dir):
     """Secure DNS (automatic mode) dials its resolver's IP literal (e.g. Google
     Public DNS), which resolver rules cannot map; tests start with it off."""
@@ -589,7 +631,7 @@ def main():
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme")):
+        for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme", "display_capture")):
             source = ENGINE / f"tests/c_abi_{kind}_host.mm"
             subprocess.run([
                 "xcrun", "clang++", "-std=c++20", "-fobjc-arc", f"-I{BRIDGE}",
@@ -647,13 +689,13 @@ def main():
                 quiet_local_state(profile)
                 with log.open("wb") as output:
                     result = subprocess.run(merge_disabled_features([
-                        "timeout", "-k", "5", "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords") else "45", str(executable),
+                        "timeout", "-k", "5", "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords", "display_capture") else "45", str(executable),
                         f"--user-data-dir={profile}", "--use-mock-keychain", f"--log-net-log={netlog}",
                         *NO_OUTSIDE_NETWORK,
                         *(["--process-per-site", *(["--disable-features=WebContentsDiscard"] if phase else [])] if kind == "discard" else []),
                         *(["--safebrowsing-manual-download-blacklist=" + hashlib.sha256(b"a" * 65536).hexdigest()] if kind == "danger" else []),
-                        *(["--remote-debugging-port=0", "--enable-logging=stderr", "--vmodule=close_controller=1,rearc_keep_alive=1,keep_alive_registry=1,devtools_ui_bindings=1"] if kind in ("devtools", "webui", "helpers", "permissions", "passwords", "fullscreen", "pip", "extensions", "autofill", "leak", "save", "interstitials") else []),
-                        *(["--disable-backgrounding-occluded-windows"] if kind in ("theme", "devtools", "helpers", "permissions", "passwords", "fullscreen", "pip", "pip_embedded", "perf", "extensions", "autofill", "leak", "save", "interstitials") else []),
+                        *(["--remote-debugging-port=0", "--enable-logging=stderr", "--vmodule=close_controller=1,rearc_keep_alive=1,keep_alive_registry=1,devtools_ui_bindings=1"] if kind in ("display_capture", "devtools", "webui", "helpers", "permissions", "passwords", "fullscreen", "pip", "extensions", "autofill", "leak", "save", "interstitials") else []),
+                        *(["--disable-backgrounding-occluded-windows"] if kind in ("display_capture", "theme", "devtools", "helpers", "permissions", "passwords", "fullscreen", "pip", "pip_embedded", "perf", "extensions", "autofill", "leak", "save", "interstitials") else []),
                         *(["--use-fake-device-for-media-stream"] if kind == "permissions" else []),
                         *(["--autoplay-policy=no-user-gesture-required"] if kind in ("pip", "pip_embedded") else []),
                         *([f"--mark_as_phishing=http://127.0.0.1:{server.server_port}/phishing-a,http://localhost:{server.server_port}/phishing-b"] if kind == "interstitials" else []),

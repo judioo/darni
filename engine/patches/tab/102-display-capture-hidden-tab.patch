@@ -1,0 +1,381 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 screen sharing: a tab nobody looks at is shared, and its page stays hidden (bridge 0.82.0)
+
+The release self-test of Darni 2026.1124.1323, step "screen sharing": the
+page asks, the person picks another tab in the sheet, the engine answers
+"shared" and reports the share (media_capture, capturing_display true), and
+ten seconds later reports it over. The page's getDisplayMedia() never
+resolved. 1329 shipped with screen sharing off because of it.
+
+Why, part one: no size. A bridge tab gets the size of its view from the
+host's first attachment (attachment_lease.cc). A tab the host never showed
+has a WebContentsView of 0 x 0: the bridge passes no initial size and
+answers no WebContentsDelegate::GetSizeForNewRenderView. Its page is laid
+out in a viewport of 0 x 0 and its compositor has nothing to draw.
+FrameSinkVideoCaptureDevice tells its client that the capture has started
+with the first frame only (OnFrameCaptured), a frame never comes, and the
+asking renderer's VideoCaptureImpl gives up after kCaptureStartTimeout, ten
+seconds: the stream's source fails, the request ends, the indicator goes.
+Chrome does not meet this, because it sizes a tab when it is made (the
+size of the tab it is opened from).
+
+Seen on the release engine (out/ReArc-codecs-arm64, bridge 0.81.0, overlay
+f4f542bf08) with the test host below in report mode: a tab never attached
+reads innerWidth 0, innerHeight 0; its share is reported, and 10.2 seconds
+later the page has "AbortError: Timeout starting video source". With the
+tab's sound and without it alike: the sound is not the cause. A tab that
+was attached once (400 x 300) and detached is live after 0.8 seconds, with
+its sound.
+
+Why, part two: what Chromium tells the shared page. A capture of a tab is a
+visible capturer, twice: WebContentsFrameTracker (the picture) and
+ForwardingAudioStreamFactory::LoopbackStreamStarted (the tab's sound) call
+WebContents::IncrementCapturerCount with stay_hidden false, and
+CalculatePageVisibilityState then answers kVisible for a tab in the
+background. Its page gets document.visibilityState "visible" and a
+visibilitychange event when the share starts, and "hidden" with another
+event when it ends. Seen on the release engine (156.0.8078.114, the stock
+launcher of out/ReArc-codecs-arm64, headless, with the tab switch of
+Chrome's own sharing turned off by CaptureController): the page of the
+shared tab in the background went hidden true -> false -> true, with two
+events. The same on the release engine's bridge, with the test host: the
+detached tab's page read hidden false while it was shared, with one more
+visibilitychange, and its devicePixelRatio went from 2 to 4 (Chromium's
+WebContentsAutoScaler raises a captured page's scale for a sharper
+picture). A page could tell from either that it is being shared, and when.
+The security review of this fix forbids it: only the capture's own frames
+may change.
+
+What this patch does.
+
+- WebContentsDelegate::KeepsPageHiddenWhileCaptured (new, false by default:
+  Chromium unchanged). WebContentsFrameTracker asks it when a capture
+  starts, ForwardingAudioStreamFactory when the loopback of the tab's sound
+  starts, and with true each counts as a hidden capturer
+  (IncrementCapturerCount with stay_hidden true, and no preferred size; the
+  closure is the matching decrement, as before). The first build of this
+  patch had the picture only, and its test showed a tab shared with its
+  sound still told it was visible. The page's state is then
+  PageVisibilityState::kHiddenButPainting while nothing shows the tab: the
+  widget is shown and draws frames for the capture, and Blink exposes that
+  state to scripts exactly as kHidden (runtime_enabled_features.json5,
+  DispatchHiddenVisibilityTransitions: "no visibilitychanged event fired
+  when switching between them"). This is the state Chromium's own tab
+  thumbnails use for a tab in the background. WebContents::GetVisibility
+  is not touched: the tab is never marked visible. A tab that is on screen
+  is visible for that reason alone, as before.
+- Such a capture makes no WebContentsAutoScaler: the page's device scale
+  factor stays what it is, shared or not. The picture of a small tab is
+  then as sharp as the tab is drawn, and no sharper.
+- ReArcTabDelegate answers true for every bridge tab.
+- HostPicker::ShareTab gives a target with no size the size of the asking
+  tab before it answers (GiveSizeToUnshownTab: WebContents::Resize). The
+  host's first attachment sets the view's frame again, as for any tab. The
+  page sees a resize from 0 x 0, as it does when it is first shown.
+- Feature "display_capture_hidden_tab", bridge 0.82.0. The shell installs
+  its display-capture callback only with it, so an engine without this
+  patch keeps refusing every request at once (NotSupportedError) instead of
+  failing some shares after ten seconds.
+
+What a shared page can still tell. Its size changes if it had none. And
+it is drawn: while it is shared in the background its animation frames run
+(about 45 requestAnimationFrame callbacks in a second of sharing, in the
+test), which they do not in a tab that is only hidden. That is the
+capture's own frame production; Chromium's tab thumbnails do the same.
+
+State. Nothing is persisted; no preference, no content setting.
+
+No signature or struct changes; ABI 1.70 stays.
+
+Tests: engine/tests/c_abi_display_capture_host.mm (run_c_abi.py
+display_capture): five shares at the engine boundary, a tab never attached
+with and without sound, a tab shown and detached with and without sound,
+and the asking tab itself; each must be live with frames, and the shared
+page's document.hidden, its count of visibilitychange events and its
+devicePixelRatio must be the same before, during and after. Its window is
+off every screen and it sends no input. REARC_CAPTURE_REPORT=1 prints what
+an engine without the patch does instead; engine/tests/
+headless_tab_capture.mjs shows Chromium's own capture on a stock launcher. The shell's self-test step
+"screen sharing" (ChromiumSelfTest.screenShareChecks) checks the same for
+a tab never shown and for the same tab once it was shown.
+
+Type-checked with the tree's clang (out/ReArc-dev-arm64 flags, Chromium's
+plugins, -fsyntax-only), then built in out/ReArc-codecs-arm64 on 2026-11-24:
+overlay 08d13afdf2, and the sound's loopback as a second overlay commit,
+86afa51467.
+
+Run on that build (run_c_abi.py display_capture, REARC_CHROMIUM_OUT the
+release out dir, nothing on screen): the five shares are live in 0.3 to 0.5
+seconds with frames of 800 x 600; the two tabs never attached read 400 x 300
+afterwards; every shared page in the background reads hidden true, the same
+count of visibilitychange events and devicePixelRatio 2 before, during and
+after its share; the network audit shows loopback only. Not run yet: the
+shell's self-test step, which needs the screen.
+
+Touches: content/public/browser/web_contents_delegate.{h,cc},
+content/browser/media/capture/web_contents_frame_tracker.cc and
+content/browser/media/forwarding_audio_stream_factory.cc (first ReArc hunk
+in each), and the bridge's tab_delegate.{h,cc}, rearc_display_capture.cc,
+rearc_engine_abi.{h,mm}, rearc_engine_entry_mac.mm.
+
+Last rebased: 2026-11-24 onto Chromium 156.0.8078.114 (overlay f4f542bf08).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/chrome/browser/rearc_bridge/rearc_display_capture.cc b/chrome/browser/rearc_bridge/rearc_display_capture.cc
+index 8d5235a..cd24d41 100644
+--- a/chrome/browser/rearc_bridge/rearc_display_capture.cc
++++ b/chrome/browser/rearc_bridge/rearc_display_capture.cc
+@@ -54,6 +54,8 @@
+ #include "media/base/media_switches.h"
+ #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
+ #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/gfx/geometry/size.h"
+ #include "url/gurl.h"
+ #include "url/origin.h"
+ #include "url/url_constants.h"
+@@ -167,6 +169,28 @@ bool IsShareablePage(content::WebContents* contents) {
+   return url.SchemeIsHTTPOrHTTPS() || url.SchemeIsFile();
+ }
+ 
++// A tab the host has never shown has no size: its view gets one from the
++// host's first attachment (attachment_lease.cc), and until then its page is
++// laid out in a viewport of 0 x 0 and its compositor draws nothing. A capture
++// of it never has a first frame, the renderer's video source gives up after
++// ten seconds (VideoCaptureImpl::kCaptureStartTimeout) and the page's
++// getDisplayMedia() fails: the share "starts and stops". Chrome sizes a tab
++// when it is made (the size of the tab it is opened from); the bridge gives a
++// tab that is shared before it was ever shown the size of the tab that asks.
++// The host's attachment sets the view's frame again when it shows the tab.
++// The page's visibility does not change here: see
++// ReArcTabDelegate::KeepsPageHiddenWhileCaptured.
++void GiveSizeToUnshownTab(content::WebContents* target,
++                          content::WebContents* asker) {
++  if (!target->GetSize().IsEmpty()) {
++    return;
++  }
++  const gfx::Size size = asker->GetSize();
++  if (!size.IsEmpty()) {
++    target->Resize(gfx::Rect(size));
++  }
++}
++
+ void StopObserving(DesktopMediaID source) {
+   content::GetIOThreadTaskRunner({})->PostTask(
+       FROM_HERE,
+@@ -347,6 +371,7 @@ class HostPicker : public DesktopMediaPicker {
+     if (!main || !main->IsRenderFrameLive() || contents->IsCrashed()) {
+       return REARC_INVALID_STATE;
+     }
++    GiveSizeToUnshownTab(contents, asker->web_contents());
+     DesktopMediaID media(
+         DesktopMediaID::TYPE_WEB_CONTENTS, DesktopMediaID::kNullId,
+         content::WebContentsMediaCaptureId(
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 6a47419..9d0370d 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -2036,7 +2036,8 @@ REARC_ENGINE_EXPORT void ReArcEngineSetDisplayCaptureCallback(
+     ReArcDisplayCaptureCallback callback, void* context);
+ // The person's answer. choice: 0 cancel (the page gets NotAllowedError); 1
+ // share the registry tab target_tab_id (its page as it is drawn, whether or
+-// not a window shows it); 2 a window, 3 the screen: the picker of macOS opens
++// not a window shows it; see "a tab nobody looks at" below); 2 a window, 3
++// the screen: the picker of macOS opens
+ // and its outcome arrives as the phase 1 event. share_audio: with sound,
+ // where the request's json offers it for that kind (ignored otherwise).
+ // target_tab_id is read for choice 1 only. It must be a live tab of the
+@@ -2052,6 +2053,16 @@ REARC_ENGINE_EXPORT void ReArcEngineSetDisplayCaptureCallback(
+ // "screen_recording_permission" is "missing": invalid_state. An unknown
+ // choice: invalid_argument. A request that is over: not_found. After a
+ // refused answer the request is still open.
++//
++// A tab nobody looks at (feature "display_capture_hidden_tab", bridge
++// 0.82.0, tab/102). The shared tab's page is painted for the share and stays
++// hidden to its own scripts: document.visibilityState stays "hidden" and no
++// visibilitychange fires when the share starts or ends, in the background or
++// not (Chromium tells such a page it is visible). A tab the host has never
++// attached has no size; it is given the asking tab's size when it is shared,
++// and the host's first attachment sizes it as always. An engine without the
++// feature cannot share a tab it never showed: the page's request fails after
++// ten seconds.
+ REARC_ENGINE_EXPORT ReArcStatus ReArcDisplayCaptureRespond(uint64_t request_id,
+                                                            uint32_t choice,
+                                                            uint64_t target_tab_id,
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 46eeb9f..de433ce 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -996,6 +996,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "site_permissions" ||
+          std::string(feature) == "webauthn_prompts" ||
+          std::string(feature) == "display_capture" ||
++         std::string(feature) == "display_capture_hidden_tab" ||
+          std::string(feature) == "early_window" ||
+          std::string(feature) == "media_capture" ||
+          std::string(feature) == "search_engines" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index cde8363..18957e7 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.81.0";
++  return "0.82.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/tab_delegate.cc b/chrome/browser/rearc_bridge/tab_delegate.cc
+index e2bf370..f85e4c0 100644
+--- a/chrome/browser/rearc_bridge/tab_delegate.cc
++++ b/chrome/browser/rearc_bridge/tab_delegate.cc
+@@ -182,6 +182,13 @@ bool ReArcTabDelegate::CheckMediaAccessPermission(content::RenderFrameHost* fram
+   return (type == Type::DEVICE_AUDIO_CAPTURE || type == Type::DEVICE_VIDEO_CAPTURE) &&
+       MediaCaptureDevicesDispatcher::GetInstance()->CheckMediaAccessPermission(frame, origin, type);
+ }
++// Sharing a tab must not tell its page that somebody looks at it (security
++// review of tab/102): the capture paints the page and changes nothing its
++// scripts can read. document.hidden stays true and no visibilitychange fires
++// when a share of a tab in the background starts or ends.
++bool ReArcTabDelegate::KeepsPageHiddenWhileCaptured(content::WebContents*) {
++  return true;
++}
+ void ReArcTabDelegate::RunFileChooser(content::RenderFrameHost* frame,
+     scoped_refptr<content::FileSelectListener> listener,
+     const blink::mojom::FileChooserParams& params) {
+diff --git a/chrome/browser/rearc_bridge/tab_delegate.h b/chrome/browser/rearc_bridge/tab_delegate.h
+index 2cfb40b..2f576f6 100644
+--- a/chrome/browser/rearc_bridge/tab_delegate.h
++++ b/chrome/browser/rearc_bridge/tab_delegate.h
+@@ -68,6 +68,8 @@ class ReArcTabDelegate : public content::WebContentsDelegate {
+       const content::MediaStreamRequest&, content::MediaResponseCallback) override;
+   bool CheckMediaAccessPermission(content::RenderFrameHost*, const url::Origin&,
+       blink::mojom::MediaStreamType) override;
++  // tab/102: a shared tab nobody looks at stays hidden to its page.
++  bool KeepsPageHiddenWhileCaptured(content::WebContents*) override;
+   void RunFileChooser(content::RenderFrameHost* frame,
+       scoped_refptr<content::FileSelectListener> listener,
+       const blink::mojom::FileChooserParams& params) override;
+diff --git a/content/browser/media/capture/web_contents_frame_tracker.cc b/content/browser/media/capture/web_contents_frame_tracker.cc
+index 94bac1f..65e75de 100644
+--- a/content/browser/media/capture/web_contents_frame_tracker.cc
++++ b/content/browser/media/capture/web_contents_frame_tracker.cc
+@@ -29,6 +29,7 @@
+ #include "content/public/browser/browser_thread.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_delegate.h"
+ #include "content/public/browser/web_contents_media_capture_id.h"
+ #include "content/public/browser/web_contents_observer.h"
+ #include "media/base/video_util.h"
+@@ -48,6 +49,13 @@ namespace content {
+ 
+ namespace {
+ 
++// ReArc tab/102: an embedder may keep a captured page hidden and unchanged
++// (see WebContentsDelegate::KeepsPageHiddenWhileCaptured).
++bool KeepsPageHiddenWhileCaptured(WebContents* contents) {
++  WebContentsDelegate* delegate = contents ? contents->GetDelegate() : nullptr;
++  return delegate && delegate->KeepsPageHiddenWhileCaptured(contents);
++}
++
+ void SetScaleOverrideForCapture(RenderFrameHost* rfh, float scale_override) {
+   if (rfh) {
+     // Inside content, down-casting from the public interface class is safe.
+@@ -151,8 +159,11 @@ class WebContentsContext : public WebContentsFrameTracker::Context {
+   }
+ 
+   void IncrementCapturerCount(const gfx::Size& capture_size) override {
++    // ReArc tab/102: a hidden capturer gives no preferred size: it must not
++    // change the contents.
++    const bool stay_hidden = KeepsPageHiddenWhileCaptured(contents_);
+     capture_handle_ = contents_->IncrementCapturerCount(
+-        capture_size, /*stay_hidden=*/false,
++        stay_hidden ? gfx::Size() : capture_size, stay_hidden,
+         /*stay_awake=*/true, /*is_activity=*/true);
+   }
+ 
+@@ -231,7 +242,10 @@ void WebContentsFrameTracker::WillStartCapturingWebContents(
+   }
+ 
+   capture_size_ = capture_size;
+-  if (is_high_dpi_enabled &&
++  // ReArc tab/102: a capture that keeps the page hidden changes nothing the
++  // page can read, so it does not raise the page's device scale factor for a
++  // sharper picture either (window.devicePixelRatio would say "shared").
++  if (is_high_dpi_enabled && !KeepsPageHiddenWhileCaptured(web_contents()) &&
+       !GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled()) {
+     auto_scaler_ =
+         std::make_unique<WebContentsAutoScaler>(*context_, capture_size);
+diff --git a/content/browser/media/forwarding_audio_stream_factory.cc b/content/browser/media/forwarding_audio_stream_factory.cc
+index 557d031..8374e07 100644
+--- a/content/browser/media/forwarding_audio_stream_factory.cc
++++ b/content/browser/media/forwarding_audio_stream_factory.cc
+@@ -20,6 +20,7 @@
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/render_process_host.h"
+ #include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_delegate.h"
+ #include "media/base/audio_parameters.h"
+ #include "media/mojo/mojom/audio_processing.mojom.h"
+ #include "ui/gfx/geometry/size.h"
+@@ -252,9 +253,14 @@ ForwardingAudioStreamFactory::~ForwardingAudioStreamFactory() {
+ 
+ void ForwardingAudioStreamFactory::LoopbackStreamStarted() {
+   CHECK_CURRENTLY_ON(BrowserThread::UI, base::NotFatalUntil::M160);
++  // ReArc tab/102: the loopback of a shared tab's sound is a capturer of the
++  // tab as well, and a visible one in Chromium. An embedder may keep the
++  // page hidden (see WebContentsDelegate::KeepsPageHiddenWhileCaptured).
++  WebContentsDelegate* delegate = web_contents()->GetDelegate();
++  const bool stay_hidden =
++      delegate && delegate->KeepsPageHiddenWhileCaptured(web_contents());
+   capture_handle_ = web_contents()->IncrementCapturerCount(
+-      gfx::Size(), /*stay_hidden=*/false,
+-      /*stay_awake=*/true, /*is_activity=*/true);
++      gfx::Size(), stay_hidden, /*stay_awake=*/true, /*is_activity=*/true);
+ }
+ 
+ void ForwardingAudioStreamFactory::LoopbackStreamStopped() {
+diff --git a/content/public/browser/web_contents_delegate.cc b/content/public/browser/web_contents_delegate.cc
+index 2de5b33..5fb8716 100644
+--- a/content/public/browser/web_contents_delegate.cc
++++ b/content/public/browser/web_contents_delegate.cc
+@@ -523,6 +523,11 @@ WebContents* WebContentsDelegate::GetResponsibleWebContents(
+   return nullptr;
+ }
+ 
++bool WebContentsDelegate::KeepsPageHiddenWhileCaptured(
++    WebContents* web_contents) {
++  return false;
++}
++
+ bool WebContentsDelegate::IsPictureInPictureEnabled() const {
+   return true;
+ }
+diff --git a/content/public/browser/web_contents_delegate.h b/content/public/browser/web_contents_delegate.h
+index cd03383..24ff270 100644
+--- a/content/public/browser/web_contents_delegate.h
++++ b/content/public/browser/web_contents_delegate.h
+@@ -618,6 +618,19 @@ class CONTENT_EXPORT WebContentsDelegate {
+   virtual void ResizeDueToAutoResize(WebContents* web_contents,
+                                      const gfx::Size& new_size) {}
+ 
++  // ReArc tab/102: whether a capture of `web_contents` as a shared tab leaves
++  // its page hidden while nothing shows it. Asked for the tab's picture
++  // (WebContentsVideoCaptureDevice, through WebContentsFrameTracker) and for
++  // its sound (the loopback stream, ForwardingAudioStreamFactory). Both count
++  // as visible capturers in Chromium: the page of a tab in the background is
++  // told it is visible (document.visibilityState, visibilitychange) for as
++  // long as it is shared. With true they count as hidden capturers instead
++  // (IncrementCapturerCount with stay_hidden): the page keeps painting for
++  // the capture and stays hidden to its scripts
++  // (PageVisibilityState::kHiddenButPainting). Such a capture does not raise
++  // the page's device scale factor either (WebContentsAutoScaler).
++  virtual bool KeepsPageHiddenWhileCaptured(WebContents* web_contents);
++
+   // Requests to lock the mouse pointer. Once the request is approved or
+   // rejected, GotResponseToPointerLockRequest() will be called on the
+   // requesting tab contents.

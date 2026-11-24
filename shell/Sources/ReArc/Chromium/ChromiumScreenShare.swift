@@ -65,9 +65,10 @@ enum ChromiumScreenShareChannel {
     /// engine's display-capture callback, so the engine has no host and refuses every request at
     /// once (`NotSupportedError`, as in 1255), and no sheet, bar or card code runs (security
     /// review MERGE-aa000bfd..3a8e98c8: switch it off at the engine boundary, not in the sheet).
-    /// Off since 2026-11-24: sharing a tab other than the asking one starts and stops at once
-    /// (the release self-test of 1323); it comes back with that fix.
-    static let isEnabled = false
+    /// It was off in 1329: a share of a tab that had never been shown ended after ten seconds
+    /// (the release self-test of 1323; the tab had no size, so its capture had no first frame).
+    /// On again with engine patch `tab/102`, and only with an engine that has it: see `register`.
+    static let isEnabled = true
 
     /// At `ready`, before any tab exists, so no request falls to the engine's no-host refusal.
     static func register(runtime: ChromiumRuntime, context: UnsafeMutableRawPointer) {
@@ -79,6 +80,13 @@ enum ChromiumScreenShareChannel {
             let missing = ChromiumScreenShareCalls.missingSymbols
             ChromiumLog.info("screen sharing: no channel in this engine (feature \(runtime.capabilities.screenSharing ? "advertised" : "not advertised")"
                 + (missing.isEmpty ? "" : ", missing \(missing.joined(separator: ", "))") + "); a page's request to share fails")
+            return
+        }
+        // The same boundary for an engine without tab/102: it cannot share a tab it never showed,
+        // and it tells a shared page in the background that it is visible. No host, no sharing.
+        guard runtime.capabilities.screenSharingHiddenTabs else {
+            ChromiumLog.info("screen sharing: off with this engine (feature \(ChromiumCapabilities.displayCaptureHiddenTabFeature) "
+                + "not advertised: it cannot share a tab nobody looks at); a page's request to share fails at once")
             return
         }
         self.calls = calls

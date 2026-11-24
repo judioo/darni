@@ -123,7 +123,8 @@ final class LoopbackFixtureServer {
         """,
         // A button that asks to share a tab, a window or the screen with its sound (getDisplayMedia
         // needs the click's user activation). window.shareState: idle, pending, live:<surface>:<audio
-        // tracks>, ended, error:<name>; window.shareFrames counts the shared picture's frames.
+        // tracks>, ended, error:<name>; window.shareFrames counts the shared picture's frames as they
+        // reach the page (a track processor: it does not depend on this page drawing the video).
         // selfBrowserSurface 'include': Chromium leaves the asking tab out of the list by default, and the
         // self-test shares that tab too.
         "/share": """
@@ -138,8 +139,14 @@ final class LoopbackFixtureServer {
             track.addEventListener('ended', function () { window.shareState = 'ended'; });
             var video = document.createElement('video');
             video.muted = true; video.srcObject = stream;
-            video.requestVideoFrameCallback(function count() { window.shareFrames++; video.requestVideoFrameCallback(count); });
             video.play();
+            var reader = new MediaStreamTrackProcessor({track: track}).readable.getReader();
+            (function next() {
+              reader.read().then(function (result) {
+                if (result.done) return;
+                result.value.close(); window.shareFrames++; next();
+              }, function () {});
+            })();
             window.shareState = 'live:' + track.getSettings().displaySurface + ':' + stream.getAudioTracks().length;
           }, function (error) { window.shareState = 'error:' + error.name; });
         }

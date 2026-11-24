@@ -100,6 +100,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 py() { (cd "$PERF" && python3 -m darni_perf "$@"); }
+# py runs from perf/: every path given on the command line is made absolute first, against the
+# caller's directory (a relative RC path failed, 2026-11-24).
+absolute() { if [[ -z $1 || $1 == /* ]]; then printf '%s' "$1"; else printf '%s/%s' "$PWD" "${1#./}"; fi; }
+DATA="$(absolute "$DATA")" RC_TARGET="$(absolute "$RC_TARGET")" RELEASES="$(absolute "$RELEASES")" ENGINE_SRC="$(absolute "$ENGINE_SRC")"
+[[ -z $GATE_ONLY ]] || GATE_ONLY="$(absolute "$GATE_ONLY")"
+[[ -z $CONFIRM ]] || CONFIRM="$(absolute "$CONFIRM")"
 if [[ -n $RC_TARGET ]]; then
   # The RC score (owner, 2026-11-24): headless, no screen, no gate file, never holds a release.
   [[ $BUILD =~ ^[0-9]+$ ]] || die "--rc-speedometer needs --build NNNN"
