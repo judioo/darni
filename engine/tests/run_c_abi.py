@@ -536,7 +536,7 @@ addEventListener('resize', function () { resizes++; });
 setInterval(function () { ticks++; document.getElementById('box').style.marginLeft = (ticks % 20) * 5 + 'px'; }, 200);
 function ask(audio) {
   share = {share: 'pending', frames: 0, audio: 0, surface: '', size: ''};
-  navigator.mediaDevices.getDisplayMedia({video: true, audio: audio}).then(function (stream) {
+  navigator.mediaDevices.getDisplayMedia({video: true, audio: audio, selfBrowserSurface: 'include'}).then(function (stream) {
     var track = stream.getVideoTracks()[0], now = share;
     track.addEventListener('ended', function () { now.share = 'ended'; });
     now.audio = stream.getAudioTracks().length;

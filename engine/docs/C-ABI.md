@@ -1,7 +1,7 @@
 # ReArc engine C ABI
 
-ABI **1.70** (major remains 1 for existing hosts), bridge **0.81.0**, compiled Chromium **156.0.8078.114**
-(1.70 and bridge 0.81.0 are patch `tab/101`, overlay fe57d24b7e, built on 2026-11-23 in `out/ReArc-codecs-arm64`; see "Screen sharing". 1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
+ABI **1.70** (major remains 1 for existing hosts), bridge **0.82.0**, compiled Chromium **156.0.8078.114**
+(bridge 0.82.0 is patch `tab/102`, overlay 86afa51467, built on 2026-11-24 in `out/ReArc-codecs-arm64`; see "A tab nobody looks at". 1.70 and bridge 0.81.0 are patch `tab/101`, overlay fe57d24b7e, built on 2026-11-23 in `out/ReArc-codecs-arm64`, the engine of Darni 2026.1124.1329; see "Screen sharing". 1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
 [IPC-CONTRACT](IPC-CONTRACT.md), not a JSON connection. Synchronous return
@@ -2953,7 +2953,7 @@ another app's window and from a minimised window were each refused in 2 to 42 ms
 line; with the window back the same `get` opened the sheet, and it stayed open when the app was
 hidden afterwards. Not run: a Mac that has not answered the Bluetooth question.
 
-## Screen sharing (ABI 1.70, bridge 0.81.0)
+## Screen sharing (ABI 1.70, bridge 0.81.0; a tab nobody looks at: bridge 0.82.0)
 
 Feature `display_capture`, patch `tab/101`. A page's `navigator.mediaDevices.getDisplayMedia()`
 reaches the tab's `WebContentsDelegate` as a media access request of the display types. Until
@@ -3037,7 +3037,11 @@ struct changes; the minor stays 1.70.
 resolved. The tab had never been attached. A bridge tab gets its size from the host's first
 attachment, so that tab's view was 0 x 0 and its compositor drew nothing; Chromium reports a tab
 capture as started with its first frame, and the asking renderer gives up after ten seconds
-(`VideoCaptureImpl::kCaptureStartTimeout`).
+(`VideoCaptureImpl::kCaptureStartTimeout`). Reproduced on that engine (bridge 0.81.0) with the test
+host below in report mode: a tab never attached reads `innerWidth` 0 and `innerHeight` 0, and
+10.2 seconds after its share is reported the page has `AbortError: Timeout starting video source`,
+with the tab's sound and without it alike. The sound is not the cause. A tab that was attached
+once and detached was live after 0.8 seconds.
 
 **A size.** When the host answers with a tab that has no size, the engine gives it the asking
 tab's size (`WebContents::Resize`) before the share starts. The host's first attachment sizes the
@@ -3045,13 +3049,21 @@ view again, as for any tab. The page sees one resize, as it does when it is firs
 
 **The page stays hidden.** Chromium's capture of a tab counts as a visible capturer: the page of a
 tab in the background is told it is visible (`document.visibilityState`, `visibilitychange`) when
-the share starts, and hidden again when it ends. A bridge tab's capture is a hidden capturer
-instead (`WebContents::IncrementCapturerCount` with `stay_hidden`, chosen by the new
-`WebContentsDelegate::KeepsPageHiddenWhileCaptured`, which the bridge's delegate answers with
-true). The page is painted for the share (`PageVisibilityState::kHiddenButPainting`) and its
+the share starts, and hidden again when it ends. The loopback of the tab's sound counts the same
+way, on its own (`ForwardingAudioStreamFactory`). A bridge tab's capture is a hidden capturer
+instead, for the picture and for the sound (`WebContents::IncrementCapturerCount` with
+`stay_hidden`, chosen by the new `WebContentsDelegate::KeepsPageHiddenWhileCaptured`, which the
+bridge's delegate answers with true). The page is painted for the share (`PageVisibilityState::kHiddenButPainting`) and its
 scripts read `hidden`, with no event, from before the share to after it. The tab itself is never
 marked visible (`WebContents::GetVisibility` is unchanged). A tab that is on screen is visible
-because it is on screen, shared or not.
+because it is on screen, shared or not. On the engine without the patch the detached tab's page
+read `hidden` false while it was shared, with one more `visibilitychange`, and its
+`devicePixelRatio` went from 2 to 4.
+
+**Its scale stays too.** Chromium raises a captured page's device scale factor when the capture
+wants more pixels than the page draws (`WebContentsAutoScaler`). A capture that keeps the page
+hidden makes no such scaler: `devicePixelRatio` is the same shared or not, and the picture of a
+small tab is as sharp as the tab is drawn.
 
 **For the host.** Nothing to call. A host should offer screen sharing only with this feature:
 without it a share of a tab it never attached fails after ten seconds, and a shared tab in the
@@ -3059,17 +3071,21 @@ background is told it is visible. The shell installs its display-capture callbac
 (`ChromiumCapabilities.screenSharingHiddenTabs`), so an older engine refuses every request at
 once, as before 1.70.
 
-**What a shared page can still tell.** Its size, if it had none. Its device scale factor may rise
-while it is shared (Chromium's `WebContentsAutoScaler`, unchanged). Neither says whether anybody
-looks at the tab.
+**What a shared page can still tell.** Its size, if it had none. And that it is drawn: while it is
+shared in the background its animation frames run, which they do not in a tab that is only hidden.
+That is the capture's own frame production; Chromium's tab thumbnails do the same.
 
-Tests: `engine/tests/c_abi_display_capture_host.mm` (`run_c_abi.py display_capture`; it shows a
-small window and sends no input): a tab never attached and a tab shown and then detached, each
-with and without sound, and the asking tab itself; every share must be live with frames, and the
-shared page's `document.hidden` and its count of `visibilitychange` events must not change from
-before the share to after it. `REARC_CAPTURE_REPORT=1` prints what an engine without the patch
-does. The shell's `ScreenShareShellTests` (the capability) and the self-test step "screen sharing"
-(a tab never shown, and the same tab once it was shown).
+Tests: `engine/tests/c_abi_display_capture_host.mm` (`run_c_abi.py display_capture`): a tab never
+attached and a tab shown and then detached, each with and without sound, and the asking tab
+itself; every share must be live with frames, and the shared page's `document.hidden`, its count
+of `visibilitychange` events and its `devicePixelRatio` must not change from before the share to
+after it. Nothing of it shows on screen and it sends no input: its window is ordered in off every
+screen and transparent, and the process has no Dock tile, so it runs while somebody uses the Mac.
+It runs against a release out dir too (`REARC_CHROMIUM_OUT`). `REARC_CAPTURE_REPORT=1` prints what
+an engine without the patch does. `engine/tests/headless_tab_capture.mjs` shows the same for
+Chromium's own capture, on the stock launcher of any out dir, headless. The shell's
+`ScreenShareShellTests` (the capability) and the self-test step "screen sharing" (a tab never
+shown, and the same tab once it was shown).
 
 ## Blocked hosts (ABI 1.69, bridge 0.79.0)
 

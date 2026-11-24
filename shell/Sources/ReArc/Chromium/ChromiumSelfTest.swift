@@ -2033,16 +2033,17 @@ final class ChromiumSelfTest {
         func state() async -> String { ((try? await engine.evaluate("window.shareState", in: .page)) as? String) ?? "" }
         func frames() async -> Int { ((try? await engine.evaluate("window.shareFrames", in: .page)) as? NSNumber)?.intValue ?? -1 }
         // What the page of the tab to share can tell about itself: "<document.hidden>:<visibilitychange
-        // events>:<width>x<height>". A share may change the size of a tab that had none, and nothing
-        // else: the page of a tab nobody looks at stays hidden, and hears nothing when the share starts
-        // or ends (engine patch tab/102, the security review's condition). The first call starts the
-        // count, and a small change of the page four times a second, so its picture has new frames.
+        // events>:<devicePixelRatio>:<width>x<height>". A share may change the size of a tab that had
+        // none, and nothing else: the page of a tab nobody looks at stays hidden, hears nothing when the
+        // share starts or ends, and keeps its scale (engine patch tab/102, the security review's
+        // condition). The first call starts the count, and a small change of the page four times a
+        // second, so its picture has new frames.
         func sharedPage() async -> String {
             ((try? await otherEngine.evaluate("""
                 (window.shareSeen === undefined && (window.shareSeen = 0,
                      document.addEventListener('visibilitychange', function () { window.shareSeen++; }),
                      setInterval(function () { document.body.style.opacity = document.body.style.opacity === '0.9' ? '1' : '0.9'; }, 250)),
-                 document.hidden + ':' + window.shareSeen + ':' + innerWidth + 'x' + innerHeight)
+                 document.hidden + ':' + window.shareSeen + ':' + devicePixelRatio + ':' + innerWidth + 'x' + innerHeight)
                 """, in: .page)) as? String) ?? ""
         }
         // A visibility change reaches a page after the browser's own state: read it a moment later.
@@ -2168,7 +2169,9 @@ final class ChromiumSelfTest {
         let shownFrames = await frames()
         // Shared, the page is painted (it has a size now) and is still hidden to its own scripts.
         let neverShownShared = try await sharedPageSettled()
-        try check(neverShownShared.hasPrefix("true:0:") && !neverShownShared.hasSuffix(":0x0") && otherEngine.attachmentID == nil,
+        let scale = { (page: String) in page.split(separator: ":").dropFirst(2).first.map(String.init) ?? "" }
+        try check(neverShownShared.hasPrefix("true:0:") && !neverShownShared.hasSuffix(":0x0") && otherEngine.attachmentID == nil
+                      && scale(neverShownShared) == scale(neverShown),
                   "the shared tab's page while it is shared: \(neverShownShared) (before \(neverShown))")
         let stops = ChromiumScreenShareChannel.stops
         prompts.stopScreenShare()

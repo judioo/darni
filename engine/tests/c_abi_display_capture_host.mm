@@ -8,17 +8,25 @@
 //   a tab that was shown and then detached, with sound, and without;
 //   the asking tab itself.
 // Each must give the page a live "browser" stream with frames, and must not
-// tell the shared page anything: document.hidden keeps its value and no
-// visibilitychange fires when the share starts or when it ends (security
-// review of tab/102). ReArcTabStopDisplayCapture ends every share.
+// tell the shared page anything: document.hidden and devicePixelRatio keep
+// their values and no visibilitychange fires when the share starts or when
+// it ends (security review of tab/102); a page that had a size keeps it.
+// ReArcTabStopDisplayCapture ends every share.
 //
 // REARC_CAPTURE_REPORT=1 asserts nothing about the outcome and prints what
 // happens instead: for an engine without the patch, where the first two
-// shares end after ten seconds and the next two tell the page it is visible.
+// shares end after ten seconds and the next two tell the page it is visible
+// and raise its devicePixelRatio.
 //
-// The asking page must be visible to Chromium (its handler refuses a page
-// nobody sees), so this host shows a small window. It sends no input.
+// Nothing appears on screen and no input is sent. The asking page must be
+// visible to Chromium (its handler refuses a page nobody sees), which the
+// bridge reads from the tab's window being ordered in: the host's window is
+// ordered in off every screen, transparent and deaf to the mouse, and the
+// process is a UI element (no Dock tile, no menu bar, never activated). The
+// runner passes --disable-backgrounding-occluded-windows, so a window nobody
+// can see still counts.
 #import <AppKit/AppKit.h>
+#import <ApplicationServices/ApplicationServices.h>
 #include "rearc_engine_abi.h"
 #include <assert.h>
 #include <stdio.h>
@@ -58,7 +66,7 @@ static void after(int ms, dispatch_block_t block) {
 // The value of a page expression, as a dictionary ({"value": x} for a scalar).
 static void eval(uint64_t tab, const char* source, Reply reply) {
   ReArcStatus status = ReArcTabEvaluateScript2(
-      tab, source, 0, nullptr, 10000,
+      tab, source, 1 /* the page's own world */, nullptr, 10000,
       [](void* context, const ReArcScriptResult* result) {
         Reply reply = (__bridge_transfer Reply)context;
         if (result->status != REARC_OK || !result->json) {
@@ -142,7 +150,12 @@ static void after_stop() {
              "document.hidden changed when the share ended");
       expect([now[@"changes"] isEqual:before[@"changes"]],
              "visibilitychange fired when the share ended");
+      expect([now[@"dpr"] isEqual:before[@"dpr"]],
+             "devicePixelRatio is not what it was before the share");
       expect(!capturing(), "media_capture still reports a share");
+      if (!capturing()) {
+        assert(ReArcTabStopDisplayCapture(asker) == REARC_INVALID_STATE);
+      }
       next_share();
     });
   });
@@ -171,11 +184,18 @@ static void during_share() {
            "document.hidden changed when the share started");
     expect([now[@"changes"] isEqual:before[@"changes"]],
            "visibilitychange fired when the share started");
+    expect([now[@"dpr"] isEqual:before[@"dpr"]],
+           "devicePixelRatio changed when the share started");
     expect([now[@"w"] intValue] > 0 && [now[@"h"] intValue] > 0,
            "the shared page has no size");
+    // Only a tab that had no size gets one.
+    expect(!shares[current].shown_before ||
+               ([now[@"w"] isEqual:before[@"w"]] &&
+                [now[@"h"] isEqual:before[@"h"]] &&
+                [now[@"resizes"] isEqual:before[@"resizes"]]),
+           "the size of a page that had one changed");
     expect(capturing(), "media_capture reports no share");
     assert(ReArcTabStopDisplayCapture(asker) == REARC_OK);
-    assert(ReArcTabStopDisplayCapture(asker) == REARC_INVALID_STATE);
     stop_share(25);
   });
 }
@@ -318,12 +338,23 @@ static void ready(void*, uint64_t profile) {
   assert(report || ReArcEngineHasFeature("display_capture_hidden_tab"));
   ReArcEngineSetDisplayCaptureCallback(display_capture, nullptr);
   ReArcEngineSetMediaCaptureCallback(media_capture, nullptr);
-  window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 400, 300)
-                                       styleMask:NSWindowStyleMaskTitled
+  // Borderless: AppKit keeps a titled window on a screen.
+  window = [[NSWindow alloc] initWithContentRect:NSMakeRect(-20000, -20000, 400, 300)
+                                       styleMask:NSWindowStyleMaskBorderless
                                          backing:NSBackingStoreBuffered
                                            defer:NO];
+  window.alphaValue = 0;
+  window.ignoresMouseEvents = YES;
+  window.hasShadow = NO;
+  window.excludedFromWindowsMenu = YES;
+  window.collectionBehavior = NSWindowCollectionBehaviorStationary |
+                              NSWindowCollectionBehaviorIgnoresCycle |
+                              NSWindowCollectionBehaviorTransient;
   assert(ReArcWindowRegister(1, (__bridge void*)window) == REARC_OK);
-  [window orderFront:nil];
+  [window orderBack:nil];
+  assert(window.visible && !window.keyWindow && !NSApp.active);
+  printf("WINDOW frame %s on screen %d\n",
+         NSStringFromRect(window.frame).UTF8String, window.screen != nil);
   const std::string url = base + "/capture";
   assert(ReArcTabCreate(profile, 1, (url + "?shown").c_str(), &shown) == 0);
   assert(ReArcTabCreate(profile, 1, (url + "?never-a").c_str(), &never_a) == 0);
@@ -335,10 +366,16 @@ static void ready(void*, uint64_t profile) {
 int main(int argc, const char** argv) {
   @autoreleasepool {
     setbuf(stdout, nullptr);
+    // No Dock tile and no menu bar, before Chromium makes the application.
+    ProcessSerialNumber process = {0, kCurrentProcess};
+    TransformProcessType(&process, kProcessTransformToUIElementApplication);
     report = getenv("REARC_CAPTURE_REPORT") != nullptr;
     base = "http://127.0.0.1:" + std::string(getenv("REARC_TEST_PORT"));
     ReArcCallbacks callbacks{ready, tab_event, nullptr, nullptr};
     assert(ReArcEngineConfigure(1, &callbacks, nullptr) == REARC_OK);
+    // A release engine drops --host-resolver-rules without this (ABI 1.56),
+    // and then does its first-run network work; the runner's audit refuses it.
+    assert(ReArcEngineAllowTestSwitches() == REARC_OK);
     const int code = ReArcEngineRun(argc, argv);
     assert(code == 0 && stopped);
     return code;
