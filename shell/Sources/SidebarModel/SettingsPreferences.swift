@@ -84,6 +84,17 @@ public enum WindowRestorePreference {
     }
 }
 
+/// Settings › Advanced "Copy links without trackers": every link the shell
+/// copies loses its tracking parameters (`LinkCleaner`). On by default, as
+/// Arc's Copy URL always is.
+public enum CleanLinksPreference {
+    public static let defaultsKey = "rearc.copyCleanLinks"
+
+    public static func isEnabled(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: defaultsKey) as? Bool ?? true
+    }
+}
+
 /// Settings › General: keep Arc's dots available alongside ReArc's circles.
 public enum SpaceIconStyle: String, CaseIterable, Sendable {
     case colouredCircles, arcDots

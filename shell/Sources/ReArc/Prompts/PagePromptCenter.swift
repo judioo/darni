@@ -51,6 +51,9 @@ protocol PageLinkRouting: AnyObject {
     func openLinkInNewSplit(_ url: URL, from prompts: PagePromptCenter)
     func openLinkInPrivateWindow(_ url: URL, from prompts: PagePromptCenter)
     func searchWeb(for text: String, from prompts: PagePromptCenter)
+    /// Copy Link Address: true when the shell copied the link, without its
+    /// trackers (`BrowserViewModel+CleanLinks`); false leaves it to the engine.
+    func copyLinkAddress(_ link: String, from prompts: PagePromptCenter) -> Bool
     /// The page's default search engine when it can search by image (nil otherwise).
     func imageSearchProvider(for prompts: PagePromptCenter) -> SearchProvider?
     /// Shows the tab a prompt belongs to (a leave-site prompt on a tab being closed).
@@ -58,6 +61,10 @@ protocol PageLinkRouting: AnyObject {
     /// Chromium's site details page for `origin`.
     func openSiteSettings(origin: String, from prompts: PagePromptCenter)
     var navigationSchemes: NavigationURLPolicy.EngineSchemes { get }
+}
+
+extension PageLinkRouting {
+    func copyLinkAddress(_ link: String, from prompts: PagePromptCenter) -> Bool { false }
 }
 
 /// One page's prompts, shown over that page only (`PagePromptOverlay`) so
@@ -923,7 +930,10 @@ final class PagePromptCenter {
                let source = NavigationURLPolicy.viewSourceURL(for: page, engine: router?.navigationSchemes ?? []) {
                 router?.openLinkInNewTab(source, from: self)
             }
-        case .copyLink, .saveLinkAs, .saveImage, .copyImage, .cut, .copy, .paste, .selectAll, .back, .forward, .reload, .inspect:
+        case .copyLink:
+            // A link with trackers is copied clean, by the shell; any other is the engine's to copy.
+            return router?.copyLinkAddress(params.linkURL, from: self) ?? false
+        case .saveLinkAs, .saveImage, .copyImage, .cut, .copy, .paste, .selectAll, .back, .forward, .reload, .inspect:
             return false
         }
         return true

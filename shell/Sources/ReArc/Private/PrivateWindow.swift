@@ -142,7 +142,7 @@ struct PrivateWindowView: View {
             if let site = SiteControlCenter.site(for: window.engine.currentURL) {
                 SiteInfoButton(model: model, engine: window.engine, site: site, ink: .secondary, showsPanelLinks: false)
             }
-            TextField("Search or enter address", text: Bindable(window).addressText)
+            TextField(AddressFieldCopy.privateWindowPlaceholder, text: Bindable(window).addressText)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit {
                     window.submitAddress(
