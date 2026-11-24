@@ -294,6 +294,66 @@ final class WebKitWindowsAndSharingTests: XCTestCase {
         XCTAssertEqual(engine.currentURL?.path, SelfTestReaderFixture.articlePath, "the page is as it was")
     }
 
+    // MARK: - Tab sleep (93443277, engine tab/103)
+
+    /// A browser with a WebKit tab left unseen (on page B, with A behind it) and the selected tab beside it.
+    private func browserWithAnUnseenWebKitTab() async throws -> (Browser, SidebarModel.Tab, WKEngine) {
+        server.route("/a", .page(title: "page A"))
+        server.route("/b", .page(title: "page B", body: "<script>window.ticks = 0; setInterval(() => window.ticks++, 50);</script>"))
+        let b = try makeBrowser()
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let unseen = b.store.addTab(kind: .today, title: "B", url: server.url("/b"), in: b.first)
+        let front = b.store.addTab(kind: .today, title: "Front", url: URL(string: "about:blank")!, in: b.first)
+        let engine = try webKitEngine(b.model, unseen, profile: profile)
+        engine.load(server.url("/a"))
+        try await wait("page A") { engine.webView.title == "page A" && !engine.isLoading }
+        engine.load(server.url("/b"))
+        try await wait("page B") { engine.webView.title == "page B" && engine.canGoBack && !engine.isLoading }
+        b.model.selectTab(front.id)
+        return (b, unseen, engine)
+    }
+
+    // parity: tabs.unload
+    func testAnUnseenWebKitTabIsUnloadedAfterTheThresholdAndLoadsAgainWhenShown() async throws {
+        let (b, tab, engine) = try await browserWithAnUnseenWebKitTab()
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let now = Date()
+        b.model.tabLastShown[tab.id] = now.addingTimeInterval(-5 * 3600)
+        b.model.tabUnloadThreshold = .twelveHours
+        XCTAssertEqual(b.model.runAutoUnload(now: now), [], "not unseen long enough")
+        XCTAssertTrue(b.model.engineHost.engine(forTabID: tab.id, profileID: profile) === engine)
+
+        b.model.tabUnloadThreshold = .fourHours
+        XCTAssertEqual(b.model.runAutoUnload(now: now), [tab.id])
+        XCTAssertTrue(b.model.isTabUnloaded(tab.id))
+        XCTAssertNil(b.model.engineHost.engine(forTabID: tab.id, profileID: profile), "WebKit drops the page: it cannot discard one in place")
+
+        let loads = server.requests(for: "/b").count
+        b.model.selectTab(tab.id)
+        let again = try XCTUnwrap(b.model.engineHost.engine(forTabID: tab.id, profileID: profile) as? WKEngine)
+        try await wait("the tab's page again") { again.webView.title == "page B" && !again.isLoading }
+        XCTAssertFalse(b.model.isTabUnloaded(tab.id))
+        XCTAssertEqual(server.requests(for: "/b").count, loads + 1, "shown again, it loads its address anew")
+        XCTAssertFalse(again.canGoBack, "and its back history is gone (tabs.unload: partial)")
+    }
+
+    // parity: tabs.freeze
+    func testAnUnseenWebKitTabIsFrozenBeforeItIsUnloaded() async throws {
+        let (b, tab, engine) = try await browserWithAnUnseenWebKitTab()
+        b.model.tabFreezeThreshold = .thirtyMinutes
+        b.model.tabUnloadThreshold = .twelveHours
+        let now = Date()
+        b.model.tabLastShown[tab.id] = now.addingTimeInterval(-3600)
+        let frozen = b.model.runAutoFreeze(now: now)
+        XCTAssertEqual(b.model.runAutoUnload(now: now), [], "an hour unseen is not twelve: the page stays loaded")
+        let before = try await engine.webView.evaluateJavaScript("window.ticks") as? Int ?? 0
+        try await Task.sleep(nanoseconds: 400_000_000)
+        let after = try await engine.webView.evaluateJavaScript("window.ticks") as? Int ?? 0
+        XCTExpectFailure("tabs.freeze: WKEngine is not TabFreezing; WebKit's inactiveSchedulingPolicy is not used")
+        XCTAssertEqual(frozen, [tab.id], "the tab is frozen")
+        XCTAssertEqual(after, before, "a frozen page runs no timers")
+    }
+
     // MARK: - Gaps, stated as Chromium behaves (expected failures)
 
     // parity: tabs.popups
