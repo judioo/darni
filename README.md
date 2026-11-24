@@ -8,14 +8,13 @@ An open-source reimplementation of the Arc browser's ideas on macOS: a native
 Swift/SwiftUI shell over a lightly patched Chromium that stays easy to update.
 
 Darni was called ReArc until November 2026. It is the same browser with the same data
-and settings. The repository, the site address, the bundle identifier
-(`com.rearc.browser`) and the names in the code keep the old name, so installed copies
-keep their data and their updates.
+and settings. The bundle identifier (`com.rearc.browser`) and the names in the code
+keep the old name, so installed copies keep their data and their updates.
 
 ## Download
 
 Darni is an alpha for Apple silicon Macs on macOS 14 or later.
-Download the DMG from [rearc.imara.ae](https://rearc.imara.ae). It is Developer ID signed and notarized,
+Download the DMG from [darni.imara.ae](https://darni.imara.ae). It is Developer ID signed and notarized,
 and updates itself through Sparkle (Darni › Check for Updates…). What changed in
 each release is in [RELEASES.md](RELEASES.md).
 
