@@ -64,6 +64,13 @@ public final class SunrisePlayer: ObservableObject {
 
     var cues: SunriseCues { reduced ? .reduced : .of(variant) }
 
+    /// Stops the score and lets it go, here on the main thread, so the render
+    /// thread never runs into a half-released one.
+    public func closeAudio() {
+        audio?.close()
+        audio = nil
+    }
+
     /// Every act's sounds follow from its log: re-scored on each change, so
     /// what you do is heard the moment it is drawn.
     func rescore() {
@@ -799,6 +806,8 @@ public final class SunriseTakeover {
     }
 
     public func dismiss() {
+        // The scene is gone for good: no sound plays on after it.
+        player.closeAudio()
         SettingsAccess.hideDragHelper()
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil

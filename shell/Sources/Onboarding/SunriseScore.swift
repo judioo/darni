@@ -378,13 +378,9 @@ public final class SunriseAudio {
         if offline {
             try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
         }
-        source = AVAudioSourceNode(format: format) { [unowned self] _, _, frames, buffers in
-            let abl = UnsafeMutableAudioBufferListPointer(buffers)
-            let l = abl[0].mData!.assumingMemoryBound(to: Float.self)
-            let r = abl[1].mData!.assumingMemoryBound(to: Float.self)
-            self.synth.render(frames: Int(frames), left: l, right: r)
-            return noErr
-        }
+        // Weak: the render thread can call once more while the score is being
+        // released (an unowned read there trapped in rc-tests); it then plays silence.
+        source = AVAudioSourceNode(format: format, renderBlock: Self.renderBlock { [weak self] in self?.synth })
         reverb.loadFactoryPreset(.largeHall2)
         reverb.wetDryMix = 36
         voiceReverb.loadFactoryPreset(.mediumRoom)
@@ -395,6 +391,24 @@ public final class SunriseAudio {
         engine.connect(player, to: voiceMixer, format: voice?.format)
         engine.connect(voiceMixer, to: voiceReverb, format: format)
         engine.connect(voiceReverb, to: engine.mainMixerNode, format: format)
+    }
+
+    /// Stops and detaches everything, so no render call outlives the score.
+    deinit { close() }
+
+    /// Fills the buffers from the owner's synth, or with silence once the owner is gone.
+    static func renderBlock(_ synth: @escaping () -> SunriseSynth?) -> AVAudioSourceNodeRenderBlock {
+        { _, _, frames, buffers in
+            let abl = UnsafeMutableAudioBufferListPointer(buffers)
+            guard let synth = synth() else {
+                for buffer in abl { if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) } }
+                return noErr
+            }
+            let l = abl[0].mData!.assumingMemoryBound(to: Float.self)
+            let r = abl[1].mData!.assumingMemoryBound(to: Float.self)
+            synth.render(frames: Int(frames), left: l, right: r)
+            return noErr
+        }
     }
 
     /// The target's resource bundle, found without SwiftPM's `Bundle.module`, which traps
@@ -457,6 +471,14 @@ public final class SunriseAudio {
     public func update(_ score: SunriseScore, sceneTime: Double? = nil) { synth.setScore(score, sceneTime: sceneTime) }
 
     public func stop() { player.stop(); engine.stop() }
+
+    /// For good: stopped, and the nodes taken off the engine. Safe to call twice.
+    public func close() {
+        stop()
+        for node in [source, reverb, player, voiceMixer, voiceReverb] as [AVAudioNode?] {
+            if let node, node.engine === engine { engine.detach(node) }
+        }
+    }
 
     /// Renders `duration` seconds to a WAV file.
     public func render(duration: Double, to url: URL) throws {
