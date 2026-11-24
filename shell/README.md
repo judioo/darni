@@ -61,6 +61,21 @@ read it later: `docs/releases/<build>/engine-parity/` (the report, notes written
 the document as it stood) and a line in `docs/releases/ENGINE-PARITY-HISTORY.md`
 ([docs/releases/README.md](../docs/releases/README.md)).
 
+Three tools keep the work around a release candidate in order
+([docs/releases/README.md](../docs/releases/README.md) has the details):
+
+- `scripts/heavy-job.sh` is a lock for heavy jobs. Only one full `swift test`, engine build,
+  `check-webkit.sh --full`, release build or performance measurement runs on this Mac at a
+  time. Those scripts take the lock by themselves and wait for each other. Run any other
+  heavy command as `scripts/heavy-job.sh <name> -- <command…>`. `--status` says who holds it.
+- `scripts/release/rc-tests.sh <commit> <build>` runs the whole `swift test` suite once for a
+  release candidate, in a throwaway worktree. It keeps the log in `dist/rc-<build>/` and
+  writes `docs/releases/<build>/tests/SUMMARY.md`. Reviews read that summary and do not run
+  the suite again.
+- `scripts/release/release-status.py <build>` shows which reviews of a candidate have
+  reported, their verdicts, and which review branches are not merged into `main` yet.
+  `--write` saves it as `docs/releases/<build>/STATUS.md`.
+
 ### Build and run with Chromium
 
 Needs the existing engine output in `engine/chromium/src/out/ReArc-dev-arm64`

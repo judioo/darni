@@ -101,6 +101,10 @@ trap restore_resolved EXIT
 # Without the Chromium variables the manifest builds the WebKit shell, whatever the caller exported.
 unset REARC_CHROMIUM_OUT REARC_ENGINE_INCLUDE
 
+# The whole suite is a heavy job: one at a time on this Mac (scripts/heavy-job.sh).
+heavy_job() { if [[ $FULL == 1 ]]; then source "$SHELL_DIR/scripts/heavy-job.sh"; "heavy_job_$1" check-webkit; fi; }
+heavy_job begin
+
 start=$SECONDS
 echo "==> swift build (WebKit shell; log: $BUILD_LOG)"
 build_failed=0
@@ -119,6 +123,7 @@ else
   echo "check-webkit: the WebKit shell did not build:" >&2
   grep -E "error:" "$BUILD_LOG" | head -n 10 >&2 || true
 fi
+heavy_job end
 
 flags=()
 if [[ $build_failed == 1 ]]; then flags+=(--build-failed); fi
