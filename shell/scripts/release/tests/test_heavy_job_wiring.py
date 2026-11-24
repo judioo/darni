@@ -120,10 +120,12 @@ class PerfCheckTests(Wiring):
         self.assertEqual(self.seen_by("gate"), [])
         self.assertFalse(self.lock.exists())
 
-    def test_a_build_measured_by_number_takes_no_lock(self):
+    def test_a_build_measured_by_number_takes_the_lock_too(self):
+        # Every measurement is a heavy job (perf/lock-every-measurement), not only --weekly.
         result = self.perf("--build", "7")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.seen_by("measure"), ["held=none owner="])
+        self.assertEqual(self.seen_by("measure"), ["held=perf owner=perf"])
+        self.assertFalse(self.lock.exists())
 
     def test_the_weekly_measurement_runs_inside_a_perf_hold(self):
         self.assertEqual(self.heavy("--hold", "perf", "60").returncode, 0)
