@@ -1,6 +1,12 @@
 import Foundation
 import SidebarModel
 
+/// Tab sleep: a tab left unseen is frozen first (30 minutes by default: the
+/// page stays in memory, runs nothing, and goes on at once when shown) and
+/// unloaded later (4 hours by default). Freezing is the engine's
+/// (`TabFreezing`, Chromium `tab_freeze`, ABI 1.71); without it pages run
+/// until the unload. Both are set in Settings › General and in the Archive.
+///
 /// Unloading tabs that stay in the sidebar (Arc "Unload Tab", pinned-tab
 /// unload on ⌘W, and the automatic unload of tabs left unseen). Chromium
 /// discards the page in place (`tab_discard`, ABI 1.25): the WebContents,
@@ -54,14 +60,17 @@ extension BrowserViewModel {
         switch discarding.discard() {
         case .discarded:
             unloadedTabIDs.remove(tabID)
-        case .refusedForNow where attempt < Self.discardRetryDelays.count:
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.discardRetryDelays[attempt]) { [weak self, weak engine] in
+        case .refusedForNow where attempt < discardRetryDelays.count:
+            DispatchQueue.main.asyncAfter(deadline: .now() + discardRetryDelays[attempt]) { [weak self, weak engine] in
                 guard let self, let engine, !self.isTabVisible(tabID),
                       let tab = self.store.tab(withID: tabID),
                       self.engineHost.engine(forTabID: tabID, profileID: self.profileID(for: tab)) === engine else { return }
                 self.unloadEngine(engine, tabID: tabID, attempt: attempt + 1, dropIfRefused: dropIfRefused)
             }
         case .refusedForNow:
+            // The automatic unload stops here: the page stays loaded. A page
+            // that asks "Leave site?" (unsaved input) is refused every time,
+            // and is never dropped behind the person's back.
             guard dropIfRefused, !isTabVisible(tabID) else { break }
             releaseEngine(for: tabID)
             unloadedTabIDs.insert(tabID)
@@ -91,19 +100,39 @@ extension BrowserViewModel {
         visibleTabIDs.contains(id)
     }
 
-    /// The tabs on screen were just shown: they are active now, and no longer unloaded.
+    /// The tabs on screen were just shown: they are active now, no longer
+    /// unloaded, and not frozen. The engine thaws a page it shows by itself;
+    /// the shell says so too, and does nothing else for a thaw: it holds no
+    /// list of things a frozen page wanted, and loads nothing.
     func noteVisibleTabsShown(at date: Date = Date()) {
         for id in visibleTabIDs {
             tabLastShown[id] = date
             unloadedTabIDs.remove(id)
+            thawTab(id)
         }
     }
 
-    /// The automatic unload (checked with auto-archive, every five minutes).
-    @discardableResult
-    func runAutoUnload(now: Date = Date()) -> [Tab.ID] {
-        noteVisibleTabsShown(at: now)
+    /// Ends the tab's freeze request, if its engine holds one.
+    func thawTab(_ id: Tab.ID) {
+        guard let tab = store.tab(withID: id),
+              let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing,
+              freezing.isFreezeRequested else { return }
+        freezing.unfreeze()
+    }
+
+    /// Whether the tab's engine holds a freeze request (its page is frozen, or about to be).
+    func isTabFrozen(_ id: Tab.ID) -> Bool {
+        guard let tab = store.tab(withID: id),
+              let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { return false }
+        return freezing.isFreezeRequested
+    }
+
+    /// Every sidebar tab with a live engine, as the freeze and unload checks
+    /// see it. Peek pages and Little Darni windows have engines of their own
+    /// and are not tabs: they are never listed, so never frozen or unloaded.
+    func tabSleepCandidates(now: Date) -> [TabUnloadCandidate] {
         let visible = visibleTabIDs
+        let shared = screenShares.chosenTargets.union(screenShareMarkedTabs)
         var candidates: [TabUnloadCandidate] = []
         for (id, profile, engine) in engineHost.allTabEngines() {
             guard store.tab(withID: id) != nil, profile == store.tab(withID: id).map(profileID(for:)) else { continue }
@@ -114,12 +143,27 @@ extension BrowserViewModel {
                 tabID: id,
                 lastActive: lastShown,
                 isVisible: visible.contains(id),
-                isAudible: media.isAudible || media.isPlaying,
+                isAudible: media.isAudible || media.isPlaying || media.isPictureInPicture,
                 isUnloaded: isTabUnloaded(id) || engine.isLoading,
-                hasPendingPrompt: engine.pagePrompts.hasPendingPrompt
+                hasPendingPrompt: engine.pagePrompts.hasPendingPrompt,
+                isCapturing: captureStateByTab[id] != nil || screenShares.isSharing(id),
+                isShared: shared.contains(id),
+                hasDownload: downloads.hasLiveDownload(startedBy: engine),
+                isTransient: engine.pagePrompts.role != .tab,
+                isFrozen: (engine as? TabFreezing)?.isFreezeRequested ?? false
             ))
         }
-        let due = TabUnloadPolicy.tabsToUnload(candidates, threshold: tabUnloadThreshold, now: now)
+        return candidates
+    }
+
+    /// The automatic unload (checked with auto-archive, every five minutes).
+    /// A discard the engine refuses (a page with unsaved input that asks
+    /// "Leave site?", playing media, a share) leaves the page loaded: this
+    /// path never drops an engine that said "not now".
+    @discardableResult
+    func runAutoUnload(now: Date = Date()) -> [Tab.ID] {
+        noteVisibleTabsShown(at: now)
+        let due = TabUnloadPolicy.tabsToUnload(tabSleepCandidates(now: now), threshold: tabUnloadThreshold, now: now)
         for id in due {
             guard let tab = store.tab(withID: id), let engine = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) else { continue }
             unloadEngine(engine, tabID: id)
@@ -127,6 +171,27 @@ extension BrowserViewModel {
         tabLastShown = tabLastShown.filter { store.tab(withID: $0.key) != nil }
         unloadedTabIDs = unloadedTabIDs.filter { store.tab(withID: $0) != nil }
         return due
+    }
+
+    /// The automatic freeze (checked with the unload, every five minutes, and
+    /// when the setting changes). First the frozen tabs that are in use again
+    /// or no longer due run again; then every loaded tab left unseen for the
+    /// threshold is frozen, if its engine can and agrees. Returns the tabs
+    /// whose engine took the request.
+    @discardableResult
+    func runAutoFreeze(now: Date = Date()) -> [Tab.ID] {
+        noteVisibleTabsShown(at: now)
+        let candidates = tabSleepCandidates(now: now)
+        for id in TabUnloadPolicy.tabsToThaw(candidates, threshold: tabFreezeThreshold, now: now) {
+            thawTab(id)
+        }
+        var frozen: [Tab.ID] = []
+        for id in TabUnloadPolicy.tabsToFreeze(candidates, threshold: tabFreezeThreshold, now: now) {
+            guard let tab = store.tab(withID: id),
+                  let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { continue }
+            if freezing.freeze() == .requested { frozen.append(id) }
+        }
+        return frozen
     }
 
     private func selectNextTabAway(from id: Tab.ID) {

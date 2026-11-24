@@ -26,6 +26,14 @@ struct ArchiveView: View {
                     }
                 }
                 .help("Today tabs in \(store.activeProfile.name) not selected for this long move here")
+                if model.engineHost.supportsTabFreezing {
+                    Menu("Freeze Inactive Tabs: \(model.tabFreezeThreshold.title)") {
+                        ForEach(TabFreezeThreshold.allCases, id: \.self) { threshold in
+                            Button(threshold.title) { model.tabFreezeThreshold = threshold }
+                        }
+                    }
+                    .help("Tabs not shown for this long stop running in the background: they stay loaded and go on at once when shown")
+                }
                 Menu("Unload Inactive Tabs: \(model.tabUnloadThreshold.title)") {
                     ForEach(TabUnloadThreshold.allCases, id: \.self) { threshold in
                         Button(threshold.title) { model.tabUnloadThreshold = threshold }

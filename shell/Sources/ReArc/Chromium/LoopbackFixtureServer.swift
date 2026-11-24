@@ -121,6 +121,27 @@ final class LoopbackFixtureServer {
         });
         </script></body></html>
         """,
+        // Tab freezing: a page that counts its own timer and says each tick in its title, so the
+        // self-test hears a running page without asking it anything (a script of the shell's thaws
+        // a frozen page). sleepState(): "<boot id>:<ticks>:<longest gap between ticks, ms>:<freeze
+        // events>:<resume events>:<document.hidden>:<document.wasDiscarded>"; sleepMark() starts
+        // the gap again.
+        "/sleep": """
+        <!doctype html><html><head><title>sleep 0</title></head><body style="margin:0;font:24px -apple-system">sleep<script>
+        var boot = Math.random().toString(36).slice(2), ticks = 0, gap = 0, freezes = 0, resumes = 0, last = performance.now();
+        document.addEventListener('freeze', function () { freezes++; });
+        document.addEventListener('resume', function () { resumes++; });
+        setInterval(function () {
+          var now = performance.now();
+          if (now - last > gap) gap = now - last;
+          last = now; ticks++; document.title = 'sleep ' + ticks;
+        }, 250);
+        function sleepMark() { gap = 0; last = performance.now(); return boot; }
+        function sleepState() {
+          return [boot, ticks, Math.round(gap), freezes, resumes, document.hidden, !!document.wasDiscarded].join(':');
+        }
+        </script></body></html>
+        """,
         // A button that asks to share a tab, a window or the screen with its sound (getDisplayMedia
         // needs the click's user activation). window.shareState: idle, pending, live:<surface>:<audio
         // tracks>, ended, error:<name>; window.shareFrames counts the shared picture's frames as they

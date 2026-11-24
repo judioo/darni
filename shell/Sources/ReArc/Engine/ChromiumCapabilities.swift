@@ -78,6 +78,7 @@ struct ChromiumCapabilities: Equatable {
     static let webAuthnPromptsFeature = "webauthn_prompts"
     static let displayCaptureFeature = "display_capture"
     static let displayCaptureHiddenTabFeature = "display_capture_hidden_tab"
+    static let tabFreezeFeature = "tab_freeze"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -146,6 +147,7 @@ struct ChromiumCapabilities: Equatable {
         displayCaptureFeature: 70,
         // Bridge 0.82.0 (engine patch tab/102): a behaviour of the 1.70 calls, no new minor.
         displayCaptureHiddenTabFeature: 70,
+        tabFreezeFeature: 71,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -202,6 +204,10 @@ struct ChromiumCapabilities: Equatable {
     var dangerousDownloads: Bool
     /// `ReArcTabDiscard` and tab-event kinds 5 (discarded) / 6 (discard cleared).
     var tabDiscard: Bool
+    /// `ReArcTabFreeze`, `ReArcTabUnfreeze` and `ReArcTabGetFreezeState` (ABI
+    /// 1.71, engine patch `tab/103`): a hidden page is frozen before it is
+    /// unloaded. Without it pages run until the unload.
+    var tabFreeze: Bool
     /// Default search provider, input classification and `ReArcAutocompleteStart`.
     var searchAutocomplete: Bool
     /// Page fullscreen requests (`ReArcEngineSetFullscreenCallback`, `ReArcTabExitFullscreen`).
@@ -347,6 +353,7 @@ struct ChromiumCapabilities: Equatable {
         historyQuery = adopted(Self.historyQueryFeature)
         dangerousDownloads = downloads && adopted(Self.dangerousDownloadsFeature)
         tabDiscard = adopted(Self.tabDiscardFeature)
+        tabFreeze = adopted(Self.tabFreezeFeature)
         searchAutocomplete = adopted(Self.searchAutocompleteFeature)
         htmlFullscreen = adopted(Self.htmlFullscreenFeature)
         printing = adopted(Self.printingFeature)
@@ -443,6 +450,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.historyQueryFeature, historyQuery),
             (Self.dangerousDownloadsFeature, dangerousDownloads),
             (Self.tabDiscardFeature, tabDiscard),
+            (Self.tabFreezeFeature, tabFreeze),
             (Self.searchAutocompleteFeature, searchAutocomplete),
             (Self.htmlFullscreenFeature, htmlFullscreen),
             (Self.printingFeature, printing),
