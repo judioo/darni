@@ -162,6 +162,53 @@ final class WebKitWindowsAndSharingTests: XCTestCase {
         XCTAssertNil(engine.pagePrompts.screenShare, "no Darni sheet is up")
     }
 
+    // MARK: - Clean link copy (f41e5de1)
+
+    // parity: links.clean-copy
+    func testCopyURLOfAWebKitPageCopiesItWithoutTrackers() async throws {
+        server.route("/a", .page(title: "page A"))
+        let b = try makeBrowser()
+        b.model.copiesCleanLinks = true
+        b.model.linkPasteboard = NSPasteboard(name: NSPasteboard.Name("rearc-webkit-clean-\(UUID().uuidString)"))
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let tracked = URL(string: server.url("/a").absoluteString + "?id=7&utm_source=news&fbclid=abc")!
+        let tab = b.store.addTab(kind: .today, title: "A", url: tracked, in: b.first)
+        b.store.selectTab(tab.id)
+        let engine = try webKitEngine(b.model, tab, profile: profile)
+        engine.load(tracked)
+        try await wait("page A") { engine.webView.title == "page A" && !engine.isLoading }
+        XCTAssertEqual(engine.currentURL, tracked, "the WebKit page is on the address with its trackers")
+
+        b.model.copyURL(of: tab.id, format: .plain)
+        XCTAssertEqual(b.model.linkPasteboard.string(forType: .string), server.url("/a").absoluteString + "?id=7",
+                       "Copy URL takes the WebKit page's address and drops its trackers")
+        b.model.copyLink(tracked)
+        XCTAssertEqual(b.model.linkPasteboard.string(forType: .string), server.url("/a").absoluteString + "?id=7",
+                       "a row's Copy Link drops them too")
+    }
+
+    // parity: links.clean-copy
+    func testWebKitsOwnCopyLinkInThePageMenuCopiesItClean() {
+        // WebKit's page menu as it builds it for a link; Darni rewrites some items in place.
+        func item(_ title: String, _ id: String) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(id)
+            return item
+        }
+        let menu = NSMenu()
+        menu.addItem(item("Open Link in New Window", ReArcWebView.openLinkInNewWindow))
+        menu.addItem(item("Copy Link", "WKMenuItemIdentifierCopyLink"))
+        let params = PageContextMenuParams(linkURL: "https://a.test/x?utm_source=news")
+        ReArcWebView.customize(menu, params: params, options: PageContextMenuPlan.Options()) { entry in
+            let made = NSMenuItem(title: entry.title, action: nil, keyEquivalent: "")
+            made.identifier = NSUserInterfaceItemIdentifier("darni.\(entry.title)")
+            return made
+        }
+        let copy = menu.items.first { $0.title.hasPrefix("Copy Link") }
+        XCTExpectFailure("links.clean-copy: the WebKit page menu keeps WebKit's own Copy Link, which copies the link with its trackers")
+        XCTAssertEqual(copy?.identifier?.rawValue, "darni.Copy Link Address", "Darni's Copy Link Address, which copies the clean link")
+    }
+
     // MARK: - Gaps, stated as Chromium behaves (expected failures)
 
     // parity: tabs.popups
