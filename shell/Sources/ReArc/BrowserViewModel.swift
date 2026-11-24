@@ -35,6 +35,8 @@ final class BrowserViewModel {
     }
     let store: SidebarStore
     let engineHost = EngineHost()
+    /// The reader view: open readers, which pages are articles, its appearance (docs/FEATURE-SPECS/READER-VIEW.md).
+    let reader = ReaderCenter()
     @ObservationIgnored let themeColors = SpaceThemeColorCache()
     let easelStore = EaselDocumentStore()
     let captureFileStore = CaptureFileStore()
@@ -1154,6 +1156,7 @@ final class BrowserViewModel {
     }
 
     func releaseEngine(for id: Tab.ID) {
+        reader.forget(tabID: id)
         faviconObservedEngines[id] = nil
         titleObservedEngines[id] = nil
         observedPageTitles[id] = nil

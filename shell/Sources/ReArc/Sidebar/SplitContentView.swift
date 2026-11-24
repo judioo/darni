@@ -128,6 +128,7 @@ struct SplitContentView: View {
             container: model.containerLabel(for: engine, tab: tab)
         ) {
             SplitPanePage(engine: engine, tabID: tab.id, findBar: model.findBar)
+                .readerOverlay(model, tabID: tab.id, engine: engine)
         } toolbar: {
             if let row {
                 SplitPaneToolbarView(

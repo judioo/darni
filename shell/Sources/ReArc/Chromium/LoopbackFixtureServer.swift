@@ -662,7 +662,7 @@ final class LoopbackFixtureServer {
         if route == "/suggest" {
             return suggest(connection, path: path)
         }
-        let extra = route == "/image/tenor.gif" ? (body: linkedGIF, type: "image/gif") : blockingScript(path) ?? settings.routes(route)
+        let extra = route == "/image/tenor.gif" ? (body: linkedGIF, type: "image/gif") : blockingScript(path) ?? SelfTestReaderFixture.response(forPathAndQuery: path) ?? settings.routes(route)
         let body = isIcon || extra != nil ? nil : pages[route]
         let found = isIcon || body != nil || extra != nil
         log("[fixture] GET \(path) -> \(found ? 200 : 404)")

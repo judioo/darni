@@ -52,6 +52,8 @@ let package = Package(
         .executableTarget(
             name: "ReArc",
             dependencies: reArcDependencies,
+            // The reader's pinned Readability.js and its licence (Resources/Reader/README.md).
+            resources: [.copy("Resources/Reader")],
             swiftSettings: reArcSwiftSettings,
             linkerSettings: reArcLinkerSettings
         ),
