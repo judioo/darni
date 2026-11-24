@@ -109,6 +109,14 @@ final class ReaderCenter {
     func session(for tabID: UUID) -> Session? { sessions[tabID] }
     func isShowing(_ tabID: UUID) -> Bool { sessions[tabID] != nil }
 
+    /// The toolbar's colour over a page: the reader theme's while a reader
+    /// shows there, else the page's own (NIGHT-1125 bug 6: the strip kept the
+    /// site's colour above the reader).
+    func toolbarTint(forPage id: UUID?, pageColor: PageColor?, isDark: Bool) -> PageColor? {
+        guard let id, isShowing(id) else { return pageColor }
+        return appearance.backgroundColor(isDark: isDark)
+    }
+
     /// Extracts the page's article and opens its reader. `url` is the address
     /// the engine reports, never one the page's script gave. `onLink` gets a
     /// link the person clicked in the reader.

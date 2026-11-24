@@ -119,18 +119,16 @@ struct ReaderPalette {
     let chrome: Color
 
     init(theme: ReaderAppearance.Theme, isDark: Bool) {
-        let resolved: ReaderAppearance.Theme = theme == .auto ? (isDark ? .dark : .light) : theme
-        switch resolved {
+        let appearance = ReaderAppearance(font: .serif, size: ReaderAppearance.defaultSize, width: .medium, theme: theme)
+        background = Color(appearance.backgroundColor(isDark: isDark))
+        switch appearance.resolvedTheme(isDark: isDark) {
         case .sepia:
-            background = Color(.sRGB, red: 0xF6 / 255, green: 0xEF / 255, blue: 0xE0 / 255)
             ink = Color(.sRGB, red: 0x3D / 255, green: 0x32 / 255, blue: 0x26 / 255)
             chrome = Color(.sRGB, red: 0xED / 255, green: 0xE3 / 255, blue: 0xCF / 255)
         case .dark:
-            background = Color(.sRGB, red: 0x1C / 255, green: 0x1C / 255, blue: 0x1E / 255)
             ink = Color(.sRGB, red: 0xE6 / 255, green: 0xE6 / 255, blue: 0xE3 / 255)
             chrome = Color(.sRGB, red: 0x2A / 255, green: 0x2A / 255, blue: 0x2D / 255)
         default:
-            background = Color(.sRGB, red: 0xFB / 255, green: 0xFB / 255, blue: 0xF9 / 255)
             ink = Color(.sRGB, red: 0x1F / 255, green: 0x1F / 255, blue: 0x1D / 255)
             chrome = Color(.sRGB, red: 0xF0 / 255, green: 0xF0 / 255, blue: 0xEB / 255)
         }

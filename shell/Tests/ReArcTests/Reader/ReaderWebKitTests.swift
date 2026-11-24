@@ -544,6 +544,24 @@ final class ReaderWebKitTests: XCTestCase {
         XCTAssertEqual(top.scrollY, 0)
     }
 
+    /// NIGHT-1125 bug 6: with the reader open the toolbar keeps the reader theme's colour, not the page's.
+    func testTheToolbarTakesTheReadersColourWhileItIsOpen() async throws {
+        let center = ReaderCenter(defaults: defaults)
+        let teal = PageColor(red: 0, green: 0.45, blue: 0.5)
+        let other = UUID()
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: teal, isDark: false), teal, "no reader: the page's colour")
+        XCTAssertNil(center.toolbarTint(forPage: tabID, pageColor: nil, isDark: false))
+        _ = center.show(sampleArticle(), tabID: tabID) { _, _ in }
+        center.appearance = ReaderAppearance(font: .serif, size: 3, width: .medium, theme: .sepia)
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: teal, isDark: false), center.appearance.backgroundColor(isDark: false))
+        XCTAssertEqual(center.toolbarTint(forPage: other, pageColor: teal, isDark: false), teal, "another pane's page keeps its own")
+        center.appearance = ReaderAppearance(font: .serif, size: 3, width: .medium, theme: .auto)
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: nil, isDark: true), center.appearance.backgroundColor(isDark: true),
+                       "a page with no colour still gets the reader's")
+        center.close(tabID: tabID)
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: teal, isDark: false), teal, "closed: the page's colour again")
+    }
+
     func testAClickedLinkIsHandedToTheShellAndTheReaderGoesNowhere() async throws {
         let center = ReaderCenter(defaults: defaults)
         var links: [(URL, Bool)] = []
