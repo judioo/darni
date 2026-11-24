@@ -240,6 +240,9 @@ class Fixture(BaseHTTPRequestHandler):
         elif self.path.startswith("/capture"):
             body = CAPTURE_PAGE
             mime = "text/html"
+        elif self.path.startswith("/freeze"):
+            body = FREEZE_PAGE
+            mime = "text/html"
         else:
             body = b'''<!doctype html><html><head><link rel="icon" href="/favicon.png"><script>
 const pageWorld = typeof rearcSecret === 'undefined';
@@ -648,6 +651,78 @@ def audit_netlog(path, label):
     return hosts
 
 
+# Tab freezing (c_abi_freeze_host.mm, tab/103). The page counts its own timer ticks and the
+# longest gap between two of them, says each tick in its title (the host hears a title change
+# without asking the page anything: a script of the host's would thaw it), and counts the page
+# lifecycle events. arm() is the page that asks for things from a timer; ask() shares a tab.
+FREEZE_PAGE = b"""<!doctype html><html><head><title>freeze-ready</title></head>
+<body style="margin:0;background:#26a"><div id="box" style="width:50px;height:50px;background:#fff"></div>
+<video id="v" muted autoplay playsinline style="width:200px"></video><script>
+var boot = Math.random().toString(36).slice(2), ticks = 0, last = performance.now(), maxGap = 0;
+var freezes = 0, resumes = 0, changes = 0, audio = null;
+var share = {share: 'idle', frames: 0};
+var armed = {armed: false, fired: false, late: 0, opened: 'idle', activation: 'idle', notification: 'idle', alerted: false}, popup = null;
+document.addEventListener('freeze', function () { freezes++; });
+document.addEventListener('resume', function () { resumes++; });
+document.addEventListener('visibilitychange', function () { changes++; });
+setInterval(function () {
+  var now = performance.now();
+  if (now - last > maxGap) maxGap = now - last;
+  last = now; ticks++;
+  document.getElementById('box').style.marginLeft = (ticks % 20) * 5 + 'px';
+  document.title = 'tick ' + ticks;
+}, 250);
+function state() {
+  return {boot: boot, ticks: ticks, maxGap: Math.round(maxGap), freezes: freezes, resumes: resumes, changes: changes,
+          hidden: document.hidden, wasDiscarded: !!document.wasDiscarded, sound: audio ? audio.state : 'none',
+          share: share.share, frames: share.frames, armed: armed, popupClosed: popup ? popup.closed : null};
+}
+function mark() { maxGap = 0; last = performance.now(); return state(); }
+function sound() {
+  audio = new AudioContext();
+  var o = audio.createOscillator(), g = audio.createGain();
+  g.gain.value = 0.05; o.connect(g); g.connect(audio.destination); o.start();
+  return audio.state;
+}
+function guard() { window.onbeforeunload = function (e) { e.preventDefault(); return 'unsaved'; }; return true; }
+function ask() {
+  share = {share: 'pending', frames: 0};
+  navigator.mediaDevices.getDisplayMedia({video: true, audio: false}).then(function (stream) {
+    var track = stream.getVideoTracks()[0], now = share;
+    track.addEventListener('ended', function () { now.share = 'ended'; });
+    document.getElementById('v').srcObject = stream;
+    var reader = new MediaStreamTrackProcessor({track: track}).readable.getReader();
+    (function pump() {
+      reader.read().then(function (result) {
+        if (result.done) return;
+        now.frames++; result.value.close(); pump();
+      }, function () {});
+    })();
+    now.share = 'live';
+  }, function (error) { share.share = 'error:' + error.name + ':' + error.message; });
+  return true;
+}
+// Everything a page could want the browser to do for it, asked from a timer.
+function arm(ms) {
+  var at = performance.now();
+  armed.armed = true;
+  setTimeout(function () {
+    armed.fired = true; armed.late = Math.round(performance.now() - at - ms);
+    armed.activation = navigator.userActivation.isActive;
+    try { popup = window.open('/visit-a'); } catch (e) { armed.opened = 'error:' + e.name; }
+    if (armed.opened === 'idle') armed.opened = !!popup;
+    try {
+      armed.notification = 'asked';
+      Notification.requestPermission().then(function (p) { armed.notification = p; }, function (e) { armed.notification = 'error:' + e.name; });
+    } catch (e) { armed.notification = 'error:' + e.name; }
+    var a = document.createElement('a'); a.href = '/download/small'; a.download = ''; document.body.appendChild(a); a.click();
+    alert('asked from a timer'); armed.alerted = true;
+  }, ms);
+  return true;
+}
+</script></body></html>"""
+
+
 def main():
     build_gate()
     workspace = Path(tempfile.mkdtemp(prefix="rearc-c-abi-"))
@@ -662,7 +737,7 @@ def main():
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme", "display_capture")):
+        for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme", "display_capture", "freeze")):
             source = ENGINE / f"tests/c_abi_{kind}_host.mm"
             refuse_offline_unsafe_host(kind, source.read_text(errors="replace"), OUT)
             subprocess.run([
@@ -696,7 +771,7 @@ def main():
                 env["REARC_EXTENSION_DIRS"] = ",".join(str(f) for f in fixtures)
                 env["REARC_DROP_CRX"] = os.environ["REARC_DROP_CRX"]
                 env["REARC_DROP_CRX_ID"] = os.environ["REARC_DROP_CRX_ID"]
-            if kind in ("downloads", "danger", "extensions"):
+            if kind in ("downloads", "danger", "extensions", "freeze"):
                 downloads = (workspace / f"downloads-{kind}").resolve()
                 downloads.mkdir(exist_ok=True)
                 env["REARC_DOWNLOAD_DIR"] = str(downloads)
@@ -721,15 +796,19 @@ def main():
                 quiet_local_state(profile)
                 with log.open("wb") as output:
                     result = subprocess.run(merge_disabled_features([
-                        "timeout", "-k", "5", "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords", "display_capture") else "45", str(executable),
+                        "timeout", "-k", "5", "300" if kind == "freeze" else "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords", "display_capture") else "45", str(executable),
                         f"--user-data-dir={profile}", "--use-mock-keychain", f"--log-net-log={netlog}",
                         "--enable-logging=stderr",  # so an ignored test switch shows in the log (below)
                         *NO_OUTSIDE_NETWORK,
                         *(["--process-per-site", *(["--disable-features=WebContentsDiscard"] if phase else [])] if kind == "discard" else []),
                         *(["--safebrowsing-manual-download-blacklist=" + hashlib.sha256(b"a" * 65536).hexdigest()] if kind == "danger" else []),
                         *(["--remote-debugging-port=0", "--enable-logging=stderr", "--vmodule=close_controller=1,rearc_keep_alive=1,keep_alive_registry=1,devtools_ui_bindings=1"] if kind in ("display_capture", "devtools", "webui", "helpers", "permissions", "passwords", "fullscreen", "pip", "extensions", "autofill", "leak", "save", "interstitials") else []),
-                        *(["--disable-backgrounding-occluded-windows"] if kind in ("display_capture", "theme", "devtools", "helpers", "permissions", "passwords", "fullscreen", "pip", "pip_embedded", "perf", "extensions", "autofill", "leak", "save", "interstitials") else []),
+                        *(["--disable-backgrounding-occluded-windows"] if kind in ("freeze", "display_capture", "theme", "devtools", "helpers", "permissions", "passwords", "fullscreen", "pip", "pip_embedded", "perf", "extensions", "autofill", "leak", "save", "interstitials") else []),
                         *(["--use-fake-device-for-media-stream"] if kind == "permissions" else []),
+                        # Chromium's own parameters: a tab hidden a second ago may be frozen (a release
+                        # keeps five minutes). The sound of the page that must not be frozen goes nowhere.
+                        *(["--enable-features=CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/1s/freezing_audio_protection_time/1s",
+                           "--mute-audio", "--autoplay-policy=no-user-gesture-required"] if kind == "freeze" else []),
                         *(["--autoplay-policy=no-user-gesture-required"] if kind in ("pip", "pip_embedded") else []),
                         *([f"--mark_as_phishing=http://127.0.0.1:{server.server_port}/phishing-a,http://localhost:{server.server_port}/phishing-b"] if kind == "interstitials" else []),
                         # The locked test session never makes the window key; Chromium
