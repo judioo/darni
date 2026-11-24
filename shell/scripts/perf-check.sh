@@ -39,6 +39,19 @@
 #                    data/performance); --no-commit leaves it uncommitted
 #   --gate-only FILE gate, index, chart and commit an existing build result; measures nothing
 #
+#        scripts/perf-check.sh --rc-speedometer <RC .app or engine out dir> --build NNNN
+#                              [--releases DIR] [--engine-src DIR] [--runs N] [--data DIR]
+#   --rc-speedometer  a quick headless Speedometer 3.1 score for one release candidate (owner,
+#                    2026-11-24): about 5 minutes at low priority, no screen, no credentials,
+#                    under the machine-wide heavy-job lock (scripts/heavy-job.sh, when present).
+#                    Writes docs/releases/NNNN/performance/speedometer.md (and .json): score,
+#                    spread and runs, against the last RC and the latest weekly figure. Flag-only:
+#                    a drop beyond the regression limit prints "rc-speedometer: FLAG ..." and the
+#                    exit code is still 0 (2 only for wrong usage). Commits nothing.
+#   --releases DIR   where the record goes (default: docs/releases of this repo)
+#   --engine-src DIR engine/chromium/src with the out dirs and Speedometer (default: this repo's,
+#                    or $DARNI_PERF_ENGINE_SRC)
+#
 # Needs the screen for measuring: the input gate ~/Library/Caches/rearc-input-allowed, an
 # unlocked screen, and nothing else posting input (the input lock is taken for the run).
 # Never pushes. Exit codes: 0 pass, 1 halt, 2 usage or not comparable, 3 flag, 75 conditions.
@@ -48,6 +61,7 @@ SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$SHELL_DIR/.." && pwd)"
 PERF="$REPO/perf"
 DATA="${DARNI_PERF_DATA:-$HOME/.t3/worktrees/rearc-monorepo/perf-data/data/performance}"
+RC_TARGET="" RELEASES="$REPO/docs/releases" ENGINE_SRC="${DARNI_PERF_ENGINE_SRC:-$REPO/engine/chromium/src}"
 COMPARE_BROWSERS="darni,chrome,brave,helium,cra,ardia,zen,orion,arc,dia,safari"
 BUILD="" WEEKLY=0 REMEASURE=0 CHECK_DUE=0 ROTATE=1 ARC_BASELINE=0 RELEASED=0 COMPARE=0 BROWSERS="" HALT="" CONFIRM="" RUNS=5 SPEEDOMETER=1 ARC=0 COMMIT=1 GUARDS=1 GATE_ONLY="" OWNER_DARNI=0 OTHERS=0
 die() { echo "perf-check: $*" >&2; exit 2; }
@@ -74,13 +88,33 @@ while [[ $# -gt 0 ]]; do
     --no-commit) COMMIT=0 ;;
     --no-guards) GUARDS=0 ;;
     --gate-only) GATE_ONLY="$2"; shift ;;
-    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
+    --rc-speedometer) RC_TARGET="$2"; shift ;;
+    --releases) RELEASES="$2"; shift ;;
+    --engine-src) ENGINE_SRC="$2"; shift ;;
+    -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo/!p;}' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
 done
-[[ -d $DATA || $COMMIT == 0 ]] || die "no data folder $DATA (make the perf-data worktree, or pass --data)"
 py() { (cd "$PERF" && python3 -m darni_perf "$@"); }
+if [[ -n $RC_TARGET ]]; then
+  # The RC score (owner, 2026-11-24): headless, no screen, no gate file, never holds a release.
+  [[ $BUILD =~ ^[0-9]+$ ]] || die "--rc-speedometer needs --build NNNN"
+  [[ $WEEKLY == 0 && $COMPARE == 0 && $ARC_BASELINE == 0 && -z $GATE_ONLY ]] || die "--rc-speedometer runs on its own"
+  [[ -e $RC_TARGET ]] || die "no such RC app or out dir: $RC_TARGET"
+  RC=(rc-speedometer --target "$RC_TARGET" --build "$BUILD" --releases "$RELEASES" --engine-src "$ENGINE_SRC" --runs "$RUNS")
+  [[ ! -d $DATA ]] || RC+=(--data "$DATA")
+  [[ ! -f $DATA/thresholds.json ]] || RC+=(--thresholds "$DATA/thresholds.json")
+  HEAVY="$SHELL_DIR/scripts/heavy-job.sh"
+  if [[ -x $HEAVY ]]; then
+    "$HEAVY" "rc-speedometer-$BUILD" -- bash -c 'cd "$1" && shift && exec python3 -m darni_perf "$@"' _ "$PERF" "${RC[@]}"
+  else
+    echo "perf-check: no scripts/heavy-job.sh yet: running without the machine-wide lock" >&2
+    py "${RC[@]}"
+  fi
+  exit $?
+fi
+[[ -d $DATA || $COMMIT == 0 ]] || die "no data folder $DATA (make the perf-data worktree, or pass --data)"
 DO_DARNI=1 DO_ROTATION=0
 if [[ $WEEKLY == 1 ]]; then
   [[ -z $BUILD ]] || die "--weekly picks the build itself; drop --build"
