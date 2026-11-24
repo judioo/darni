@@ -1994,7 +1994,10 @@ final class ChromiumSelfTest {
     /// request open; Share is ignored while the sheet has just changed
     /// (SS-01); sharing the other tab gives
     /// the page a live "browser" stream with sound and frames, the bar over
-    /// both tabs and the model's record, and Darni's Stop ends it; sharing
+    /// both tabs and the model's record, and Darni's Stop ends it; that tab
+    /// has never been shown and is shared again after it was, and both times
+    /// its page stays hidden to its own scripts and hears no visibilitychange
+    /// when the share starts or ends (engine patch tab/102); sharing
     /// its own tab and stopping from the page clears the same state; a page
     /// that navigates away takes its sheet with it. A window or the screen
     /// is chosen in the macOS picker, which only a person may answer: this
@@ -2006,7 +2009,9 @@ final class ChromiumSelfTest {
         }
         guard ChromiumScreenShareChannel.calls != nil else {
             let missing = ChromiumScreenShareCalls.missingSymbols
-            return log("ABI-GAP display_capture not advertised\(missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))"): "
+            let gap = !runtime.capabilities.screenSharing ? ChromiumCapabilities.displayCaptureFeature
+                : ChromiumCapabilities.displayCaptureHiddenTabFeature
+            return log("ABI-GAP \(gap) not advertised\(missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))"): "
                 + "a page's request to share a tab, a window or the screen fails at once")
         }
         let previous = store.selectedTab?.id
@@ -2027,6 +2032,24 @@ final class ChromiumSelfTest {
         let site = shareURL.host().map { "\($0):\(shareURL.port ?? 0)" } ?? ""
         func state() async -> String { ((try? await engine.evaluate("window.shareState", in: .page)) as? String) ?? "" }
         func frames() async -> Int { ((try? await engine.evaluate("window.shareFrames", in: .page)) as? NSNumber)?.intValue ?? -1 }
+        // What the page of the tab to share can tell about itself: "<document.hidden>:<visibilitychange
+        // events>:<width>x<height>". A share may change the size of a tab that had none, and nothing
+        // else: the page of a tab nobody looks at stays hidden, and hears nothing when the share starts
+        // or ends (engine patch tab/102, the security review's condition). The first call starts the
+        // count, and a small change of the page four times a second, so its picture has new frames.
+        func sharedPage() async -> String {
+            ((try? await otherEngine.evaluate("""
+                (window.shareSeen === undefined && (window.shareSeen = 0,
+                     document.addEventListener('visibilitychange', function () { window.shareSeen++; }),
+                     setInterval(function () { document.body.style.opacity = document.body.style.opacity === '0.9' ? '1' : '0.9'; }, 250)),
+                 document.hidden + ':' + window.shareSeen + ':' + innerWidth + 'x' + innerHeight)
+                """, in: .page)) as? String) ?? ""
+        }
+        // A visibility change reaches a page after the browser's own state: read it a moment later.
+        func sharedPageSettled() async throws -> String {
+            try await Task.sleep(nanoseconds: 700_000_000)
+            return await sharedPage()
+        }
         func cleanUp() async throws {
             model.closeTab(tab.id)
             model.closeTab(other.id)
@@ -2111,6 +2134,11 @@ final class ChromiumSelfTest {
         try check(late != .rearcOK, "an answer to a request that is over: \(late.rearcName)")
 
         // 3. Share the other tab, with its sound: a live stream, the bars, the record; Darni's Stop ends it.
+        // That tab has never been shown: its page is hidden and has no size yet (the share of 1323
+        // ended after ten seconds for want of a first frame).
+        let neverShown = await sharedPage()
+        try check(neverShown.hasPrefix("true:0:") && otherEngine.attachmentID == nil,
+                  "the tab to share before the share: \(neverShown), lease \(String(describing: otherEngine.attachmentID))")
         guard await askByClick() else { throw Failure(description: "the second click opened no sheet (page \(await state()))") }
         sheet = try XUnwrap(prompts.screenShare, "the second sheet")
         prompts.screenShareSelection = otherEngine.tabID
@@ -2138,6 +2166,10 @@ final class ChromiumSelfTest {
         try check(model.screenShareCards(in: model.store.keyWindowID).isEmpty, "a card for the tab on screen")
         try await waitAsync("frames of the shared tab", timeout: 15) { await frames() > 0 }
         let shownFrames = await frames()
+        // Shared, the page is painted (it has a size now) and is still hidden to its own scripts.
+        let neverShownShared = try await sharedPageSettled()
+        try check(neverShownShared.hasPrefix("true:0:") && !neverShownShared.hasSuffix(":0x0") && otherEngine.attachmentID == nil,
+                  "the shared tab's page while it is shared: \(neverShownShared) (before \(neverShown))")
         let stops = ChromiumScreenShareChannel.stops
         prompts.stopScreenShare()
         try await waitAsync("Stop Sharing ends the page's track", timeout: 10) { await state() == "ended" }
@@ -2147,6 +2179,41 @@ final class ChromiumSelfTest {
                   "after Stop Sharing: bar \(prompts.sharingLine ?? "none"), shared tab's bar \(otherEngine.pagePrompts.sharedBy), "
                       + "record empty \(model.screenShares.isEmpty)")
         try check(!engine.stopScreenShare(), "a second Stop found something to stop")
+        let neverShownAfter = try await sharedPageSettled()
+        try check(neverShownAfter == neverShownShared, "the shared tab's page after the share: \(neverShownAfter) (shared \(neverShownShared))")
+
+        // 3b. The same tab once it has been on screen and is in the background again, without its
+        // sound: live with frames, and its page hears nothing of the share from start to end.
+        model.selectTab(other.id)
+        try await waitAsync("the other tab on screen", timeout: 15) {
+            let page = await sharedPage()
+            return otherEngine.attachmentID != nil && page.hasPrefix("false:")
+        }
+        model.selectTab(tab.id)
+        try await waitAsync("the other tab in the background again", timeout: 15) {
+            let page = await sharedPage()
+            return engine.attachmentID != nil && otherEngine.attachmentID == nil && page.hasPrefix("true:")
+        }
+        let background = try await sharedPageSettled()
+        guard await askByClick() else { throw Failure(description: "the click for the tab in the background opened no sheet (page \(await state()))") }
+        prompts.screenShareSelection = otherEngine.tabID
+        prompts.screenShareAudio = false
+        try await wait("Share takes input for the tab in the background", timeout: 5) { prompts.screenShareInputAllowed && prompts.screenShareInputEnabled }
+        prompts.answerScreenShare(try XUnwrap(prompts.screenShareAnswer, "the answer for the tab in the background"))
+        try await waitAsync("the tab in the background shared", timeout: 15) { await state().hasPrefix("live:") }
+        let backgroundLive = await state()
+        try check(backgroundLive == "live:browser:0", "the tab in the background without sound: \(backgroundLive)")
+        try await waitAsync("frames of the tab in the background", timeout: 15) { await frames() > 0 }
+        let backgroundShared = try await sharedPageSettled()
+        try check(background.hasPrefix("true:") && backgroundShared == background,
+                  "the page of the tab in the background while it is shared: \(backgroundShared) (before \(background))")
+        prompts.stopScreenShare()
+        try await waitAsync("Stop Sharing ends the second share", timeout: 10) { await state() == "ended" }
+        try await wait("the engine reports the second share over", timeout: 10) {
+            !engine.mediaCapture.isCapturingDisplay && !prompts.isSharingScreen && model.screenShares.isEmpty
+        }
+        let backgroundAfter = try await sharedPageSettled()
+        try check(backgroundAfter == background, "the page of the tab in the background after the share: \(backgroundAfter) (before \(background))")
 
         // 4. Share its own tab; the page stops it itself.
         guard await askByClick() else { throw Failure(description: "the third click opened no sheet (page \(await state()))") }
@@ -2176,8 +2243,11 @@ final class ChromiumSelfTest {
             + "\(offered.map(\.engineTabID)), window \(request.offersWindow), screen \(request.offersScreen) (system picker "
             + "\(request.usesSystemPicker), screen recording \(request.screenRecording.rawValue)); unknown tab -> \(unknown.rearcName), "
             + "\(devTools), request kept; Cancel -> \(cancelled); Share at once after picking a row ignored, taken after "
-            + "\(Int(PagePromptCenter.screenShareInputDelay * 1000)) ms; other tab with sound -> \(live), \(shownFrames) frame(s), bars on both tabs, "
-            + "Stop Sharing -> ended; own tab -> \(ownLive), page stop clears the bar; navigation withdraws the sheet; "
+            + "\(Int(PagePromptCenter.screenShareInputDelay * 1000)) ms; other tab (never shown: \(neverShown)) with sound -> \(live), "
+            + "\(shownFrames) frame(s), bars on both tabs, its page shared \(neverShownShared) and after \(neverShownAfter), "
+            + "Stop Sharing -> ended; the same tab back in the background (\(background)) without sound -> \(backgroundLive), "
+            + "its page shared \(backgroundShared) and after \(backgroundAfter); "
+            + "own tab -> \(ownLive), page stop clears the bar; navigation withdraws the sheet; "
             + "last outcome \(ChromiumScreenShareChannel.lastOutcome)")
     }
 
