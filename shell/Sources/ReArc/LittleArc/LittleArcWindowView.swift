@@ -334,7 +334,7 @@ struct LittleArcWindowView: View {
                     // Arc centres the host in the field.
                     Spacer(minLength: 0)
                     let text = LittleArcChrome.addressText(for: engine.currentURL ?? record.url)
-                    Text(text.isEmpty ? "Search or enter URL" : text)
+                    Text(text.isEmpty ? AddressFieldCopy.littleArcPlaceholder : text)
                         .foregroundStyle(text.isEmpty ? .secondary : .primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
