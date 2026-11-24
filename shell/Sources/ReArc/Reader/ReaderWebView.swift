@@ -69,9 +69,11 @@ final class ReaderPage: NSObject, WKNavigationDelegate, WKUIDelegate {
         documentNavigation = webView.loadHTMLString(html, baseURL: nil)
     }
 
-    /// A changed setting: the root element's attributes change in place, so
-    /// the place in the article is kept. The stylesheet already has a rule
-    /// for every value; no style text is written.
+    /// A changed setting: the root element's attributes change in place, with
+    /// no reload. The stylesheet already has a rule for every value; no style
+    /// text is written. A new font or size reflows the text, so the place in
+    /// the article is kept by hand: the element at the top of the view, and how
+    /// far into it the view starts, are the same after the change.
     func applyAppearance(_ appearance: ReaderAppearance) {
         guard appearance != self.appearance else { return }
         self.appearance = appearance
@@ -79,7 +81,50 @@ final class ReaderPage: NSObject, WKNavigationDelegate, WKUIDelegate {
         let assignments = appearance.rootAttributes.map { attribute in
             "document.documentElement.setAttribute(\(Self.literal(attribute.name)), \(Self.literal(attribute.value)));"
         }.joined()
-        webView.evaluateJavaScript(assignments + "true", in: nil, in: Self.appearanceWorld) { _ in }
+        webView.evaluateJavaScript(Self.keepingPlace(assignments), in: nil, in: Self.appearanceWorld) { _ in }
+    }
+
+    /// Runs `change` with the reading place held: the first block under the
+    /// top of the view (searched down the text column's middle) is the anchor.
+    /// At the very top nothing is held, so the title stays in view.
+    static func keepingPlace(_ change: String) -> String {
+        """
+        (function () {
+          var anchor = null, y = 0, into = 0;
+          if (window.scrollY > 0) {
+            var column = document.querySelector("main") || document.body, box = column.getBoundingClientRect();
+            var x = box.left + box.width / 2, skip = ["HTML", "BODY", "MAIN", "ARTICLE", "HEADER"];
+            for (var probe = 1; probe < window.innerHeight / 2 && !anchor; probe += 12) {
+              var e = document.elementFromPoint(x, probe);
+              while (e && e.parentElement && getComputedStyle(e).display.indexOf("inline") === 0) { e = e.parentElement; }
+              if (e && skip.indexOf(e.tagName) < 0) {
+                var r = e.getBoundingClientRect();
+                if (r.height > 0) { anchor = e; y = probe; into = (probe - r.top) / r.height; }
+              }
+            }
+          }
+          \(change)
+          if (anchor && anchor.isConnected) {
+            var n = anchor.getBoundingClientRect();
+            window.scrollBy(0, n.top + into * n.height - y);
+          }
+          return true;
+        })()
+        """
+    }
+
+    /// Where the view is: the page's scroll offset and the text at the top of the view (tests).
+    @MainActor
+    func readingPlace() async throws -> (scrollY: Double, topText: String) {
+        let json = try await ReaderWebKitEvaluation.evaluate("""
+            (function () {
+              var column = document.querySelector("main") || document.body, box = column.getBoundingClientRect();
+              var e = document.elementFromPoint(box.left + box.width / 2, 2);
+              return JSON.stringify({y: window.scrollY, text: e ? (e.textContent || "").slice(0, 40) : ""});
+            })()
+            """, in: webView)
+        let object = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        return ((object?["y"] as? NSNumber)?.doubleValue ?? 0, object?["text"] as? String ?? "")
     }
 
     /// The root element's appearance attributes as the page has them now (tests).

@@ -505,6 +505,45 @@ final class ReaderWebKitTests: XCTestCase {
         XCTAssertTrue(ReaderHTML.document(for: sampleArticle(), appearance: ReaderCenter(defaults: defaults).appearance).contains("data-theme=\"dark\""))
     }
 
+    /// NIGHT-1125 bug 4: a new font or size kept the scroll offset, so the text
+    /// under the view's top moved away. Now the paragraph there stays there.
+    func testANewFontOrSizeKeepsTheReadingPlace() async throws {
+        let words = Array(repeating: "words that wrap across the column and reflow when the type changes", count: 6).joined(separator: " ")
+        let article = ReaderArticle(sourceURL: server.url(SelfTestReaderFixture.articlePath), title: "Long", siteName: "example",
+                                    body: (0..<60).map { .element(ReaderElement(.p, children: [.text("Paragraph \($0): \(words)")])) })
+        let center = ReaderCenter(defaults: defaults)
+        let session = center.show(article, tabID: tabID) { _, _ in }
+        session.page.webView.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        _ = try await contents(of: session.page)
+        _ = try await ReaderWebKitEvaluation.evaluate(
+            "document.querySelectorAll('article p')[30].scrollIntoView(); window.scrollBy(0, 8); 'ok'", in: session.page.webView)
+        let before = try await session.page.readingPlace()
+        XCTAssertTrue(before.topText.hasPrefix("Paragraph 30:"), "set up: \(before.topText)")
+        XCTAssertGreaterThan(before.scrollY, 0)
+
+        var last = before.scrollY
+        for next in [ReaderAppearance(font: .sans, size: 3, width: .medium, theme: .auto),
+                     ReaderAppearance(font: .sans, size: 6, width: .medium, theme: .auto),
+                     ReaderAppearance(font: .serif, size: 2, width: .narrow, theme: .sepia)] {
+            center.appearance = next
+            var place = try await session.page.readingPlace()
+            for _ in 0..<100 where place.scrollY == last {
+                try await Task.sleep(nanoseconds: 20_000_000)
+                place = try await session.page.readingPlace()
+            }
+            XCTAssertNotEqual(place.scrollY, last, "the text reflowed under \(next)")
+            last = place.scrollY
+            XCTAssertTrue(place.topText.hasPrefix("Paragraph 30:"), "under \(next) the top of the view shows: \(place.topText)")
+        }
+
+        // At the very top the title stays in view.
+        _ = try await ReaderWebKitEvaluation.evaluate("window.scrollTo(0, 0); 'ok'", in: session.page.webView)
+        center.appearance = ReaderAppearance(font: .serif, size: 7, width: .wide, theme: .light)
+        try await settle(0.3)
+        let top = try await session.page.readingPlace()
+        XCTAssertEqual(top.scrollY, 0)
+    }
+
     func testAClickedLinkIsHandedToTheShellAndTheReaderGoesNowhere() async throws {
         let center = ReaderCenter(defaults: defaults)
         var links: [(URL, Bool)] = []
