@@ -195,11 +195,16 @@ extension SiteControlCenter {
         case removeDevice
         /// After a permission change: the loaded page keeps what it had until it is reloaded.
         case reloadPage
+        /// "Dark mode on this site": the site's own choice, or back to the setting.
+        case darkModeOnForSite, darkModeOffForSite, darkModeDefaultForSite
 
         public var title: String {
             switch self {
             case .removeDevice: return "Remove Access"
             case .reloadPage: return "Reload Page"
+            case .darkModeOnForSite: return "Turn On for This Site"
+            case .darkModeOffForSite: return "Turn Off for This Site"
+            case .darkModeDefaultForSite: return "Use the Setting for All Websites"
             case .turnOffBlockingForSite: return "Turn Off Blocking for This Site"
             case .turnOnBlockingForSite: return "Turn On Blocking for This Site"
             case .turnOffBlockingForSiteOnly: return "Turn Off Blocking for This Site Only"
@@ -225,6 +230,7 @@ extension SiteControlCenter {
             case reloadToApply
             case autoPictureInPicture
             case contentBlocking
+            case websiteDarkMode
         }
 
         public var kind: Kind
@@ -349,8 +355,8 @@ extension SiteControlCenter {
     /// Location, camera, microphone and notifications lead, as in Arc; other types follow by name.
     static let leadingPermissions = ["geolocation", "camera_stream", "mic_stream", "notifications"]
 
-    /// Blocking first (when the engine has it), then the site's
-    /// permissions, then automatic Picture in Picture.
+    /// Blocking first (when the engine has it), then dark mode (the same),
+    /// then the site's permissions, then automatic Picture in Picture.
     /// `siteAccess`: the engine's own state for the site (Chromium ABI 1.67).
     /// With it the rows are the engine's (every setting the site holds, the
     /// devices chosen for it, what is in use) and the shell's record of its
@@ -361,6 +367,7 @@ extension SiteControlCenter {
     /// On WebKit the shell's store is the answer.
     public static func settingRows(
         contentBlocking: SettingRow? = nil,
+        websiteDarkMode: SettingRow? = nil,
         siteAccess: SiteAccess? = nil,
         needsReload: Bool = false,
         permissions: [(type: PermissionType, entry: SitePermissionStore.Entry)],
@@ -386,6 +393,8 @@ extension SiteControlCenter {
             }
         }
         rows.append(autoPiPRow(autoPiP, enabled: autoPiPEnabled, now: now))
+        // Dark mode (when the engine has it) sits under blocking: the two rows that are Darni's own.
+        if let websiteDarkMode { rows.insert(websiteDarkMode, at: 0) }
         if let contentBlocking { rows.insert(contentBlocking, at: 0) }
         return rows
     }

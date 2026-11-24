@@ -28,7 +28,7 @@ extension BrowserViewModel {
         siteControlSettingRows(for: engine, site: site).filter { row in
             switch row.kind {
             case .permission, .sitePermission, .siteDevice, .reloadToApply: return true
-            case .autoPictureInPicture, .contentBlocking: return false
+            case .autoPictureInPicture, .contentBlocking, .websiteDarkMode: return false
             }
         }
     }
