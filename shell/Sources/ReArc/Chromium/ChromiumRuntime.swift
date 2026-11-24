@@ -707,6 +707,12 @@ final class ChromiumRuntime {
 
     /// `--user-data-dir` and `--profile-directory` the engine runs with.
     private(set) var userDataDir: URL?
+    /// This run is the person's ordinary launch on their own data: not the
+    /// self-test or the bench, not a release verification bundle, not another
+    /// data or engine folder (`ChromiumNativeMessagingHosts.runs`). Only such
+    /// a run may reach what is the person's outside the profile folder, such
+    /// as their "this Mac" passkeys (`LocalPasskeyStorePolicy`).
+    private(set) var isOrdinaryLaunch = false
     /// 1Password's helper, from the host manifest this launch copied and
     /// checked; nil when the hosts were not mirrored (`OnePasswordConnection`).
     private(set) var onePasswordHelperPath: String?
@@ -771,6 +777,7 @@ final class ChromiumRuntime {
         keychainMode = keychain
         userDataDir = ChromiumLaunchArguments.userDataDir(in: arguments).map { URL(fileURLWithPath: $0, isDirectory: true) }
         startupDirectory = ChromiumLaunchArguments.startupProfileDirectory(in: arguments)
+        isOrdinaryLaunch = userDataDir.map { ChromiumNativeMessagingHosts.runs(testSwitches: testSwitches, userDataDir: $0) } ?? false
         if let userDataDir {
             // Crash dumps (page content) into ReArc's data, not the stock
             // Chromium folder every engine shares (RC-802 AC-02). Helpers

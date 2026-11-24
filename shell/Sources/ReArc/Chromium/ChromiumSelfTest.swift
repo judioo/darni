@@ -1488,6 +1488,7 @@ final class ChromiumSelfTest {
         try await passkeyHiddenLittleArcChecks(model: model, shell: shell, store: store, base: base)
         try await screenShareChecks(model: model, store: store, window: first, base: base)
         try await websiteDarkModeChecks(model: model, store: store, base: base)
+        try await localPasskeyChecks(model: model)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
         } else {
@@ -1983,6 +1984,74 @@ final class ChromiumSelfTest {
             + "engine and content generation \(generation) kept, row dimmed); selecting B restored it as a new document "
             + "(\(documentBefore.map { "\($0.documentGeneration)" } ?? "?") -> "
             + "\(runtime.documentIdentity(tab: hiddenEngine.tabID).map { "\($0.documentGeneration)" } ?? "?"))")
+    }
+
+    // MARK: "This Mac" passkeys in Settings (ABI 1.72)
+
+    /// "This Mac" passkeys in Settings (ABI 1.72, engine patch `tab/104`;
+    /// PASSKEYS-AND-SITE-PERMISSIONS.md, 1.7). The self-test must never list,
+    /// make or delete a real passkey (security review PK-08, advance read
+    /// point 5), so it checks three things and reaches no keychain:
+    /// 1. this launch is a test launch, and the app's store is not the engine's;
+    /// 2. the Settings model lists and deletes on a fixture in memory, asking first;
+    /// 3. the engine's own calls, only in a bundle where the engine has no
+    ///    profile authenticator (a verification bundle, or one not signed with
+    ///    the passkey group): "available" false, and a delete refused.
+    @MainActor
+    private func localPasskeyChecks(model: BrowserViewModel) async throws {
+        try check(!runtime.isOrdinaryLaunch, "the self-test counts as the person's ordinary launch: it could reach their passkeys")
+        try check(model.localPasskeys.choice != .engine && model.localPasskeys.engineStore == nil,
+                  "the engine's passkey store is attached in a self-test (\(model.localPasskeys.choice))")
+        let profile = Profile.ID()
+        try check(model.localPasskeys.store(for: profile) is UnavailableLocalPasskeyStore || model.localPasskeys.choice != .none,
+                  "a self-test without a fixture has a passkey store")
+
+        let ada = LocalPasskey(id: "00ff", site: "example.com", userName: "ada@example.com", displayName: "Ada Lovelace")
+        let bob = LocalPasskey(id: "a1b2c3", site: "bank.example", userName: "bob")
+        let fixture = FixtureLocalPasskeyStore(passkeys: [ada, bob])
+        let sheet = LocalPasskeysModel(store: fixture, isFixture: true)
+        sheet.refresh()
+        try check(sheet.phase == .loaded && sheet.passkeys == [bob, ada], "the fixture's passkeys are not listed: \(sheet.phase) \(sheet.passkeys.count)")
+        sheet.ask(ada)
+        try check(sheet.asking == ada && fixture.calls == ["list"], "asking about a passkey deleted something: \(fixture.calls)")
+        sheet.cancelDelete()
+        sheet.confirmDelete()
+        try check(fixture.calls == ["list"] && fixture.passkeys.count == 2, "a cancelled delete went through: \(fixture.calls)")
+        sheet.ask(ada)
+        sheet.confirmDelete()
+        try check(fixture.calls == ["list", "delete 00ff"] && sheet.passkeys == [bob] && sheet.notice == LocalPasskeyText.deleted,
+                  "the confirmed passkey was not the one deleted: \(fixture.calls) \(sheet.passkeys.count)")
+        log("PASS local passkeys: Settings lists a fixture's passkeys and deletes the one confirmed, after asking; a test launch has no engine store")
+
+        guard runtime.capabilities.localPasskeys, let calls = ChromiumLocalPasskeyCalls.resolve() else {
+            let missing = ChromiumLocalPasskeyCalls.missingSymbols
+            return log("ABI-GAP \(ChromiumCapabilities.localPasskeysFeature) not advertised\(missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))"): "
+                + "Settings has no list of this Mac's passkeys")
+        }
+        let verification = ShippedBuild.isVerificationBundle(infoDictionary: Bundle.main.infoDictionary)
+        guard verification || !SignedKeychainGroups.hasPasskeyGroup else {
+            return log("SKIP local passkeys engine calls: this bundle is signed with the passkey group and is no verification bundle, "
+                + "so the engine would ask the real keychain; the self-test never does")
+        }
+        let engine = ChromiumLocalPasskeyEngine(runtime: runtime, calls: calls)
+        let engineProfile = runtime.defaultProfileID
+        var listed: (status: ReArcStatus, json: String?)?
+        let listStatus = engine.rawList(engineProfile: engineProfile) { listed = ($0, $1) }
+        try check(listStatus == .rearcOK, "ReArcProfileGetLocalPasskeys refused: \(listStatus.rearcName)")
+        try check(listed == nil, "the passkey list was delivered inside the call")
+        try await wait("the engine's passkey list") { listed != nil }
+        let answer = LocalPasskeyAnswer(engineStatus: listed?.status ?? -1, json: listed?.json)
+        // A verification bundle must say this even if it was signed with the group by mistake:
+        // the engine names a group no build has (tab/104), so it never reaches a real passkey.
+        try check(answer == .unavailable, "the engine has a profile authenticator in a \(verification ? "verification bundle" : "bundle without the passkey group"): "
+            + "status \(listed?.status.rearcName ?? "none"), available \(answer.available), \(answer.passkeys.count) passkey(s)")
+        var deleteAnswered = false
+        let deleteStatus = engine.rawDelete(engineProfile: engineProfile, id: "00ff") { _, _ in deleteAnswered = true }
+        try check(deleteStatus == ReArcStatus(REARC_UNSUPPORTED) && !deleteAnswered, "a delete without a profile authenticator was not refused: \(deleteStatus.rearcName)")
+        let badStatus = engine.rawDelete(engineProfile: engineProfile, id: "not-hex") { _, _ in deleteAnswered = true }
+        try check(badStatus == ReArcStatus(REARC_INVALID_ARGUMENT) && !deleteAnswered, "a credential ID that is not hex was taken: \(badStatus.rearcName)")
+        log("PASS local passkeys: the engine has no profile authenticator in this \(verification ? "verification bundle" : "bundle") "
+            + "(available false, delete unsupported): no real passkey is listed or deleted")
     }
 
     // MARK: Dark mode for websites (ABI 1.73)
