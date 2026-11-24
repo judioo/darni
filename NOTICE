@@ -8,5 +8,9 @@ Authors, distributed under a BSD-style license:
 https://chromium.googlesource.com/chromium/src/+/main/LICENSE
 Chromium itself is not included in this repository.
 
+shell/Sources/ReArc/Resources/Reader/ contains Readability.js 0.6.0, Copyright
+(c) 2010 Arc90 Inc, from https://github.com/mozilla/readability, unmodified,
+licensed under the Apache License, Version 2.0 (LICENSE.md beside it).
+
 "Arc" is a trademark of The Browser Company of New York, Inc. Darni is not
 affiliated with or endorsed by The Browser Company.

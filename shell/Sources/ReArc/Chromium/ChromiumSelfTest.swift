@@ -1511,6 +1511,7 @@ final class ChromiumSelfTest {
         try await prerenderChecks(model: model, store: store)
         try await taskManagerChecks(model: model, store: store, window: first)
         try await contentBlockingChecks(model: model, store: store)
+        try await readerViewChecks(model: model, store: store)
         try await contentBlockingBlockedListChecks(model: model, store: store, shell: shell)
         try hostSitesChecks()
         try await siteNamesUsersChecks(model: model, store: store)
@@ -4414,6 +4415,135 @@ extension ChromiumSelfTest {
             } else {
                 log("ABI-GAP prerender: not prerendered (ReArcTabDelegate keeps IsPrerender2Supported's default, unsupported); the target loaded normally, renderer fine")
             }
+        }
+    }
+
+    // MARK: Reader view
+
+    /// The reader view on the engine (docs/FEATURE-SPECS/READER-VIEW.md §10), on the
+    /// reader fixture's pages (`SelfTestReaderFixture`), each through the model's own commands:
+    ///
+    /// - On the article the address field's button shows, and View > Show Reader is on.
+    /// - The reader opens with the article's title, byline, site, text and its picture.
+    ///   Readability ran in the reader's isolated world: the page's own world has no trace of it.
+    /// - Leaving the reader shows the page as it was left, with no history entry added.
+    /// - A link from the reader loads in the tab; an address that is not a web address does nothing.
+    /// - On a page that is no article there is no button.
+    /// - The hostile article (script in its body, on-attributes, javascript: links, SVG,
+    ///   frames): its payloads are live in the page itself, which is the control, and from
+    ///   the reader not one beacon reaches the fixture server.
+    @MainActor
+    private func readerViewChecks(model: BrowserViewModel, store: SidebarStore) async throws {
+        typealias Fixture = SelfTestReaderFixture
+        guard runtime.capabilities.scriptEvaluation else {
+            log("ABI-GAP script_evaluation not advertised: the reader view has no button and its menu item is off")
+            return
+        }
+        @MainActor func readerText(_ tab: Tab) async throws -> (text: String, names: Set<String>) {
+            guard let session = model.reader.session(for: tab.id) else { throw Failure(description: "reader: no reader is open") }
+            try await wait("the reader's page") { !session.page.webView.isLoading }
+            let json = try await ReaderWebKitEvaluation.evaluate(
+                "JSON.stringify({text: document.body.innerText, names: Array.prototype.map.call(document.querySelectorAll('article *'), "
+                    + "function (e) { return (e.namespaceURI === 'http://www.w3.org/1999/xhtml' ? '' : 'foreign ') + e.localName; })})",
+                in: session.page.webView)
+            let object = try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+            return (object?["text"] as? String ?? "", Set(object?["names"] as? [String] ?? []))
+        }
+        let menuItem = ShellMenus.reader(model).flatMap { $0 }.first
+        try check(menuItem?.appKitKeyEquivalent.key == "r" && menuItem?.appKitKeyEquivalent.mask == [.command, .option],
+                  "reader: the menu item's key is not ⌥⌘R")
+
+        try await withFixtureTab(model, store, title: "Reader", path: Fixture.articlePath) { tab, engine in
+            try await wait("the reader fixture's article") { engine.pageTitle?.contains(Fixture.articleTitle) == true && !engine.isLoading }
+            try check(model.readerButtonState(for: tab, engine: engine) != .showing, "reader: a reader is open before it was asked for")
+            model.detectReaderArticle(for: tab, engine: engine)
+            try await wait("the reader button on an article") { model.readerButtonState(for: tab, engine: engine) == .available }
+            try check(menuItem?.shownTitle == "Show Reader" && menuItem?.isEnabledNow == true,
+                      "reader: View > Show Reader is \(menuItem?.shownTitle ?? "missing"), enabled \(menuItem?.isEnabledNow ?? false)")
+            try check(model.readerImageMode(for: tab, engine: engine) == .loadedByPage, "reader: an ordinary tab's reader has pictures off")
+            _ = try await engine.evaluate("(function () { window.rearcReaderKept = 'kept'; window.scrollTo(0, 30); return 1; })()", in: .page)
+            let before = try await engine.evaluate("document.documentElement.outerHTML.length", in: .page) as? NSNumber
+
+            model.toggleReader(tabID: tab.id)
+            try await wait("the reader to open") { model.reader.isShowing(tab.id) }
+            guard let article = model.reader.session(for: tab.id)?.article else { throw Failure(description: "reader: no article") }
+            try check(article.title == Fixture.articleTitle && article.byline == Fixture.articleByline && article.siteName == Fixture.articleSite,
+                      "reader: title [\(article.title)] byline [\(article.byline ?? "none")] site [\(article.siteName)]")
+            try check(article.imagesShown == 1 && article.imagesWithheld == 0,
+                      "reader: \(article.imagesShown) pictures shown, \(article.imagesWithheld) withheld; the page had loaded its one picture")
+            let shown = try await readerText(tab)
+            try check(shown.text.contains(Fixture.articleTitle) && shown.text.contains("\(Fixture.articleByline) · \(article.readingMinutes) min read")
+                        && shown.text.contains("someone has added the single word"),
+                      "reader: the page does not show the article: \(shown.text.prefix(300))")
+            try check(shown.names.isSubset(of: Set(ReaderTag.allCases.map(\.rawValue))), "reader: elements outside the allowlist: \(shown.names.sorted())")
+            try check(menuItem?.shownTitle == "Hide Reader", "reader: the menu item still says \(menuItem?.shownTitle ?? "nothing") with the reader open")
+            try check(model.readerButtonState(for: tab, engine: engine) == .showing, "reader: the button does not show the reader as open")
+            let leaked = try await engine.evaluate("typeof Readability + '/' + typeof isProbablyReaderable + '/' + typeof walk", in: .page) as? String
+            try check(leaked == "undefined/undefined/undefined", "reader: the scripts left names in the page's own world: \(leaked ?? "?")")
+            log("PASS reader: the button shows on an article; the reader opens with its title, byline, site, \(article.readingMinutes) min, "
+                + "\(article.wordCount) words and 1 picture; Readability ran in an isolated world (page world: \(leaked ?? "?"))")
+
+            model.toggleReader(tabID: tab.id)
+            try check(!model.reader.isShowing(tab.id), "reader: it did not close")
+            let kept = try await engine.evaluate("window.rearcReaderKept + '|' + location.pathname", in: .page) as? String
+            let after = try await engine.evaluate("document.documentElement.outerHTML.length", in: .page) as? NSNumber
+            try check(kept == "kept|\(Fixture.articlePath)" && before == after && !engine.canGoBack,
+                      "reader: the page is not as it was left (state \(kept ?? "?"), length \(String(describing: before)) -> \(String(describing: after)), can go back \(engine.canGoBack))")
+            log("PASS reader: leaving it shows the page as it was left (its state kept, its document unchanged, no history entry)")
+
+            // Links: only a web address, and only as a page link in the tab.
+            model.toggleReader(tabID: tab.id)
+            try await wait("the reader to open again") { model.reader.isShowing(tab.id) }
+            for refused in ["javascript:document.title='reader-link-ran'", "chrome://settings", "file:///etc/hosts", "data:text/html,x"] {
+                model.openReaderLink(URL(string: refused)!, fromTab: tab.id, inNewTab: false)
+            }
+            try await Task.sleep(nanoseconds: 400_000_000)
+            try check(model.reader.isShowing(tab.id) && engine.currentURL?.path == Fixture.articlePath && engine.pageTitle != "reader-link-ran",
+                      "reader: an address that is not a web address was followed (\(engine.currentURL?.absoluteString ?? "?"))")
+            let plain = URL(string: "\(serverBase)\(Fixture.plainPath)")!
+            model.store.updateTab(tab.id, url: plain)
+            model.openReaderLink(plain, fromTab: tab.id, inNewTab: false)
+            try await wait("the reader's link to load in the tab") { engine.currentURL?.path == Fixture.plainPath && engine.pageTitle == "About" && !engine.isLoading }
+            try check(!model.reader.isShowing(tab.id), "reader: it stayed open over another page")
+            model.detectReaderArticle(for: tab, engine: engine)
+            try await wait("the page that is no article to be judged", timeout: 10) {
+                model.reader.availability(for: tab.id, url: engine.currentURL) == .notArticle
+            }
+            try check(model.readerButtonState(for: tab, engine: engine) == .hidden, "reader: the button shows on a page that is no article")
+            log("PASS reader: a link loads in the tab and closes the reader; javascript:, chrome:, file: and data: addresses do nothing; no button on a page that is no article")
+
+            // The hostile article. First the control: in the page itself its payloads run.
+            Fixture.resetBeacons()
+            loadShellTab(model, tab, engine, URL(string: "\(serverBase)\(Fixture.hostilePath)")!)
+            try await wait("the hostile article") { engine.pageTitle == Fixture.hostileTitle && !engine.isLoading }
+            try await wait("the hostile page's own beacons (the control)") {
+                let counts = Fixture.beaconCounts
+                return (counts["body-script"] ?? 0) > 0 && (counts["img-onerror"] ?? 0) > 0 && (counts["body-onload"] ?? 0) > 0
+            }
+            try await Task.sleep(nanoseconds: 1_500_000_000)
+            // The page itself stays alive under the reader, and its autofocus field pings again
+            // whenever the page gets the keyboard back: that one id is the page's, so it is left
+            // out. (The reader has no field: its elements are checked below.)
+            @MainActor func counts() -> [String: Int] { Fixture.beaconCounts.filter { $0.key != "input-autofocus" } }
+            let control = counts()
+            model.toggleReader(tabID: tab.id)
+            try await wait("the reader on the hostile article") { model.reader.isShowing(tab.id) }
+            let hostile = try await readerText(tab)
+            try check(hostile.text.contains(Fixture.hostileMarker) && hostile.text.contains(Fixture.hostileTitle),
+                      "reader: the hostile article's text is not shown: \(hostile.text.prefix(300))")
+            try check(hostile.names.isSubset(of: Set(ReaderTag.allCases.map(\.rawValue))) && !hostile.names.contains("a"),
+                      "reader: the hostile article brought elements across: \(hostile.names.sorted())")
+            if let page = model.reader.session(for: tab.id)?.page {
+                _ = try await ReaderWebKitEvaluation.evaluate(
+                    "Array.prototype.forEach.call(document.querySelectorAll('article *'), function (e) { if (typeof e.click === 'function') e.click(); }); 'clicked'",
+                    in: page.webView)
+            }
+            try await Task.sleep(nanoseconds: 2_500_000_000)
+            let afterReader = counts()
+            try check(afterReader == control, "reader: a beacon arrived while the reader showed the hostile article: before \(control), after \(afterReader)")
+            log("PASS reader: nothing from the hostile article ran in the reader: \(control.values.reduce(0, +)) beacons from the page itself "
+                + "(\(control.keys.sorted().joined(separator: ", "))), none more with the reader open and every element clicked")
+            model.closeReader(tabID: tab.id)
         }
     }
 
