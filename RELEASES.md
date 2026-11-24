@@ -24,6 +24,21 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1124.1317 — 2026-11-24
+
+**New**
+- Sites can share your screen. When a site such as Google Meet asks to share, Darni shows a sheet
+  where you pick a tab, a window or your entire screen; a window or the screen is picked in the
+  macOS picker. While a tab is shared, a bar on it says "Sharing a tab with …" and has Stop, and
+  the tab's row in the sidebar shows it too.
+- A tab can be dragged from one window's sidebar into another window's sidebar, and it moves
+  there. Moving a tab to a space in another profile or container asks first, as Move to Profile
+  does.
+- Little Darni opens where you last left one, at the same size and on the same screen.
+
+**Security**
+- The engine is updated to Chromium 156.0.8078.114, with Google's latest security fixes.
+
 ## Darni 2026.1123.1255 — 2026-11-23
 
 **Fixes**
