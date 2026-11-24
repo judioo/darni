@@ -147,7 +147,7 @@ extension BrowserViewModel {
         guard let id = tabID ?? store.selectedTabID, let tab = store.tab(withID: id) else { return }
         let engine = engineHost.engine(forTabID: id, profileID: profileID(for: tab))
         // Arc copies the link "without any trackers".
-        let (url, cleaned) = LinkCleaner.clean(engine?.currentURL ?? tab.url)
+        let (url, cleaned) = linkForCopying(engine?.currentURL ?? tab.url)
         let title = tab.customTitle ?? engine?.pageTitle ?? tab.title
         guard format == .quote, let reader = engine as? PageSelectionReading else {
             writeToPasteboard(format.text(url: url, title: title), toast: format, cleaned: cleaned, url: url)
@@ -161,9 +161,7 @@ extension BrowserViewModel {
 
     /// The last text a copy command wrote (the self-test reads it back).
     private func writeToPasteboard(_ text: String, toast format: PageLinkCopyFormat, cleaned: Bool, url: URL) {
-        linkPasteboard.clearContents()
-        linkPasteboard.setString(text, forType: .string)
-        lastCopiedLinkText = text
+        writeCopiedLinks(text)
         // Arc's Copied Current URL toast carries a share button (§6).
         if cleaned, format != .quote {
             showToast(PageLinkCopyFormat.cleanConfirmation, systemImage: "checkmark.shield.fill", action: .share(url))

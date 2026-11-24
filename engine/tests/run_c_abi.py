@@ -243,6 +243,9 @@ class Fixture(BaseHTTPRequestHandler):
         elif self.path.startswith("/freeze"):
             body = FREEZE_PAGE
             mime = "text/html"
+        elif self.path.split("?")[0] in DARK_PAGES:
+            body = DARK_PAGES[self.path.split("?")[0]]
+            mime = "text/html"
         else:
             body = b'''<!doctype html><html><head><link rel="icon" href="/favicon.png"><script>
 const pageWorld = typeof rearcSecret === 'undefined';
@@ -564,6 +567,32 @@ function state() {
 </script></body></html>"""
 
 
+# Dark mode for websites (c_abi_dark_mode_host.mm, tab/105): a page with no dark theme, one with
+# its own dark scheme (declared, and styled by media query), and one that says "only light". Each
+# tells the host what a page can tell: the CSS system colour Canvas as computed, whether
+# (prefers-color-scheme: dark) matches, its body's computed background, and a token made once per
+# document (the same token later: no reload). The title names the load (the query).
+DARK_SCRIPT = b"""<script>document.title = 'dark-ready-' + location.search.slice(1);
+var token = Math.random();
+function rgb(colour) { return colour.match(/[\\d.]+/g).slice(0, 3).map(Math.round); }
+function state() {
+  return {prefersDark: matchMedia('(prefers-color-scheme: dark)').matches,
+          canvas: rgb(getComputedStyle(document.getElementById('probe')).backgroundColor),
+          body: rgb(getComputedStyle(document.body).backgroundColor), token: token};
+}
+</script>"""
+DARK_BODY = (b'<body><div id="probe" style="position:absolute;left:-100px;width:1px;height:1px;background-color:Canvas"></div>'
+             b'<p>dark mode fixture</p></body></html>')
+DARK_PAGES = {
+    "/dark-plain": b'<!doctype html><html><head><style>body{margin:0;background:#fff;color:#000}</style>' + DARK_SCRIPT + b'</head>' + DARK_BODY,
+    "/dark-own": (b'<!doctype html><html><head><meta name="color-scheme" content="light dark">'
+                  b'<style>body{margin:0;background:#fff;color:#000}@media (prefers-color-scheme: dark){body{background:#102030;color:#eee}}</style>'
+                  + DARK_SCRIPT + b'</head>' + DARK_BODY),
+    "/dark-only-light": (b'<!doctype html><html><head><meta name="color-scheme" content="only light">'
+                         b'<style>body{margin:0;background:#fff;color:#000}</style>' + DARK_SCRIPT + b'</head>' + DARK_BODY),
+}
+
+
 def quiet_local_state(user_data_dir):
     """Secure DNS (automatic mode) dials its resolver's IP literal (e.g. Google
     Public DNS), which resolver rules cannot map; tests start with it off."""
@@ -737,7 +766,7 @@ def main():
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     try:
-        for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme", "display_capture", "freeze")):
+        for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme", "display_capture", "dark_mode", "freeze")):
             source = ENGINE / f"tests/c_abi_{kind}_host.mm"
             refuse_offline_unsafe_host(kind, source.read_text(errors="replace"), OUT)
             subprocess.run([
@@ -796,14 +825,14 @@ def main():
                 quiet_local_state(profile)
                 with log.open("wb") as output:
                     result = subprocess.run(merge_disabled_features([
-                        "timeout", "-k", "5", "300" if kind == "freeze" else "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords", "display_capture") else "45", str(executable),
+                        "timeout", "-k", "5", "300" if kind == "freeze" else "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords", "display_capture", "dark_mode") else "45", str(executable),
                         f"--user-data-dir={profile}", "--use-mock-keychain", f"--log-net-log={netlog}",
                         "--enable-logging=stderr",  # so an ignored test switch shows in the log (below)
                         *NO_OUTSIDE_NETWORK,
                         *(["--process-per-site", *(["--disable-features=WebContentsDiscard"] if phase else [])] if kind == "discard" else []),
                         *(["--safebrowsing-manual-download-blacklist=" + hashlib.sha256(b"a" * 65536).hexdigest()] if kind == "danger" else []),
                         *(["--remote-debugging-port=0", "--enable-logging=stderr", "--vmodule=close_controller=1,rearc_keep_alive=1,keep_alive_registry=1,devtools_ui_bindings=1"] if kind in ("display_capture", "devtools", "webui", "helpers", "permissions", "passwords", "fullscreen", "pip", "extensions", "autofill", "leak", "save", "interstitials") else []),
-                        *(["--disable-backgrounding-occluded-windows"] if kind in ("freeze", "display_capture", "theme", "devtools", "helpers", "permissions", "passwords", "fullscreen", "pip", "pip_embedded", "perf", "extensions", "autofill", "leak", "save", "interstitials") else []),
+                        *(["--disable-backgrounding-occluded-windows"] if kind in ("freeze", "display_capture", "dark_mode", "theme", "devtools", "helpers", "permissions", "passwords", "fullscreen", "pip", "pip_embedded", "perf", "extensions", "autofill", "leak", "save", "interstitials") else []),
                         *(["--use-fake-device-for-media-stream"] if kind == "permissions" else []),
                         # Chromium's own parameters: a tab hidden a second ago may be frozen (a release
                         # keeps five minutes). The sound of the page that must not be frozen goes nowhere.

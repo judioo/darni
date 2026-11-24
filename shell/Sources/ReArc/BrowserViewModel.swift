@@ -167,6 +167,15 @@ final class BrowserViewModel {
         didSet { spaceIconStyle.save(to: externalLinkDefaults) }
     }
 
+    /// Settings › General › Dark mode for websites (`BrowserViewModel+WebsiteDarkMode`).
+    var websiteDarkModeSetting = WebsiteDarkModeSetting.load(from: .standard) {
+        didSet {
+            guard websiteDarkModeSetting != oldValue else { return }
+            websiteDarkModeSetting.save(to: externalLinkDefaults)
+            websiteDarkModeStateChanged()
+        }
+    }
+
     var warnBeforeQuitting = QuitWarning.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(warnBeforeQuitting, forKey: QuitWarning.defaultsKey) }
     }
@@ -196,6 +205,10 @@ final class BrowserViewModel {
     /// Settings › Advanced: reopen every window of the last session at launch.
     var restoresWindows = WindowRestorePreference.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(restoresWindows, forKey: WindowRestorePreference.defaultsKey) }
+    }
+    /// Settings › Advanced: copied links lose their trackers (`BrowserViewModel+CleanLinks`).
+    var copiesCleanLinks = CleanLinksPreference.isEnabled(in: .standard) {
+        didSet { externalLinkDefaults.set(copiesCleanLinks, forKey: CleanLinksPreference.defaultsKey) }
     }
     /// Settings › Max: which rule-based helpers are on (MaxFeatures.swift).
     var maxPreferences: MaxPreferences = .load(from: .standard) {
@@ -734,6 +747,10 @@ final class BrowserViewModel {
     /// the one-time offer (`BrowserViewModel+ContentBlocking.swift`). Hidden
     /// until an engine with the blocking calls attaches.
     let contentBlocking = ContentBlockingController()
+    /// Dark mode for websites: the engine seam, Darni's appearance and the
+    /// sites with a choice of their own (`BrowserViewModel+WebsiteDarkMode.swift`).
+    /// Hidden until an engine with the call attaches.
+    let websiteDarkMode: WebsiteDarkModeController
     /// Blocking's recent log lines, newest last (the Chromium shell logs them).
     @ObservationIgnored var contentBlockingEvents: [String] = []
     @ObservationIgnored var onContentBlockingEvent: ((String) -> Void)?
@@ -812,6 +829,7 @@ final class BrowserViewModel {
                                              turnBudget: DownloadsController.appTurnBudget)
         engineHost.downloadCenter = downloads.webKit
         self.sitePermissions = SitePermissionsController(fileURL: Self.siblingFile(SitePermissionStore.fileName, of: persistence.fileURL), prepared: preparedStartup?.permissions)
+        self.websiteDarkMode = WebsiteDarkModeController(fileURL: Self.siblingFile(WebsiteDarkModeSites.fileName, of: persistence.fileURL))
         engineHost.sitePermissions = sitePermissions
         self.nowPlaying = nowPlaying ?? NowPlayingController()
         let engine = syncEngine ?? MainActor.assumeIsolated {
@@ -1240,6 +1258,8 @@ final class BrowserViewModel {
         loadSelectedIfNeeded()
         // Each one's engine data goes as a deleted container's does (S-07).
         for profileID in doomed { onProfileDeleted?(profileID, littleArcs[profileID]?.map(\.id) ?? []) }
+        // The sites it had a dark mode choice for go with it.
+        websiteDarkMode.profilesDeleted(doomed)
         return nil
     }
 
@@ -1772,8 +1792,7 @@ final class BrowserViewModel {
 
     func peekCopyLink() {
         guard let url = peekSession?.url else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        copyLink(url)
     }
 
     /// The open Peek's page, while there is one.
@@ -2226,9 +2245,7 @@ final class BrowserViewModel {
         guard let url = result.destinationURL else { return }
         switch action {
         case .copyURL:
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(url.absoluteString, forType: .string)
+            copyLink(url)
         case .deleteFromHistory:
             deleteFromHistory(url)
         }

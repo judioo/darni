@@ -189,6 +189,12 @@ struct GeneralSettingsPane: View {
                     SettingsPopUp(label: "Space icons", selection: $model.spaceIconStyle,
                                   options: SpaceIconStyle.allCases.map { ($0, $0.title) })
                 }
+                if model.websiteDarkMode.isAvailable {
+                    SettingsLabeledRow(label: WebsiteDarkModeController.settingLabel, detail: WebsiteDarkModeController.settingDetail) {
+                        SettingsPopUp(label: WebsiteDarkModeController.settingLabel, selection: $model.websiteDarkModeSetting,
+                                      options: WebsiteDarkModeSetting.allCases.map { ($0, $0.title) })
+                    }
+                }
                 SettingsLabeledRow(label: "Sidebar position", detail: "The traffic lights stay at the window's top left.") {
                     Picker("Sidebar position", selection: Binding(
                         get: { model.pendingSidebarSide ?? model.sidebarSide },
@@ -1049,6 +1055,9 @@ struct AdvancedSettingsPane: View {
                                     ? "Move to the top of a page pane or press ⌘L to reveal its toolbar."
                                     : "Applies when the address is in the toolbar, as it always is with the mini sidebar (⇧⌘S). Move to the top of a page pane or press ⌘L to reveal it.",
                                   icon: icon("menubar.arrow.up.rectangle", .red), isOn: $autoHideAddressBar)
+                SettingsSwitchRow(label: "Copy links without trackers",
+                                  detail: "Copied links leave out tracking tags such as utm_source and fbclid. The rest of the link stays as it is.",
+                                  icon: icon("checkmark.shield.fill", .green), isOn: $model.copiesCleanLinks)
             }
             SettingsGroup {
                 if capabilities.pictureInPicture {

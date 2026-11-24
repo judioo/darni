@@ -4,6 +4,9 @@ import XCTest
 @testable import ReArc
 @testable import SidebarModel
 
+/// SwiftUI has a `Tab` of its own.
+private typealias Tab = SidebarModel.Tab
+
 /// A tab's engine as the sleep checks drive it: it records what the shell
 /// asks and answers as the test says. Its page is "loaded" at `currentURL`.
 private final class SleepEngine: WebEngine, TabDiscarding, TabFreezing {
@@ -75,7 +78,8 @@ private final class SleepEngine: WebEngine, TabDiscarding, TabFreezing {
 }
 
 final class TabSleepShellTests: XCTestCase {
-    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+    /// The clock's own time: a change of the setting checks at once, with the time it is.
+    private let now = Date()
 
     private func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
 
@@ -156,7 +160,8 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertFalse(model.isTabFrozen(tabs["front"]!.id))
         // Frozen is not unloaded: the row keeps its normal icon.
         XCTAssertFalse(model.isTabUnloaded(tabs["idle"]!.id))
-        XCTAssertFalse(engines["idle"]!.activity.isDiscarded)
+        XCTAssertFalse(engines["idle"]!.isDiscarded)
+        XCTAssertEqual(engines["idle"]!.activity, .idle)
     }
 
     func testATabSeenMoreRecentlyThanTheThresholdRuns() {

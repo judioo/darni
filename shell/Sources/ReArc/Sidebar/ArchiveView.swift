@@ -111,10 +111,7 @@ struct ArchiveView: View {
         }
         .contextMenu {
             Button("Restore") { model.restoreArchivedTab(record.id) }
-            Button("Copy Link") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(record.tab.url.absoluteString, forType: .string)
-            }
+            Button("Copy Link") { model.copyLink(record.tab.url) }
             Divider()
             Button("Remove from Archive") { model.store.removeArchivedTab(record.id) }
         }

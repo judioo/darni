@@ -38,8 +38,8 @@ extension BrowserViewModel {
     }
 
     func copySplitLinks(_ splitID: SplitViewItem.ID, markdown: Bool) {
-        guard let split = store.split(withID: splitID) else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(split.links(markdown: markdown), forType: .string)
+        // Its panes' links as a selection's are copied: each page's address now, without trackers.
+        guard store.split(withID: splitID) != nil else { return }
+        copyLinks(of: [splitID], format: markdown ? .markdown : .plain)
     }
 }
