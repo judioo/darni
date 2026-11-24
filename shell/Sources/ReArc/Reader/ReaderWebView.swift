@@ -161,20 +161,27 @@ final class ReaderPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// The reader's web view: a plain context menu (Copy, Copy Link and Look Up only; no
+/// The reader's web view: a plain context menu (Copy and Look Up only; no
 /// "Open Link in New Window", "Download Image" or "Reload", which would act
-/// outside the tab's profile or load something Darni did not write).
+/// outside the tab's profile or load something Darni did not write). WebKit's
+/// own Copy Link is dropped too: it would copy the link with its trackers,
+/// past `LinkCleaner` (security note R-2). A link is copied from the page.
 final class ReaderWKWebView: WKWebView {
-    private static let keptMenuItems: Set<String> = [
-        "WKMenuItemIdentifierCopy", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierLookUp",
+    static let keptMenuItems: Set<String> = [
+        "WKMenuItemIdentifierCopy", "WKMenuItemIdentifierLookUp",
     ]
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        Self.trim(menu)
+        super.willOpenMenu(menu, with: event)
+    }
+
+    /// Keeps only `keptMenuItems` (and separators between them).
+    static func trim(_ menu: NSMenu) {
         menu.items.removeAll { item in
             guard !item.isSeparatorItem else { return false }
-            return !Self.keptMenuItems.contains(item.identifier?.rawValue ?? "")
+            return !keptMenuItems.contains(item.identifier?.rawValue ?? "")
         }
-        super.willOpenMenu(menu, with: event)
     }
 }
 

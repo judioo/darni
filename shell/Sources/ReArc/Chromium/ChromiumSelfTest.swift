@@ -1295,6 +1295,16 @@ final class ChromiumSelfTest {
             syncEngine: LocalSyncEngine(),
             faviconStore: FaviconStore(directory: nil)
         )
+        // Tab freezing has its own step (tabFreezeChecks). For the rest of the run it is off, in
+        // a scratch domain: the person's choice is never written, and no step meets a page the
+        // five-minute check froze behind it (a tab unseen for thirty minutes of a long run).
+        let sleepDomain = "darni-selftest-sleep-\(UUID().uuidString)"
+        let sleepDefaults = UserDefaults(suiteName: sleepDomain)
+        if let sleepDefaults {
+            model.tabUnloadDefaults = sleepDefaults
+            model.tabFreezeThreshold = .never
+        }
+        defer { sleepDefaults?.removePersistentDomain(forName: sleepDomain) }
         // A temp session file: the user's window-session.json is never read or written.
         let sessionFile = shellData.appendingPathComponent("window-session.json")
         let shell = ChromiumShell(runtime: runtime, autosavesFrames: false, sessionFile: sessionFile)
@@ -1487,6 +1497,7 @@ final class ChromiumSelfTest {
         try await passkeyStaleSheetChecks(model: model, store: store, base: base)
         try await passkeyHiddenLittleArcChecks(model: model, shell: shell, store: store, base: base)
         try await screenShareChecks(model: model, store: store, window: first, base: base)
+        try await tabFreezeChecks(model: model, store: store, base: base)
         try await websiteDarkModeChecks(model: model, store: store, base: base)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
@@ -1986,6 +1997,129 @@ final class ChromiumSelfTest {
             + "\(runtime.documentIdentity(tab: hiddenEngine.tabID).map { "\($0.documentGeneration)" } ?? "?"))")
     }
 
+    // MARK: Tab freezing (ABI 1.71)
+
+    /// Tab sleep's first stage, end to end through the engine. A page in a
+    /// tab nobody looks at is frozen by the model's own check once it is due:
+    /// its timer stops (its title stops counting, and nothing asks the page:
+    /// a script of the shell's would thaw it), it stays loaded and its row
+    /// stays as it is. Showing the tab runs it again at once, in the same
+    /// document: nothing is loaded again, and the page saw one freeze and
+    /// one resume. A page that plays is not frozen, by the model's check or
+    /// by the engine when asked. Turning the setting to Never thaws a frozen
+    /// tab. The launch carries `selfTestFreezeSwitch`, so Chromium's five
+    /// minutes of protection after a tab was on screen are one second here.
+    @MainActor
+    private func tabFreezeChecks(model: BrowserViewModel, store: SidebarStore, base: String) async throws {
+        guard runtime.capabilities.tabFreeze, ChromiumTabFreezeCalls.shared != nil else {
+            let missing = ChromiumTabFreezeCalls.missingSymbols
+            return log("ABI-GAP \(ChromiumCapabilities.tabFreezeFeature) not advertised"
+                + (missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))") + ": pages run until they are unloaded")
+        }
+        let previous = store.selectedTab?.id
+        // The choice is the person's: this step writes it to a scratch domain and puts it back.
+        let savedDefaults = model.tabUnloadDefaults
+        let savedThreshold = model.tabFreezeThreshold
+        let scratchName = "darni-selftest-sleep-\(UUID().uuidString)"
+        guard let scratch = UserDefaults(suiteName: scratchName) else { throw Failure(description: "no scratch defaults for the freeze step") }
+        model.tabUnloadDefaults = scratch
+        model.tabFreezeThreshold = .thirtyMinutes
+        defer {
+            model.tabFreezeThreshold = savedThreshold
+            model.tabUnloadDefaults = savedDefaults
+            scratch.removePersistentDomain(forName: scratchName)
+        }
+
+        let sleepURL = URL(string: "\(base)/sleep")!
+        let sleeper = store.addTab(kind: .today, title: "Sleeper", url: sleepURL)
+        _ = model.engineHost.engine(for: sleeper, profileID: model.profileID(for: sleeper))
+        let engine = try shellEngine(model, sleeper)
+        engine.load(sleepURL)
+        func ticks() -> Int { Int((engine.pageTitle ?? "").dropFirst("sleep ".count)) ?? -1 }
+        func state() async throws -> [String] {
+            ((try await engine.evaluate("sleepState()", in: .page)) as? String ?? "").split(separator: ":").map(String.init)
+        }
+        try await wait("the sleep fixture's timer runs in a tab never shown", timeout: 30) { ticks() >= 2 && !engine.isLoading }
+        let boot = (try await engine.evaluate("sleepMark()", in: .page)) as? String ?? ""
+        let document = runtime.documentIdentity(tab: engine.tabID)
+
+        // Not due: seen a moment ago.
+        model.tabLastShown[sleeper.id] = Date()
+        try check(!model.runAutoFreeze().contains(sleeper.id) && !model.isTabFrozen(sleeper.id), "a tab seen a moment ago was frozen")
+        // Due: the model's own check asks, and Chromium freezes the page.
+        model.tabLastShown[sleeper.id] = Date().addingTimeInterval(-31 * 60)
+        let asked = model.runAutoFreeze()
+        try check(asked.contains(sleeper.id) && model.isTabFrozen(sleeper.id), "the check did not freeze a tab unseen for 31 minutes: asked \(asked.count)")
+        try await wait("the page reports frozen", timeout: 20) { engine.queryFreezeState()?.frozen == true }
+        let frozenAt = ticks()
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        // At most the one tick that was on its way.
+        try check(ticks() <= frozenAt + 1 && engine.queryFreezeState()?.frozen == true,
+                  "the frozen page's timer ran: \(frozenAt) -> \(ticks()) ticks in 3 s")
+        try check(!model.isTabUnloaded(sleeper.id) && !engine.isDiscarded && engine.activity == .idle,
+                  "a frozen tab shows as unloaded")
+        let silentTicks = ticks()
+
+        // Shown: it runs again at once, and it is the same document.
+        model.selectTab(sleeper.id)
+        try await wait("the tab thaws when shown", timeout: 10) {
+            engine.attachmentID != nil && engine.queryFreezeState().map { !$0.requested && !$0.frozen } == true
+        }
+        try await wait("the page's timer runs again", timeout: 20) { ticks() > silentTicks + 1 }
+        let shown = try await state()
+        try check(shown.count == 7 && shown[0] == boot && shown[6] == "false" && shown[5] == "false",
+                  "the shown page is not the page that was frozen: \(shown) vs boot \(boot)")
+        try check((Int(shown[2]) ?? 0) >= 2500 && shown[3] == "1" && shown[4] == "1",
+                  "the page did not stop for the freeze: longest gap \(shown[2]) ms, freeze \(shown[3]), resume \(shown[4])")
+        let documentAfter = runtime.documentIdentity(tab: engine.tabID)
+        try check(document != nil && documentAfter.map { $0.isSameDocument(as: document!) } == true && !engine.isLoading,
+                  "showing a frozen tab loaded a document: \(String(describing: document)) -> \(String(describing: documentAfter))")
+        try check(engine.freeze() == .refusedForNow && !model.isTabFrozen(sleeper.id), "the engine took a freeze request for the tab on screen")
+
+        // A page that plays is not frozen: not by the check, and not by the engine.
+        let playURL = URL(string: "\(base)/pip")!
+        let player = store.addTab(kind: .today, title: "Player", url: playURL)
+        _ = model.engineHost.engine(for: player, profileID: model.profileID(for: player))
+        let playerEngine = try shellEngine(model, player)
+        model.selectTab(player.id)
+        playerEngine.load(playURL)
+        try await wait("the player plays", timeout: 30) { playerEngine.pageTitle == "pip-playing" }
+        // Leave it: the sleeper is on screen, the player plays unseen (or in Picture in Picture).
+        model.selectTab(sleeper.id)
+        try await wait("the model knows the hidden player plays", timeout: 15) {
+            let media = model.mediaState(for: player.id)
+            return media.isPlaying || media.isAudible || media.isPictureInPicture
+        }
+        model.tabLastShown[player.id] = Date().addingTimeInterval(-31 * 60)
+        try check(!model.runAutoFreeze().contains(player.id) && !model.isTabFrozen(player.id), "the check froze a tab that plays")
+        let direct = playerEngine.freeze()
+        try check(direct == .refusedForNow && playerEngine.queryFreezeState()?.requested == false,
+                  "the engine took a freeze request for a playing tab: \(direct)")
+
+        // Hidden again and due: frozen again once Chromium's protection time is over; Never thaws it.
+        model.selectTab(player.id)
+        model.tabLastShown[sleeper.id] = Date().addingTimeInterval(-31 * 60)
+        // The engine refuses while the page is still leaving the screen: the check asks again.
+        try await wait("a tab hidden again and due is taken by the engine", timeout: 15) {
+            model.runAutoFreeze()
+            return model.isTabFrozen(sleeper.id)
+        }
+        try await wait("the page is frozen again", timeout: 30) { engine.queryFreezeState()?.frozen == true }
+        let again = ticks()
+        model.tabFreezeThreshold = .never
+        try check(!model.isTabFrozen(sleeper.id), "Never left a tab frozen")
+        try await wait("the page runs again with freezing off", timeout: 20) { ticks() > again + 1 }
+        try check(!model.runAutoFreeze().contains(sleeper.id), "Never froze a tab")
+
+        model.closeTab(player.id)
+        model.closeTab(sleeper.id)
+        try await wait("the freeze tabs closed") { store.tab(withID: player.id) == nil && store.tab(withID: sleeper.id) == nil }
+        if let previous { model.selectTab(previous) }
+        log("PASS tab freezing (ABI 1.71): a tab unseen for 31 minutes -> frozen by the check (timer \(frozenAt) -> \(silentTicks) ticks in 3 s, "
+            + "row not dimmed); shown -> running at once in the same document (longest gap \(shown[2]) ms, one freeze and one resume event, "
+            + "no load); a playing tab -> not asked, engine \(direct); hidden again -> frozen again; Never -> thawed")
+    }
+
     // MARK: Dark mode for websites (ABI 1.73)
 
     /// Dark mode for websites through the engine (engine patch tab/105, ABI
@@ -2080,6 +2214,44 @@ final class ChromiumSelfTest {
         try await waitAsync("the page goes light with the setting", timeout: 10) { await state().hasPrefix("light:") }
         try check(engineSaysDark() == false && model.websiteDarkMode.sites.choices(for: model.store.owningProfileID(of: model.profileID(for: tab))).isEmpty,
                   "dark mode off: engine \(String(describing: engineSaysDark())), sites left")
+
+        // 6. The sites and the history (security DM-1). A site keeps its choice only while the
+        //    profile's history has it. The fixture's host has this step's visits; the other name
+        //    was never visited. With Chromium's Clear Browsing Data page open the sites are
+        //    checked: the one without a visit goes, the one with visits stays. Nothing is
+        //    deleted from the history here, and the Clear button is never pressed.
+        let owner = store.owningProfileID(of: model.profileID(for: tab))
+        let unvisited = "never-visited.example"
+        guard let fixtureHost = WebsiteDarkModeSites.host(for: url) else { throw Failure(description: "the dark mode fixture has no host") }
+        defer { model.websiteDarkMode.change { $0.removeHosts([unvisited], profile: owner) } }
+        model.setWebsiteDarkMode(.on, forSiteOf: engine, site: site)
+        try check(model.websiteDarkMode.change { $0.set(.on, forHost: unvisited, profile: owner) }
+                      && model.websiteDarkMode.sites.choice(forHost: fixtureHost, profile: owner) == .on,
+                  "dark mode: the two sites' choices were not kept")
+        if model.websiteDarkMode.historyQuery != nil, model.canOpenBrowserPage(.clearBrowsingData) {
+            model.openBrowserPage(.clearBrowsingData)
+            try await wait("Clear Browsing Data starts the checks of the sites against the history", timeout: 20) {
+                model.websiteDarkMode.historyPagesForTesting.values.contains(owner) && model.websiteDarkMode.historyTimerIsRunning
+            }
+            let clearTab = store.selectedTab?.id
+            model.websiteDarkModeHistoryTick()
+            try await wait("the site without a visit loses its choice", timeout: 20) {
+                model.websiteDarkMode.sites.choice(forHost: unvisited, profile: owner) == nil
+            }
+            try check(model.websiteDarkMode.sites.choice(forHost: fixtureHost, profile: owner) == .on,
+                      "dark mode: a site that is in the history lost its choice")
+            if let clearTab, clearTab != tab.id {
+                model.closeTab(clearTab)
+                try await wait("the Clear Browsing Data tab closed") { store.tab(withID: clearTab) == nil }
+            }
+            model.websiteDarkModeHistoryTick()
+            try check(model.websiteDarkMode.historyPagesForTesting.isEmpty && !model.websiteDarkMode.historyTimerIsRunning,
+                      "dark mode: the history is still asked with no settings page open")
+            log("PASS dark mode sites follow the history: with Clear Browsing Data open, a site without a visit lost its choice "
+                + "and a visited one kept it")
+        } else {
+            log("ABI-GAP \(ChromiumCapabilities.historyQueryFeature) not advertised or no settings page: dark mode sites are not checked against the history")
+        }
 
         model.closeTab(tab.id)
         try await wait("the dark mode tab closed") { store.tab(withID: tab.id) == nil }

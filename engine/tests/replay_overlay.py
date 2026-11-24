@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Verify series newest-first back to pin, then forward, in a disposable index."""
+"""Verify series newest-first back to pin, then forward, in a disposable index.
+
+REARC_REPLAY_TARGET: the overlay commit the series must reproduce (default HEAD). The engine
+tree is shared: another thread may have stacked a patch on it that is not in this checkout's
+series yet. The target is then that thread's base, and the tree's files are not compared with
+the target (they hold the stacked patch)."""
 from pathlib import Path
 import os, subprocess, tempfile
 from run_c_abi import ENGINE, SRC, build_gate
@@ -16,7 +21,8 @@ with tempfile.TemporaryDirectory(prefix='rearc-replay-') as temp:
     def git(*args):
         return subprocess.check_output(['git', '-C', str(SRC), *args], env=env, stderr=subprocess.STDOUT, text=True).strip()
     head = git('rev-parse', 'HEAD')
-    git('read-tree', head)
+    target = git('rev-parse', os.environ.get('REARC_REPLAY_TARGET', 'HEAD') + '^{commit}')
+    git('read-tree', target)
     for name in reversed(series):
         path = str(ENGINE / 'patches' / name)
         git('apply', '--cached', '--reverse', '--check', path)
@@ -31,10 +37,11 @@ with tempfile.TemporaryDirectory(prefix='rearc-replay-') as temp:
         git('apply', '--cached', path)
         print('FORWARD PASS', name, flush=True)
     forward = git('write-tree')
-    assert forward == git('rev-parse', head + '^{tree}')
-    print('FORWARD TREE', forward, 'MATCHES HEAD', head, flush=True)
+    assert forward == git('rev-parse', target + '^{tree}')
+    print('FORWARD TREE', forward, 'MATCHES', 'HEAD' if target == head else 'TARGET', target, flush=True)
     # Sub-project checkouts (v8, ANGLE, ffmpeg) carry their own security patches
     # (engine/patches/series-subprojects), so their gitlinks differ from src's on purpose.
-    assert git('diff', '--name-only', '--ignore-submodules=all') == ''
+    if target == head:
+        assert git('diff', '--name-only', '--ignore-submodules=all') == ''
     assert git('rev-parse', 'HEAD') == head
     print(f'REPLAY PASS {len(series)}/{len(series)} reverse and forward; real index/worktree untouched', flush=True)

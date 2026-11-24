@@ -193,6 +193,31 @@ protocol TabDiscarding: AnyObject {
     func discard() -> DiscardOutcome
 }
 
+/// What a freeze request did.
+enum FreezeOutcome: Equatable {
+    /// The engine holds the request: the page is frozen, or will be when the
+    /// engine's own rules allow (Chromium waits five minutes after a tab was
+    /// last on screen or heard).
+    case requested
+    /// The page is visible, playing, shared, loading, or has something open; it can be asked again later.
+    case refusedForNow
+    /// The engine cannot freeze this page (no `tab_freeze`, no tab).
+    case unsupported
+}
+
+/// Engines that can freeze a hidden page: it stays in memory, runs no script
+/// and no timer, and goes on at once when the tab is shown, with nothing
+/// loaded again (Chromium `tab_freeze`, ABI 1.71). The engine ends the request
+/// itself when the tab is shown or used. WebKit has no such call: its pages
+/// run until they are unloaded.
+protocol TabFreezing: AnyObject {
+    /// The engine holds a freeze request for the page.
+    var isFreezeRequested: Bool { get }
+    func freeze() -> FreezeOutcome
+    /// Ends the request: the page runs again. Nothing is loaded.
+    func unfreeze()
+}
+
 /// Engines whose pages can ask for fullscreen through the shell window
 /// (Chromium `html_fullscreen`, ABI 1.27; WKWebView runs its own fullscreen window).
 protocol PageFullscreenControlling: AnyObject {

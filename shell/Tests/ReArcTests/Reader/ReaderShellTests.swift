@@ -220,4 +220,21 @@ final class ReaderShellTests: XCTestCase {
         try await Task.sleep(nanoseconds: 1_200_000_000)
         XCTAssertEqual(server.contentRequests.count, requests, "a container's reader asked the network for \(server.contentRequests.dropFirst(requests))")
     }
+
+    /// Security note R-2: WebKit's own Copy Link would copy a link with its trackers, past
+    /// LinkCleaner, so the reader's menu keeps only Copy and Look Up.
+    func testTheReadersMenuHasNoCopyLinkThatWouldSkipTheCleaner() {
+        func item(_ id: String) -> NSMenuItem {
+            let item = NSMenuItem(title: id, action: nil, keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(id)
+            return item
+        }
+        let menu = NSMenu()
+        for id in ["WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierCopy",
+                   "WKMenuItemIdentifierDownloadImage", "WKMenuItemIdentifierLookUp", "WKMenuItemIdentifierReload"] {
+            menu.addItem(item(id))
+        }
+        ReaderWKWebView.trim(menu)
+        XCTAssertEqual(menu.items.map { $0.identifier?.rawValue ?? "" }, ["WKMenuItemIdentifierCopy", "WKMenuItemIdentifierLookUp"])
+    }
 }

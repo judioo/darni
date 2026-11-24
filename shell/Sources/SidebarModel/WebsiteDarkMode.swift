@@ -113,6 +113,19 @@ public struct WebsiteDarkModeSites: Equatable, Sendable {
         return true
     }
 
+    /// Forgets the choices of `hosts` in a profile (their history is gone).
+    /// False when none had one.
+    @discardableResult
+    public mutating func removeHosts(_ hosts: [String], profile: Profile.ID) -> Bool {
+        let scope = profile.uuidString
+        guard var sites = scopes[scope] else { return false }
+        let before = sites.count
+        for host in hosts { sites[host] = nil }
+        guard sites.count != before else { return false }
+        scopes[scope] = sites.isEmpty ? nil : sites
+        return true
+    }
+
     /// A profile was deleted: its sites go with it.
     @discardableResult
     public mutating func removeProfile(_ profile: Profile.ID) -> Bool {
@@ -214,6 +227,131 @@ public enum WebsiteDarkMode {
             darkHosts: sites.filter { $0.value == .on }.keys.sorted(),
             lightHosts: sites.filter { $0.value == .off }.keys.sorted()
         )
+    }
+}
+
+// MARK: - The sites and the profile's history
+
+/// A site's choice is kept only while the site is in its profile's history
+/// (security DM-1: the list names sites the person went to, so it must not
+/// outlive what history says). "Clear Browsing Data" is Chromium's own page
+/// and the engine does not say when it has cleared, so the shell asks the
+/// history instead: at launch, while a tab is on a page that can delete
+/// history, and when a tab leaves one. A site with no visit left loses its
+/// choice. That covers every way history goes: Clear Browsing Data for any
+/// time range, the History page, an extension, and Chromium's own expiry of
+/// visits older than 90 days.
+public enum WebsiteDarkModeHistory {
+    /// A page of the engine from which the person can delete a profile's
+    /// history: Chromium's settings (Clear Browsing Data is a dialog of it,
+    /// reached from several of its addresses) and its History page.
+    public static func canDeleteHistory(pageURL url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "chrome", let host = url.host()?.lowercased() else { return false }
+        return host == "settings" || host == "history"
+    }
+
+    /// Whether a history row's address is a page of `host`, by the rule the
+    /// choices are kept under (`WebsiteDarkModeSites.host`).
+    public static func isVisit(_ address: String, toHost host: String) -> Bool {
+        WebsiteDarkModeSites.host(for: URL(string: address)) == host
+    }
+
+    /// Whether a storage's history has a page of `host`; nil when it cannot
+    /// say (no engine, a refused query). A storage is a profile or one of
+    /// its containers: each has a history of its own.
+    public typealias Ask = (_ storage: Profile.ID, _ host: String, _ reply: @escaping (Bool?) -> Void) -> Void
+
+    /// One query of a storage's history, as the engine has it
+    /// (`ReArcHistoryQuery`): empty `text` gives the most recent pages,
+    /// newest first; other text gives the pages its search finds. The reply
+    /// is the pages' addresses, or nil when the query was refused.
+    public typealias Query = (_ storage: Profile.ID, _ text: String, _ reply: @escaping ([String]?) -> Void) -> Void
+
+    /// Answers `Ask` from history queries, for one check: made, used and
+    /// dropped, so nothing it read outlives the check.
+    ///
+    /// A "no" must be certain, because it deletes a choice. So:
+    /// - a host among the storage's most recent pages is there, with no search;
+    /// - a storage with no web page among them has no web history at all;
+    /// - otherwise the history's text search is asked for the host. A hit
+    ///   that is a page of the host is a yes. No hit is believed only if the
+    ///   same search finds a host that is certainly there (one of the recent
+    ///   pages): a search that cannot find that one cannot say.
+    public final class Reader {
+        private enum Recent {
+            case hosts(Set<String>)
+            case refused
+        }
+
+        private let query: Query
+        private var recent: [Profile.ID: Recent] = [:]
+        private var searchWorks: [Profile.ID: Bool] = [:]
+
+        public init(query: @escaping Query) {
+            self.query = query
+        }
+
+        public var ask: Ask {
+            { storage, host, reply in self.hasVisit(storage: storage, host: host, reply: reply) }
+        }
+
+        private func hasVisit(storage: Profile.ID, host: String, reply: @escaping (Bool?) -> Void) {
+            recentHosts(of: storage) { recent in
+                guard case .hosts(let hosts) = recent else { return reply(nil) }
+                if hosts.isEmpty { return reply(false) }
+                if hosts.contains(host) { return reply(true) }
+                self.query(storage, host) { pages in
+                    guard let pages else { return reply(nil) }
+                    if pages.contains(where: { isVisit($0, toHost: host) }) { return reply(true) }
+                    self.searchFinds(aHostOf: hosts, in: storage) { works in reply(works ? false : nil) }
+                }
+            }
+        }
+
+        private func recentHosts(of storage: Profile.ID, _ body: @escaping (Recent) -> Void) {
+            if let known = recent[storage] { return body(known) }
+            query(storage, "") { pages in
+                let answer: Recent = pages.map { .hosts(Set($0.compactMap { WebsiteDarkModeSites.host(for: URL(string: $0)) })) } ?? .refused
+                self.recent[storage] = answer
+                body(answer)
+            }
+        }
+
+        /// The control: the search is asked for a host that is in the history.
+        private func searchFinds(aHostOf hosts: Set<String>, in storage: Profile.ID, _ body: @escaping (Bool) -> Void) {
+            if let known = searchWorks[storage] { return body(known) }
+            guard let control = hosts.min() else { return body(false) }
+            query(storage, control) { pages in
+                let works = pages?.contains(where: { isVisit($0, toHost: control) }) ?? false
+                self.searchWorks[storage] = works
+                body(works)
+            }
+        }
+    }
+
+    /// The hosts of `hosts` that no storage has a page of. A host is kept
+    /// as soon as one storage has it, and also when one cannot say: a
+    /// choice is never dropped on a guess. One question at a time, in order,
+    /// so the engine never holds more than one of these queries.
+    public static func hostsWithoutVisits(_ hosts: [String], storages: [Profile.ID], ask: @escaping Ask,
+                                          completion: @escaping ([String]) -> Void) {
+        var gone: [String] = []
+        func next(_ hostIndex: Int, _ storageIndex: Int) {
+            guard hostIndex < hosts.count else { return completion(gone) }
+            guard storageIndex < storages.count else {
+                // Every storage answered no.
+                if !storages.isEmpty { gone.append(hosts[hostIndex]) }
+                return next(hostIndex + 1, 0)
+            }
+            ask(storages[storageIndex], hosts[hostIndex]) { visited in
+                if visited == false {
+                    next(hostIndex, storageIndex + 1)
+                } else {
+                    next(hostIndex + 1, 0)
+                }
+            }
+        }
+        next(0, 0)
     }
 }
 
