@@ -11,6 +11,7 @@
 # Usage: scripts/check-reader-engine.sh [--out-dir <engine out dir>] [--skip-build]
 #   --out-dir   default: <main checkout>/engine/chromium/src/out/ReArc-codecs-arm64, the
 #               release engine. REARC_ENGINE_OUT names another.
+#   -h, --help  this text
 #
 # It does not replace the self-test's reader step (the shell's own engine tab, the button,
 # the overlay): that one needs the screen.
@@ -25,6 +26,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --skip-build) SKIP_BUILD="--skip-build"; shift ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "check-reader-engine: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -34,7 +36,17 @@ command -v node >/dev/null || { echo "check-reader-engine: node is needed" >&2; 
 
 # Scratch outside the repository and outside any session's temporary folder; removed on exit.
 SCRATCH="$(mktemp -d "$HOME/Library/Caches/darni-reader-check.XXXXXX")"
-trap 'rm -rf "$SCRATCH"' EXIT
+# `swift test` rewrites Package.resolved without the Sparkle pin. Put it back on every exit,
+# a failed one too, unless it already had changes of its own (check-webkit.sh's rule).
+resolved_was_clean=0
+if git -C "$SHELL_DIR" diff --quiet -- Package.resolved 2>/dev/null; then resolved_was_clean=1; fi
+finish() {
+  rm -rf "$SCRATCH"
+  if [[ $resolved_was_clean == 1 ]] && ! git -C "$SHELL_DIR" diff --quiet -- Package.resolved 2>/dev/null; then
+    git -C "$SHELL_DIR" checkout -- Package.resolved
+  fi
+}
+trap finish EXIT
 
 cd "$SHELL_DIR"
 echo "==> writing the scripts and fixtures"
@@ -52,5 +64,4 @@ DARNI_READER_ENGINE_ANSWERS="$SCRATCH/answers" swift test --skip-build \
   --filter 'ReaderEngineAnswerTests/testAnswersFromTheEngineGiveTheSameReader' >"$SCRATCH/answers.log" 2>&1 \
   || { grep -E "error:|failed" "$SCRATCH/answers.log" | head -20; exit 1; }
 grep -E "Executed 1 test, with 0 failures" "$SCRATCH/answers.log" | head -1
-git -C "$SHELL_DIR" checkout -- Package.resolved 2>/dev/null || true
 echo "check-reader-engine: passed"
