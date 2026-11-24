@@ -247,7 +247,8 @@ struct SiteControlCenterView: View {
         HStack(spacing: Self.spacing) {
             ForEach(SiteControlCenter.quickActions(boostsEligible: BoostScopeMatcher.urlIsEligibleForBoosts(url))) { item in
                 if item.action == .share {
-                    ShareLink(item: url) { squareLabel(item.action) }
+                    // Share's own Copy gives the link as Copy URL does: without trackers.
+                    ShareLink(item: model.linkForCopying(url).url) { squareLabel(item.action) }
                         .buttonStyle(.plain)
                         .help(item.action.title)
                 } else {

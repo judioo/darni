@@ -1028,6 +1028,9 @@ struct AdvancedSettingsPane: View {
                                     ? "Move to the top of a page pane or press ⌘L to reveal its toolbar."
                                     : "Applies when the address is in the toolbar, as it always is with the mini sidebar (⇧⌘S). Move to the top of a page pane or press ⌘L to reveal it.",
                                   icon: icon("menubar.arrow.up.rectangle", .red), isOn: $autoHideAddressBar)
+                SettingsSwitchRow(label: "Copy links without trackers",
+                                  detail: "Copied links leave out tracking tags such as utm_source and fbclid. The rest of the link stays as it is.",
+                                  icon: icon("checkmark.shield.fill", .green), isOn: $model.copiesCleanLinks)
             }
             SettingsGroup {
                 if capabilities.pictureInPicture {
