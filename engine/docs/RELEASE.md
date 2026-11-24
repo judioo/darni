@@ -29,6 +29,9 @@ distribution.
 | `blocklists/blocklists-public-key.txt` | The lists keys a bundle may be signed with, the key in use first. The app carries the same keys (`BlocklistSigningKey.compiledInTexts`). |
 | `release/signing-env.sh` | Shared loader for `shell/signing.local.env`. Environment wins, and it never prints a value. |
 | `release/dmg-background.swift` | Draws the DMG background (brand canvas and cobalt arrow). |
+| `heavy-job.sh` | The lock for heavy jobs: one at a time on this Mac. `build-engine-release.sh` holds it for the build and `release.sh` from the bundle build to the end of its checks (step 5c); signing the shipped bundle, notarization and the DMG run without it. A job that finds it taken waits and prints the holder. `--status` shows the holder. See `docs/releases/README.md`, "Heavy jobs". |
+| `release/rc-tests.sh <commit> <build>` | The whole `swift test` suite, once per release candidate, in a throwaway worktree under the lock. Log in `shell/dist/rc-<build>/`, summary in `docs/releases/<build>/tests/SUMMARY.md`. |
+| `release/release-status.py <build>` | Which reviews of a candidate have reported, their verdicts, and which review branches are ahead of `main`. `--write` saves `docs/releases/<build>/STATUS.md`. |
 
 ## The rename: ReArc is Darni from build 1054
 

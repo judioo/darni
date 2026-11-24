@@ -350,7 +350,10 @@ _hj_main() {
   if [[ $mode == status ]]; then _hj_status; exit 0; fi
   [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { _hj_say "a job needs a name (letters, digits, . _ -); see --help"; exit 64; }
   case "$mode" in
-    hold) _hj_hold "$name" "$seconds" ;;
+    hold)
+      # From inside a heavy job it would wait for that job, which waits for this command.
+      [[ -z ${DARNI_HEAVY_JOB_HELD:-} ]] || { _hj_say "a hold cannot be taken from inside the heavy job $DARNI_HEAVY_JOB_HELD"; exit 64; }
+      _hj_hold "$name" "$seconds" ;;
     release) _hj_end_hold "$name" || exit 1 ;;
     run)
       [[ $# -gt 0 ]] || { _hj_say "no command: heavy-job.sh <name> -- <command…>"; exit 64; }

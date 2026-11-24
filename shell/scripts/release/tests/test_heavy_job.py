@@ -290,6 +290,12 @@ class HeavyJobTests(unittest.TestCase):
         self.assertTrue(self.status().startswith("held by perf (a hold"))
         self.heavy("--release", "perf")
 
+    def test_a_hold_from_inside_a_heavy_job_is_refused(self):
+        result = self.heavy("outer", "--", str(HEAVY_JOB), "--hold", "perf", "60")
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("cannot be taken from inside the heavy job outer", result.stderr)
+        self.assertEqual(self.status(), "free")
+
     def test_a_command_of_the_same_name_runs_inside_the_hold(self):
         self.heavy("--hold", "perf", "60")
         result = self.heavy("perf", "--", "sh", "-c", "echo measured as $DARNI_HEAVY_JOB_HELD", timeout=10)
