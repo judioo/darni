@@ -209,6 +209,61 @@ final class WebKitWindowsAndSharingTests: XCTestCase {
         XCTAssertEqual(copy?.identifier?.rawValue, "darni.Copy Link Address", "Darni's Copy Link Address, which copies the clean link")
     }
 
+    // MARK: - Dark mode for websites (d4532c1c, engine tab/105)
+
+    /// A page that reports whether it is in its own dark theme, and its background as drawn.
+    private func darkModePages() {
+        server.route("/themed", .page(title: "themed", head: """
+        <style>body { background: rgb(255, 255, 255); } @media (prefers-color-scheme: dark) { body { background: rgb(20, 20, 20); } }</style>
+        """))
+        server.route("/plain", .page(title: "plain", body: "<p>No dark theme</p>", head: "<style>body { background: rgb(255, 255, 255); }</style>"))
+    }
+
+    private func pageLooksDark(_ engine: WKEngine) async throws -> (prefersDark: Bool, background: String) {
+        let prefers = try await engine.webView.evaluateJavaScript("matchMedia('(prefers-color-scheme: dark)').matches") as? Bool ?? false
+        let background = try await engine.webView.evaluateJavaScript("getComputedStyle(document.body).backgroundColor") as? String ?? ""
+        return (prefers, background)
+    }
+
+    // parity: pages.dark-mode
+    func testAWebKitTabUsesASitesOwnDarkThemeWhenDarniIsDark() async throws {
+        darkModePages()
+        let engine = WKEngine(context: EngineProfileContext(profileID: UUID(), isEphemeral: true))
+        engine.webView.appearance = NSAppearance(named: .darkAqua)
+        engine.load(server.url("/themed"))
+        try await wait("the themed page") { engine.webView.title == "themed" && !engine.isLoading }
+        var look = try await pageLooksDark(engine)
+        XCTAssertTrue(look.prefersDark, "a WebKit page follows Darni's appearance")
+        XCTAssertEqual(look.background, "rgb(20, 20, 20)", "so a site with a dark theme of its own uses it")
+
+        engine.webView.appearance = NSAppearance(named: .aqua)
+        var light = false
+        for _ in 0..<100 where !light {
+            light = try await !isDarkNow(engine)
+            if !light { try await Task.sleep(nanoseconds: 20_000_000) }
+        }
+        XCTAssertTrue(light, "the page goes light again with Darni")
+        look = try await pageLooksDark(engine)
+        XCTAssertEqual(look.background, "rgb(255, 255, 255)", "and back, without a reload")
+    }
+
+    private func isDarkNow(_ engine: WKEngine) async throws -> Bool {
+        try await engine.webView.evaluateJavaScript("matchMedia('(prefers-color-scheme: dark)').matches") as? Bool ?? false
+    }
+
+    // parity: pages.dark-mode
+    func testAWebKitTabDarkensASiteWithoutADarkTheme() async throws {
+        darkModePages()
+        let engine = WKEngine(context: EngineProfileContext(profileID: UUID(), isEphemeral: true))
+        engine.webView.appearance = NSAppearance(named: .darkAqua)
+        engine.load(server.url("/plain"))
+        try await wait("the plain page") { engine.webView.title == "plain" && !engine.isLoading }
+        let look = try await pageLooksDark(engine)
+        XCTAssertTrue(look.prefersDark)
+        XCTExpectFailure("pages.dark-mode: WebKit has no public call to darken a page; Chromium's engine does it (tab/105)")
+        XCTAssertNotEqual(look.background, "rgb(255, 255, 255)", "a site with no dark theme is darkened")
+    }
+
     // MARK: - Gaps, stated as Chromium behaves (expected failures)
 
     // parity: tabs.popups
