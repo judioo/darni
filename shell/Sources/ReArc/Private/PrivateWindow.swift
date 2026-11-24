@@ -74,6 +74,7 @@ extension BrowserViewModel {
     /// storage (WebKit's non-persistent store goes with the engine).
     func privateWindowClosed(_ id: UUID) {
         guard let window = privateWindows.removeValue(forKey: id) else { return }
+        reader.forget(tabID: id)
         if !privateWindows.values.contains(where: { $0.session == window.session }) {
             sitePermissions.dropScope(SitePermissionStore.ephemeralPrefix + window.session.uuidString)
             onPrivateSessionEnded?(window)
@@ -115,6 +116,8 @@ struct PrivateWindowView: View {
                 .environment(\.themeChrome, .outsideSpaces(dark: colorScheme == .dark))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .findBar(model.findBar, for: window.engine)
+                // The reader here loads no picture: its page is not this window's session.
+                .readerOverlay(model, tabID: window.id, engine: window.engine)
         }
         .frame(minWidth: 480, minHeight: 360)
         .background(Color.purple.opacity(0.08))
@@ -150,6 +153,7 @@ struct PrivateWindowView: View {
                         provider: model.commandBarServices.searchProvider(for: model.settingsProfileID(for: window.parentProfileID))
                     )
                 }
+            ReaderAddressButton(model: model, pageID: window.id, engine: window.engine)
             if let error = window.addressError {
                 Text(error)
                     .font(.caption)
