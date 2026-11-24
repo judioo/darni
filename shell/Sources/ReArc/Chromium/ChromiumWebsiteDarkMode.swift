@@ -68,6 +68,9 @@ final class ChromiumWebsiteDarkModeEngine: WebsiteDarkModeEngine {
         return calls.get(tab, &dark) == .rearcOK ? dark : nil
     }
 
+    /// The most rows the engine gives for one history query (C-ABI.md, ABI 1.23).
+    static let historyQueryLimit: UInt32 = 1000
+
     private static func json(_ strings: [String]) -> String {
         (try? String(decoding: JSONEncoder().encode(strings), as: UTF8.self)) ?? "[]"
     }
@@ -97,6 +100,19 @@ final class ChromiumWebsiteDarkModeEngine: WebsiteDarkModeEngine {
         runtime.onEngineProfileClosed = { [weak model] engineProfile in
             closed?(engineProfile)
             model?.websiteDarkModeProfileClosed(engineProfile: engineProfile)
+        }
+        // The sites are kept only while history has them (security DM-1): the profile's
+        // HistoryService is asked through the ABI's query, as the command bar and site search
+        // ask it. The addresses go to the check that asked and are neither kept nor logged.
+        model.websiteDarkMode.historyQuery = { [weak runtime] storage, text, reply in
+            guard let runtime, runtime.capabilities.historyQuery else { return reply(nil) }
+            runtime.withEngineProfile(.persistent(storage)) { [weak runtime] engineProfile in
+                guard let runtime, let engineProfile else { return reply(nil) }
+                let status = runtime.queryHistory(profile: engineProfile, text: text, limit: historyQueryLimit) { status, rows in
+                    reply(status == .rearcOK ? rows.map(\.url) : nil)
+                }
+                if status != .rearcOK { reply(nil) }
+            }
         }
         model.attachWebsiteDarkMode(engine: engine)
         for key in runtime.openProfileKeys where !key.isOffTheRecord {

@@ -327,6 +327,12 @@ public struct ScreenShareLedger<TabID: Hashable & Sendable>: Equatable, Sendable
         live.filter { capturer in (chosen[capturer] ?? []).contains { $0.kind == .tab && $0.target == tab } }
     }
 
+    /// Every tab a page was told it may share, whether its stream is live yet
+    /// or not: such a tab must keep running (it is neither frozen nor unloaded).
+    public var chosenTargets: Set<TabID> {
+        Set(chosen.values.joined().compactMap { $0.kind == .tab ? $0.target : nil })
+    }
+
     /// Short words for what `capturer` shares: "this tab", "a tab", "a window", "your screen".
     public func summary(of capturer: TabID, titleOf: (TabID) -> String?) -> String {
         let shares = shares(of: capturer)

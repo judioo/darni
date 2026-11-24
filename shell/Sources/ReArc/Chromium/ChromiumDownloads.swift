@@ -109,7 +109,8 @@ final class ChromiumDownloadBackend: DownloadBackend {
             return DownloadOrigin(page: TidyDownloads.Origin(), isPrivate: true)
         }
         let engine = download.tabID == 0 ? nil : runtime.engine(forTab: download.tabID)
-        return DownloadOrigin(page: TidyDownloads.Origin(pageTitle: engine?.pageTitle, pageHost: engine?.currentURL?.host()), isPrivate: false)
+        return DownloadOrigin(page: TidyDownloads.Origin(pageTitle: engine?.pageTitle, pageHost: engine?.currentURL?.host()), isPrivate: false,
+                              engine: engine.map { ObjectIdentifier($0) })
     }
 
     /// ABI 1.24: the warning booleans, not the danger code, say whether Keep

@@ -781,7 +781,18 @@ final class BrowserViewModel {
     var tabUnloadThreshold: TabUnloadThreshold = .load(from: .standard) {
         didSet { tabUnloadThreshold.save(to: tabUnloadDefaults) }
     }
+    /// Freeze inactive tabs after this long unseen (remembered). A shorter
+    /// wait takes effect at the next check; a longer one, or Never, thaws the
+    /// tabs that are no longer due at once.
+    var tabFreezeThreshold: TabFreezeThreshold = .load(from: .standard) {
+        didSet {
+            tabFreezeThreshold.save(to: tabUnloadDefaults)
+            if tabFreezeThreshold != oldValue { runAutoFreeze() }
+        }
+    }
     @ObservationIgnored var tabUnloadDefaults: UserDefaults = .standard
+    /// Waits between tries of a discard the engine refused for the moment.
+    @ObservationIgnored var discardRetryDelays: [TimeInterval] = BrowserViewModel.discardRetryDelays
     private(set) var startupDeferred = false
     @ObservationIgnored private var didFinishStartup = false
     /// A mutation's engine reconcile and boost sync are queued (`scheduleMutationFollowUp`).
@@ -1405,6 +1416,7 @@ final class BrowserViewModel {
             self.switchOffFileScriptBoostsScopedToASuffix()
             self.syncAllTabBoosts()
             self.contentBlockingSettingsChanged()
+            self.websiteDarkModeProfilesChanged()
         }
     }
 
@@ -1451,6 +1463,7 @@ final class BrowserViewModel {
         if url.absoluteString == "about:blank", let tab = store.tab(withID: tabID), tab.url.absoluteString != "about:blank",
            engineHost.engine(forTabID: tabID, profileID: profileID(for: tab))?.canGoBack != true { return }
         let title = Self.isBlankDocumentTitle(title, for: url) ? nil : title
+        if let tab = store.tab(withID: tabID) { websiteDarkModePageCommitted(.tab(tabID), profile: profileID(for: tab), url: url) }
         recordVisit(tabID: tabID, url: url, title: title)
         let resolvedTitle = (title?.isEmpty == false) ? title : nil
         let fallback = store.tab(withID: tabID)?.title ?? url.host() ?? "Page"
@@ -1466,6 +1479,9 @@ final class BrowserViewModel {
 
     func handleLittleArcNavigationCommit(windowID: LittleArcWindow.ID, url: URL?, title: String?) {
         guard let url else { return }
+        if let window = store.littleArcWindow(withID: windowID) {
+            websiteDarkModePageCommitted(.littleArc(windowID), profile: window.profileID, url: url)
+        }
         let resolvedTitle = (title?.isEmpty == false) ? title : nil
         store.updateLittleArcWindow(id: windowID, title: resolvedTitle, url: url)
     }
@@ -2253,8 +2269,12 @@ final class BrowserViewModel {
             commandBarLive = live
         }
         let profileID = store.activeProfileID
-        _ = commandBarServices.deleteFromHistory(url, profileID: profileID) { [weak self] _ in
-            self?.refreshCommandBarLive()
+        _ = commandBarServices.deleteFromHistory(url, profileID: profileID) { [weak self] deleted in
+            guard let self else { return }
+            self.refreshCommandBarLive()
+            // A third way history goes (security D-1): a site whose last visit this was
+            // loses its dark mode choice, as after Clear Browsing Data.
+            if deleted { self.checkWebsiteDarkModeSitesAgainstHistory(profile: profileID) }
         }
     }
 

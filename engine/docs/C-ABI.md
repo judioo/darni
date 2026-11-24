@@ -166,7 +166,8 @@ All displayed split panes receive visibility intent. Native window observers
 reconcile occlusion separately from hidden. Lease transitions use
 `UpdateWebContentsVisibility`, whose pin implementation handles the first
 VISIBLE transition before using WasShown/WasHidden/WasOccluded internally.
-No media pause, freeze or discard is implied by hiding.
+No media pause, freeze or discard is implied by hiding (a host asks for a
+freeze with `ReArcTabFreeze`, 1.71, and for a discard with `ReArcTabDiscard`).
 
 ## Errors (IPC-CONTRACT §8)
 
@@ -205,7 +206,7 @@ Advertised features: `native_view`, `navigation`, `navigation_extended`, `media_
 `pip_embedded` (1.43), `perf_metrics` (1.44), `early_window` (1.45),
 `media_capture` and `search_engines` (1.46) and `extension_side_panels`
 (1.47); later ones are named in their sections (`site_permissions` 1.67,
-`webauthn_prompts` 1.68, `display_capture` 1.70). `pip_control`, `pip_native`
+`webauthn_prompts` 1.68, `display_capture` 1.70, `tab_freeze` 1.71). `pip_control`, `pip_native`
 and `script_opener` remain unadvertised names. Unknown optional operations are unsupported.
 
 | Function | Semantics |
@@ -3273,6 +3274,115 @@ every page under them (security CB-12, AG-05, BO-01). This call is Chromium's an
 exported, the characters it takes, the refusals, that the name comes from the tracker's
 function, and that the suffix test is asked only of a canonical name that is not an address.
 Built; not run.
+
+## Tab freezing (ABI 1.71, bridge 0.83.0)
+
+Patch `tab/103-tab-freeze`, feature `tab_freeze`. Gate on minor >= 71 and the feature; a host
+reaches the three calls by symbol lookup. **Built and run** (out/ReArc-codecs-arm64, overlay
+a3b96b217d and 577e70cef2, 2026-11-25). No struct, no callback, no event.
+
+The step before a discard. A frozen page stays in memory and runs nothing: no timer, no
+script, no task (page lifecycle "frozen"; the page gets `freeze` and, later, `resume`).
+Showing its tab runs it again at once, in the same document: nothing is loaded, the tab's
+identity, generation and attachment are as they were, and the host hears no event.
+
+| Function | Contract |
+|---|---|
+| `ReArcTabFreeze(tab)` | Asks that the tab's page be frozen. `ok`: the request is held (also when one was held already). It does not mean the page is frozen yet: see "Who freezes". Refusals below. |
+| `ReArcTabUnfreeze(tab)` | Ends the request; the page runs again. `ok` for any live tab, with or without a request. |
+| `ReArcTabGetFreezeState(tab, &requested, &frozen)` | `requested`: a request is held. `frozen`: the page's lifecycle state as its renderer last reported it, a moment behind the request. Null argument: `invalid_argument`. |
+
+Unknown tab: `tab_not_found`, outputs false. Main thread, synchronous.
+
+**Who freezes.** Chromium, with its own machinery: the bridge holds a
+`performance_manager::freezing::FreezingVote` for the tab, and Chromium's `FreezingPolicy`
+freezes the page (`WebContents::SetPageFrozen`) while every page of its browsing instance has a
+vote and none of its `CannotFreezeReason`s applies, and thaws it the moment one starts:
+
+- visible, or visible in the last five minutes; audible, or audible in the last five;
+- capturing the camera or the microphone, WebRTC, being mirrored;
+- holding a Web Lock or an IndexedDB lock;
+- connected to a USB, Bluetooth, HID or serial device;
+- loading; notification permission granted; a WebUI page.
+
+A host that asks thirty minutes after a tab was last shown never meets the five minutes. A test
+shortens them with Chromium's own parameters:
+`--enable-features=CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/1s/freezing_audio_protection_time/1s`.
+A page with notification permission (mail, chat) is therefore never frozen, whatever the host
+asks: it must be able to tell the person something. Pages of one browsing instance (a page and
+the window it opened) are frozen together or not at all, so one of them on screen keeps the
+other running.
+
+**What the bridge refuses** (`invalid_state`), because Chromium's policy does not know it about
+a bridge tab: a tab that is presented or has visibility intent, is not hidden, is discarded,
+crashed, loading or without a committed entry; a tab that is being captured (below); a tab that
+is audible or whose media session is playing, heard or not; picture-in-picture, fullscreen; an
+open permission request or passkey request; a download of the tab's own in progress. `busy`
+while a script or snapshot of the host's runs. `unsupported` for a hosted DevTools frontend.
+The host does not ask for a tab with a prompt of its own open (a JavaScript dialog, a file
+chooser, HTTP authentication, a password or autofill offer): the bridge does not look there.
+
+**The shared tab** (security's advance read of tab sleep, 2). A tab that is shared while
+nobody looks at it stays hidden (`tab/102`): its picture and its sound are hidden capturers,
+its page node is not visible, and Chromium's policy would freeze it; the share would show a
+still picture. `ReArcTabFreeze` refuses a tab with any capturer
+(`WebContents::IsBeingCaptured`, hidden ones included), and `ReArcDisplayCaptureRespond` ends
+the request of the tab it is about to share, before the capture starts.
+
+**When the request ends** (the page thaws, and the host asks again when the tab has been left
+alone long enough): the tab is shown; it navigates to another document; it starts media or
+becomes audible; it enters picture-in-picture; it is discarded, shared, or asked to close (a
+frozen page answers no beforeunload); its renderer is gone; the host evaluates a script in it
+(`ReArcTabEvaluateScript`, a frozen page would let it time out) or sends a media action
+(`ReArcTabMediaAction`: Play in the host's controls wakes the tab); `ReArcTabUnfreeze`. A
+request never outlives a use of the tab.
+
+**Freeze and discard.** A frozen tab is discarded like any other (`ReArcTabDiscard`), and the
+discard ends the request. A page with a beforeunload handler (unsaved input, "Leave site?") may
+be frozen and is never discarded, frozen or not: `invalid_state`, as before 1.71, and the
+refusal leaves it frozen and loaded (security's advance read, 1).
+
+**Thawing** (security's advance read, 3). The bridge queues nothing for a frozen page: there is
+no list of things to do at the thaw, in the bridge or in this patch. A frozen page runs no task,
+so it asks for nothing: no dialog, no pop-up, no download, no permission or notification request
+reaches the browser process, and the host hears nothing of the tab. A request that was open
+before the freeze keeps the tab from being frozen. At the thaw the page's own timers and
+handlers run again, and what they ask then is a request of that moment, treated as the same
+request of any tab that was never frozen: a pop-up without a click is dropped (no tab is made
+for it: `tab_adoption.cc`; no click can be younger than the minutes the tab was hidden, and
+activation lasts five seconds); a JavaScript dialog, a download or a permission request from a
+timer is what a tab in the background may ask at any time, frozen before or not. The bridge
+adds no rule for those and takes none away.
+
+**State.** Nothing is persisted: no preference, no content setting, no file. A request lives in
+the browser process and ends with the tab or the engine.
+
+**What is not turned on.** Chromium's Battery Saver freezing and its "infinite tabs" freezing
+are as they were (off: the bridge has no Battery Saver mode and the feature is off by default).
+Chromium's discard of frozen pages whose memory grows takes tabs of a tab strip only
+(`DiscardEligibilityPolicy`: not a tab), which a bridge tab is not: the host decides every
+discard.
+
+**Tests:** `engine/tests/c_abi_freeze_host.mm` (`run_c_abi.py freeze`; off-screen window, no
+input, sound muted): the refusals; a tab never shown is frozen, silent for three seconds
+(its timer's ticks are heard in its title, without a script), and runs again after Unfreeze
+in the same document with one `freeze` and one `resume` event; a tab shown and hidden again is
+frozen, thawed by being shown and thawed by a script of the host's; a tab that plays sound is
+refused; a tab with a beforeunload handler is frozen and not discarded, and a frozen tab
+without one is; a frozen tab picked for a share has no request when the answer returns, its
+stream is live and its picture moves, it is refused while shared and accepted after; a tab with
+a download in progress is refused until it ends; a page that would open a pop-up, ask for
+notifications, start a download and show a dialog from a timer does none of it while frozen
+(the host counts none of the four), and at the thaw the timer runs late by the time frozen, the
+pop-up makes no tab, and the dialog and the download arrive as they do from any background tab.
+Passed on the release engine, 2026-11-25. `engine/tests/check_abi171_imports.py`: the 61 struct
+layouts of 1.70 are unchanged, exactly three functions are added, no struct and no callback
+type, and gated Swift adoption typechecks (against the headers of overlay a3b96b217d; a later
+minor is stacked on the tree). The shell's self-test step "tab freezing"
+(`ChromiumSelfTest.tabFreezeChecks`): the model's own check freezes a tab unseen for 31
+minutes, its timer stops and its row is not dimmed; showing it runs it at once in the same
+document; a playing tab is not asked and is refused by the engine; Never thaws. **The shell's
+step has not run** (it needs the screen).
 
 ## Dark mode for websites (ABI 1.73, bridge 0.85.0)
 

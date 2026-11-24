@@ -222,6 +222,18 @@ struct GeneralSettingsPane: View {
                 }
             }
             SettingsGroup {
+                if model.engineHost.supportsTabFreezing {
+                    SettingsLabeledRow(label: TabSleepSettings.freezeLabel, detail: TabSleepSettings.freezeDetail) {
+                        SettingsPopUp(label: TabSleepSettings.freezeLabel, selection: $model.tabFreezeThreshold,
+                                      options: TabFreezeThreshold.allCases.map { ($0, $0.title) }, minWidth: 150)
+                    }
+                }
+                SettingsLabeledRow(label: TabSleepSettings.unloadLabel, detail: TabSleepSettings.unloadDetail) {
+                    SettingsPopUp(label: TabSleepSettings.unloadLabel, selection: $model.tabUnloadThreshold,
+                                  options: TabUnloadThreshold.allCases.map { ($0, $0.title) }, minWidth: 150)
+                }
+            }
+            SettingsGroup {
                 SettingsLabeledRow(label: "Manage your default search engine, Auto-Archive, and downloads in Profile Settings.") {
                     Button("Profile Settings…") { model.settingsPane = .profiles }
                 }
@@ -230,6 +242,15 @@ struct GeneralSettingsPane: View {
         // 1Password may have been installed or removed since launch.
         .onAppear { model.locateOnePasswordApp() }
     }
+}
+
+/// Settings › General, tab sleep: the words of its two rows. The Archive's
+/// menus set the same two values (`ArchiveView`).
+enum TabSleepSettings {
+    static let freezeLabel = "Freeze inactive tabs"
+    static let freezeDetail = "A tab you have not looked at for this long stops running in the background. It stays loaded and goes on at once when you open it. A tab that plays, is in a call, is shared or has a download running is left alone."
+    static let unloadLabel = "Unload inactive tabs"
+    static let unloadDetail = "After this long a tab’s page is unloaded to free memory. The tab stays in the sidebar and loads again when you open it."
 }
 
 /// 1Password: the sidebar card's one-time step and buttons, kept here for as

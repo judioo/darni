@@ -57,7 +57,7 @@ private let snapshotCallback: ReArcSnapshotCallback = { context, status, _, gene
 /// engine profile is open (named profiles open asynchronously); commands
 /// issued earlier wait for it.
 @Observable
-final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding, PageFullscreenControlling, LiveVideoProviding, MediaCaptureProviding, ScreenShareProviding, SiteAccessProviding {
+final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding, TabFreezing, PageFullscreenControlling, LiveVideoProviding, MediaCaptureProviding, ScreenShareProviding, SiteAccessProviding {
     let profileContext: EngineProfileContext
     /// Only a Peek's changes, to `.tab`, when it is expanded (`retag(as:)`).
     @ObservationIgnored private(set) var role: EngineRole
@@ -449,6 +449,45 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
         default:
             return .unsupported
         }
+    }
+
+    // MARK: Freeze (ABI 1.71)
+
+    /// `ReArcTabFreeze`: the engine holds the request and freezes the page
+    /// when nothing of its own speaks against it; it refuses a page that is
+    /// on screen, playing, shared, loading, or has a request or download open.
+    func freeze() -> FreezeOutcome {
+        guard let calls = freezeCalls, !isDiscarded else { return .unsupported }
+        let status = calls.freeze(tabID)
+        ChromiumLog.info("tab \(tabID) freeze -> \(status.rearcName)")
+        switch status {
+        case .rearcOK: return .requested
+        case ReArcStatus(REARC_INVALID_STATE), ReArcStatus(REARC_BUSY): return .refusedForNow
+        default: return .unsupported
+        }
+    }
+
+    /// `ReArcTabUnfreeze`: the page runs again; nothing is loaded.
+    func unfreeze() {
+        guard let calls = freezeCalls else { return }
+        let status = calls.unfreeze(tabID)
+        ChromiumLog.info("tab \(tabID) unfreeze -> \(status.rearcName)")
+    }
+
+    var isFreezeRequested: Bool { queryFreezeState()?.requested ?? false }
+
+    /// `ReArcTabGetFreezeState`: whether a request is held, and whether the
+    /// page's renderer has reported it frozen. nil when the engine cannot say.
+    func queryFreezeState() -> (requested: Bool, frozen: Bool)? {
+        guard let calls = freezeCalls else { return nil }
+        var requested = false
+        var frozen = false
+        return calls.state(tabID, &requested, &frozen) == .rearcOK ? (requested, frozen) : nil
+    }
+
+    /// The freeze calls, for an engine that has them and a tab that exists.
+    private var freezeCalls: ChromiumTabFreezeCalls? {
+        runtime.capabilities.tabFreeze && tabID != 0 ? ChromiumTabFreezeCalls.shared : nil
     }
 
     /// `ReArcTabGetDiscardState`, nil when the engine cannot say.

@@ -1,0 +1,557 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 tab sleep: a tab left alone is frozen before it is unloaded (ABI 1.71, bridge 0.83.0)
+
+Darni unloaded a tab nobody had looked at for four hours and did nothing
+before that: a tab in the background ran its timers and scripts at full
+cost until it was discarded, and then had to load again. The best of the
+other browsers freezes such a tab after thirty minutes: the page stays in
+memory, its scripts and timers stop, and showing it resumes it at once.
+
+What this patch does.
+
+- ReArcTabFreeze(tab): the host asks that the tab's page be frozen. The
+  bridge holds a performance_manager::freezing::FreezingVote for the tab's
+  WebContents (FreezeHold, a WebContentsUserData in freeze_adapter.cc). The
+  freezing is Chromium's own, FreezingPolicy with WebContents::SetPageFrozen:
+  the page is frozen while every page of its browsing instance has a vote and
+  none of Chromium's CannotFreezeReasons applies (visible, or visible in the
+  last five minutes; audible, or audible in the last five; capturing camera
+  or microphone; WebRTC; being mirrored; a Web Lock or IndexedDB lock; a USB,
+  Bluetooth, HID or serial device; loading; notification permission; WebUI),
+  and it thaws the moment one starts. OK means the request is held.
+- What Chromium's policy does not know about a bridge tab, Freeze refuses
+  (invalid_state): a tab that is presented or has visibility intent, is not
+  hidden, is discarded, crashed, loading or without a committed entry, is
+  being captured, is audible or has playing media (the bridge's media
+  session state, heard or not), has picture-in-picture or fullscreen, an
+  open permission request (PermissionRequestManager) or passkey request
+  (AuthenticatorRequestScheduler), or a download of its own in progress.
+  busy while a script or snapshot of the host's runs; unsupported for a
+  hosted DevTools frontend and without a page node.
+- The shared tab (security's advance read, 2). tab/102 keeps a tab that is
+  shared while nobody looks at it hidden: its picture and its sound are
+  hidden capturers, and its page node is not visible, so Chromium's policy
+  would freeze it and the share would show a still picture. Freeze refuses a
+  tab with any capturer (WebContents::IsBeingCaptured, hidden ones
+  included), and ReArcDisplayCaptureRespond drops the request of the tab it
+  is about to share (HostPicker::ShareTab) before the capture starts.
+- The request ends, and the page thaws, when the tab is shown
+  (OnVisibilityChanged to anything but hidden; content thaws a page that is
+  made visible by itself), when it navigates to another document, starts
+  media or becomes audible, enters picture-in-picture, is discarded, loses
+  its renderer, is shared, is asked to close (a frozen page answers no
+  beforeunload), when the host evaluates a script in it or sends a media
+  action, and with ReArcTabUnfreeze. The host asks again when the tab has
+  been left alone for its own time; a request never outlives a use of the
+  tab.
+- ReArcTabGetFreezeState(tab, &requested, &frozen): whether a request is
+  held, and the page's lifecycle state as its renderer last reported it
+  (PageNode::GetLifecycleState).
+- Feature "tab_freeze", ABI 1.71, bridge 0.83.0. Three functions, no struct,
+  no callback, no event.
+
+Thawing (security's advance read, 3). The bridge queues nothing for a
+frozen page, and neither does this patch: there is no list of things to do
+at the thaw. A frozen page runs no task, so it asks for nothing: no dialog,
+no pop-up, no download, no permission or notification request reaches the
+browser process, and the host hears nothing of the tab. A request that was
+open before the freeze keeps the tab from being frozen (above; the host
+answers for its own prompts). At the thaw the page's own timers and
+handlers run again, and what they ask then is a request of that moment,
+treated as the same request of a tab that was never frozen: a pop-up
+without a click is dropped and no tab is made for it (tab_adoption.cc; a
+click cannot be younger than the five minutes the tab must have been
+hidden, and activation lasts five seconds); a JavaScript dialog, a
+download or a permission request from a timer is what a tab in the
+background may ask at any time. The bridge adds no rule for those and
+takes none away.
+
+State. Nothing is persisted: no preference, no content setting, no file. A
+vote lives in the browser process and ends with the tab.
+
+Chromium's own freezing is otherwise as it was: its Battery Saver and
+"infinite tabs" freezing are not turned on by this patch, and its discard
+of frozen pages whose memory grows (FreezingDiscarder) takes tabs of a tab
+strip only (DiscardEligibilityPolicy: kNotATab), which a bridge tab is not.
+
+Tests: engine/tests/c_abi_freeze_host.mm (run_c_abi.py freeze). The runner
+passes
+--enable-features=CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/1s/freezing_audio_protection_time/1s,
+Chromium's own parameters, so a tab hidden a second ago can be frozen; a
+release keeps the five minutes. Its window is off every screen, it sends no
+input and its sound is muted. engine/tests/check_abi171_imports.py: the
+struct layouts of 1.70 are unchanged, three functions are added, no struct
+and no callback type. The shell's self-test step "tab freezing"
+(ChromiumSelfTest.tabFreezeChecks) drives the same through the model.
+
+Touches: the bridge only. New freeze_adapter.cc; one line each in
+close_controller.cc, rearc_display_capture.cc and twice in
+rearc_services_abi.cc; MediaIsPlaying in media_adapter.{h,cc};
+rearc_abi_internal.h, rearc_engine_abi.{h,mm}, rearc_engine_entry_mac.mm,
+chrome/browser/BUILD.gn, and the three names in chrome/app/framework.exports
+and framework.order. No upstream file but those three lists.
+
+Type-checked with the tree's clang (out/ReArc-codecs-arm64 flags, Chromium's
+plugins, -fsyntax-only), then built in out/ReArc-codecs-arm64 on 2026-11-25:
+overlay a3b96b217d, and the three names in framework.exports and
+framework.order as a second overlay commit, 577e70cef2 (tab/105 was
+committed between the two; this patch is the two together, on tab/102).
+
+Run on that build (run_c_abi.py freeze, REARC_CHROMIUM_OUT the release out
+dir, nothing on screen): a tab never shown is frozen and silent for three
+seconds, and after Unfreeze it is the same document with one freeze and one
+resume event and a longest gap of 4.2 s between two ticks of its timer; a
+tab shown and hidden again is frozen after the protection second, thawed
+by being shown and by a script of the host's; a tab that plays sound is
+refused six times in a row and keeps ticking; a tab with a beforeunload
+handler is frozen and its discard is refused, frozen or not; a frozen tab
+without one is discarded; a frozen tab picked for a share has no request
+when the answer returns, is live with 2 and then 13 frames, is refused
+while shared and accepted after; a tab with a download in progress is
+refused until it ends; the page that asks from a timer makes the host hear
+nothing while frozen (0 pop-ups, 0 permission requests, 0 dialogs, 0
+downloads), its timer runs 4.3 s late at the thaw, its pop-up makes no tab,
+and its dialog and its download arrive then. The network audit shows
+loopback only. Not run: the shell's self-test step, which needs the screen.
+
+Last rebased: 2026-11-25 onto Chromium 156.0.8078.114 (overlay 86afa51467).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 3dc7e43614..c2b50fb71f 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -142,6 +142,9 @@ _ReArcAutocompleteStart
+ _ReArcAutocompleteStop
+ _ReArcTabDiscard
+ _ReArcTabGetDiscardState
++_ReArcTabFreeze
++_ReArcTabUnfreeze
++_ReArcTabGetFreezeState
+ _ReArcEngineSetFullscreenCallback
+ _ReArcEngineSetFullscreenCallback2
+ _ReArcTabExitFullscreen
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index c64f290038..08e83364a7 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -155,6 +155,9 @@ _ReArcAutocompleteStart
+ _ReArcAutocompleteStop
+ _ReArcTabDiscard
+ _ReArcTabGetDiscardState
++_ReArcTabFreeze
++_ReArcTabUnfreeze
++_ReArcTabGetFreezeState
+ _ReArcEngineSetFullscreenCallback
+ _ReArcEngineSetFullscreenCallback2
+ _ReArcTabExitFullscreen
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 0c1f1643fa..5071c7dc60 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1533,6 +1533,7 @@ source_set("core") {
+       "rearc_bridge/rearc_autofill_save.h",
+       "rearc_bridge/rearc_extension_windows.h",
+       "rearc_bridge/discard_adapter.cc",
++      "rearc_bridge/freeze_adapter.cc",
+       "rearc_bridge/rearc_find_abi.cc",
+       "rearc_bridge/rearc_file_chooser.cc",
+       "rearc_bridge/rearc_file_chooser.h",
+diff --git a/chrome/browser/rearc_bridge/close_controller.cc b/chrome/browser/rearc_bridge/close_controller.cc
+index 5b6d2d808e..0eac95dec0 100644
+--- a/chrome/browser/rearc_bridge/close_controller.cc
++++ b/chrome/browser/rearc_bridge/close_controller.cc
+@@ -138,6 +138,8 @@ CloseRequestResult RequestTabClose(uint64_t tab_id,
+   if (!session || session->close_state() != TabSession::CloseState::kOpen) {
+     return CloseRequestResult::kTabNotFound;
+   }
++  // A frozen page answers no beforeunload: it thaws before it is asked.
++  ABIDropFreezeVote(tab_id);
+   PendingClose& pending =
+       AddPending(*session, TabClosedReason::kShell, std::move(callback));
+   if (force || IsHostedDevTools(session->web_contents())) {
+diff --git a/chrome/browser/rearc_bridge/freeze_adapter.cc b/chrome/browser/rearc_bridge/freeze_adapter.cc
+new file mode 100644
+index 0000000000..1531d461f4
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/freeze_adapter.cc
+@@ -0,0 +1,204 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// tab_freeze (ABI 1.71, tab/103). The host asks that a tab nobody has looked
++// at for a while be frozen: its page stays in memory and its scripts and
++// timers stop (page lifecycle "frozen"), and showing the tab resumes it at
++// once, with no reload. The freezing itself is Chromium's: the bridge holds a
++// performance_manager::freezing::FreezingVote for the tab, and Chromium's
++// FreezingPolicy freezes the page while none of its CannotFreezeReasons
++// applies (visible or recently visible, audible or recently audible, camera,
++// microphone, WebRTC, being mirrored, a Web Lock or IndexedDB lock, a USB,
++// Bluetooth, HID or serial device, loading, notification permission, WebUI)
++// and thaws it the moment one starts. What Chromium does not know about a
++// bridge tab is checked here.
++
++#include <pthread.h>
++
++#include "base/check.h"
++#include "base/memory/weak_ptr.h"
++#include "chrome/browser/rearc_bridge/media_adapter.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_devtools.h"
++#include "chrome/browser/rearc_bridge/tab_registry.h"
++#include "chrome/browser/rearc_bridge/tab_session.h"
++#include "chrome/browser/webauthn/authenticator_request_scheduler.h"
++#include "components/download/public/common/download_item.h"
++#include "components/download/public/common/simple_download_manager.h"
++#include "components/performance_manager/public/freezing/freezing.h"
++#include "components/performance_manager/public/graph/page_node.h"
++#include "components/performance_manager/public/performance_manager.h"
++#include "components/permissions/permission_request_manager.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/download_item_utils.h"
++#include "content/public/browser/download_manager.h"
++#include "content/public/browser/media_player_id.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/visibility.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/browser/web_contents_user_data.h"
++
++namespace rearc {
++namespace {
++
++// The host's request for one tab, and Chromium's vote with it. It goes, and
++// the page thaws, when the tab is shown or used: the host asks again once the
++// tab has been left alone for its own time.
++class FreezeHold : public content::WebContentsUserData<FreezeHold>,
++                   public content::WebContentsObserver {
++ public:
++  ~FreezeHold() override = default;
++
++  // content::WebContentsObserver:
++  void OnVisibilityChanged(content::Visibility visibility) override {
++    if (visibility != content::Visibility::HIDDEN) {
++      Drop();
++    }
++  }
++  void DidStartNavigation(content::NavigationHandle* handle) override {
++    if (handle->IsInPrimaryMainFrame() && !handle->IsSameDocument()) {
++      Drop();
++    }
++  }
++  void OnAudioStateChanged(bool audible) override {
++    if (audible) {
++      Drop();
++    }
++  }
++  void MediaStartedPlaying(const MediaPlayerInfo&,
++                           const content::MediaPlayerId&) override {
++    Drop();
++  }
++  void MediaPictureInPictureChanged(bool is_picture_in_picture) override {
++    if (is_picture_in_picture) {
++      Drop();
++    }
++  }
++  void AboutToBeDiscarded(content::WebContents*) override { Drop(); }
++  void PrimaryMainFrameRenderProcessGone(base::TerminationStatus) override {
++    Drop();
++  }
++  // The vote must go while the contents can still be reached: removing it
++  // makes the policy thaw the page through the WebContents.
++  void WebContentsDestroyed() override { Drop(); }
++
++ private:
++  friend class content::WebContentsUserData<FreezeHold>;
++  explicit FreezeHold(content::WebContents* contents)
++      : content::WebContentsUserData<FreezeHold>(*contents),
++        content::WebContentsObserver(contents),
++        vote_(contents) {}
++
++  // Deletes this.
++  void Drop() { web_contents()->RemoveUserData(UserDataKey()); }
++
++  performance_manager::freezing::FreezingVote vote_;
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++WEB_CONTENTS_USER_DATA_KEY_IMPL(FreezeHold);
++
++// A download the tab started that is still running.
++bool HasDownloadInProgress(content::WebContents* contents) {
++  content::DownloadManager* manager =
++      contents->GetBrowserContext()->GetDownloadManager();
++  if (!manager) {
++    return false;
++  }
++  download::SimpleDownloadManager::DownloadVector items;
++  manager->GetAllDownloads(&items);
++  for (download::DownloadItem* item : items) {
++    if (item->GetState() == download::DownloadItem::IN_PROGRESS &&
++        content::DownloadItemUtils::GetWebContents(item) == contents) {
++      return true;
++    }
++  }
++  return false;
++}
++
++// A permission question or a passkey request of the tab that is not answered.
++bool HasOpenRequest(content::WebContents* contents) {
++  auto* permissions =
++      permissions::PermissionRequestManager::FromWebContents(contents);
++  if (permissions && (permissions->IsRequestInProgress() ||
++                      permissions->has_pending_requests())) {
++    return true;
++  }
++  return AuthenticatorRequestScheduler::GetRequestDelegate(contents) != nullptr;
++}
++
++}  // namespace
++
++void ABIDropFreezeVote(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  TabSession* session = TabRegistry::Get().FindSession(tab_id);
++  if (session && session->web_contents()) {
++    session->web_contents()->RemoveUserData(FreezeHold::UserDataKey());
++  }
++}
++
++}  // namespace rearc
++
++ReArcStatus ReArcTabFreeze(uint64_t tab) {
++  CHECK(pthread_main_np());
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab, &session)) return status;
++  auto* contents = session->web_contents();
++  if (rearc::IsHostedDevTools(contents)) return REARC_UNSUPPORTED;
++  if (!performance_manager::PerformanceManager::IsAvailable() ||
++      !performance_manager::PerformanceManager::GetPrimaryPageNodeForWebContents(
++          contents)) {
++    return REARC_UNSUPPORTED;
++  }
++  if (rearc::FreezeHold::FromWebContents(contents)) return REARC_OK;
++  auto& controller = contents->GetController();
++  // The tab is on screen, or in use in a way a frozen page would break. The
++  // shared tab is one of them: a tab that is shared while nobody looks at it
++  // is a hidden capturer's (tab/102), which Chromium's policy does not see.
++  if (contents->WasDiscarded() || rearc::ABIHasVisibilityIntent(tab) ||
++      contents->GetVisibility() != content::Visibility::HIDDEN ||
++      contents->IsLoading() || controller.GetPendingEntry() ||
++      contents->HasUncommittedNavigationInPrimaryMainFrame() ||
++      !controller.GetLastCommittedEntry() || contents->IsCrashed() ||
++      !contents->GetPrimaryMainFrame()->IsRenderFrameLive() ||
++      contents->IsBeingCaptured() || contents->IsCurrentlyAudible() ||
++      rearc::MediaIsPlaying(tab) || contents->HasPictureInPictureVideo() ||
++      contents->HasPictureInPictureDocument() || contents->IsFullscreen() ||
++      rearc::HasOpenRequest(contents) ||
++      rearc::HasDownloadInProgress(contents)) {
++    return REARC_INVALID_STATE;
++  }
++  if (rearc::ABIDiscardServicesBusy(tab)) return REARC_BUSY;
++  rearc::FreezeHold::CreateForWebContents(contents);
++  return REARC_OK;
++}
++
++ReArcStatus ReArcTabUnfreeze(uint64_t tab) {
++  CHECK(pthread_main_np());
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab, &session)) return status;
++  rearc::ABIDropFreezeVote(tab);
++  return REARC_OK;
++}
++
++ReArcStatus ReArcTabGetFreezeState(uint64_t tab, bool* requested, bool* frozen) {
++  CHECK(pthread_main_np());
++  if (requested) *requested = false;
++  if (frozen) *frozen = false;
++  if (!requested || !frozen) return REARC_INVALID_ARGUMENT;
++  rearc::TabSession* session;
++  if (auto status = rearc::ABICheckTab(tab, &session)) return status;
++  auto* contents = session->web_contents();
++  *requested = rearc::FreezeHold::FromWebContents(contents) != nullptr;
++  if (performance_manager::PerformanceManager::IsAvailable()) {
++    auto page =
++        performance_manager::PerformanceManager::GetPrimaryPageNodeForWebContents(
++            contents);
++    *frozen = page && page->GetLifecycleState() ==
++                          performance_manager::PageNode::LifecycleState::kFrozen;
++  }
++  return REARC_OK;
++}
+diff --git a/chrome/browser/rearc_bridge/media_adapter.cc b/chrome/browser/rearc_bridge/media_adapter.cc
+index 1689ff2a3a..75131530c2 100644
+--- a/chrome/browser/rearc_bridge/media_adapter.cc
++++ b/chrome/browser/rearc_bridge/media_adapter.cc
+@@ -41,6 +41,8 @@ class MediaAdapter : public content::WebContentsObserver,
+  public:
+   ~MediaAdapter() override = default;
+ 
++  bool playing() const { return event_.playback == MediaPlayback::kPlaying; }
++
+   void Publish() {
+     if (!web_contents()) {
+       return;
+@@ -273,6 +275,14 @@ MediaCommandResult MediaSetPlayback(uint64_t tab_id,
+                  : MediaCommandResult::kInvalidState;
+ }
+ 
++bool MediaIsPlaying(uint64_t tab_id) {
++  CHECK(pthread_main_np());
++  auto* session = TabRegistry::Get().FindSession(tab_id);
++  auto* adapter =
++      session ? MediaAdapter::FromWebContents(session->web_contents()) : nullptr;
++  return adapter && adapter->playing();
++}
++
+ uint32_t MediaActionBits(uint64_t tab_id) {
+   CHECK(pthread_main_np());
+   auto* session = TabRegistry::Get().FindSession(tab_id);
+diff --git a/chrome/browser/rearc_bridge/media_adapter.h b/chrome/browser/rearc_bridge/media_adapter.h
+index d54308c136..451ae5b419 100644
+--- a/chrome/browser/rearc_bridge/media_adapter.h
++++ b/chrome/browser/rearc_bridge/media_adapter.h
+@@ -26,6 +26,8 @@ MediaCommandResult MediaSetMuted(uint64_t tab_id, bool muted);
+ bool MediaCanEnterPictureInPicture(uint64_t tab_id);
+ // Wave 32 (pip_embedded): REARC_MEDIA_ACTION_* bits of the tab's session.
+ uint32_t MediaActionBits(uint64_t tab_id);
++// ABI 1.71 (tab_freeze): the tab's media session is playing, heard or not.
++bool MediaIsPlaying(uint64_t tab_id);
+ 
+ }  // namespace rearc
+ 
+diff --git a/chrome/browser/rearc_bridge/rearc_abi_internal.h b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+index 8627a4e788..662d99c85f 100644
+--- a/chrome/browser/rearc_bridge/rearc_abi_internal.h
++++ b/chrome/browser/rearc_bridge/rearc_abi_internal.h
+@@ -58,5 +58,9 @@ void ABICancelWebAuthn(uint64_t tab_id);
+ // ABI 1.70 screen sharing (rearc_display_capture.cc): the host hears no more
+ // of the tab's open requests; Chromium drops them with the tab.
+ void ABICancelDisplayCapture(uint64_t tab_id);
++// ABI 1.71 tab freezing (freeze_adapter.cc): the host's request to freeze the
++// tab ends and its page thaws. Called when the tab is put to use: a script of
++// the host's, a media command, a share of the tab, its close.
++void ABIDropFreezeVote(uint64_t tab_id);
+ }  // namespace rearc
+ #endif
+diff --git a/chrome/browser/rearc_bridge/rearc_display_capture.cc b/chrome/browser/rearc_bridge/rearc_display_capture.cc
+index cd24d4120c..0209d33163 100644
+--- a/chrome/browser/rearc_bridge/rearc_display_capture.cc
++++ b/chrome/browser/rearc_bridge/rearc_display_capture.cc
+@@ -371,6 +371,8 @@ class HostPicker : public DesktopMediaPicker {
+     if (!main || !main->IsRenderFrameLive() || contents->IsCrashed()) {
+       return REARC_INVALID_STATE;
+     }
++    // A frozen page draws nothing: the tab that is shared thaws (tab/103).
++    ABIDropFreezeVote(target_tab);
+     GiveSizeToUnshownTab(contents, asker->web_contents());
+     DesktopMediaID media(
+         DesktopMediaID::TYPE_WEB_CONTENTS, DesktopMediaID::kNullId,
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 9d0370daab..a55ccaf9cc 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 70, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 71, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -403,6 +403,37 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcTabActivate(uint64_t tab_id);
+ REARC_ENGINE_EXPORT ReArcStatus ReArcTabDiscard(uint64_t tab_id);
+ REARC_ENGINE_EXPORT ReArcStatus ReArcTabGetDiscardState(uint64_t tab_id,
+                                                         bool* discarded);
++// tab_freeze (ABI 1.71, tab/103): the step before a discard. A frozen page
++// stays in memory with its scripts and timers stopped (page lifecycle
++// "frozen"); showing the tab resumes it at once, with no reload and no
++// event to the host. Freeze asks: OK means the request is held, not that the
++// page is frozen yet. Chromium freezes it while none of its own reasons not
++// to applies (visible, or visible in the last five minutes; audible, or
++// audible in the last five; camera, microphone, WebRTC, being mirrored; a Web
++// Lock or IndexedDB lock; a USB, Bluetooth, HID or serial device; loading;
++// notification permission; WebUI; and the same for every page of the same
++// browsing instance), and thaws it the moment one starts.
++// Freeze refuses, with invalid_state, a tab that is presented or has
++// visibility intent, is not hidden, is discarded, crashed, loading or without
++// a committed entry, is being captured (the shared tab of a screen share
++// too), is audible or has playing media, has picture-in-picture or
++// fullscreen, an open permission or passkey request, or a download of its
++// own in progress; busy while a script or snapshot of the host's runs;
++// unsupported for a hosted DevTools frontend. The host does not ask for a tab
++// with a prompt of its own open.
++// The request ends, and the page thaws, when the tab is shown, navigates,
++// starts media, is discarded, shared or closed, when the host evaluates a
++// script in it or sends a media action, and with Unfreeze (always OK for a
++// live tab). The host asks again when the tab has been left alone long
++// enough. Nothing a page did before it was frozen is replayed at the thaw:
++// the bridge queues nothing for a frozen page.
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabFreeze(uint64_t tab_id);
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabUnfreeze(uint64_t tab_id);
++// requested: a Freeze request is held. frozen: the page's lifecycle state as
++// its renderer last reported it (a moment behind the request).
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabGetFreezeState(uint64_t tab_id,
++                                                       bool* requested,
++                                                       bool* frozen);
+ 
+ // HTML fullscreen (html_fullscreen, ABI 1.27). Element.requestFullscreen()
+ // in a presented tab enters Chromium tab fullscreen; the event asks the host
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index de433ce778..9ec93b96e3 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -971,6 +971,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "context_menu" ||
+          std::string(feature) == "password_prompts" ||
+          std::string(feature) == "tab_discard" ||
++         std::string(feature) == "tab_freeze" ||
+          std::string(feature) == "html_fullscreen" ||
+          std::string(feature) == "printing" ||
+          std::string(feature) == "page_drops" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index 18957e790d..c788818648 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.82.0";
++  return "0.83.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_services_abi.cc b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+index 7733278f8d..31212278ef 100644
+--- a/chrome/browser/rearc_bridge/rearc_services_abi.cc
++++ b/chrome/browser/rearc_bridge/rearc_services_abi.cc
+@@ -1239,6 +1239,7 @@ void ABIAttachServices(uint64_t id) {
+ }
+ void ABIDetachServices(uint64_t id) {
+   CHECK(pthread_main_np());
++  ABIDropFreezeVote(id);
+   ABICancelPasswords(id);
+   ABICancelHttpAuth(id);
+   ABICancelClientCertificates(id);
+@@ -1281,6 +1282,8 @@ ReArcStatus ReArcTabMediaAction(uint64_t id, uint32_t action) {
+   if (action > 5) {
+     return REARC_INVALID_ARGUMENT;
+   }
++  // A frozen page cannot act on it: the command thaws the tab first.
++  rearc::ABIDropFreezeVote(id);
+   if (action == 5) {
+     // Suspend every registered player in the addressed WebContents, without
+     // relying on a currently focused global session or muting other tabs.
+@@ -1516,6 +1519,8 @@ static ReArcStatus EvaluateScript(uint64_t id, const char* source,
+   if (page->navigation_pending()) return REARC_INVALID_STATE;
+   if (!page->evaluation_allowed()) return REARC_UNSUPPORTED;
+   if (page->evaluation_busy()) return REARC_BUSY;
++  // A frozen page runs no script: the host's use of the tab thaws it.
++  rearc::ABIDropFreezeVote(id);
+   page->EvaluateScript(source, world ? std::string() : rearc::BoostWorld(name),
+                        timeout_ms, completion, context, callback2);
+   return REARC_OK;

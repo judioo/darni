@@ -207,10 +207,19 @@ enum ChromiumLaunchArguments {
     static let selfTestAutofillFocusSwitch = "--disable-features="
         + (["RWHVMacHasFocusReturnsFalseForNonKeyWindow"] + disabledEngineFeatureNames).joined(separator: ",")
 
+    /// Self-test only: Chromium does not freeze a page for five minutes after it was on
+    /// screen or heard (its own protection times, parameters of its freezing policy). A
+    /// self-test step cannot wait that long: here they are one second. It replaces the launch's
+    /// own `--enable-features` (Chromium keeps the last), so it carries every feature a launch
+    /// turns on too. A release keeps the five minutes: no launch but the self-test's names them.
+    static let selfTestFreezeProtection = "CPUMeasurementInFreezingPolicy:freezing_visible_protection_time/1s/freezing_audio_protection_time/1s"
+    static let selfTestFreezeSwitch = "--enable-features="
+        + (persistedProfileFeatureNames + enabledEngineFeatureNames + [selfTestFreezeProtection]).joined(separator: ",")
+
     /// `extensionDirs`: the self-test's local unpacked fixtures (`--load-extension`).
     static func selfTestArguments(_ arguments: [String], extensionDirs: [String] = []) -> [String] {
         var extra = selfTestForegroundSwitches + [selfTestDangerSwitch, selfTestAutoplaySwitch]
-            + selfTestNoOutsideNetworkSwitches + [selfTestAutofillFocusSwitch]
+            + selfTestNoOutsideNetworkSwitches + [selfTestAutofillFocusSwitch, selfTestFreezeSwitch]
         if !extensionDirs.isEmpty { extra.append("--load-extension=" + extensionDirs.joined(separator: ",")) }
         return arguments + extra.filter { !arguments.contains($0) }
     }

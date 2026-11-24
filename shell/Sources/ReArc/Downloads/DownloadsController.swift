@@ -42,6 +42,9 @@ struct DownloadOrigin: Equatable {
     /// A private window's download, or one whose profile could not be told:
     /// nothing is renamed or read from it.
     var isPrivate: Bool
+    /// The engine whose page started it, while that is known: a tab with a
+    /// download still running is neither frozen nor unloaded by itself.
+    var engine: ObjectIdentifier?
 }
 
 /// The downloads tray's model, shared by every window: the recent list
@@ -286,6 +289,12 @@ final class DownloadsController {
     }
 
     // MARK: Tidy Downloads
+
+    /// A download this engine's page started is still running (or paused).
+    func hasLiveDownload(startedBy engine: AnyObject) -> Bool {
+        let id = ObjectIdentifier(engine)
+        return origins.contains { $0.value.engine == id && list.record(withID: $0.key)?.isActive != false }
+    }
 
     /// The engine says where a download started; the first report stands.
     func noteOrigin(_ origin: DownloadOrigin, for id: String) {
