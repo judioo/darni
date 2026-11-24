@@ -13,14 +13,23 @@
 # No app is launched, no window opens and no input is posted, so it needs no screen token.
 # It builds, so mind the Mac's load (not during a performance slot).
 #
-# Usage: scripts/check-webkit.sh [--report DIR] [--full] [--record REV] [--label TEXT] [--scratch-path DIR]
+# Usage: scripts/check-webkit.sh [--report DIR] [--full | --log FILE] [--record REV] [--label TEXT]
+#                               [--scratch-path DIR]
+#        scripts/check-webkit.sh --coverage A..B
 #   --report DIR        where the report and logs go (default dist/webkit-check)
 #   --full              run the whole `swift test` suite, not only the WebKit engine tests
+#   --log FILE          build and test nothing: read the results from FILE, a `swift test` log of
+#                       the whole suite on this commit (the orchestrator's run of the release)
 #   --record REV        for a release: also keep its record in docs/releases/<build>/engine-parity
 #                       (REPORT.md, report.json, a NOTES.md to fill in, the document as it stood)
 #                       and add its line to docs/releases/ENGINE-PARITY-HISTORY.md. REV is the
 #                       release's commit, with its RELEASES.md entry; shell/Sources here must be
-#                       that commit's. Commit the folder afterwards. A failed pass is recorded too.
+#                       that commit's (and the WebKit engine tests too, with --log). The record
+#                       lists the commits since the record before that have neither a WebKit test
+#                       nor a reason (docs/engine-parity-changes.json); that flags, never fails.
+#                       Commit the folder afterwards. A failed pass is recorded too.
+#   --coverage A..B     only list the range's commits that change Darni's code, each with its
+#                       WebKit test or reason, or flagged; builds nothing, exits 0
 #   --label TEXT        the build's name in the report (default: the commit's version)
 #   --scratch-path DIR  SwiftPM's build directory (default: the package's own .build)
 # Exit status: 0 pass; 1 the build or a test failed; 2 the index, the document or a test's
@@ -33,15 +42,19 @@ REPORT="$SHELL_DIR/dist/webkit-check"
 FULL=0
 LABEL=""
 RECORD=""
+GIVEN_LOG=""
+COVERAGE=""
 SCRATCH=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --report) REPORT="${2:?--report needs a directory}"; shift ;;
     --full) FULL=1 ;;
     --record) RECORD="${2:?--record needs a release commit}"; shift ;;
+    --log) GIVEN_LOG="${2:?--log needs a swift test log}"; shift ;;
+    --coverage) COVERAGE="${2:?--coverage needs a range A..B}"; shift ;;
     --label) LABEL="${2:?--label needs text}"; shift ;;
     --scratch-path) SCRATCH=(--scratch-path "${2:?--scratch-path needs a directory}"); shift ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
     *) echo "check-webkit: unknown option: $1" >&2; exit 64 ;;
   esac
   shift
@@ -51,8 +64,17 @@ REPORTER=(python3 -I "$SHELL_DIR/scripts/release/webkit-parity-report.py"
   --index "$REPO/docs/engine-parity.json" --doc "$REPO/docs/ENGINE-PARITY.md"
   --tests "$SHELL_DIR/Tests/ReArcTests/WebKitEngine")
 
-echo "==> index, document and tests"
-"${REPORTER[@]}" --check || exit 2
+LEDGER="$REPO/docs/engine-parity-changes.json"
+if [[ $FULL == 1 && -n $GIVEN_LOG ]]; then echo "check-webkit: --full runs the suite and --log reads a run: pick one" >&2; exit 64; fi
+if [[ -n $GIVEN_LOG && ! -f $GIVEN_LOG ]]; then echo "check-webkit: no log at $GIVEN_LOG" >&2; exit 64; fi
+
+echo "==> index, document and tests" >&2
+"${REPORTER[@]}" --check >&2 || exit 2
+
+if [[ -n $COVERAGE ]]; then
+  "${REPORTER[@]}" --repo "$REPO" --ledger "$LEDGER" --coverage "$COVERAGE"
+  exit $?
+fi
 
 RECORD_FLAGS=()
 if [[ -n $RECORD ]]; then
@@ -62,13 +84,17 @@ if [[ -n $RECORD ]]; then
   fi
   read -r release_version release_build <<<"$stamp"
   release_commit="$(git -C "$REPO" rev-parse --short=8 "$RECORD^{commit}")"
-  if ! git -C "$REPO" diff --quiet "$RECORD" -- shell/Sources; then
-    echo "check-webkit: shell/Sources here is not $release_commit's, so this would not be Darni $release_version's pass." >&2
+  same=(shell/Sources)
+  # A given log is the release's own run: the tests it names must be the ones read here.
+  if [[ -n $GIVEN_LOG ]]; then same+=(shell/Tests/ReArcTests/WebKitEngine); fi
+  if ! git -C "$REPO" diff --quiet "$RECORD" -- "${same[@]}"; then
+    echo "check-webkit: ${same[*]} here is not $release_commit's, so this would not be Darni $release_version's pass." >&2
     echo "check-webkit: check the release out (its tests and scripts may be newer), then record." >&2
     exit 64
   fi
   release_date="${release_version:0:4}-${release_version:5:2}-${release_version:7:2}"
-  RECORD_FLAGS=(--record-release "$release_version" --releases "$REPO/docs/releases" --commit "$release_commit" --date "$release_date")
+  RECORD_FLAGS=(--record-release "$release_version" --releases "$REPO/docs/releases" --commit "$release_commit" --date "$release_date"
+    --repo "$REPO" --ledger "$LEDGER")
   if [[ -z $LABEL ]]; then LABEL="Darni $release_version (main $release_commit), WebKit shell"; fi
 fi
 
@@ -102,22 +128,28 @@ trap restore_resolved EXIT
 unset REARC_CHROMIUM_OUT REARC_ENGINE_INCLUDE
 
 start=$SECONDS
-echo "==> swift build (WebKit shell; log: $BUILD_LOG)"
 build_failed=0
+tests_failed=0
+if [[ -n $GIVEN_LOG ]]; then
+  echo "==> no build and no tests: reading $GIVEN_LOG"
+  cp "$GIVEN_LOG" "$TEST_LOG"
+  if grep -qE "^✘ Test |error: -\[" "$TEST_LOG"; then tests_failed=1; fi
+else
+echo "==> swift build (WebKit shell; log: $BUILD_LOG)"
 swift build --package-path "$SHELL_DIR" ${SCRATCH[@]+"${SCRATCH[@]}"} >"$BUILD_LOG" 2>&1 || build_failed=1
 
-tests_failed=0
 if [[ $build_failed == 0 ]]; then
   if [[ $FULL == 1 ]]; then
     echo "==> swift test, the whole suite (log: $TEST_LOG)"
     swift test --package-path "$SHELL_DIR" ${SCRATCH[@]+"${SCRATCH[@]}"} >"$TEST_LOG" 2>&1 || tests_failed=1
   else
     echo "==> swift test, the WebKit engine tests (log: $TEST_LOG)"
-    swift test --package-path "$SHELL_DIR" ${SCRATCH[@]+"${SCRATCH[@]}"} --filter 'ReArcTests\.WebKitEngine' >"$TEST_LOG" 2>&1 || tests_failed=1
+    swift test --package-path "$SHELL_DIR" ${SCRATCH[@]+"${SCRATCH[@]}"} --filter 'ReArcTests\.WebKit' >"$TEST_LOG" 2>&1 || tests_failed=1
   fi
 else
   echo "check-webkit: the WebKit shell did not build:" >&2
   grep -E "error:" "$BUILD_LOG" | head -n 10 >&2 || true
+fi
 fi
 
 flags=()
@@ -130,7 +162,7 @@ echo "==> $((SECONDS - start))s"
 if [[ $report_status != 0 ]]; then exit "$report_status"; fi
 if [[ $tests_failed == 1 ]]; then
   # The WebKit engine tests passed, so the failure is in another suite (--full) or in the run itself.
-  echo "check-webkit: swift test failed outside the WebKit engine tests:" >&2
+  echo "check-webkit: swift test failed outside the WebKit parity tests:" >&2
   grep -E "^✘ Test |error: -\[|: error: " "$TEST_LOG" | head -n 10 >&2 || true
   exit 1
 fi

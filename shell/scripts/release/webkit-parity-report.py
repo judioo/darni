@@ -21,6 +21,12 @@ With --record-release it also keeps the release's record for people to read late
 and rewrites <releases>/ENGINE-PARITY-HISTORY.md, one line per release, newest first.
 --history RELEASES rewrites only that file (after a release's notes are written).
 
+Coverage (docs/ENGINE-PARITY.md, section 5): every commit that changes Darni's code should have a
+WebKit parity test or a reason it needs none. docs/engine-parity-changes.json says which rows each
+commit touched (or that it is Chromium-only, or no feature at all). --coverage A..B lists the
+commits in a range and flags those with neither a tagged WebKit test nor a reason; a release record
+lists the commits since the record before. Flags never change the exit status.
+
 Exit status: 0 pass; 1 a WebKit test failed or did not run, or the build failed; 2 the index,
 the document or a test's row ID is wrong (fix those first: the report would mislead).
 """
@@ -28,6 +34,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 VERDICTS = ("works", "partial", "missing", "impossible")
@@ -35,6 +42,12 @@ PARITY = re.compile(r"^\s*//\s*parity:\s*(.+?)\s*$")
 TEST_FUNC = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*func\s+(test\w*)\s*\(")
 SUITE = re.compile(r"^\s*(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase")
 CASE = re.compile(r"^Test Case '-\[(?P<module>\w+)\.(?P<suite>\w+) (?P<test>\w+)\]' (?P<result>passed|failed)")
+# XCTExpectFailure that matched: the test states behaviour WebKit does not have yet, and passes.
+EXPECTED = re.compile(r"Expected failure in -\[(?P<module>\w+)\.(?P<suite>\w+) (?P<test>\w+)\]")
+# Darni's own code. A commit touching only tests, docs, scripts, benches or the perf tools is no feature.
+PRODUCT_PATHS = ("shell/Sources/ReArc/", "shell/Sources/SidebarModel/", "shell/Sources/Onboarding/",
+                 "shell/Resources/", "engine/patches/")
+ROW_REASONS = ("chromiumOnly", "screenOnly")
 DOC_ROW = re.compile(r"^\|.*\|\s*(?P<chromium>\w+)\s*\|\s*\*\*(?P<webkit>\w+)\*\*[^|]*\|.*\|\s*`(?P<id>[a-z0-9.-]+)`\s*\|\s*$")
 
 
@@ -51,6 +64,9 @@ def load_index(path):
         if row_id in seen:
             problems.append(f"index: row {row_id} is there twice")
         seen.add(row_id)
+        for reason in ROW_REASONS:
+            if reason in row and not (isinstance(row[reason], str) and row[reason].strip()):
+                problems.append(f"index: row {row_id} has an empty \"{reason}\"; give the reason or leave it out")
         if row.get("webkit") not in VERDICTS:
             problems.append(f"index: row {row_id} has the WebKit verdict \"{row.get('webkit')}\"; use one of {', '.join(VERDICTS)}")
     return rows, problems
@@ -101,13 +117,20 @@ def tagged_tests(tests_dir):
 
 
 def test_results(log_path):
-    """Suite.test -> "passed" | "failed" from a `swift test` log. A test that ran twice and failed once failed."""
-    results = {}
+    """Suite.test -> "passed" | "failed" | "gap confirmed" from a `swift test` log. A test that ran twice
+    and failed once failed. "gap confirmed": it passed on an expected failure (XCTExpectFailure), so the
+    behaviour it states is still missing on WebKit."""
+    results, expected = {}, set()
     for line in Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines():
+        if match := EXPECTED.search(line):
+            expected.add(f"{match['suite']}.{match['test']}")
         if match := CASE.match(line.strip()):
             name = f"{match['suite']}.{match['test']}"
             if results.get(name) != "failed":
                 results[name] = match["result"]
+    for name in expected:
+        if results.get(name) == "passed":
+            results[name] = "gap confirmed"
     return results
 
 
@@ -129,13 +152,15 @@ def build_report(rows, tags, results, build_ok, label):
         elif any(t["result"] == "not run" for t in tests):
             state = "not run"
             not_run.append(row["id"])
+        elif any(t["result"] == "gap confirmed" for t in tests):
+            state = "passed, gap confirmed"
         elif tests:
             state = "passed"
         else:
             state = "no test"
         report_rows.append({**row, "tests": tests, "webkitTests": state})
     counts = {verdict: sum(1 for row in rows if row["webkit"] == verdict) for verdict in VERDICTS}
-    covered = sum(1 for row in report_rows if row["webkitTests"] == "passed")
+    covered = sum(1 for row in report_rows if row["webkitTests"].startswith("passed"))
     untested_working = [row["id"] for row in report_rows if row["webkit"] == "works" and row["webkitTests"] == "no test"]
     passed = build_ok and not failed and not not_run
     return {
@@ -150,6 +175,92 @@ def build_report(rows, tags, results, build_ok, label):
         "workingRowsWithoutAWebKitTest": untested_working,
         "matrix": report_rows,
     }, problems
+
+
+def range_commits(repo, rev_range):
+    """The commits of `rev_range` (merges left out), oldest first: [{"commit", "subject", "files"}]."""
+    out = subprocess.run(["git", "-C", str(repo), "log", "--reverse", "--no-merges", "--format=@@%H%x09%s", "--name-only", rev_range],
+                         capture_output=True, text=True, check=True).stdout
+    commits = []
+    for line in out.splitlines():
+        if line.startswith("@@"):
+            sha, _, subject = line[2:].partition("\t")
+            commits.append({"commit": sha, "subject": subject, "files": []})
+        elif line.strip() and commits:
+            commits[-1]["files"].append(line.strip())
+    return commits
+
+
+def load_ledger(path):
+    """docs/engine-parity-changes.json: commit (an abbreviated SHA) -> what it touched."""
+    if not path or not Path(path).exists():
+        return {}
+    return json.loads(Path(path).read_text(encoding="utf-8")).get("changes", {})
+
+
+def coverage(commits, ledger, rows, tags):
+    """Each commit that changes Darni's code, covered or flagged, and how many changed none of it."""
+    by_id = {row["id"]: row for row in rows}
+    tested = {row_id for ids in tags.values() for row_id in ids}
+    entries, skipped = [], 0
+    for commit in commits:
+        if not any(f.startswith(PRODUCT_PATHS) for f in commit["files"]):
+            skipped += 1
+            continue
+        key = next((k for k in ledger if len(k) >= 7 and commit["commit"].startswith(k)), None)
+        entry = ledger.get(key) if key else None
+        item = {"commit": commit["commit"][:8], "subject": commit["subject"], "rows": [], "flags": [], "reasons": []}
+        if entry is None:
+            item["flags"].append("no entry in docs/engine-parity-changes.json")
+        elif entry.get("chromiumOnly"):
+            item["reasons"].append(f"Chromium-only: {entry['chromiumOnly']}")
+        elif entry.get("notAFeature"):
+            item["reasons"].append(f"no feature: {entry['notAFeature']}")
+        elif not entry.get("rows"):
+            item["flags"].append("its entry names no row and gives no reason")
+        by_reason = entry is not None and bool(entry.get("chromiumOnly") or entry.get("notAFeature"))
+        for row_id in [] if entry is None or by_reason else entry.get("rows", []):
+            item["rows"].append(row_id)
+            row = by_id.get(row_id)
+            if row is None:
+                item["flags"].append(f"{row_id}: not a row of the index")
+            elif row_id in tested:
+                item["reasons"].append(f"{row_id}: WebKit test")
+            elif row.get("chromiumOnly"):
+                item["reasons"].append(f"{row_id}: Chromium-only: {row['chromiumOnly']}")
+            elif row.get("screenOnly"):
+                item["flags"].append(f"{row_id}: no WebKit test; needs the screen: {row['screenOnly']}")
+            else:
+                item["flags"].append(f"{row_id}: no WebKit test and no Chromium-only reason")
+        item["state"] = "flagged" if item["flags"] else "covered"
+        entries.append(item)
+    return {"changes": entries, "notProductCode": skipped,
+            "flagged": [e["commit"] for e in entries if e["state"] == "flagged"]}
+
+
+def plural(count, one, many, bare=False):
+    """"1 commit changes", "2 commits change"; with `bare`, "1 has", "2 have"."""
+    return f"{count} {one if count == 1 else many}"
+
+
+def coverage_markdown(result, rev_range, heading="##"):
+    lines = [f"{heading} Changes in `{rev_range}` and their WebKit tests", ""]
+    changes = result["changes"]
+    if not changes:
+        lines.append("No commit in the range changes Darni's code.")
+    else:
+        flagged = [e for e in changes if e["state"] == "flagged"]
+        lines.append(f"{plural(len(changes), 'commit changes', 'commits change')} Darni's code; "
+                     f"{plural(len(flagged), 'has', 'have', bare=True)} neither a WebKit test nor a reason it needs none."
+                     " This flags and does not block.")
+        lines += ["", "| Commit | Change | Rows | Coverage |", "|---|---|---|---|"]
+        for e in changes:
+            what = "; ".join(e["flags"] + e["reasons"]) or ""
+            mark = "**flagged**: " if e["flags"] else ""
+            subject = e["subject"].replace("|", "\\|")
+            lines.append(f"| `{e['commit']}` | {subject} | {', '.join(e['rows']) or '-'} | {mark}{what} |")
+    lines += ["", f"{plural(result['notProductCode'], 'more commit changes', 'more commits change')} no Darni code (tests, docs, scripts, benches)."]
+    return "\n".join(lines)
 
 
 NOTES_PENDING = "<!-- engine-parity notes: not written yet -->"
@@ -194,8 +305,16 @@ def describe_change(change):
     return text
 
 
-def notes_template(release, previous):
+def notes_template(release, previous, cover=None):
     since = f"since {previous}" if previous else "in this release"
+    flagged = [e for e in (cover or {}).get("changes", []) if e["state"] == "flagged"]
+    gaps = ["## Changes without a WebKit test or a Chromium-only reason", ""]
+    if cover is None:
+        gaps.append("No coverage check: no earlier record to start the range from.")
+    elif not flagged:
+        gaps.append("None.")
+    else:
+        gaps += [f"- `{e['commit']}` {e['subject']}: {'; '.join(e['flags'])}" for e in flagged]
     return "\n".join([
         f"# Engine parity notes: Darni {release['version']}",
         "",
@@ -209,6 +328,8 @@ def notes_template(release, previous):
         "|---|---|---|",
         "",
         "## What the WebKit pass found",
+        "",
+        *gaps,
         "",
         "## Conclusions and open questions",
         "",
@@ -236,6 +357,8 @@ def release_markdown(report):
     else:
         lines += ["| Feature | Change | ID |", "|---|---|---|"]
         lines += [f"| {c['feature']} | {describe_change(c)} | `{c['id']}` |" for c in report["changes"]]
+    if report.get("coverage") is not None:
+        lines += ["", coverage_markdown(report["coverage"], report["coverageRange"])]
     lines += ["", "## The pass", ""]
     return "\n".join(lines) + "\n" + "\n".join(markdown(report).splitlines()[2:])
 
@@ -247,8 +370,8 @@ def history_markdown(releases):
         "Made by `shell/scripts/check-webkit.sh --record`; do not edit. One line per release, newest first.",
         "Each release's folder has its report, its notes and the full document as it stood (README.md).",
         "",
-        "| Release | Date | Commit | WebKit pass | Works | Partly | Missing | Impossible | Covered by a WebKit test | Failed | Verdict changes | Notes |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Release | Date | Commit | WebKit pass | Works | Partly | Missing | Impossible | Covered by a WebKit test | Failed | Verdict changes | Changes without a WebKit test | Notes |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for build, folder in reversed(recorded_releases(releases)):
         report = json.loads((folder / "report.json").read_text(encoding="utf-8"))
@@ -261,12 +384,14 @@ def history_markdown(releases):
             f"| {'pass' if report['result'] == 'pass' else '**fail**'} | {counts['works']} | {counts['partial']} | {counts['missing']} "
             f"| {counts['impossible']} | {report['rowsWithAPassingWebKitTest']} of {report['rows']} "
             f"| {', '.join(report['failedRows'] + report['notRunRows']) or 'none'} | {changes} "
+            f"| {'not checked' if report.get('coverage') is None else (len(report['coverage']['flagged']) or 'none')} "
             f"| {f'[notes]({build}/{RECORD}/NOTES.md)' if written else 'not written yet'} |")
     return "\n".join(lines) + "\n"
 
 
-def record_release(report, rows, doc, releases, release):
-    """Keeps this release's record and rewrites the history. Returns the release's folder."""
+def record_release(report, rows, doc, releases, release, repo=None, ledger=None, tags=None):
+    """Keeps this release's record and rewrites the history. Returns the release's folder. With `repo`,
+    the commits since the record before are checked for WebKit tests (`coverage`)."""
     releases = Path(releases)
     folder = releases / str(release["build"]) / RECORD
     earlier = [(build, path) for build, path in recorded_releases(releases) if build < release["build"]]
@@ -277,7 +402,12 @@ def record_release(report, rows, doc, releases, release):
         changes = verdict_changes(before["matrix"], rows)
         if not changes:
             snapshot = before["documentSnapshot"]
-    record = {**report, "release": release, "previous": previous, "changes": changes, "documentSnapshot": snapshot}
+    cover, cover_range = None, None
+    if repo and earlier:
+        cover_range = f"{before['release']['commit']}..{release['commit']}"
+        cover = coverage(range_commits(repo, cover_range), load_ledger(ledger), rows, tags or {})
+    record = {**report, "release": release, "previous": previous, "changes": changes, "documentSnapshot": snapshot,
+              "coverage": cover, "coverageRange": cover_range}
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "report.json").write_text(json.dumps(record, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     (folder / "REPORT.md").write_text(release_markdown(record) + "\n", encoding="utf-8")
@@ -290,7 +420,7 @@ def record_release(report, rows, doc, releases, release):
         copy.unlink()
     notes = folder / "NOTES.md"
     if not notes.exists():
-        notes.write_text(notes_template(release, previous), encoding="utf-8")
+        notes.write_text(notes_template(release, previous, cover), encoding="utf-8")
     (releases / "ENGINE-PARITY-HISTORY.md").write_text(history_markdown(releases), encoding="utf-8")
     return folder
 
@@ -341,6 +471,9 @@ def main(argv=None):
     parser.add_argument("--releases", help="docs/releases")
     parser.add_argument("--commit", help="the release's commit")
     parser.add_argument("--date", help="the release's date, YYYY-MM-DD")
+    parser.add_argument("--repo", help="the repository, for --coverage and a release record's coverage")
+    parser.add_argument("--ledger", help="docs/engine-parity-changes.json")
+    parser.add_argument("--coverage", metavar="A..B", help="only list the range's commits and their WebKit tests (prints markdown)")
     parser.add_argument("--history", metavar="RELEASES", help="only rewrite RELEASES/ENGINE-PARITY-HISTORY.md (after a release's notes are written)")
     args = parser.parse_args(argv)
     if args.history:
@@ -368,6 +501,12 @@ def main(argv=None):
         for problem in problems:
             print(f"webkit-parity-report: {problem}", file=sys.stderr)
         return 2
+    if args.coverage:
+        if not args.repo:
+            parser.error("--coverage needs --repo")
+        result = coverage(range_commits(args.repo, args.coverage), load_ledger(args.ledger), rows, tags)
+        print(coverage_markdown(result, args.coverage, heading="#"))
+        return 0
     if args.check:
         print(f"webkit-parity-report: {len(rows)} rows, {len(tags)} tagged tests; index, document and tests agree")
         return 0
@@ -381,7 +520,11 @@ def main(argv=None):
         (out / "webkit-parity-report.md").write_text(markdown(report) + "\n", encoding="utf-8")
         where.append(f"report in {out}")
     if release:
-        where.append(f"release record in {record_release(report, rows, args.doc, args.releases, release)}")
+        folder = record_release(report, rows, args.doc, args.releases, release, repo=args.repo, ledger=args.ledger, tags=tags)
+        where.append(f"release record in {folder}")
+        recorded = json.loads((folder / "report.json").read_text(encoding="utf-8"))
+        for commit in (recorded.get("coverage") or {}).get("flagged", []):
+            print(f"webkit-parity-report: NO WEBKIT TEST for {commit} (flagged, not blocking)", file=sys.stderr)
     print(f"webkit-parity-report: {report['result'].upper()}: {report['rowsWithAPassingWebKitTest']} of {report['rows']} "
           f"features covered by a passing WebKit test; {'; '.join(where)}")
     for row_id in report["failedRows"]:
