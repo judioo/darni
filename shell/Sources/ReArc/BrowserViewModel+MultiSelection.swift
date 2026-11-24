@@ -96,15 +96,13 @@ extension BrowserViewModel {
         let links = store.linkTabIDs(for: ids).compactMap { id -> (url: URL, title: String)? in
             guard let tab = store.tab(withID: id) else { return nil }
             let engine = engineHost.engine(forTabID: id, profileID: profileID(for: tab))
-            let (url, cleaned) = LinkCleaner.clean(engine?.currentURL ?? tab.url)
+            let (url, cleaned) = linkForCopying(engine?.currentURL ?? tab.url)
             anyCleaned = anyCleaned || cleaned
             return (url, tab.customTitle ?? engine?.pageTitle ?? tab.title)
         }
         guard !links.isEmpty else { return }
         let text = (format == .markdown ? PageLinkCopyFormat.markdown : .plain).text(links: links)
-        linkPasteboard.clearContents()
-        linkPasteboard.setString(text, forType: .string)
-        lastCopiedLinkText = text
+        writeCopiedLinks(text)
         showToast(PageLinkCopyFormat.multipleConfirmation(cleaned: anyCleaned),
                   systemImage: anyCleaned ? "checkmark.shield.fill" : "link")
     }

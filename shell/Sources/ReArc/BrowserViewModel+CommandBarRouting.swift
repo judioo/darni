@@ -159,6 +159,7 @@ extension BrowserViewModel {
             if self.handleFullscreenEscape(event) { return nil }
             if self.handlePeekEscape(event) { return nil }
             if self.handleCommandBarKey(event) { return nil }
+            if self.handleAddressFieldCopy(event) { return nil }
             if self.handleTabSwitcherEvent(event) { return nil }
             if self.handleDownloadsTrayEscape(event) { return nil }
             if self.handleLibraryEscape(event, pageHasFocus: self.shortcutRouter.pageHasFocus(event)) { return nil }

@@ -168,8 +168,7 @@ struct LittleArcWindowView: View {
                 if model.splitLittleArcWindow(windowID) { dismiss() }
             }
             navButton("link", "Copy Link", enabled: true) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString((engine.currentURL ?? record.url).absoluteString, forType: .string)
+                model.copyLink(engine.currentURL ?? record.url, littleArc: windowID)
             }
             profileMenu(for: record)
             // Asked first what it needs: the address field gives way before a word of it does.
@@ -306,7 +305,7 @@ struct LittleArcWindowView: View {
             if isEditingAddress {
                 let suffix = InlineDomainCompletion.complete(addressText, candidates: InlineDomainCompletion.candidates(history: model.visitHistory(for: record.profileID)))
                     .flatMap { InlineDomainCompletion.suffix(typed: addressText, completion: $0) }
-                TextField("Search or enter URL", text: $addressText)
+                TextField(AddressFieldCopy.littleArcPlaceholder, text: $addressText)
                     .textFieldStyle(.plain)
                     .focused($addressFocused)
                     .overlay(alignment: .leading) {
