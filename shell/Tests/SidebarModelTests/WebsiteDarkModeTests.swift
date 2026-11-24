@@ -278,4 +278,168 @@ final class WebsiteDarkModeTests: XCTestCase {
         XCTAssertEqual(kinds(contentBlocking: nil, websiteDarkMode: dark), [.websiteDarkMode, .autoPictureInPicture])
         XCTAssertEqual(kinds(contentBlocking: blocking, websiteDarkMode: nil), [.contentBlocking, .autoPictureInPicture], "the panel is as it was")
     }
+
+    // MARK: The sites and the profile's history (security DM-1)
+
+    func testThePagesThatCanDeleteHistoryAreChromiumsSettingsAndHistory() {
+        func can(_ text: String) -> Bool { WebsiteDarkModeHistory.canDeleteHistory(pageURL: URL(string: text)) }
+        XCTAssertTrue(can("chrome://settings/clearBrowserData"), "Clear Browsing Data")
+        XCTAssertTrue(can("chrome://settings/privacy"), "the dialog is opened from here too, without a new page")
+        XCTAssertTrue(can("chrome://settings"))
+        XCTAssertTrue(can("CHROME://Settings/clearBrowserData"))
+        XCTAssertTrue(can("chrome://history"))
+        XCTAssertTrue(can("chrome://history/?q=news"))
+        XCTAssertFalse(can("chrome://extensions"))
+        XCTAssertFalse(can("chrome://downloads"))
+        XCTAssertFalse(can("https://settings/clearBrowserData"), "a website with that name is not the engine's page")
+        XCTAssertFalse(can("https://example.com/chrome://settings"))
+        XCTAssertFalse(can("about:blank"))
+        XCTAssertFalse(WebsiteDarkModeHistory.canDeleteHistory(pageURL: nil))
+    }
+
+    func testAHistoryRowIsAVisitToAHostByTheRuleTheChoicesAreKeptUnder() {
+        XCTAssertTrue(WebsiteDarkModeHistory.isVisit("https://news.example/story?id=1", toHost: "news.example"))
+        XCTAssertTrue(WebsiteDarkModeHistory.isVisit("http://NEWS.example:8080/", toHost: "news.example"))
+        XCTAssertFalse(WebsiteDarkModeHistory.isVisit("https://www.news.example/", toHost: "news.example"), "another host")
+        XCTAssertFalse(WebsiteDarkModeHistory.isVisit("https://other.example/?from=news.example", toHost: "news.example"),
+                       "the host in a query is not a visit: the history's text search finds such rows too")
+        XCTAssertFalse(WebsiteDarkModeHistory.isVisit("chrome://history/?q=news.example", toHost: "news.example"))
+        XCTAssertFalse(WebsiteDarkModeHistory.isVisit("not a url", toHost: "news.example"))
+    }
+
+    func testASiteIsGoneOnlyWhenEveryStorageSaysItHasNoVisit() {
+        let main = UUID(), container = UUID()
+        var history: [UUID: [String: Bool]] = [
+            main: ["a.example": true, "b.example": false, "c.example": false, "d.example": false],
+            container: ["b.example": true, "c.example": false, "e.example": true],
+        ]
+        // The storages that cannot say for a host (a refused query).
+        var cannotSay: [UUID: Set<String>] = [main: ["e.example"], container: ["d.example"]]
+        var asked: [String] = []
+        let ask: WebsiteDarkModeHistory.Ask = { storage, host, reply in
+            asked.append("\(storage == main ? "main" : "container") \(host)")
+            reply(cannotSay[storage]?.contains(host) == true ? nil : history[storage]?[host] ?? false)
+        }
+        var gone: [String]?
+        WebsiteDarkModeHistory.hostsWithoutVisits(["a.example", "b.example", "c.example", "d.example", "e.example"],
+                                                  storages: [main, container], ask: ask) { gone = $0 }
+        XCTAssertEqual(gone, ["c.example"], "only the site no storage has; one that cannot say keeps the site")
+        XCTAssertEqual(asked, ["main a.example", "main b.example", "container b.example", "main c.example", "container c.example",
+                               "main d.example", "container d.example", "main e.example"],
+                       "a container is asked only when the profile has no visit, and nothing after a yes or a cannot-say")
+
+        history = [:]
+        cannotSay = [:]
+        WebsiteDarkModeHistory.hostsWithoutVisits(["a.example", "b.example"], storages: [main, container], ask: ask) { gone = $0 }
+        XCTAssertEqual(gone, ["a.example", "b.example"], "all history cleared: every site goes")
+        WebsiteDarkModeHistory.hostsWithoutVisits(["a.example"], storages: [], ask: ask) { gone = $0 }
+        XCTAssertEqual(gone, [], "nobody to ask: nothing is dropped")
+        WebsiteDarkModeHistory.hostsWithoutVisits([], storages: [main], ask: ask) { gone = $0 }
+        XCTAssertEqual(gone, [])
+    }
+
+    func testAnswersMayComeLater() {
+        let main = UUID()
+        var replies: [(Bool?) -> Void] = []
+        var gone: [String]?
+        WebsiteDarkModeHistory.hostsWithoutVisits(["a.example", "b.example"], storages: [main], ask: { _, _, reply in replies.append(reply) }) { gone = $0 }
+        XCTAssertEqual(replies.count, 1, "one question at a time")
+        replies[0](false)
+        XCTAssertNil(gone)
+        XCTAssertEqual(replies.count, 2)
+        replies[1](true)
+        XCTAssertEqual(gone, ["a.example"])
+    }
+
+    func testHostsAreRemovedFromOneProfileOnly() {
+        var sites = WebsiteDarkModeSites()
+        let other = UUID()
+        sites.set(.on, forHost: "a.example", profile: profile)
+        sites.set(.off, forHost: "b.example", profile: profile)
+        sites.set(.on, forHost: "a.example", profile: other)
+        XCTAssertFalse(sites.removeHosts(["z.example"], profile: profile))
+        XCTAssertFalse(sites.removeHosts([], profile: profile))
+        XCTAssertTrue(sites.removeHosts(["a.example", "z.example"], profile: profile))
+        XCTAssertEqual(sites.choices(for: profile), ["b.example": .off])
+        XCTAssertEqual(sites.choices(for: other), ["a.example": .on], "another profile's history is its own")
+        XCTAssertTrue(sites.removeHosts(["b.example"], profile: profile))
+        XCTAssertNil(sites.scopes[profile.uuidString], "a profile with no site left is not named")
+        XCTAssertFalse(sites.removeHosts(["a.example"], profile: UUID()))
+    }
+
+    // MARK: Reading the history (a "no" must be certain)
+
+    /// A storage's history: its pages newest first, a list of recent pages
+    /// that reaches `recentLimit` of them, and a text search.
+    private final class History {
+        var pages: [String] = []
+        var recentLimit = 1000
+        var refuses = false
+        var searchIsBroken = false
+        var queries: [String] = []
+        var query: WebsiteDarkModeHistory.Query {
+            { [self] _, text, reply in
+                queries.append(text)
+                guard !refuses else { return reply(nil) }
+                if text.isEmpty { return reply(Array(pages.prefix(recentLimit))) }
+                reply(searchIsBroken ? [] : pages.filter { $0.contains(text) })
+            }
+        }
+        func hasVisit(_ host: String) -> Bool?? {
+            var answer: Bool??
+            WebsiteDarkModeHistory.Reader(query: query).ask(UUID(), host) { answer = .some($0) }
+            return answer
+        }
+    }
+
+    func testARecentPageOfTheHostIsAVisitWithoutASearch() {
+        let history = History()
+        history.pages = ["https://news.example/a", "https://bank.example/"]
+        XCTAssertEqual(history.hasVisit("news.example"), .some(true))
+        XCTAssertEqual(history.queries, [""], "the list of recent pages is enough")
+    }
+
+    func testAHistoryWithNoWebPageHasNoVisitToAnySite() {
+        let history = History()
+        XCTAssertEqual(history.hasVisit("news.example"), .some(false), "all history cleared")
+        history.pages = ["chrome://settings/", "file:///Users/someone/notes.html"]
+        XCTAssertEqual(history.hasVisit("news.example"), .some(false), "what is left names no website")
+    }
+
+    func testAnOlderVisitIsFoundByTheSearchAndOnlyAPageOfTheHostCounts() {
+        let history = History()
+        history.pages = ["https://recent.example/", "https://other.example/?from=news.example", "https://news.example/old"]
+        history.recentLimit = 1
+        XCTAssertEqual(history.hasVisit("news.example"), .some(true))
+        XCTAssertEqual(history.queries, ["", "news.example"])
+        // Only the page that mentions the host is left: not a visit to it.
+        history.pages.removeLast()
+        history.queries = []
+        XCTAssertEqual(history.hasVisit("news.example"), .some(false))
+        XCTAssertEqual(history.queries, ["", "news.example", "recent.example"], "the no is believed after the search found a host that is there")
+    }
+
+    func testANoIsNotBelievedFromASearchThatCannotFindWhatIsThere() {
+        let history = History()
+        history.pages = ["https://recent.example/", "https://news.example/old"]
+        history.recentLimit = 1
+        history.searchIsBroken = true
+        XCTAssertEqual(history.hasVisit("news.example"), .some(nil), "it cannot say: the choice is kept")
+        history.searchIsBroken = false
+        history.refuses = true
+        XCTAssertEqual(history.hasVisit("news.example"), .some(nil), "a refused query cannot say either")
+    }
+
+    func testOneCheckReadsTheRecentPagesAndTheControlOncePerStorage() {
+        let history = History()
+        history.pages = ["https://recent.example/"]
+        let reader = WebsiteDarkModeHistory.Reader(query: history.query)
+        let storage = UUID()
+        var answers: [Bool?] = []
+        for host in ["a.example", "b.example", "recent.example"] { reader.ask(storage, host) { answers.append($0) } }
+        XCTAssertEqual(answers, [false, false, true])
+        XCTAssertEqual(history.queries, ["", "a.example", "recent.example", "b.example"])
+        reader.ask(UUID(), "a.example") { answers.append($0) }
+        XCTAssertEqual(history.queries.suffix(3), ["", "a.example", "recent.example"], "another storage is read for itself")
+    }
 }
