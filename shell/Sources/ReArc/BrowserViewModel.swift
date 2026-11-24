@@ -2258,8 +2258,12 @@ final class BrowserViewModel {
             commandBarLive = live
         }
         let profileID = store.activeProfileID
-        _ = commandBarServices.deleteFromHistory(url, profileID: profileID) { [weak self] _ in
-            self?.refreshCommandBarLive()
+        _ = commandBarServices.deleteFromHistory(url, profileID: profileID) { [weak self] deleted in
+            guard let self else { return }
+            self.refreshCommandBarLive()
+            // A third way history goes (security D-1): a site whose last visit this was
+            // loses its dark mode choice, as after Clear Browsing Data.
+            if deleted { self.checkWebsiteDarkModeSitesAgainstHistory(profile: profileID) }
         }
     }
 

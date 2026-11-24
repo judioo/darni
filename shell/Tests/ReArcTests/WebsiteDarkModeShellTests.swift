@@ -570,5 +570,41 @@ final class WebsiteDarkModeShellTests: XCTestCase {
         unanswered[0](["https://news.example/", "https://bank.example/"])
         XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["news.example": .on])
     }
+
+    /// Security D-1: removing a page from history in the command bar is a third way a
+    /// site's last visit goes; the site's choice goes with it, and only when the engine
+    /// said the delete worked.
+    func testRemovingASitesLastPageFromHistoryInTheCommandBarTakesItsChoice() throws {
+        let (model, engine, history, profile) = try launchWithHistory()
+        let services = DeletingCommandBarServices()
+        model.commandBarServices = services
+        let page = URL(string: "https://news.example/story")!
+
+        services.answer = false
+        history.visited[profile] = ["bank.example"]
+        model.deleteFromHistory(page)
+        XCTAssertEqual(services.deleted, [page])
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2, "a delete the engine refused changes nothing")
+
+        services.answer = true
+        model.deleteFromHistory(page)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["bank.example": .on])
+        XCTAssertEqual(engine.take(), ["4 light on[bank.example] off[]"])
+    }
 }
 
+/// Deletes from history with the answer it is given, at once.
+private final class DeletingCommandBarServices: CommandBarServices {
+    var answer = true
+    var deleted: [URL] = []
+    var onSearchProviderChange: (() -> Void)?
+    func searchProvider(for profileID: Profile.ID) -> SearchProvider { .google }
+    func commandBarWillOpen(profileID: Profile.ID) {}
+    func query(_ text: String, profileID: Profile.ID, isPrivate: Bool, deliver: @escaping (CommandBarLiveResults) -> Void) {}
+    func cancel() {}
+    func deleteFromHistory(_ url: URL, profileID: Profile.ID, completion: @escaping (Bool) -> Void) -> Bool {
+        deleted.append(url)
+        completion(answer)
+        return answer
+    }
+}
