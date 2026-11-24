@@ -53,7 +53,10 @@
 #                    or $DARNI_PERF_ENGINE_SRC)
 #
 # Needs the screen for measuring: the input gate ~/Library/Caches/rearc-input-allowed, an
-# unlocked screen, and nothing else posting input (the input lock is taken for the run).
+# unlocked screen, and nothing else posting input (the input lock is taken for the run). Every
+# measuring run also takes the machine-wide heavy-job lock as `perf` (scripts/heavy-job.sh) and
+# waits for a heavy job that holds it; without the gate it refuses before waiting. In a break
+# slot, `scripts/heavy-job.sh --hold perf <seconds>` first keeps the Mac for the whole slot.
 # Never pushes. Exit codes: 0 pass, 1 halt, 2 usage or not comparable, 3 flag, 75 conditions.
 set -euo pipefail
 
@@ -150,6 +153,11 @@ if [[ $ARC_BASELINE == 1 ]]; then
   BUILD="${BUILD:-arc}"
 fi
 [[ $BUILD =~ ^[0-9]+$ || $ARC_BASELINE == 1 ]] || die "--build NNNN, --weekly or --arc-baseline is required"
+# A measurement needs the screen: refuse at once without the input gate, before waiting for the
+# heavy-job lock (an engine build can hold it for an hour) or making a QA copy. Checked again
+# after the wait, as a break can end while it waits.
+GATE_FILE="$HOME/Library/Caches/rearc-input-allowed"
+[[ -n $GATE_ONLY || -e $GATE_FILE ]] || refuse "no input gate: the owner has not lent the screen"
 mkdir -p "$DATA"
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 OUT="$SHELL_DIR/bench/results/perf/$STAMP-$BUILD"   # git-ignored
@@ -175,9 +183,10 @@ if [[ -z $GATE_ONLY ]]; then
     MEASURE+=(--darni-app "$QA")
   fi
 
-  # The weekly measurement is a heavy job: nothing else heavy runs with it, and it waits for
-  # one that is running (scripts/heavy-job.sh). Inside a `--hold perf` window it starts at once.
-  heavy_job() { if [[ $WEEKLY == 1 ]]; then source "$SHELL_DIR/scripts/heavy-job.sh"; "heavy_job_$1" perf; fi; }
+  # Every measurement (--weekly, --build, --arc-baseline, --compare) is a heavy job: nothing else
+  # heavy runs with it, and it waits for one that is running (scripts/heavy-job.sh). Inside a
+  # `--hold perf` window (a break slot) it starts at once. --gate-only measures nothing.
+  heavy_job() { source "$SHELL_DIR/scripts/heavy-job.sh"; "heavy_job_$1" perf; }
   heavy_job begin
 
   # The probe (arc-vs-rearc probe): built from this checkout; Package.resolved is kept as it was.
@@ -187,7 +196,7 @@ if [[ -z $GATE_ONLY ]]; then
     || { cp "$OUT/Package.resolved.bak" "$RESOLVED"; die "building the probe failed (see $OUT/probe-build.log)"; }
   cp "$OUT/Package.resolved.bak" "$RESOLVED"
 
-  [[ -e "$HOME/Library/Caches/rearc-input-allowed" ]] || refuse "no input gate: the owner has not lent the screen"
+  [[ -e $GATE_FILE ]] || refuse "no input gate (gone while waiting for the heavy-job lock): the owner has not lent the screen"
   if [[ $GUARDS == 1 ]]; then
     # This Mac rests at 25-35 % CPU from the owner's apps: the limits perf-0 measured (PERF-BASELINE.md).
     export REARC_BENCH_MAX_LOAD1="${REARC_BENCH_MAX_LOAD1:-12}" REARC_BENCH_MAX_LOAD5="${REARC_BENCH_MAX_LOAD5:-20}" \
