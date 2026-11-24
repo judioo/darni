@@ -132,9 +132,9 @@ if [[ -d $SPARKLE ]]; then
 fi
 
 # Whether a release is signed with the keychain access group of "this Mac" passkeys when
-# REARC_WEBAUTHN_KEYCHAIN_GROUP does not say. 0: not yet. The commit that makes it 1 also adds
-# the group to release/shipped-keychain-groups.txt, and from then on no release may lose it.
-export REARC_WEBAUTHN_GROUP_DEFAULT=0
+# REARC_WEBAUTHN_KEYCHAIN_GROUP does not say. 1 since build 1357: the same commit added the group
+# to release/shipped-keychain-groups.txt, and from then on no release may lose it (PK-01).
+export REARC_WEBAUTHN_GROUP_DEFAULT=1
 ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/rearc-release-entitlements.XXXXXX")"
 trap 'rm -f "$ENTITLEMENTS"' EXIT
 # shellcheck source=icloud-signing.sh

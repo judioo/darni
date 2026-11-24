@@ -14,3 +14,4 @@
 # group is added in the same commit that turns its signing on. A group is dropped, if it ever
 # must be, with REARC_DROP_KEYCHAIN_GROUP and REARC_DROP_KEYCHAIN_GROUP_REASON at release time,
 # and its line stays. Every change to this file goes to the security review.
+<team>.com.rearc.browser.webauthn 1357
