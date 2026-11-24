@@ -36,8 +36,7 @@ extension BrowserViewModel {
     /// True for a tab the shell unloaded (or whose page Chromium discarded) that has not been shown since.
     func isTabUnloaded(_ id: Tab.ID) -> Bool {
         if unloadedTabIDs.contains(id) { return true }
-        guard let tab = store.tab(withID: id),
-              let discarding = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabDiscarding else { return false }
+        guard let discarding = liveEngine(for: id) as? TabDiscarding else { return false }
         return discarding.isDiscarded
     }
 
@@ -114,16 +113,13 @@ extension BrowserViewModel {
 
     /// Ends the tab's freeze request, if its engine holds one.
     func thawTab(_ id: Tab.ID) {
-        guard let tab = store.tab(withID: id),
-              let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing,
-              freezing.isFreezeRequested else { return }
+        guard let freezing = liveEngine(for: id) as? TabFreezing, freezing.isFreezeRequested else { return }
         freezing.unfreeze()
     }
 
     /// Whether the tab's engine holds a freeze request (its page is frozen, or about to be).
     func isTabFrozen(_ id: Tab.ID) -> Bool {
-        guard let tab = store.tab(withID: id),
-              let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { return false }
+        guard let freezing = liveEngine(for: id) as? TabFreezing else { return false }
         return freezing.isFreezeRequested
     }
 
@@ -187,8 +183,7 @@ extension BrowserViewModel {
         }
         var frozen: [Tab.ID] = []
         for id in TabUnloadPolicy.tabsToFreeze(candidates, threshold: tabFreezeThreshold, now: now) {
-            guard let tab = store.tab(withID: id),
-                  let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { continue }
+            guard let freezing = liveEngine(for: id) as? TabFreezing else { continue }
             if freezing.freeze() == .requested { frozen.append(id) }
         }
         return frozen

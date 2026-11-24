@@ -1009,6 +1009,13 @@ final class BrowserViewModel {
         store.tab(withID: id).map { profileID(for: $0) }
     }
 
+    /// The loaded engine of sidebar tab `id`, in its profile; nil when the tab
+    /// is gone or has none. Ask it with `as?` for what the page can do
+    /// (`TabDiscarding`, `TabFreezing`).
+    func liveEngine(for id: Tab.ID) -> (any WebEngine)? {
+        profileID(forTabID: id).flatMap { engineHost.engine(forTabID: id, profileID: $0) }
+    }
+
     func handleWindowOcclusion(_ state: WindowOcclusionState) {
         windowOcclusionState = state
         if state == .visible {
@@ -1131,9 +1138,7 @@ final class BrowserViewModel {
     }
 
     private func discardableEngine(for id: Tab.ID) -> (any WebEngine)? {
-        guard let tab = store.tab(withID: id),
-              let engine = engineHost.engine(forTabID: id, profileID: profileID(for: tab)),
-              engine is TabDiscarding else { return nil }
+        guard let engine = liveEngine(for: id), engine is TabDiscarding else { return nil }
         return engine
     }
 

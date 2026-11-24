@@ -222,7 +222,7 @@ extension BrowserViewModel {
             let isOpen: Bool
             switch page {
             case .tab(let id):
-                isOpen = store.tab(withID: id).map { engineHost.engine(forTabID: id, profileID: profileID(for: $0)) != nil } ?? false
+                isOpen = liveEngine(for: id) != nil
             case .littleArc(let id):
                 isOpen = store.littleArcWindow(withID: id) != nil
             }

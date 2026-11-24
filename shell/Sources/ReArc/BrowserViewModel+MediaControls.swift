@@ -216,7 +216,7 @@ extension BrowserViewModel {
     /// The tab's page as it is now, for a blank player's still.
     @MainActor
     private func takeLiveVideoStill(_ tabID: Tab.ID) async {
-        guard liveVideoStills[tabID] == nil, let engine = mediaEngine(for: tabID),
+        guard liveVideoStills[tabID] == nil, let engine = liveEngine(for: tabID),
               let data = try? await engine.captureSnapshot(scope: .visible), let image = NSImage(data: data) else { return }
         if blankLiveVideos.contains(tabID) { liveVideoStills[tabID] = image }
     }
@@ -248,7 +248,7 @@ extension BrowserViewModel {
         if let video = liveVideo(for: tabID) {
             video.perform(.togglePlayPause)
         } else {
-            mediaEngine(for: tabID)?.togglePlayPause()
+            liveEngine(for: tabID)?.togglePlayPause()
         }
     }
 
@@ -258,7 +258,7 @@ extension BrowserViewModel {
         if !mediaState(for: tabID).canNextTrack, let video = liveVideo(for: tabID), video.canSkipTracks.next {
             video.perform(.nextTrack)
         } else {
-            mediaEngine(for: tabID)?.skipToNextTrack()
+            liveEngine(for: tabID)?.skipToNextTrack()
         }
     }
 
@@ -266,7 +266,7 @@ extension BrowserViewModel {
         if !mediaState(for: tabID).canPreviousTrack, let video = liveVideo(for: tabID), video.canSkipTracks.previous {
             video.perform(.previousTrack)
         } else {
-            mediaEngine(for: tabID)?.skipToPreviousTrack()
+            liveEngine(for: tabID)?.skipToPreviousTrack()
         }
     }
 
@@ -302,8 +302,4 @@ extension BrowserViewModel {
         liveVideo(for: tabID)?.perform(.closeAndPause)
     }
 
-    private func mediaEngine(for tabID: Tab.ID) -> (any WebEngine)? {
-        guard let pid = profileID(forTabID: tabID) else { return nil }
-        return engineHost.engine(forTabID: tabID, profileID: pid)
-    }
 }
