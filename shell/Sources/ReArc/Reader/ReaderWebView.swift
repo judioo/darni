@@ -198,6 +198,7 @@ final class ReaderWKWebView: WKWebView {
     }
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        menuSelection = nil
         Self.fill(menu, target: self, selection: nil)
         super.willOpenMenu(menu, with: event)
     }
