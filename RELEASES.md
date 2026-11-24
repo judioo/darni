@@ -24,7 +24,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1125.1371 — 2026-11-25
+## Darni 2026.1125.1375 — 2026-11-25
 
 **New**
 - Reader view. On an article, click the page icon in the address field, or press ⌥⌘R, to read
