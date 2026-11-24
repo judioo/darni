@@ -167,6 +167,15 @@ final class BrowserViewModel {
         didSet { spaceIconStyle.save(to: externalLinkDefaults) }
     }
 
+    /// Settings › General › Dark mode for websites (`BrowserViewModel+WebsiteDarkMode`).
+    var websiteDarkModeSetting = WebsiteDarkModeSetting.load(from: .standard) {
+        didSet {
+            guard websiteDarkModeSetting != oldValue else { return }
+            websiteDarkModeSetting.save(to: externalLinkDefaults)
+            websiteDarkModeStateChanged()
+        }
+    }
+
     var warnBeforeQuitting = QuitWarning.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(warnBeforeQuitting, forKey: QuitWarning.defaultsKey) }
     }
@@ -734,6 +743,10 @@ final class BrowserViewModel {
     /// the one-time offer (`BrowserViewModel+ContentBlocking.swift`). Hidden
     /// until an engine with the blocking calls attaches.
     let contentBlocking = ContentBlockingController()
+    /// Dark mode for websites: the engine seam, Darni's appearance and the
+    /// sites with a choice of their own (`BrowserViewModel+WebsiteDarkMode.swift`).
+    /// Hidden until an engine with the call attaches.
+    let websiteDarkMode: WebsiteDarkModeController
     /// Blocking's recent log lines, newest last (the Chromium shell logs them).
     @ObservationIgnored var contentBlockingEvents: [String] = []
     @ObservationIgnored var onContentBlockingEvent: ((String) -> Void)?
@@ -801,6 +814,7 @@ final class BrowserViewModel {
                                              turnBudget: DownloadsController.appTurnBudget)
         engineHost.downloadCenter = downloads.webKit
         self.sitePermissions = SitePermissionsController(fileURL: Self.siblingFile(SitePermissionStore.fileName, of: persistence.fileURL), prepared: preparedStartup?.permissions)
+        self.websiteDarkMode = WebsiteDarkModeController(fileURL: Self.siblingFile(WebsiteDarkModeSites.fileName, of: persistence.fileURL))
         engineHost.sitePermissions = sitePermissions
         self.nowPlaying = nowPlaying ?? NowPlayingController()
         let engine = syncEngine ?? MainActor.assumeIsolated {
@@ -1229,6 +1243,8 @@ final class BrowserViewModel {
         loadSelectedIfNeeded()
         // Each one's engine data goes as a deleted container's does (S-07).
         for profileID in doomed { onProfileDeleted?(profileID, littleArcs[profileID]?.map(\.id) ?? []) }
+        // The sites it had a dark mode choice for go with it.
+        websiteDarkMode.profilesDeleted(doomed)
         return nil
     }
 

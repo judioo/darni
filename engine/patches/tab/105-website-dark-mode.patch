@@ -1,0 +1,553 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 dark mode for websites: the host says which pages are dark, Blink's Auto Dark Mode does it (ABI 1.73, bridge 0.85.0)
+
+Darni had no dark mode for websites. A site with a dark theme of its own
+followed the appearance of macOS, and a site without one stayed white. This
+patch lets the host say, per profile, that pages are dark and which hosts
+differ, and makes a dark page use Chromium's own means: the dark colour
+scheme for a site that has one, and Blink's Auto Dark Mode (forced
+darkening) for one that has none.
+
+What the host says.
+- ReArcProfileSetWebsiteDarkMode(profile_id, dark, dark_hosts_json,
+  light_hosts_json): whether the profile's pages are dark, and two lists of
+  hosts that are dark or light whatever `dark` says. A host is matched
+  whole. Up to 10,000 hosts a list; a host in both lists, a string that is
+  not a host or malformed JSON is invalid_argument and changes nothing. An
+  off-the-record profile is invalid_argument: a private window follows its
+  profile.
+- ReArcTabGetWebsiteDarkMode(tab_id, &dark): what the tab holds now.
+- Feature "website_dark_mode".
+
+What the engine does with it.
+- rearc::WebsiteDarkModeApplies(contents) answers for a page: a bridge tab
+  (never a DevTools frontend, an extension's popup or side panel, or any
+  other contents the engine makes for itself) whose main frame has committed
+  an http or https address, by that address's host. A local file, about:blank,
+  the engine's own pages and error pages are never dark by it.
+- ChromeContentBrowserClient asks it in the three places a tab's colour
+  preferences are worked out:
+  GetPreferredColorScheme (so OverrideWebPreferences,
+  OverrideWebPreferencesAfterNavigation and
+  WebPreferencesNeedUpdateForColorRelatedStateChanges agree): a dark page
+  prefers the dark scheme and its root scrollbar is dark;
+  OverrideWebPreferences: force_dark_mode_enabled for such a page;
+  OverrideWebPreferencesAfterNavigation: the same again for the page that has
+  just committed, and the profile's own preference back for a page that is
+  not dark. That is the "rule read at navigation".
+- When the host says something new, every tab of the profile and of its
+  private windows works its preferences out again
+  (WebContents::OnWebPreferencesChanged). The renderers get what changed and
+  restyle: open tabs follow without a reload.
+- Nothing is persisted. The state hangs on the Profile object
+  (SupportsUserData) and the host says it again at the next profile load. No
+  preference, no content setting, nothing in Local State.
+- No feature flag is switched on: blink::features::kForceWebContentsDarkMode
+  only changes the default of the profile preference
+  webkit.webprefs.force_dark_mode_enabled, which stays false and is not
+  written. Blink reads the web preference alone.
+
+What Chromium then does, unchanged (Chromium 156; stated because the brief
+asked whether forced darkening also sets prefers-color-scheme):
+- (prefers-color-scheme: dark) matches in a dark page. The comment on
+  StyleEngine::preferred_color_scheme_ still says a force-darkened page is
+  told it prefers light; the code of 156 does not do that
+  (StyleEngine::UpdateColorScheme takes the setting as it is, and the host
+  test reads "matches" from the page). So a site that
+  styles its dark theme by media query gets it, and the darkening then finds
+  little that is still light.
+- A page that declares a dark scheme (color-scheme "dark" or "light dark",
+  by meta tag or on its root) is drawn in it and is not darkened
+  (ComputedStyleBuilder::SetUsedColorScheme: dark, not forced).
+- A page that declares nothing, or "light", is darkened as it is painted:
+  backgrounds brighter than 205 and text darker than 150 (of 255) are
+  inverted in lightness, what is already dark stays
+  (dark_mode_settings_builder.cc). Photographs and videos are not touched;
+  an image that is drawn small enough to be an icon, or thin enough to be a
+  separator, is classified and adapted when it would vanish on dark
+  (DarkModeFilter::ShouldApplyFilterToImage).
+- The page's computed styles are its own; only the CSS system colours
+  change (Canvas becomes #121212), which is how a page can tell.
+- color-scheme "only light" opts a page or an element out.
+
+Known limits.
+- The preferences reach a renderer after the navigation has committed. A
+  page whose state differs from the page before it (the first page of a new
+  tab; a host on one of the lists) can paint a first frame in the old state.
+  With "dark" for the whole profile and no list, same-tab navigations do not
+  change state and show nothing of it.
+- A host is matched whole, as zoom is: example.com and www.example.com are
+  two sites.
+
+State. Nothing is persisted by the engine. An engine without this patch
+does not export the two functions, and a host that looks them up finds none.
+
+ABI 1.73: two functions, no struct, no callback type. 1.72 is tab/104's
+(local passkeys), which landed on the checkout after this patch.
+
+Tests: engine/tests/c_abi_dark_mode_host.mm (run_c_abi.py dark_mode), with
+a window off every screen and no input: a page with no dark theme is white
+while nothing is said (drawn 255,255,255); when the profile goes dark the
+same document, not reloaded, is drawn 18,18,18, its computed Canvas is
+18,18,18, (prefers-color-scheme: dark) matches and its body's computed
+background is still white; its host on the light list makes it white again
+without a reload; a navigation to another host is dark; dark for one host
+only is white on the other and dark after navigating back; a page with its
+own dark scheme is drawn in its own colour (16,32,48); a page that says
+"only light" stays white; a private window's tab follows its profile; ten
+refusals change nothing. engine/tests/check_abi173_imports.py: layouts kept,
+two functions added, gated Swift adoption typechecks. The shell's self-test
+step "dark mode" (ChromiumSelfTest.websiteDarkModeChecks) drives the same
+through Settings' setting and the site controls row.
+
+Type-checked with the tree's clang (out/ReArc-codecs-arm64 flags, Chromium's
+plugins, -fsyntax-only; rearc_website_dark_mode.cc and
+chrome_content_browser_client.cc), then built in out/ReArc-codecs-arm64 on
+2026-11-25: overlay 30c30a1c8d on a3b96b217d (tab/103).
+
+Run on that build with tab/103's exports (577e70cef2) and tab/104
+(faf0faf7a4) on top (run_c_abi.py dark_mode, REARC_CHROMIUM_OUT the release
+out dir, nothing on screen, bridge 0.86.0): every step above passed; the
+network audit shows loopback only. Not run: the shell's self-test step,
+which needs the screen.
+
+Touches: chrome/browser/chrome_content_browser_client.cc (three hunks and an
+include), chrome/browser/BUILD.gn, chrome/app/framework.{exports,order}, and
+the bridge's rearc_engine_abi.{h,mm}, rearc_engine_entry_mac.mm and the new
+rearc_website_dark_mode.{h,cc}.
+
+Applies after tab/103 (its context is ABI 1.71, bridge 0.83.0) and before
+tab/104, as the overlay has them.
+
+Last rebased: 2026-11-25 onto Chromium 156.0.8078.114 (overlay a3b96b217d).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 3dc7e43..0f7cf01 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -48,6 +48,8 @@ _ReArcEngineSetBlocklistDirectory
+ _ReArcProfileSetContentBlocking
+ _ReArcProfileSetBlockingExceptions
+ _ReArcProfileSetOwnBlockingRules
++_ReArcProfileSetWebsiteDarkMode
++_ReArcTabGetWebsiteDarkMode
+ _ReArcTabGetBlockedCount
+ _ReArcEngineSetBlockedCountCallback
+ _ReArcTabGetSitePermissions
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index c64f290..7eb5f46 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -55,6 +55,8 @@ _ReArcEngineSetBlocklistDirectory
+ _ReArcProfileSetContentBlocking
+ _ReArcProfileSetBlockingExceptions
+ _ReArcProfileSetOwnBlockingRules
++_ReArcProfileSetWebsiteDarkMode
++_ReArcTabGetWebsiteDarkMode
+ _ReArcTabGetBlockedCount
+ _ReArcEngineSetBlockedCountCallback
+ _ReArcTabGetSitePermissions
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 5071c7d..3ff0b6c 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1491,6 +1491,8 @@ source_set("core") {
+       "rearc_bridge/rearc_downloads_abi.cc",
+       "rearc_bridge/rearc_history_abi.cc",
+       "rearc_bridge/rearc_search_abi.cc",
++      "rearc_bridge/rearc_website_dark_mode.cc",
++      "rearc_bridge/rearc_website_dark_mode.h",
+       "rearc_bridge/rearc_site_permissions.cc",
+       "rearc_bridge/rearc_webauthn.cc",
+       "rearc_bridge/rearc_webauthn.h",
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index a316ec4..6235aac 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -9,6 +9,7 @@
+ #include "chrome/browser/rearc_bridge/browserless_tab_helpers.h"
+ #include "chrome/browser/rearc_bridge/rearc_client_certificates.h"
+ #include "chrome/browser/rearc_bridge/rearc_content_blocker.h"
++#include "chrome/browser/rearc_bridge/rearc_website_dark_mode.h"
+ #endif
+ 
+ #include <algorithm>
+@@ -4159,6 +4160,16 @@ GetPreferredColorScheme(const WebPreferences& web_prefs,
+       }
+     }
+   }
++  // ReArc tab/105: the host's dark mode for websites. A bridge tab's page
++  // that is dark by it prefers the dark scheme, whatever the browser's colour
++  // mode is; its scrollbar follows. Here, so that the three readers of this
++  // function agree (WebPreferencesNeedUpdateForColorRelatedStateChanges
++  // compares what it returns with what the tab holds).
++  if (web_contents && rearc::WebsiteDarkModeApplies(web_contents)) {
++    preferred_color_scheme = blink::mojom::PreferredColorScheme::kDark;
++    preferred_root_scrollbar_color_scheme =
++        blink::mojom::PreferredColorScheme::kDark;
++  }
+   return {preferred_color_scheme, preferred_root_scrollbar_color_scheme};
+ }
+ 
+@@ -4978,6 +4989,11 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
+            web_prefs->preferred_root_scrollbar_color_scheme) =
+       GetPreferredColorScheme(
+           *web_prefs, main_frame_site.GetSecurityPrincipal(), web_contents);
++  // ReArc tab/105: such a page is also darkened where it has no dark scheme
++  // of its own (Blink's Auto Dark Mode).
++  if (web_contents && rearc::WebsiteDarkModeApplies(web_contents)) {
++    web_prefs->force_dark_mode_enabled = true;
++  }
+ 
+   web_prefs->root_scrollbar_theme_color =
+       GetRootScrollbarThemeColor(web_contents);
+@@ -5121,6 +5137,19 @@ bool ChromeContentBrowserClient::OverrideWebPreferencesAfterNavigation(
+       web_prefs->preferred_root_scrollbar_color_scheme !=
+           old_preferred_root_scrollbar_color_scheme;
+ 
++  // ReArc tab/105: the host's dark mode for websites is read for the page
++  // that has just committed. A page it does not cover gets the profile's own
++  // preference back (as OverrideWebPreferences sets it).
++  {
++    const bool force_dark =
++        rearc::WebsiteDarkModeApplies(web_contents) ||
++        Profile::FromBrowserContext(web_contents->GetBrowserContext())
++            ->GetPrefs()
++            ->GetBoolean(prefs::kWebKitForceDarkModeEnabled);
++    prefs_changed |= web_prefs->force_dark_mode_enabled != force_dark;
++    web_prefs->force_dark_mode_enabled = force_dark;
++  }
++
+ #if BUILDFLAG(IS_ANDROID)
+   if (auto* theme_client =
+           night_mode::WebContentsThemeClient::FromWebContents(web_contents)) {
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index a55ccaf..1a0d6cf 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -42,7 +42,7 @@ enum {
+   REARC_SCRIPT_ERROR = 17,
+   REARC_TIMEOUT = 18
+ };
+-enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 71, REARC_MAX_BLOB_BYTES = 16777216 };
++enum { REARC_ABI_VERSION = 1, REARC_ABI_MINOR_VERSION = 73, REARC_MAX_BLOB_BYTES = 16777216 };
+ 
+ // kind: 0 created, 1 updated, 2 closed, 3 navigation committed, 4 failed.
+ // ABI 1.25 adds kind 5 discarded, 6 discard cleared (also on state refresh).
+@@ -1597,6 +1597,49 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcProfileGetPasswordLeakDetection(
+ REARC_ENGINE_EXPORT ReArcStatus ReArcProfileSetPasswordLeakDetection(
+     uint64_t profile_id, bool enabled);
+ 
++// Dark mode for websites (website_dark_mode, ABI 1.73, tab/105). The host
++// says, per profile, whether pages are dark and which hosts differ; the
++// engine reads that for a tab's page at every main frame navigation and
++// whenever the host says something new, and open tabs follow without a
++// reload. A page that is dark gets two of Chromium's web preferences:
++// preferred_color_scheme dark and force_dark_mode_enabled (Blink's Auto Dark
++// Mode). Chromium then does this, and the bridge changes none of it:
++// - (prefers-color-scheme: dark) matches, whatever the appearance of macOS
++//   is, so a page's own dark styles apply.
++// - A page that says it has a dark scheme (color-scheme "dark" or "light
++//   dark", by <meta name="color-scheme"> or on its root element) is drawn in
++//   it and is not darkened.
++// - A page that says nothing, or only "light", is darkened as it is painted:
++//   light backgrounds become dark and dark text light. What is already dark
++//   stays. Photographs and videos are left alone; small images that read as
++//   icons or separators are adapted. The page's computed styles do not
++//   change, except the CSS system colours (Canvas, CanvasText).
++// - color-scheme "only light" opts a page or an element out.
++// It covers the pages of bridge tabs on http and https addresses: never
++// DevTools, an extension's pages, the engine's own pages, a local file or an
++// error page. Frames follow their tab's page. A page that is not dark is as
++// before: its scheme follows the appearance of macOS and nothing is darkened.
++//
++// dark: the profile's pages are dark. dark_hosts_json, light_hosts_json: JSON
++// arrays of at most 10,000 hosts each, lower-case ASCII (punycode) as in a
++// URL's host, without scheme, port or path; null is an empty array. A page
++// whose host is in the light list is never dark, one in the dark list always
++// is, any other follows `dark`. A host is matched whole: "example.com" does
++// not cover "www.example.com". A host in both lists, a string that is not a
++// host, a longer list or malformed JSON: invalid_argument, and nothing
++// changes. profile_id is never an off-the-record profile (invalid_argument):
++// private windows follow their profile. The engine keeps this in memory with
++// the profile and writes nothing: the host is the source of truth and says
++// it again at every profile load. A profile it has said nothing about has no
++// dark pages.
++REARC_ENGINE_EXPORT ReArcStatus ReArcProfileSetWebsiteDarkMode(
++    uint64_t profile_id, bool dark, const char* dark_hosts_json,
++    const char* light_hosts_json);
++// Whether the tab's page is dark by the above now: both web preferences as
++// the tab holds them. dark null: invalid_argument.
++REARC_ENGINE_EXPORT ReArcStatus ReArcTabGetWebsiteDarkMode(uint64_t tab_id,
++                                                           bool* dark);
++
+ // Performance metrics (perf_metrics, ABI 1.44). Every *_us time is
+ // microseconds on mach_absolute_time's clock (base::TimeTicks on macOS), the
+ // clock of CACurrentMediaTime() and NSEvent.timestamp: host and engine times
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 9ec93b9..5821ab1 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -992,6 +992,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "perf_metrics" ||
+          std::string(feature) == "task_manager" ||
+          std::string(feature) == "content_blocking" ||
++         std::string(feature) == "website_dark_mode" ||
+          std::string(feature) == "content_blocking_hosts" ||
+          std::string(feature) == "host_sites" ||
+          std::string(feature) == "site_permissions" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index c788818..0c7374d 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.83.0";
++  return "0.85.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_website_dark_mode.cc b/chrome/browser/rearc_bridge/rearc_website_dark_mode.cc
+new file mode 100644
+index 0000000..ef9042f
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_website_dark_mode.cc
+@@ -0,0 +1,204 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Dark mode for websites (website_dark_mode, ABI 1.73, tab/105). The host
++// tells the engine, per profile, whether pages are dark and which hosts
++// differ. ChromeContentBrowserClient asks WebsiteDarkModeApplies for a tab's
++// page when it works out the tab's web preferences: at first use, at every
++// main frame navigation (OverrideWebPreferencesAfterNavigation) and when the
++// host says something new (WebContents::OnWebPreferencesChanged, below). A
++// dark page gets preferred_color_scheme dark and force_dark_mode_enabled, and
++// Blink does the rest. Nothing is written: the state lives with the Profile
++// object and the host says it again at the next profile load.
++
++#include "chrome/browser/rearc_bridge/rearc_website_dark_mode.h"
++
++#include <pthread.h>
++
++#include <algorithm>
++#include <cstddef>
++#include <functional>
++#include <memory>
++#include <optional>
++#include <set>
++#include <string>
++#include <string_view>
++#include <utility>
++
++#include "base/check.h"
++#include "base/json/json_reader.h"
++#include "base/strings/string_util.h"
++#include "base/supports_user_data.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/rearc_bridge/browserless_tab_helpers.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_engine_abi.h"
++#include "chrome/browser/rearc_bridge/rearc_profile_registry.h"
++#include "chrome/browser/rearc_bridge/tab_registry.h"
++#include "chrome/browser/rearc_bridge/tab_session.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "third_party/blink/public/common/web_preferences/web_preferences.h"
++#include "third_party/blink/public/mojom/css/preferred_color_scheme.mojom.h"
++#include "url/gurl.h"
++
++namespace rearc {
++namespace {
++
++constexpr size_t kMaxHosts = 10000;
++// 10,000 hosts of 253 characters, quoted and separated, fit in 4 MB.
++constexpr size_t kMaxArgumentBytes = 4 * 1024 * 1024;
++
++using HostSet = std::set<std::string, std::less<>>;
++
++// What the host said for one profile. It hangs on the original Profile, so
++// it goes when the profile does, and the profile's private windows read it.
++struct DarkModeState : public base::SupportsUserData::Data {
++  bool dark = false;
++  HostSet dark_hosts;
++  HostSet light_hosts;
++};
++
++const char kStateKey[] = "rearc.website_dark_mode";
++
++const DarkModeState* StateOf(content::WebContents* contents) {
++  Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
++  if (!profile) {
++    return nullptr;
++  }
++  return static_cast<const DarkModeState*>(
++      profile->GetOriginalProfile()->GetUserData(kStateKey));
++}
++
++// A URL's host as GURL writes it: lower-case letters, digits, "-", ".", "_",
++// and the brackets and colons of an IPv6 literal.
++bool IsHost(std::string_view host) {
++  return !host.empty() && host.size() <= 253 &&
++         std::ranges::all_of(host, [](char c) {
++           return base::IsAsciiLower(c) || base::IsAsciiDigit(c) || c == '-' ||
++                  c == '.' || c == '_' || c == '[' || c == ']' || c == ':';
++         });
++}
++
++// A JSON array of hosts; null is the empty one. nullopt when it is not such
++// an array or is too long.
++std::optional<HostSet> ReadHosts(const char* json) {
++  HostSet hosts;
++  if (!json) {
++    return hosts;
++  }
++  const std::string_view text(json);
++  if (text.size() > kMaxArgumentBytes) {
++    return std::nullopt;
++  }
++  std::optional<base::ListValue> list =
++      base::JSONReader::ReadList(text, base::JSON_PARSE_RFC);
++  if (!list || list->size() > kMaxHosts) {
++    return std::nullopt;
++  }
++  for (const base::Value& value : *list) {
++    if (!value.is_string() || !IsHost(value.GetString())) {
++      return std::nullopt;
++    }
++    hosts.insert(value.GetString());
++  }
++  return hosts;
++}
++
++}  // namespace
++
++bool WebsiteDarkModeApplies(content::WebContents* contents) {
++  CHECK(pthread_main_np());
++  if (!contents) {
++    return false;
++  }
++  const DarkModeState* state = StateOf(contents);
++  // Nothing said, or nothing dark: the answer for every page, and the only
++  // work an engine does whose host never calls this.
++  if (!state || (!state->dark && state->dark_hosts.empty())) {
++    return false;
++  }
++  // Tabs only: not a DevTools frontend, an extension's popup or side panel,
++  // or any other contents the engine makes for itself.
++  if (!IsBrowserlessTabContents(contents)) {
++    return false;
++  }
++  const GURL& url = contents->GetPrimaryMainFrame()->GetLastCommittedURL();
++  if (!url.SchemeIsHTTPOrHTTPS()) {
++    return false;
++  }
++  const std::string_view host = url.host();
++  if (state->light_hosts.contains(host)) {
++    return false;
++  }
++  return state->dark || state->dark_hosts.contains(host);
++}
++
++}  // namespace rearc
++
++ReArcStatus ReArcProfileSetWebsiteDarkMode(uint64_t profile_id,
++                                           bool dark,
++                                           const char* dark_hosts_json,
++                                           const char* light_hosts_json) {
++  CHECK(pthread_main_np());
++  Profile* profile = rearc::FindBridgeProfile(profile_id);
++  if (!profile) {
++    return REARC_PROFILE_NOT_FOUND;
++  }
++  if (profile->IsOffTheRecord()) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  std::optional<rearc::HostSet> dark_hosts = rearc::ReadHosts(dark_hosts_json);
++  std::optional<rearc::HostSet> light_hosts =
++      rearc::ReadHosts(light_hosts_json);
++  if (!dark_hosts || !light_hosts) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  for (const std::string& host : *dark_hosts) {
++    if (light_hosts->contains(host)) {
++      return REARC_INVALID_ARGUMENT;
++    }
++  }
++  auto state = std::make_unique<rearc::DarkModeState>();
++  state->dark = dark;
++  state->dark_hosts = std::move(*dark_hosts);
++  state->light_hosts = std::move(*light_hosts);
++  profile->SetUserData(rearc::kStateKey, std::move(state));
++
++  // Open tabs follow now, without a reload: each works its web preferences
++  // out again and sends its renderers what changed. The profile's private
++  // windows too.
++  auto& registry = rearc::TabRegistry::Get();
++  for (uint64_t id : registry.SessionIds()) {
++    rearc::TabSession* session = registry.FindSession(id);
++    content::WebContents* contents =
++        session ? session->web_contents() : nullptr;
++    if (!contents || contents->IsBeingDestroyed()) {
++      continue;
++    }
++    Profile* owner = Profile::FromBrowserContext(contents->GetBrowserContext());
++    if (owner && owner->GetOriginalProfile() == profile) {
++      contents->OnWebPreferencesChanged();
++    }
++  }
++  return REARC_OK;
++}
++
++ReArcStatus ReArcTabGetWebsiteDarkMode(uint64_t tab_id, bool* dark) {
++  CHECK(pthread_main_np());
++  if (!dark) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  rearc::TabSession* session = nullptr;
++  if (auto status = rearc::ABICheckTab(tab_id, &session)) {
++    return status;
++  }
++  const blink::web_pref::WebPreferences& prefs =
++      session->web_contents()->GetOrCreateWebPreferences();
++  *dark = prefs.force_dark_mode_enabled &&
++          prefs.preferred_color_scheme ==
++              blink::mojom::PreferredColorScheme::kDark;
++  return REARC_OK;
++}
+diff --git a/chrome/browser/rearc_bridge/rearc_website_dark_mode.h b/chrome/browser/rearc_bridge/rearc_website_dark_mode.h
+new file mode 100644
+index 0000000..f3e2f09
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_website_dark_mode.h
+@@ -0,0 +1,24 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_REARC_BRIDGE_REARC_WEBSITE_DARK_MODE_H_
++#define CHROME_BROWSER_REARC_BRIDGE_REARC_WEBSITE_DARK_MODE_H_
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace rearc {
++
++// Dark mode for websites (ABI 1.73, tab/105). Whether the page of `contents`
++// is dark by what the host said for its profile
++// (ReArcProfileSetWebsiteDarkMode): a bridge tab whose main frame is on an
++// http or https address, by that address's host. False for everything else,
++// and always in an engine no host has said anything to. ChromeContentBrowserClient
++// reads it when it works out a tab's web preferences. UI thread.
++bool WebsiteDarkModeApplies(content::WebContents* contents);
++
++}  // namespace rearc
++
++#endif  // CHROME_BROWSER_REARC_BRIDGE_REARC_WEBSITE_DARK_MODE_H_

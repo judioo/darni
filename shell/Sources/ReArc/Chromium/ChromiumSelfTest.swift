@@ -1487,6 +1487,7 @@ final class ChromiumSelfTest {
         try await passkeyStaleSheetChecks(model: model, store: store, base: base)
         try await passkeyHiddenLittleArcChecks(model: model, shell: shell, store: store, base: base)
         try await screenShareChecks(model: model, store: store, window: first, base: base)
+        try await websiteDarkModeChecks(model: model, store: store, base: base)
         if runtime.capabilities.htmlFullscreen {
             try await fullscreenChecks(model: model, shell: shell, window: first, tab: tabA, engine: engineA, base: base)
         } else {
@@ -1982,6 +1983,108 @@ final class ChromiumSelfTest {
             + "engine and content generation \(generation) kept, row dimmed); selecting B restored it as a new document "
             + "(\(documentBefore.map { "\($0.documentGeneration)" } ?? "?") -> "
             + "\(runtime.documentIdentity(tab: hiddenEngine.tabID).map { "\($0.documentGeneration)" } ?? "?"))")
+    }
+
+    // MARK: Dark mode for websites (ABI 1.73)
+
+    /// Dark mode for websites through the engine (engine patch tab/105, ABI
+    /// 1.73): Settings › General's setting and the site controls row reach a
+    /// real page. A page with no dark theme is darkened when the setting
+    /// goes to Always, without a reload; the row turns it off for the site
+    /// and back to the setting; each state survives a navigation, where the
+    /// engine reads it again. The page says so itself (the CSS system colour
+    /// Canvas as computed, `prefers-color-scheme`), and the engine says what
+    /// the tab holds. What is drawn is checked by pixel in
+    /// engine/tests/c_abi_dark_mode_host.mm. The setting is written to a
+    /// throwaway defaults suite, never the app's own.
+    @MainActor
+    private func websiteDarkModeChecks(model: BrowserViewModel, store: SidebarStore, base: String) async throws {
+        guard model.websiteDarkMode.isAvailable else {
+            let missing = ChromiumWebsiteDarkModeCalls.missingSymbols
+            return log("ABI-GAP \(ChromiumCapabilities.websiteDarkModeFeature) not advertised\(missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))"): "
+                + "the dark mode setting is hidden and pages are as before")
+        }
+        let suite = "rearc-selftest-dark-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite), let url = URL(string: "\(base)/dark"),
+              let site = SiteControlCenter.site(for: url) else { throw Failure(description: "no defaults suite or site for dark mode") }
+        let realDefaults = model.externalLinkDefaults
+        let savedSetting = model.websiteDarkModeSetting
+        model.externalLinkDefaults = defaults
+        let previous = store.selectedTab?.id
+        let tab = store.addTab(kind: .today, title: "Dark", url: url)
+        _ = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let engine = try shellEngine(model, tab)
+        defer {
+            // Whatever happened: no choice for the fixture's site, the setting as it was, and
+            // the app's own defaults never written (the setting saves to the suite until here).
+            model.setWebsiteDarkMode(nil, forSiteOf: engine, site: site)
+            model.websiteDarkModeSetting = savedSetting
+            model.externalLinkDefaults = realDefaults
+            defaults.removePersistentDomain(forName: suite)
+        }
+        model.websiteDarkModeSetting = .off
+        model.selectTab(tab.id)
+        engine.load(url)
+        try await wait("dark mode fixture", timeout: 20) { engine.pageTitle == "dark-ready" && !engine.isLoading }
+
+        // "<dark|light>:<prefers dark>:<document token>:<query>"
+        func state() async -> String { ((try? await engine.evaluate("darkState()", in: .page)) as? String) ?? "" }
+        func engineSaysDark() -> Bool? { model.websiteDarkMode.isDarkInEngine?(engine) }
+        func row() -> SiteControlCenter.SettingRow? {
+            model.siteControlSettingRows(for: engine, site: site).first { $0.kind == .websiteDarkMode }
+        }
+        func token(_ state: String) -> String { state.split(separator: ":").dropFirst(2).first.map(String.init) ?? "" }
+        func navigate(_ query: String) async throws {
+            guard let next = URL(string: "\(base)/dark?\(query)") else { throw Failure(description: "no URL for the dark mode fixture") }
+            engine.load(next)
+            try await waitAsync("the dark mode fixture's page \(query)", timeout: 20) { await state().hasSuffix(":?\(query)") }
+            // The engine reads the rule when the navigation has finished; the page has it a moment later.
+            try await Task.sleep(nanoseconds: 600_000_000)
+        }
+
+        // 1. Off: the page is as it was before this setting.
+        let before = await state()
+        try check(before.hasPrefix("light:") && engineSaysDark() == false && row()?.state == "Off" && row()?.actions == [.darkModeOnForSite],
+                  "dark mode off: page \(before), engine \(String(describing: engineSaysDark())), row \(String(describing: row()))")
+
+        // 2. Always: the open page is darkened and told to prefer dark, without a reload.
+        model.websiteDarkModeSetting = .always
+        try await waitAsync("the open page goes dark", timeout: 10) { await state().hasPrefix("dark:true:") }
+        let dark = await state()
+        try check(token(dark) == token(before) && !token(dark).isEmpty, "dark mode reloaded the page: \(before) then \(dark)")
+        try check(engineSaysDark() == true && row()?.state == "On", "dark mode always: engine \(String(describing: engineSaysDark())), row \(String(describing: row()))")
+
+        // 3. The site controls row: off for this site, at once and after a navigation.
+        guard let onRow = row() else { throw Failure(description: "no dark mode row in the site controls") }
+        model.performSiteSetting(.darkModeOffForSite, on: onRow, engine: engine, site: site)
+        try await waitAsync("the site's page goes light", timeout: 10) { await state().hasPrefix("light:") }
+        let light = await state()
+        try check(token(light) == token(before) && engineSaysDark() == false && row()?.state == "Off for this site",
+                  "dark mode off for the site: page \(light), engine \(String(describing: engineSaysDark())), row \(String(describing: row()))")
+        try await navigate("2")
+        let lightAfter = await state()
+        try check(lightAfter.hasPrefix("light:") && engineSaysDark() == false, "after a navigation the site is dark again: \(lightAfter)")
+
+        // 4. Back to the setting: dark, at once and after a navigation.
+        guard let offRow = row() else { throw Failure(description: "no dark mode row in the site controls") }
+        model.performSiteSetting(.darkModeDefaultForSite, on: offRow, engine: engine, site: site)
+        try await waitAsync("the site's page follows the setting again", timeout: 10) { await state().hasPrefix("dark:true:") }
+        try await navigate("3")
+        let darkAfter = await state()
+        try check(darkAfter.hasPrefix("dark:true:") && engineSaysDark() == true && row()?.state == "On",
+                  "after a navigation the page is not dark: \(darkAfter), engine \(String(describing: engineSaysDark()))")
+
+        // 5. Off again: nothing is left of it.
+        model.websiteDarkModeSetting = .off
+        try await waitAsync("the page goes light with the setting", timeout: 10) { await state().hasPrefix("light:") }
+        try check(engineSaysDark() == false && model.websiteDarkMode.sites.choices(for: model.store.owningProfileID(of: model.profileID(for: tab))).isEmpty,
+                  "dark mode off: engine \(String(describing: engineSaysDark())), sites left")
+
+        model.closeTab(tab.id)
+        try await wait("the dark mode tab closed") { store.tab(withID: tab.id) == nil }
+        if let previous { model.selectTab(previous) }
+        log("PASS dark mode for websites: a page with no dark theme is darkened by the setting without a reload, the site "
+            + "controls row turns it off for the site and back, and each state holds after a navigation")
     }
 
     // MARK: Screen sharing (ABI 1.70)

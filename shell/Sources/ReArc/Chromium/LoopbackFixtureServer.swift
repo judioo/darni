@@ -36,6 +36,22 @@ final class LoopbackFixtureServer {
         <body style="margin:0;background:#2a6;font:32px -apple-system"><h1>ReArc selftest page A</h1>
         <p><a href="/boost">boost page</a></p></body></html>
         """,
+        // Dark mode for websites (self-test step "dark mode", engine patch tab/105): a page with
+        // no dark theme. It says what a page can tell: the CSS system colour Canvas as computed
+        // (dark only while the engine darkens the page), whether (prefers-color-scheme: dark)
+        // matches, a token made once per document (the same later: no reload), and its query.
+        "/dark": """
+        <!doctype html><html><head><title>dark-ready</title><style>body{margin:0;background:#fff;color:#000}</style></head>
+        <body><div id="probe" style="position:absolute;left:-100px;width:1px;height:1px;background-color:Canvas"></div>
+        <p>A page with no dark theme.</p><script>
+        window.darkToken = String(Math.random()).slice(2);
+        function darkState() {
+          var c = getComputedStyle(document.getElementById('probe')).backgroundColor.match(/[\\d.]+/g).slice(0, 3).map(Number);
+          return (c[0] + c[1] + c[2] < 200 ? 'dark' : 'light') + ':' + matchMedia('(prefers-color-scheme: dark)').matches
+            + ':' + window.darkToken + ':' + location.search;
+        }
+        </script></body></html>
+        """,
         "/boost": """
         <!doctype html><html><head><title>boost-pending</title><script>
         function check(n) {
