@@ -92,8 +92,7 @@ struct LocalPasskeysSheet: View {
                 }
             }
             .frame(maxHeight: Self.listHeight)
-            .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous).strokeBorder(SettingsColors.border))
+            .settingsBox()
         }
     }
 
@@ -133,8 +132,7 @@ struct LocalPasskeysSheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)
-        .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous).strokeBorder(SettingsColors.border))
+        .settingsBox()
     }
 
     private var footer: some View {
@@ -167,8 +165,7 @@ struct LocalPasskeysSheet: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous).strokeBorder(SettingsColors.border))
+            .settingsBox()
             HStack {
                 if passkeys.isDeleting { ProgressView().controlSize(.small) }
                 Spacer()

@@ -115,7 +115,16 @@ struct SettingsGroup<Content: View>: View {
     var body: some View {
         _VariadicView.Tree(DividedRows()) { content }
             .frame(maxWidth: .infinity)
-            .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
+            .settingsBox()
+    }
+}
+
+extension View {
+    /// A Settings box: its fill, its rounded corners and its hairline. What
+    /// `SettingsGroup` draws around its rows, for a box that holds something
+    /// other than rows (a list, a question, links).
+    func settingsBox() -> some View {
+        background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous)
                 .strokeBorder(SettingsColors.border, lineWidth: 1))
     }

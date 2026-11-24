@@ -325,8 +325,7 @@ private struct AccountBox<Content: View>: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 15)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous).strokeBorder(SettingsColors.border))
+            .settingsBox()
     }
 }
 
