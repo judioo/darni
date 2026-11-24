@@ -336,6 +336,7 @@ class CoverageTests(unittest.TestCase):
         self.commit("tested feature", {"shell/Sources/ReArc/Page.swift": "1"})
         self.commit("untested feature", {"shell/Sources/SidebarModel/Popups.swift": "1"})
         self.commit("engine switch", {"engine/patches/launch.patch": "1"})
+        self.commit("pin bump", {"engine/CHROMIUM_PIN": "156.0.8078.114"})
         self.commit("refactor", {"shell/Sources/ReArc/Helpers.swift": "1"})
         self.commit("forgotten", {"shell/Sources/Onboarding/Act.swift": "1"})
         self.commit("tests only", {"shell/Tests/ReArcTests/X.swift": "1"})
@@ -344,17 +345,19 @@ class CoverageTests(unittest.TestCase):
             "tested feature": {"rows": ["navigation.load"]},
             "untested feature": {"rows": ["tabs.popups"]},
             "engine switch": {"chromiumOnly": "a Chromium launch switch"},
+            "pin bump": {"chromiumOnly": "the engine pin"},
             "refactor": {"notAFeature": "one helper for two call sites"},
         })
         result = self.run_coverage(ledger)
         self.assertEqual(result.returncode, 0, result.stderr)
         out = result.stdout
-        self.assertIn("5 commits change Darni's code; 2 have neither a WebKit test nor a reason it needs none.", out)
+        self.assertIn("6 commits change Darni's code; 2 have neither a WebKit test nor a reason it needs none.", out)
         self.assertIn(f"| `{self.commits['tested feature'][:8]}` | tested feature | navigation.load | navigation.load: WebKit test |", out)
         self.assertIn(f"| `{self.commits['untested feature'][:8]}` | untested feature | tabs.popups | **flagged**: "
                       "tabs.popups: no WebKit test and no Chromium-only reason |", out)
         self.assertIn("| engine switch | - | Chromium-only: a Chromium launch switch |", out)
         self.assertIn("| refactor | - | no feature: one helper for two call sites |", out)
+        self.assertIn("| pin bump | - | Chromium-only: the engine pin |", out, "the engine pin is Darni's code")
         self.assertIn("| forgotten | - | **flagged**: no entry in docs/engine-parity-changes.json |", out)
         self.assertIn("2 more commits change no Darni code", out)
 

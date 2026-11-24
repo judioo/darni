@@ -46,7 +46,7 @@ CASE = re.compile(r"^Test Case '-\[(?P<module>\w+)\.(?P<suite>\w+) (?P<test>\w+)
 EXPECTED = re.compile(r"Expected failure in -\[(?P<module>\w+)\.(?P<suite>\w+) (?P<test>\w+)\]")
 # Darni's own code. A commit touching only tests, docs, scripts, benches or the perf tools is no feature.
 PRODUCT_PATHS = ("shell/Sources/ReArc/", "shell/Sources/SidebarModel/", "shell/Sources/Onboarding/",
-                 "shell/Resources/", "engine/patches/")
+                 "shell/Resources/", "engine/patches/", "engine/CHROMIUM_PIN")
 ROW_REASONS = ("chromiumOnly", "screenOnly")
 DOC_ROW = re.compile(r"^\|.*\|\s*(?P<chromium>\w+)\s*\|\s*\*\*(?P<webkit>\w+)\*\*[^|]*\|.*\|\s*`(?P<id>[a-z0-9.-]+)`\s*\|\s*$")
 
