@@ -3273,3 +3273,70 @@ every page under them (security CB-12, AG-05, BO-01). This call is Chromium's an
 exported, the characters it takes, the refusals, that the name comes from the tracker's
 function, and that the suffix test is asked only of a canonical name that is not an address.
 Built; not run.
+
+## Dark mode for websites (ABI 1.73, bridge 0.85.0)
+
+Patch `tab/105-website-dark-mode`, feature `website_dark_mode`. **Built and run** at the engine
+boundary: overlay 30c30a1c8d on a3b96b217d (`tab/103`), built on 2026-11-25 in
+`out/ReArc-codecs-arm64`; `run_c_abi.py dark_mode` passes on that engine with `tab/104` on top
+(bridge 0.86.0). The shell's self-test step for it needs the screen and has not run. No struct
+and no callback type. 1.72 is `tab/104`'s; it landed on the checkout after this patch. The line at
+the top of this file does not name 1.71 to 1.73 yet: three branches change it, and it is written
+when they meet.
+
+The host says, per profile, whether pages are dark and which hosts differ. The engine reads that
+for a tab's page at every main frame navigation and whenever the host says something new, and
+gives a dark page two of Chromium's web preferences: `preferred_color_scheme` dark and
+`force_dark_mode_enabled` (Blink's Auto Dark Mode). The shell's side is
+`docs/FEATURE-SPECS/WEBSITE-DARK-MODE.md`.
+
+| Function | Contract |
+|---|---|
+| `ReArcProfileSetWebsiteDarkMode(profile_id, dark, dark_hosts_json, light_hosts_json)` | Replaces what the profile was told. `dark`: its pages are dark. The two JSON arrays (null: empty) hold at most 10,000 hosts each, lower-case ASCII (punycode) as in a URL's host, without scheme, port or path; an IPv6 literal keeps its brackets. A page whose host is in the light list is never dark, one in the dark list always is, any other follows `dark`. A host in both lists, a string that is not a host, a longer list or malformed JSON: `invalid_argument`, and nothing changes. An unknown profile: `profile_not_found`. An off-the-record profile: `invalid_argument` (a private window follows its profile). Synchronous, main thread. Open tabs of the profile and of its private windows follow at once, without a reload. |
+| `ReArcTabGetWebsiteDarkMode(tab_id, &dark)` | Whether the tab's page is dark by the above now: both web preferences, as the tab holds them. Null `dark`: `invalid_argument`. |
+
+- **Which pages.** A bridge tab whose main frame has committed an `http` or `https` address, by
+  that address's host, matched whole: `example.com` does not cover `www.example.com`. Never a
+  DevTools frontend, an extension's popup, side panel or page, the engine's own pages, a local
+  file, `about:blank` or an error page. Frames follow their tab's page.
+- **Nothing is persisted.** The state lives with the `Profile` object. The host is the source of
+  truth and says it again at every profile load; a profile it has said nothing about has no dark
+  pages. No preference is written: `webkit.webprefs.force_dark_mode_enabled` stays as it is, and
+  the feature `WebContentsForceDark` is not switched on (it only changes that preference's
+  default).
+- **What a dark page gets** is Chromium 156's own behaviour, which the bridge does not change:
+
+  | The page | What happens |
+  |---|---|
+  | declares a dark scheme (`color-scheme` `dark` or `light dark`, by meta tag or on its root) | drawn in its own dark scheme, not darkened |
+  | styles a dark theme by `@media (prefers-color-scheme: dark)` only | the query matches, so its dark styles apply; the darkening then acts on what is still light |
+  | declares nothing, or `light` | darkened as it is painted: backgrounds brighter than 205 and text darker than 150 (of 255) are inverted in lightness; what is already dark stays |
+  | declares `only light` (page or element) | left as it is |
+
+  Photographs and videos are not touched. An image drawn small enough to be an icon, or thin
+  enough to be a separator, is classified and adapted when it would vanish on dark. Computed
+  styles are the page's own, except the CSS system colours (`Canvas` is `#121212`), which is how
+  a page can tell that it is being darkened.
+- **`prefers-color-scheme`.** It matches `dark` in every dark page, whatever the appearance of
+  macOS. The comment on `StyleEngine::preferred_color_scheme_` still describes the older
+  behaviour (a force-darkened page is told it prefers light); the code of 156 does not do that,
+  and the host test reads the match from the page.
+- **A page that is not dark** is as before this patch: its scheme follows the appearance of
+  macOS and nothing is darkened.
+- **Timing.** The preferences reach a renderer after its navigation has committed. A page whose
+  state differs from the page before it in the tab (the first page of a new tab, or a host on one
+  of the lists) can paint a first frame in the old state. With `dark` for the whole profile and
+  empty lists, navigations in a tab do not change state.
+- **An engine without the patch** exports neither function; the shell looks both up by name
+  (`ChromiumWebsiteDarkModeCalls`) and hides the setting and the site controls row without them.
+
+**Tests:** `engine/tests/c_abi_dark_mode_host.mm` (`run_c_abi.py dark_mode`; a window off every
+screen, no input, loopback only): a page with no dark theme is drawn white while nothing is
+said; with the profile dark the same document is drawn `18,18,18` without a reload, its
+computed `Canvas` is `18,18,18`, `(prefers-color-scheme: dark)` matches and its body's computed
+background is still white; its host on the light list makes it white again; a navigation to
+another host is dark; dark for one host only; a page with its own dark scheme is drawn in its
+own colour; `only light` stays white; a private window's tab follows its profile; the refusals
+change nothing. `engine/tests/check_abi173_imports.py`: layouts kept, two functions added, gated
+Swift adoption typechecks. The self-test step "dark mode" (`ChromiumSelfTest.websiteDarkModeChecks`)
+goes through Settings' setting and the site controls row.

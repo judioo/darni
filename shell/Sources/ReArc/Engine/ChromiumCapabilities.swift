@@ -78,6 +78,7 @@ struct ChromiumCapabilities: Equatable {
     static let webAuthnPromptsFeature = "webauthn_prompts"
     static let displayCaptureFeature = "display_capture"
     static let displayCaptureHiddenTabFeature = "display_capture_hidden_tab"
+    static let websiteDarkModeFeature = "website_dark_mode"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -146,6 +147,7 @@ struct ChromiumCapabilities: Equatable {
         displayCaptureFeature: 70,
         // Bridge 0.82.0 (engine patch tab/102): a behaviour of the 1.70 calls, no new minor.
         displayCaptureHiddenTabFeature: 70,
+        websiteDarkModeFeature: 73,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -311,6 +313,11 @@ struct ChromiumCapabilities: Equatable {
     /// such a share after ten seconds (a tab it never showed), or tells the
     /// shared page it is visible; the shell does not share with it at all.
     var screenSharingHiddenTabs: Bool
+    /// Dark mode for websites: a profile's pages are dark, with the hosts
+    /// that differ, read by the engine at every navigation (ABI 1.73, engine
+    /// patch `tab/105`). Without it the setting and the site controls row
+    /// are hidden and pages are as before.
+    var websiteDarkMode: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -384,6 +391,7 @@ struct ChromiumCapabilities: Equatable {
         // What is shared shows from media_capture: without it there would be no bar and no Stop.
         screenSharing = mediaCapture && adopted(Self.displayCaptureFeature)
         screenSharingHiddenTabs = screenSharing && adopted(Self.displayCaptureHiddenTabFeature)
+        websiteDarkMode = profiles && adopted(Self.websiteDarkModeFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -477,6 +485,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.webAuthnPromptsFeature, passkeyPrompts),
             (Self.displayCaptureFeature, screenSharing),
             (Self.displayCaptureHiddenTabFeature, screenSharingHiddenTabs),
+            (Self.websiteDarkModeFeature, websiteDarkMode),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),
