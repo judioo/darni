@@ -161,13 +161,12 @@ final class ReaderPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// The reader's web view: a plain context menu (copy and look up only; no
+/// The reader's web view: a plain context menu (Copy, Copy Link and Look Up only; no
 /// "Open Link in New Window", "Download Image" or "Reload", which would act
 /// outside the tab's profile or load something Darni did not write).
 final class ReaderWKWebView: WKWebView {
     private static let keptMenuItems: Set<String> = [
         "WKMenuItemIdentifierCopy", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierLookUp",
-        "WKMenuItemIdentifierTranslate", "WKMenuItemIdentifierSpeechMenu", "WKMenuItemIdentifierShareMenu",
     ]
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
@@ -184,13 +183,29 @@ final class ReaderWKWebView: WKWebView {
 struct ReaderPageView: NSViewRepresentable {
     let page: ReaderPage
 
+    final class Coordinator {
+        var tookKeyboard = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> WKWebView {
-        DispatchQueue.main.async { [weak view = page.webView] in
-            guard let view, let window = view.window else { return }
-            window.makeFirstResponder(view)
+        // Not in a window yet: try once it is.
+        DispatchQueue.main.async { [weak view = page.webView, coordinator = context.coordinator] in
+            guard let view else { return }
+            Self.takeKeyboard(view, coordinator)
         }
         return page.webView
     }
 
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        Self.takeKeyboard(nsView, context.coordinator)
+    }
+
+    /// Once, when the reader first shows in a key window: later the keyboard is wherever the person put it.
+    private static func takeKeyboard(_ view: WKWebView, _ coordinator: Coordinator) {
+        guard !coordinator.tookKeyboard, let window = view.window else { return }
+        coordinator.tookKeyboard = true
+        if window.isKeyWindow { window.makeFirstResponder(view) }
+    }
 }

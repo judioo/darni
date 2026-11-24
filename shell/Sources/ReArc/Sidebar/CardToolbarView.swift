@@ -60,7 +60,7 @@ struct CardToolbarView: View {
                 .onHover { isHoveringURL = $0 }
                 .help(url.map { WelcomePageAddress.displayAddress(for: $0) } ?? "Open the command bar (⌘L)")
                 // The reader, at the end of the address, when the page looks like an article.
-                ReaderAddressButton(model: model, tab: tab, engine: engine, ink: quietInk)
+                ReaderAddressButton(model: model, pageID: tab?.id, engine: engine, ink: quietInk)
             }
             .padding(.horizontal, 140)
             .padding(.trailing, 20) // centred about 10 pt left of the card's centre

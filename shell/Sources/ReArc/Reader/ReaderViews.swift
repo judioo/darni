@@ -7,22 +7,23 @@ import SwiftUI
 /// has loaded, whether it is one.
 struct ReaderAddressButton: View {
     let model: BrowserViewModel
-    let tab: Tab?
+    /// The page the button is for: a tab's id, or a private window's.
+    let pageID: UUID?
     let engine: (any WebEngine)?
     var ink: Color = .secondary
     var size: CGFloat = 13
 
     private struct PageKey: Equatable {
-        var tabID: Tab.ID?
+        var pageID: UUID?
         var url: URL?
         var isLoading: Bool
     }
 
     var body: some View {
-        let state = model.readerButtonState(for: tab, engine: engine)
+        let state = model.readerButtonState(forPage: pageID, engine: engine)
         Group {
             if state != .hidden {
-                Button { model.toggleReader(tabID: tab?.id) } label: {
+                Button { model.toggleReader(pageID: pageID) } label: {
                     Image(systemName: state == .showing ? "doc.plaintext.fill" : "doc.plaintext")
                         .font(.system(size: size, weight: .medium))
                         .foregroundStyle(state == .showing ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(ink))
@@ -38,24 +39,25 @@ struct ReaderAddressButton: View {
                 .accessibilityIdentifier("reader-button")
             }
         }
-        .task(id: PageKey(tabID: tab?.id, url: engine?.currentURL, isLoading: engine?.isLoading ?? true)) {
-            guard let tab, let engine else { return }
-            model.detectReaderArticle(for: tab, engine: engine)
+        .task(id: PageKey(pageID: pageID, url: engine?.currentURL, isLoading: engine?.isLoading ?? true)) {
+            guard let pageID, let engine else { return }
+            model.detectReaderArticle(forPage: pageID, engine: engine)
         }
     }
 }
 
 extension View {
-    /// A tab's page with its reader over it while one is open. The page stays
-    /// where it is underneath, so leaving the reader shows it as it was left.
-    func readerOverlay(_ model: BrowserViewModel, tabID: Tab.ID, engine: any WebEngine) -> some View {
+    /// A page (a tab's, by the tab's id, or a private window's, by the window's)
+    /// with its reader over it while one is open. The page stays where it is
+    /// underneath, so leaving the reader shows it as it was left.
+    func readerOverlay(_ model: BrowserViewModel, tabID: UUID, engine: any WebEngine) -> some View {
         modifier(ReaderOverlayModifier(model: model, tabID: tabID, engine: engine))
     }
 }
 
 private struct ReaderOverlayModifier: ViewModifier {
     let model: BrowserViewModel
-    let tabID: Tab.ID
+    let tabID: UUID
     let engine: any WebEngine
 
     func body(content: Content) -> some View {

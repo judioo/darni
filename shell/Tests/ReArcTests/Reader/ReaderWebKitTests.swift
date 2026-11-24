@@ -3,6 +3,14 @@ import XCTest
 @testable import ReArc
 @testable import SidebarModel
 
+extension WebKitFixtureServer {
+    /// Every request but the page engine's own late `/favicon.ico` (it follows
+    /// the page's load by itself and is not the reader's): path and query.
+    var contentRequests: [String] {
+        requests.filter { $0.path != "/favicon.ico" }.map { $0.query.isEmpty ? $0.path : $0.path + "?" + $0.query }
+    }
+}
+
 /// The reader end to end with no window: real pages from a loopback server,
 /// the real extraction scripts, the real reader page. "Nothing ran" is the
 /// server's word: a beacon request that must never arrive
@@ -193,7 +201,7 @@ final class ReaderWebKitTests: XCTestCase {
         let center = ReaderCenter(defaults: defaults)
         let engine = try await engine(showing: SelfTestReaderFixture.articlePath)
         try await wait("the page's picture") { self.server.requests(for: SelfTestReaderFixture.picturePath).count == 1 }
-        let requests = server.requests.count
+        let requests = server.contentRequests.count
         let session = try await center.open(tabID: tabID, url: server.url(SelfTestReaderFixture.articlePath), engine: engine, images: .off) { _, _ in }
         XCTAssertTrue(session.article.imagesOff)
         XCTAssertEqual(session.article.imagesWithheld, 1)
@@ -201,7 +209,7 @@ final class ReaderWebKitTests: XCTestCase {
         XCTAssertFalse(shown.elements.contains { $0.name == "img" })
         XCTAssertTrue(shown.text.contains("Pictures are not shown in the reader in private windows and containers."))
         try await settle()
-        XCTAssertEqual(server.requests.count, requests, "the reader made a request: \(server.requests.dropFirst(requests).map(\.path))")
+        XCTAssertEqual(server.contentRequests.count, requests, "the reader made a request: \(server.contentRequests.dropFirst(requests))")
     }
 
     func testAPageWithNoArticleOpensNoReader() async throws {
@@ -234,7 +242,7 @@ final class ReaderWebKitTests: XCTestCase {
             return seen.isSuperset(of: ["body-script", "img-onerror", "body-onload", "svg-onload", "iframe-srcdoc"])
         }
         try await settle()
-        let requestsBefore = server.requests.count
+        let requestsBefore = server.contentRequests.count
 
         let session = try await center.open(tabID: tabID, url: server.url(SelfTestReaderFixture.hostilePath), engine: engine,
                                             images: .loadedByPage) { _, _ in }
@@ -255,8 +263,8 @@ final class ReaderWebKitTests: XCTestCase {
         _ = try await ReaderWebKitEvaluation.evaluate(
             "Array.prototype.forEach.call(document.querySelectorAll('article *'), function (e) { if (typeof e.click === 'function') e.click(); }); 'clicked'", in: session.page.webView)
         try await settle(2)
-        XCTAssertEqual(server.requests.count, requestsBefore,
-                       "the reader made a request: \(server.requests.dropFirst(requestsBefore).map { $0.path + "?" + $0.query })")
+        XCTAssertEqual(server.contentRequests.count, requestsBefore,
+                       "the reader made a request: \(server.contentRequests.dropFirst(requestsBefore))")
     }
 
     /// The second barrier by itself: the hostile page's own HTML, unsanitised, in the reader's web view.
@@ -478,7 +486,7 @@ final class ReaderWebKitTests: XCTestCase {
         XCTAssertEqual(session.page.cancelledNavigations.map(\.absoluteString), ["https://ok.example/next?a=1"])
         try await settle(0.5)
         XCTAssertEqual(session.page.webView.url?.absoluteString, "about:blank")
-        XCTAssertEqual(server.requests.count, 0)
+        XCTAssertEqual(server.contentRequests, [])
     }
 
     func testLeavingTheReaderLeavesThePageAsItWas() async throws {
@@ -488,7 +496,7 @@ final class ReaderWebKitTests: XCTestCase {
         let url = server.url(SelfTestReaderFixture.articlePath)
         try await center.open(tabID: tabID, url: url, engine: engine, images: .off) { _, _ in }
         XCTAssertTrue(center.isShowing(tabID))
-        let requests = server.requests.count
+        let requests = server.contentRequests.count
         // Opening it again gives the same reader.
         let again = try await center.open(tabID: tabID, url: url, engine: engine, images: .off) { _, _ in }
         XCTAssertEqual(again.id, center.session(for: tabID)?.id)
@@ -499,7 +507,7 @@ final class ReaderWebKitTests: XCTestCase {
         XCTAssertEqual(state, "typed by the person|changed title|\(url.absoluteString)")
         XCTAssertEqual(engine.currentURL, url)
         XCTAssertFalse(engine.canGoBack, "the reader added no history entry")
-        XCTAssertEqual(server.requests.count, requests, "and the page was not loaded again")
+        XCTAssertEqual(server.contentRequests.count, requests, "and the page was not loaded again: \(server.contentRequests.dropFirst(requests))")
     }
 
     func testAReaderClosesWhenItsTabShowsAnotherPageOrGoes() async throws {
