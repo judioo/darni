@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     --record) RECORD="${2:?--record needs a release commit}"; shift ;;
     --label) LABEL="${2:?--label needs text}"; shift ;;
     --scratch-path) SCRATCH=(--scratch-path "${2:?--scratch-path needs a directory}"); shift ;;
-    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "check-webkit: unknown option: $1" >&2; exit 64 ;;
   esac
   shift

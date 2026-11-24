@@ -16,24 +16,11 @@ struct ScreenShareCardView: View {
     let goToTab: () -> Void
     let stop: () -> Void
     @State private var isHovering = false
-    @Environment(\.themeChrome) private var chrome
 
     var body: some View {
         HStack(spacing: 0) {
-            Button(action: goToTab) {
-                HStack(spacing: 8) {
-                    SiteIconView(image: favicon, token: faviconToken, size: 16)
-                    MarqueeText(text: line, font: .system(size: 12, weight: .medium),
-                                color: chrome.isDark ? Color.white.opacity(0.9) : Color.black.opacity(0.8),
-                                isActive: isHovering || isAlone)
-                }
-                .padding(.leading, 9)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Back to Tab")
-            .accessibilityLabel(line)
+            MediaCardLead(title: line, favicon: favicon, faviconToken: faviconToken, isActive: isHovering || isAlone,
+                          accessibilityLabel: line, goToTab: goToTab)
             ScreenShareStopButton(action: stop)
                 .padding(.trailing, 4)
         }

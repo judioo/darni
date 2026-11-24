@@ -97,11 +97,11 @@ private struct FavoriteAreaDropDelegate: DropDelegate {
 
     /// The dragged tab: this window's own, or another window's drag over this strip.
     private func draggedItem(_ info: DropInfo) -> UUID? {
-        model.sidebarDragItem(offered: draggedTabID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+        SidebarDragPayload.draggedItem(info, local: draggedTabID, model: model)
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        if SidebarDragPayload.hasItem(info) { model.sidebarDragReached(window) }
+        SidebarDragPayload.noteOffered(info, in: window, model: model)
         if let dragged = draggedItem(info) { return model.canDropOnFavorites(dragged, of: profileID) }
         return SidebarURLDropLoader.hasLinks(info)
     }
@@ -139,7 +139,7 @@ private struct FavoriteDropDelegate: DropDelegate {
 
     /// The dragged tab: this window's own, or another window's drag over this tile.
     private func draggedItem(_ info: DropInfo) -> UUID? {
-        model.sidebarDragItem(offered: draggedTabID, carriesSidebarItem: SidebarDragPayload.hasItem(info))
+        SidebarDragPayload.draggedItem(info, local: draggedTabID, model: model)
     }
 
     /// Only plain tabs can become favorites (SidebarStore.moveItem rules),
@@ -154,7 +154,7 @@ private struct FavoriteDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        if SidebarDragPayload.hasItem(info) { model.sidebarDragReached(window) }
+        SidebarDragPayload.noteOffered(info, in: window, model: model)
         return true
     }
 

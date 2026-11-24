@@ -182,7 +182,6 @@ public struct ExtensionTabRate: Equatable, Sendable {
 
     public init() {}
 
-
     private static func isRecent(_ date: Date, at now: Date) -> Bool {
         date <= now && now.timeIntervalSince(date) < window
     }
@@ -228,7 +227,6 @@ public struct ExtensionBlankTabs: Equatable, Sendable {
     private var tabs: [ExtensionInProfile: [UUID]] = [:]
 
     public init() {}
-
 
     /// How many of the extension's blank tabs are still unused. `stillBlank`
     /// says whether a sidebar tab is open and shows no page yet; the rest are forgotten.

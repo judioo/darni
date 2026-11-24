@@ -25,18 +25,8 @@ struct CallCardView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Button(action: goToTab) {
-                HStack(spacing: 8) {
-                    SiteIconView(image: favicon, token: faviconToken, size: 16)
-                    CallCardTitle(title: title, isActive: isHovering || isAlone)
-                }
-                .padding(.leading, 9)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Back to Tab")
-            .accessibilityLabel("Go to \(title)")
+            MediaCardLead(title: title, favicon: favicon, faviconToken: faviconToken, isActive: isHovering || isAlone,
+                          accessibilityLabel: "Go to \(title)", goToTab: goToTab)
             CallCardToggle(device: .camera, capture: capture) { toggle(.camera) }
             CallCardToggle(device: .microphone, capture: capture) { toggle(.microphone) }
                 .padding(.trailing, endTitle == nil ? 4 : 0)
@@ -50,6 +40,34 @@ struct CallCardView: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Call controls for \(title)")
+    }
+}
+
+/// A strip card's leading part, the call card's and the sharing card's
+/// (`ScreenShareCardView`): the tab's favicon and its line, back to the tab on
+/// a click.
+struct MediaCardLead: View {
+    let title: String
+    let favicon: NSImage?
+    let faviconToken: String
+    /// The line scrolls when it is long (the pointer is on the card, or it is the only card).
+    let isActive: Bool
+    let accessibilityLabel: String
+    let goToTab: () -> Void
+
+    var body: some View {
+        Button(action: goToTab) {
+            HStack(spacing: 8) {
+                SiteIconView(image: favicon, token: faviconToken, size: 16)
+                CallCardTitle(title: title, isActive: isActive)
+            }
+            .padding(.leading, 9)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Back to Tab")
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

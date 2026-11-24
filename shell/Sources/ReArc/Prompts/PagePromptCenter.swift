@@ -1,7 +1,6 @@
 import AppKit
 import SidebarModel
 
-/// Where the page menu's Arc items and the prompts' links go (the browser view model).
 /// A tab Darni can offer to share (the screen sharing sheet's list).
 struct ScreenShareCandidate: Identifiable, Equatable {
     /// The engine's number for the tab: the answer's target.
@@ -40,6 +39,7 @@ protocol ScreenShareRouting: AnyObject {
     func stopScreenShare(of capturer: UUID)
 }
 
+/// Where the page menu's Arc items and the prompts' links go (the browser view model).
 protocol PageLinkRouting: AnyObject {
     func openLinkInNewTab(_ url: URL, from prompts: PagePromptCenter)
     /// The link in front, in a new browser window.
