@@ -22,7 +22,17 @@ enum ChromiumLaunchArguments {
     /// as rolled back and aborts while loading search engines (build 602 did). The engine runs
     /// the testing config again, so these are on anyway; they stay listed so that a later
     /// engine without it cannot repeat 602. Never remove a feature from this list.
-    static let persistedProfileFeatures = "--enable-features=PrepopulatedEnginesMigration,ApplySearchEngineTypeMigration"
+    static let persistedProfileFeatureNames = ["PrepopulatedEnginesMigration", "ApplySearchEngineTypeMigration"]
+    /// Engine features ReArc turns on besides those. Nothing here writes anything an older build reads.
+    /// - `GetDisplayMediaRequiresUserActivation` (off by default in Chromium 156): a page may ask
+    ///   to share the screen (`getDisplayMedia`) only right after the person clicked or typed on
+    ///   it, as in Safari and Firefox. Without it a page could put Darni's sharing sheet up at any
+    ///   moment, unasked (found by the release self-test of 1317, the first run of its
+    ///   screen-sharing step). It is the base feature that decides: Chrome's web preferences
+    ///   follow it, and Blink's runtime feature of the same name alone changes nothing.
+    static let enabledEngineFeatureNames = ["GetDisplayMediaRequiresUserActivation"]
+    /// The one `--enable-features` every launch passes (Chromium keeps the last).
+    static let enabledEngineFeatures = "--enable-features=" + (persistedProfileFeatureNames + enabledEngineFeatureNames).joined(separator: ",")
     /// The engine features ReArc turns off. Neither writes anything an older build reads.
     /// - `SafeBrowsingLocalListsUseSBv5`, from the testing config: Safe Browsing's v5 list
     ///   protocol, which Google answers with 404 for ReArc's key, so no threat list would ever
@@ -42,14 +52,6 @@ enum ChromiumLaunchArguments {
     ///   preferences are read the same way with it off.
     static let disabledEngineFeatureNames = ["SafeBrowsingLocalListsUseSBv5", "LazyBrowserInterfaceBroker", "PreemptiveSodaDownload"]
     static let disabledEngineFeatures = "--disable-features=" + disabledEngineFeatureNames.joined(separator: ",")
-    /// Blink features ReArc turns on. Nothing here writes anything an older build reads.
-    /// - `GetDisplayMediaRequiresUserActivation` (experimental, off in Chromium 156): a page may
-    ///   ask to share the screen (`getDisplayMedia`) only right after the person clicked or typed
-    ///   on it, as in Safari and Firefox. Without it a page could put Darni's sharing sheet up at
-    ///   any moment, unasked (found by the release self-test of 1317, the first run of its
-    ///   screen-sharing step).
-    static let enabledBlinkFeatureNames = ["GetDisplayMediaRequiresUserActivation"]
-    static let enabledBlinkFeatures = "--enable-blink-features=" + enabledBlinkFeatureNames.joined(separator: ",")
 
     enum KeychainMode: Equatable {
         /// The macOS Keychain ("Chromium Safe Storage"); the only production mode.
@@ -100,9 +102,9 @@ enum ChromiumLaunchArguments {
         isRelease ? releaseClearedEnvironment : []
     }
 
-    /// What every launch hands the engine: `browserArguments`, then the Blink features ReArc turns
-    /// on (`enabledBlinkFeatures`), the features each profile needs on (`persistedProfileFeatures`)
-    /// and the ones ReArc turns off (`disabledEngineFeatures`),
+    /// What every launch hands the engine: `browserArguments`, then the features ReArc turns on,
+    /// those each profile needs among them (`enabledEngineFeatures`), and the ones ReArc turns off
+    /// (`disabledEngineFeatures`),
     /// in release and development builds alike. Chromium keeps only the last `--enable-features`
     /// and the last `--disable-features`, so these come after anything argv carried.
     static func engineArguments(
@@ -113,7 +115,7 @@ enum ChromiumLaunchArguments {
         isShipped: Bool = ShippedBuild.current
     ) -> [String] {
         browserArguments(arguments, defaultUserDataDir: defaultUserDataDir, keychain: keychain, isRelease: isRelease, isShipped: isShipped)
-            + [enabledBlinkFeatures, persistedProfileFeatures, disabledEngineFeatures]
+            + [enabledEngineFeatures, disabledEngineFeatures]
     }
 
     /// LaunchServices arguments are untrusted in shipping bundles. Only profile
