@@ -145,6 +145,7 @@ struct SidebarURLField: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 0)
+            ReaderAddressButton(model: model, tab: tab, engine: engine, size: 11)
             if let container = model.containerLabel(for: engine, tab: tab) {
                 ContainerChip(label: container)
             }
