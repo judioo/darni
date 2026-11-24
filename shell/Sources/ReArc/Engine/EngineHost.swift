@@ -162,6 +162,15 @@ final class EngineHost {
         return []
     }
 
+    /// Hidden pages can be frozen before they are unloaded (Chromium `tab_freeze`, ABI 1.71).
+    var supportsTabFreezing: Bool {
+        #if REARC_CHROMIUM
+        return ChromiumRuntime.running?.capabilities.tabFreeze ?? false
+        #else
+        return false
+        #endif
+    }
+
     /// PiP video plays in shell views (Chromium `pip_embedded`, ABI 1.43).
     var supportsLiveVideo: Bool {
         #if REARC_CHROMIUM

@@ -781,7 +781,18 @@ final class BrowserViewModel {
     var tabUnloadThreshold: TabUnloadThreshold = .load(from: .standard) {
         didSet { tabUnloadThreshold.save(to: tabUnloadDefaults) }
     }
+    /// Freeze inactive tabs after this long unseen (remembered). A shorter
+    /// wait takes effect at the next check; a longer one, or Never, thaws the
+    /// tabs that are no longer due at once.
+    var tabFreezeThreshold: TabFreezeThreshold = .load(from: .standard) {
+        didSet {
+            tabFreezeThreshold.save(to: tabUnloadDefaults)
+            if tabFreezeThreshold != oldValue { runAutoFreeze() }
+        }
+    }
     @ObservationIgnored var tabUnloadDefaults: UserDefaults = .standard
+    /// Waits between tries of a discard the engine refused for the moment.
+    @ObservationIgnored var discardRetryDelays: [TimeInterval] = BrowserViewModel.discardRetryDelays
     private(set) var startupDeferred = false
     @ObservationIgnored private var didFinishStartup = false
     /// A mutation's engine reconcile and boost sync are queued (`scheduleMutationFollowUp`).
