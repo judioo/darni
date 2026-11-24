@@ -24,13 +24,14 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1124.1317 — 2026-11-24
+## Darni 2026.1124.1319 — 2026-11-24
 
 **New**
 - Sites can share your screen. When a site such as Google Meet asks to share, Darni shows a sheet
   where you pick a tab, a window or your entire screen; a window or the screen is picked in the
   macOS picker. While a tab is shared, a bar on it says "Sharing a tab with …" and has Stop, and
-  the tab's row in the sidebar shows it too.
+  the tab's row in the sidebar shows it too. A site can only ask right after you click or press
+  a key on it.
 - A tab can be dragged from one window's sidebar into another window's sidebar, and it moves
   there. Moving a tab to a space in another profile or container asks first, as Move to Profile
   does.
