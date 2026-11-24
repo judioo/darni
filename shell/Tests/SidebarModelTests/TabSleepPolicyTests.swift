@@ -8,6 +8,36 @@ final class TabSleepPolicyTests: XCTestCase {
 
     private func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
 
+    /// One domain for the class, emptied before and after each test and removed
+    /// with its file at the end: the app's own defaults are never written.
+    private static let domain = "darni-sleep-policy-tests"
+
+    private func scratchDefaults() throws -> UserDefaults {
+        try XCTUnwrap(UserDefaults(suiteName: Self.domain))
+    }
+
+    private static func clearDefaults() {
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        CFPreferencesAppSynchronize(domain as CFString)
+    }
+
+    override func setUp() {
+        super.setUp()
+        Self.clearDefaults()
+    }
+
+    override func tearDown() {
+        Self.clearDefaults()
+        super.tearDown()
+    }
+
+    override class func tearDown() {
+        clearDefaults()
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/\(domain).plist")
+        try? FileManager.default.removeItem(at: file)
+        super.tearDown()
+    }
+
     // MARK: Thresholds
 
     func testTheFreezeChoicesAreNeverFifteenThirtyAndAnHour() {
@@ -17,13 +47,13 @@ final class TabSleepPolicyTests: XCTestCase {
     }
 
     func testTabsFreezeAfterThirtyMinutesAndUnloadAfterFourHoursByDefault() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "darni-sleep-\(UUID().uuidString)"))
+        let defaults = try scratchDefaults()
         XCTAssertEqual(TabFreezeThreshold.load(from: defaults), .thirtyMinutes)
         XCTAssertEqual(TabUnloadThreshold.load(from: defaults), .fourHours)
     }
 
     func testTheFreezeChoiceIsRememberedUnderItsOwnKey() throws {
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "darni-sleep-\(UUID().uuidString)"))
+        let defaults = try scratchDefaults()
         TabFreezeThreshold.oneHour.save(to: defaults)
         XCTAssertEqual(TabFreezeThreshold.load(from: defaults), .oneHour)
         XCTAssertEqual(defaults.string(forKey: "ReArcTabFreezeThreshold"), "oneHour")
@@ -33,7 +63,7 @@ final class TabSleepPolicyTests: XCTestCase {
 
     func testAnExistingUnloadChoiceIsKeptAndTheFreezeStartsAtItsDefault() throws {
         // What a build before tab freezing left behind: the unload key only.
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "darni-sleep-\(UUID().uuidString)"))
+        let defaults = try scratchDefaults()
         defaults.set("twelveHours", forKey: "ReArcTabUnloadThreshold")
         XCTAssertEqual(TabUnloadThreshold.load(from: defaults), .twelveHours)
         XCTAssertEqual(TabFreezeThreshold.load(from: defaults), .thirtyMinutes)
@@ -44,7 +74,7 @@ final class TabSleepPolicyTests: XCTestCase {
 
     func testAnUnknownStoredValueFallsBackToTheDefault() throws {
         // A later build may store a choice this one does not know.
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "darni-sleep-\(UUID().uuidString)"))
+        let defaults = try scratchDefaults()
         defaults.set("twoMinutes", forKey: "ReArcTabFreezeThreshold")
         XCTAssertEqual(TabFreezeThreshold.load(from: defaults), .thirtyMinutes)
     }

@@ -83,6 +83,36 @@ final class TabSleepShellTests: XCTestCase {
 
     private func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
 
+    /// One domain for the class, emptied before and after each test and removed
+    /// with its file at the end: the app's own defaults are never written.
+    private static let domain = "darni-sleep-shell-tests"
+
+    private func scratchDefaults() -> UserDefaults {
+        UserDefaults(suiteName: Self.domain)!
+    }
+
+    private static func clearDefaults() {
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        CFPreferencesAppSynchronize(domain as CFString)
+    }
+
+    override func setUp() {
+        super.setUp()
+        Self.clearDefaults()
+    }
+
+    override func tearDown() {
+        Self.clearDefaults()
+        super.tearDown()
+    }
+
+    override class func tearDown() {
+        clearDefaults()
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Preferences/\(domain).plist")
+        try? FileManager.default.removeItem(at: file)
+        super.tearDown()
+    }
+
     /// A model with a selected tab ("front", on screen) and `names` more tabs
     /// behind it, each with a `SleepEngine`, last shown `minutes` ago.
     private func makeModel(_ names: [String] = ["idle"], shown minutes: Double = 45)
@@ -95,7 +125,7 @@ final class TabSleepShellTests: XCTestCase {
             syncEngine: LocalSyncEngine(),
             faviconStore: FaviconStore(directory: nil)
         )
-        model.tabUnloadDefaults = UserDefaults(suiteName: "darni-sleep-\(UUID().uuidString)")!
+        model.tabUnloadDefaults = scratchDefaults()
         model.tabFreezeThreshold = .thirtyMinutes
         model.tabUnloadThreshold = .fourHours
         var tabs: [String: Tab] = [:]
@@ -212,7 +242,7 @@ final class TabSleepShellTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("darni-sleep-\(UUID().uuidString)")
         let model = BrowserViewModel(store: store, persistence: SidebarFilePersistence(fileURL: directory.appendingPathComponent("sidebar.json")),
                                      syncEngine: LocalSyncEngine(), faviconStore: FaviconStore(directory: nil))
-        model.tabUnloadDefaults = UserDefaults(suiteName: "darni-sleep-\(UUID().uuidString)")!
+        model.tabUnloadDefaults = scratchDefaults()
         let a = store.addTab(kind: .today, title: "A", url: URL(string: "https://a.test")!)
         let b = store.addTab(kind: .today, title: "B", url: URL(string: "https://b.test")!)
         model.selectTab(b.id)
