@@ -138,6 +138,59 @@ final class ReaderSanitiserTests: XCTestCase {
         XCTAssertEqual(ReaderSanitiser.srcsetURLs("a.jpg 1x, b.jpg 2x,\n c.jpg 640w , d.jpg"), ["a.jpg", "b.jpg", "c.jpg", "d.jpg"])
     }
 
+    /// A <picture> as the extraction script writes it: the page showed the
+    /// `<source>`'s 1x URL (its `currentSrc`, in "cs"); the <img>'s own src is
+    /// a fallback the page never fetched.
+    private func pictureElement(shown: String?, extra: [String: String] = [:]) -> [String: Any] {
+        var image = readerElement("img", ["src": "/img/lamp-fallback.jpg", "alt": "lamp"].merging(extra) { $1 })
+        if let shown { image["cs"] = shown }
+        return readerElement("figure", [:], [
+            readerElement("picture", [:], [
+                readerElement("source", ["media": "(min-width: 600px)", "srcset": "/img/lamp-wide.jpg 1x, /img/lamp-wide-2x.jpg 2x"]),
+                readerElement("source", ["srcset": "/img/lamp.jpg 1x, /img/lamp-2x.jpg 2x"]),
+                image,
+            ]),
+        ])
+    }
+
+    func testAPicturesSourceThePageShowedIsShownAndNoSourceOrSrcsetIsWritten() {
+        let output = sanitise(pictureElement(shown: picture))
+        XCTAssertEqual(output.imagesShown, 1)
+        XCTAssertEqual(output.imagesWithheld, 0)
+        let markup = ReaderHTML.fragment(for: output.nodes)
+        XCTAssertEqual(markup, "<figure><img src=\"https://news.example/img/lamp.jpg\" alt=\"lamp\" referrerpolicy=\"no-referrer\" decoding=\"async\"></figure>")
+        for forbidden in ["srcset", "<source", "<picture", "media=", "lamp-2x", "lamp-wide", "fallback"] {
+            XCTAssertFalse(markup.contains(forbidden), forbidden)
+        }
+    }
+
+    func testAPicturesSourceThePageDidNotLoadIsNotTaken() {
+        // The page loaded the 1x picture. Another density and another media
+        // query's source are named in the tree but were never loaded.
+        for shown in ["https://news.example/img/lamp-2x.jpg", "https://news.example/img/lamp-wide.jpg", "https://news.example/img/lamp-wide-2x.jpg"] {
+            let output = sanitise(pictureElement(shown: shown))
+            XCTAssertFalse(ReaderHTML.fragment(for: output.nodes).contains("<img"), shown)
+            XCTAssertEqual(output.imagesShown, 0, shown)
+            XCTAssertEqual(output.imagesWithheld, 1, shown)
+        }
+        // Only the img's own src and srcset, and no shown URL: the sources' URLs are never candidates.
+        let fromSources = sanitise(pictureElement(shown: nil), images: .loadedByPage(["https://news.example/img/lamp-wide.jpg"]))
+        XCTAssertEqual(fromSources.imagesShown, 0)
+        XCTAssertEqual(fromSources.imagesWithheld, 1)
+    }
+
+    func testAShownURLIsCheckedAsSrcIsAndCannotComeFromAnAttribute() {
+        // Not a web address, or with userinfo, or too long: never shown, even if listed as loaded.
+        let long = "https://news.example/" + String(repeating: "a", count: 5000) + ".jpg"
+        for shown in ["javascript:alert(1)", "data:image/png;base64,AAAA", "https://user:pass@news.example/img/lamp.jpg", long] {
+            let output = sanitise(pictureElement(shown: shown), images: .loadedByPage([shown]))
+            XCTAssertEqual(output.imagesShown, 0, String(shown.prefix(60)))
+        }
+        // A page's own attribute named "cs" is just an attribute: it is not the shown URL.
+        let forged = sanitise(pictureElement(shown: nil, extra: ["cs": picture]))
+        XCTAssertEqual(forged.imagesShown, 0)
+    }
+
     func testAnImageURLThatIsNotAWebAddressIsNeverShownEvenIfListedAsLoaded() {
         for src in ["javascript:alert(1)", "data:image/svg+xml,<svg onload=alert(1)>", "blob:https://news.example/1", "file:///x.png", "chrome://theme/x"] {
             let output = sanitise(readerElement("img", ["src": src]), images: .loadedByPage([src]))

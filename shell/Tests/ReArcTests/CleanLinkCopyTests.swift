@@ -150,6 +150,35 @@ final class CleanLinkCopyTests: XCTestCase {
         XCTAssertEqual(model.toast?.message, cleanToast)
     }
 
+    /// Peek › Copy Link's toast is drawn on the Peek's card, not on the
+    /// window's card under the Peek (where it was dimmed and mostly hidden).
+    func testAPeeksCopyLinkToastsOnThePeekNotUnderIt() {
+        let model = makeModel()
+        let first = SidebarWindowID(), second = SidebarWindowID()
+        model.store.registerWindow(first)
+        model.store.registerWindow(second)
+        model.windowBecameKey(first)
+        model.peekSession = BrowserViewModel.PeekSession(url: tracked, title: "Item", engineID: UUID(),
+                                                         profileID: model.store.activeProfileID, windowID: first)
+        XCTAssertTrue(model.showsPeek(in: first))
+        model.peekCopyLink()
+        XCTAssertEqual(copied(model), clean)
+        XCTAssertNil(model.cardToast(in: first), "nothing under the Peek")
+        let shown = try? XCTUnwrap(model.peekToast(in: first))
+        XCTAssertEqual(shown?.message, cleanToast)
+        XCTAssertEqual(shown?.id, model.toast?.id)
+        XCTAssertEqual(shown?.placement, .belowToolbar, "centred under the Peek's address line")
+        XCTAssertEqual(shown?.action, .share(URL(string: clean)!))
+        XCTAssertNil(model.peekToast(in: second))
+        XCTAssertNil(model.cardToast(in: second), "another window draws no toast while not key")
+
+        // The Peek closed: the window's toast is on its card again, where it was.
+        model.peekSession = nil
+        XCTAssertNil(model.peekToast(in: first))
+        XCTAssertEqual(model.cardToast(in: first)?.id, model.toast?.id)
+        XCTAssertEqual(model.cardToast(in: first)?.placement, .corner)
+    }
+
     func testTheCommandBarRowsCopyURL() {
         let model = makeModel()
         let row = CommandBarSearch.Result(id: "h1", kind: .history, title: "Item", destinationURL: tracked)

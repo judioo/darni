@@ -161,26 +161,126 @@ final class ReaderPage: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// The reader's web view: a plain context menu (Copy and Look Up only; no
-/// "Open Link in New Window", "Download Image" or "Reload", which would act
-/// outside the tab's profile or load something Darni did not write). WebKit's
-/// own Copy Link is dropped too: it would copy the link with its trackers,
-/// past `LinkCleaner` (security note R-2). A link is copied from the page.
+/// The reader's web view: a plain context menu, exactly Copy and Look Up.
+/// No "Open Link in New Window", "Download Image" or "Reload", which would
+/// act outside the tab's profile or load something Darni did not write.
+/// WebKit's own Copy Link is dropped too: it would copy the link with its
+/// trackers, past `LinkCleaner` (security note R-2). A link is copied from the page.
+///
+/// The menu is Darni's own, shown with `NSMenu.popUp(positioning:at:in:)`, which
+/// adds nothing: AppKit's contextual additions (Services, Writing Tools, Siri
+/// and the like) come only with a context menu shown through
+/// `popUpContextMenu`. Darni ships no AI features, so none may appear here.
+/// Should WebKit still open its own menu (the keyboard's menu key, VoiceOver),
+/// `willOpenMenu` replaces every item with Darni's two.
 final class ReaderWKWebView: WKWebView {
-    static let keptMenuItems: Set<String> = [
-        "WKMenuItemIdentifierCopy", "WKMenuItemIdentifierLookUp",
-    ]
+    static let copyIdentifier = NSUserInterfaceItemIdentifier("DarniReaderMenuCopy")
+    static let lookUpIdentifier = NSUserInterfaceItemIdentifier("DarniReaderMenuLookUp")
+    /// The app's own world for reading the selection; content JavaScript stays off.
+    private static let selectionWorld = WKContentWorld.world(name: "DarniReaderSelection")
+
+    /// The selected text and where its first line sits (the view's coordinates).
+    struct Selection: Equatable {
+        var text: String
+        var origin: CGPoint
+    }
+
+    /// What the menu last open was made for: Look Up shows it.
+    private var menuSelection: Selection?
+
+    override func rightMouseDown(with event: NSEvent) {
+        openMenu(for: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { return openMenu(for: event) }
+        super.mouseDown(with: event)
+    }
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
-        Self.trim(menu)
+        Self.fill(menu, target: self, selection: nil)
         super.willOpenMenu(menu, with: event)
     }
 
-    /// Keeps only `keptMenuItems` (and separators between them).
-    static func trim(_ menu: NSMenu) {
-        menu.items.removeAll { item in
-            guard !item.isSeparatorItem else { return false }
-            return !keptMenuItems.contains(item.identifier?.rawValue ?? "")
+    /// Makes `menu` exactly Copy and Look Up, with nothing AppKit may add.
+    /// `selection` nil: not known yet (WebKit's own menu), both items stay on
+    /// and act on whatever is selected then.
+    static func fill(_ menu: NSMenu, target: AnyObject?, selection: Selection?) {
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        menu.allowsContextMenuPlugIns = false
+        if #available(macOS 15.2, *) { menu.automaticallyInsertsWritingToolsItems = false }
+        let hasText = selection.map { !$0.text.isEmpty } ?? true
+        let copy = NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "")
+        copy.identifier = copyIdentifier
+        let lookUp = NSMenuItem(title: "Look Up", action: #selector(ReaderWKWebView.lookUpSelection(_:)), keyEquivalent: "")
+        lookUp.identifier = lookUpIdentifier
+        for item in [copy, lookUp] {
+            item.target = target
+            item.isEnabled = hasText
+            menu.addItem(item)
+        }
+    }
+
+    /// A right-click on a word with nothing selected selects the word, as in
+    /// Safari; then Darni's menu opens at the pointer.
+    private func openMenu(for event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        window?.makeFirstResponder(self)
+        readSelection(selectingWordAt: point) { [weak self] selection in
+            guard let self else { return }
+            self.menuSelection = selection
+            let menu = NSMenu(title: "Reader")
+            Self.fill(menu, target: self, selection: selection ?? Selection(text: "", origin: .zero))
+            menu.popUp(positioning: nil, at: point, in: self)
+        }
+    }
+
+    @objc func lookUpSelection(_ sender: Any?) {
+        if let selection = menuSelection, !selection.text.isEmpty { return showDefinition(selection) }
+        readSelection(selectingWordAt: nil) { [weak self] selection in
+            guard let selection, !selection.text.isEmpty else { return }
+            self?.showDefinition(selection)
+        }
+    }
+
+    private func showDefinition(_ selection: Selection) {
+        let text = NSAttributedString(string: selection.text, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize + 4)])
+        showDefinition(for: text, at: selection.origin)
+    }
+
+    /// The page's selection (the word at `point` selected first when nothing
+    /// is), in the reader's own document, from the app's own world.
+    private func readSelection(selectingWordAt point: CGPoint?, _ completion: @escaping (Selection?) -> Void) {
+        let scale = magnification > 0 ? magnification : 1
+        var select = "false"
+        if let point {
+            let x = point.x / scale, y = (isFlipped ? point.y : bounds.height - point.y) / scale
+            select = "\(Double(x)), \(Double(y))"
+        }
+        let script = """
+        (function (at) {
+          var s = getSelection();
+          if (at && (s.rangeCount === 0 || s.isCollapsed) && document.caretRangeFromPoint) {
+            var caret = document.caretRangeFromPoint(at[0], at[1]);
+            if (caret && caret.startContainer.nodeType === 3) {
+              s.removeAllRanges(); s.addRange(caret);
+              s.modify("move", "backward", "word"); s.modify("extend", "forward", "word");
+            }
+          }
+          if (s.rangeCount === 0 || s.isCollapsed) return null;
+          var text = s.toString().trim().slice(0, 2000);
+          var r = s.getRangeAt(0).getClientRects()[0] || s.getRangeAt(0).getBoundingClientRect();
+          return text ? {text: text, x: r.left, y: r.bottom} : null;
+        })(\(point == nil ? "null" : "[" + select + "]"))
+        """
+        evaluateJavaScript(script, in: nil, in: Self.selectionWorld) { [weak self] result in
+            guard let self, case .success(let value) = result, let object = value as? [String: Any],
+                  let text = object["text"] as? String, let x = object["x"] as? Double, let y = object["y"] as? Double else {
+                return completion(nil)
+            }
+            let viewY = (self.isFlipped ? y * scale : self.bounds.height - y * scale)
+            completion(Selection(text: text, origin: CGPoint(x: x * scale, y: viewY)))
         }
     }
 }
