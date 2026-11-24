@@ -1,0 +1,480 @@
+From: ReArc Authors
+Subject: [PATCH] P-TAB-001 "this Mac" passkeys: list and delete for the host's settings (ABI 1.72)
+
+Engine side of docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md, 1.7
+(security review PK-07). A passkey made on "this Mac" is a Secure Enclave key
+whose keychain item carries the site and the account sealed with the
+profile's metadata secret (device/fido/mac/credential_store.h). Nobody could
+see or remove one from Darni: Chromium's page for them
+(chrome://settings/passkeys) is not reachable from the host's settings, and
+the host cannot read the sealed names by itself.
+
+ReArcProfileGetLocalPasskeys answers for a profile with one JSON object:
+"available" (the app is signed with the profile authenticator's keychain
+access group) and "passkeys", each with its credential ID in hex, the site
+(the relying party's ID) and the account's two names. It is
+LocalCredentialManagement::Enumerate, the call behind Chromium's own page,
+so the order and the content are Chromium's. Reading asks for no Touch ID.
+
+ReArcProfileDeleteLocalPasskey deletes one for good and answers with the list
+as it is afterwards. TouchIdCredentialStore::DeleteCredentialById removes a
+keychain item by its credential ID alone, anywhere in the access group, so
+the bridge first lists the profile's own passkeys and deletes only an ID it
+finds there: an ID of another profile, or a guess, is not_found and reaches
+no SecItemDelete.
+
+Without the access group in the signature (a build without it, a C ABI test
+host, a development bundle) "available" is false, the list is empty, delete
+is unsupported, and nothing touches the keychain or the profile's metadata
+secret.
+
+A release bundle in verification mode never has the profile authenticator
+(security advance read 2026-11-24, point 5). The copies the release scripts
+run their gates on, --qa bundles and the upgrade checks' copies of a previous
+release are signed by the same team and may be started on a copy of a
+person's profile; with the group they could use, list and delete that
+person's real passkeys. rearc::WebAuthnKeychainAccessGroup() (tab/097) now
+gives such a bundle (ReArcReleaseVerification true in the main bundle's
+Info.plist) a group name no build is ever signed with, so Chromium's own
+check (TouchIdContext::TouchIdAvailable) finds the authenticator unavailable
+for requests, and this patch's calls report "available": false. The release
+scripts also sign those copies without the group; this holds if one slips
+through.
+
+Private profiles are unsupported (they use their original profile's
+passkeys). The site chose the account names: the host treats them as
+untrusted text. Nothing is logged by the engine.
+
+No test in the tree creates a passkey: the store's fakes are test-only
+targets (crypto:test_support), so the engine has none. engine/tests/
+c_abi_local_passkeys_host.mm runs the calls on a host without the group
+(available false, delete unsupported, the argument checks, a private
+profile); the list and delete logic with content is tested in the shell with
+an injected store.
+
+Touches: chrome/app/framework.exports, chrome/app/framework.order,
+chrome/browser/BUILD.gn, chrome/browser/rearc_bridge/{rearc_engine_abi.h,
+rearc_engine_abi.mm, rearc_engine_entry_mac.mm, rearc_local_passkeys.cc
+(new), rearc_webauthn.cc, rearc_webauthn.h}. No Chromium file outside the
+bridge.
+
+Bridge 0.86.0, ABI 1.72, feature local_passkeys. One callback type added
+(ReArcLocalPasskeysCallback, the shape of ReArcSitePermissionsCallback), no
+struct. The header's minor version stays 73: tab/105 (ABI 1.73) is under
+this patch in the overlay, so the order in the series is 103, 105, 104.
+
+Built into the release engine on 2026-11-25 (overlay faf0faf7a4 on
+577e70cef2, out/ReArc-codecs-arm64): the framework exports the two
+functions, engine/tests/check_abi172_imports.py passes, and
+c_abi_local_passkeys_host.mm passes on that engine with every connection on
+loopback. Not run: a build signed with the group (no test may reach a real
+passkey), so the list with content and a real delete are unexercised in the
+engine.
+
+Last rebased: 2026-11-25 onto Chromium 156.0.8078.114 (overlay 577e70cef2,
+through tab/103 and tab/105).
+
+Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>
+
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 12129f3..edaddc1 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -58,6 +58,8 @@ _ReArcTabRevokeSiteDevice
+ _ReArcEngineSetSitePermissionsChangedCallback
+ _ReArcEngineSetWebAuthnCallback
+ _ReArcWebAuthnRespond
++_ReArcProfileGetLocalPasskeys
++_ReArcProfileDeleteLocalPasskey
+ _ReArcEngineSetDisplayCaptureCallback
+ _ReArcDisplayCaptureRespond
+ _ReArcTabStopDisplayCapture
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 58586a7..bb9ae34 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -65,6 +65,8 @@ _ReArcTabRevokeSiteDevice
+ _ReArcEngineSetSitePermissionsChangedCallback
+ _ReArcEngineSetWebAuthnCallback
+ _ReArcWebAuthnRespond
++_ReArcProfileGetLocalPasskeys
++_ReArcProfileDeleteLocalPasskey
+ _ReArcEngineSetDisplayCaptureCallback
+ _ReArcDisplayCaptureRespond
+ _ReArcTabStopDisplayCapture
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 3ff0b6c..6735486 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1494,6 +1494,7 @@ source_set("core") {
+       "rearc_bridge/rearc_website_dark_mode.cc",
+       "rearc_bridge/rearc_website_dark_mode.h",
+       "rearc_bridge/rearc_site_permissions.cc",
++      "rearc_bridge/rearc_local_passkeys.cc",
+       "rearc_bridge/rearc_webauthn.cc",
+       "rearc_bridge/rearc_webauthn.h",
+       "rearc_bridge/rearc_display_capture.cc",
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.h b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+index 1a0d6cf..5991e58 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.h
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.h
+@@ -1997,6 +1997,58 @@ REARC_ENGINE_EXPORT ReArcStatus ReArcWebAuthnRespond(uint64_t request_id,
+                                                      uint32_t index,
+                                                      const char* text);
+ 
++// "This Mac" passkeys (local_passkeys, ABI 1.72): the passkeys Chromium's
++// profile authenticator keeps for a profile, for a list in the host's
++// settings with a way to delete one. They are what a request's "this_mac"
++// way makes: a key in the Secure Enclave, in the keychain access group
++// <team>.<bundle identifier>.webauthn of the signed app, with the site and
++// the account sealed by a secret in the profile's preferences. One belongs to
++// one profile on one Mac and is in no sync. The engine is asked because only
++// it can read the sealed names; it is Chromium's own page for them
++// (chrome://settings/passkeys, LocalCredentialManagement) without the page.
++//
++// json is a UTF-8 object; a host ignores keys it does not know:
++//   "available": the app is signed with the access group, so this profile
++//     can have such passkeys. false: no passkeys, and the engine asked the
++//     keychain nothing and wrote nothing (a build without the group, a test
++//     host, and every bundle in release verification mode, which names a
++//     group no build is signed with: such a bundle never reaches a real
++//     passkey).
++//   "passkeys": this profile's, in Chromium's order (by site, then account).
++//     "id": the credential's ID, lower-case hex, for
++//     ReArcProfileDeleteLocalPasskey; "rp_id": the site it signs in to (the
++//     relying party's ID, a domain); "user_name" and "user_display_name": the
++//     account as the site named it when the passkey was made, either may be
++//     "". The site chose both names: a host treats them as untrusted text.
++// Reading asks for no Touch ID and no password. Snapshot at call time,
++// delivered deferred, exactly once, borrowed. An unknown profile:
++// profile_not_found. A private profile: unsupported (it uses its original
++// profile's passkeys and has none of its own). A null completion:
++// invalid_argument. The keychain refused the query: the completion gets
++// internal with "passkeys": [].
++typedef void (*ReArcLocalPasskeysCallback)(void* context,
++                                           ReArcStatus status,
++                                           uint64_t profile_id,
++                                           const char* json);
++REARC_ENGINE_EXPORT ReArcStatus ReArcProfileGetLocalPasskeys(
++    uint64_t profile_id, ReArcLocalPasskeysCallback completion, void* context);
++// Deletes one passkey of the profile for good: the keychain item and its key
++// in the Secure Enclave. There is no undo and no copy anywhere; the site
++// keeps its half and will no longer be answered by this Mac. The host asks
++// the person first. credential_id: an "id" of the profile's list. Only a
++// passkey of this profile's own list is deleted, so an ID of another profile
++// or a guess removes nothing: the completion gets not_found. The completion
++// always carries the list as it is afterwards: ok when the passkey is gone,
++// not_found, or internal when the keychain refused. Returned at once, and
++// then no completion: invalid_argument (null, not hex, empty, over 1024
++// bytes), profile_not_found, unsupported (a private profile, or "available"
++// is false).
++REARC_ENGINE_EXPORT ReArcStatus ReArcProfileDeleteLocalPasskey(
++    uint64_t profile_id,
++    const char* credential_id,
++    ReArcLocalPasskeysCallback completion,
++    void* context);
++
+ // Blocked hosts (content_blocking_hosts, ABI 1.69): what ReArcTabGetBlockedCount
+ // counts, by site, for a "Blocked on this page" list. *json is +1 malloc,
+ // NUL-terminated UTF-8; free with ReArcBufferFree.
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_abi.mm b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+index 5821ab1..b479a2b 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_abi.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_abi.mm
+@@ -997,6 +997,7 @@ bool ReArcEngineHasFeature(const char* feature) {
+          std::string(feature) == "host_sites" ||
+          std::string(feature) == "site_permissions" ||
+          std::string(feature) == "webauthn_prompts" ||
++         std::string(feature) == "local_passkeys" ||
+          std::string(feature) == "display_capture" ||
+          std::string(feature) == "display_capture_hidden_tab" ||
+          std::string(feature) == "early_window" ||
+diff --git a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+index 0c7374d..cf1ae29 100644
+--- a/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
++++ b/chrome/browser/rearc_bridge/rearc_engine_entry_mac.mm
+@@ -45,7 +45,7 @@ bool HandleTerminateCancel() override {
+ 
+ const char* ReArcEngineBridgeVersion(void) {
+   CHECK([NSThread isMainThread]);
+-  return "0.85.0";
++  return "0.86.0";
+ }
+ 
+ void ReArcEngineSetLifecycleCallbacks(
+diff --git a/chrome/browser/rearc_bridge/rearc_local_passkeys.cc b/chrome/browser/rearc_bridge/rearc_local_passkeys.cc
+new file mode 100644
+index 0000000..8eb027c
+--- /dev/null
++++ b/chrome/browser/rearc_bridge/rearc_local_passkeys.cc
+@@ -0,0 +1,227 @@
++// Copyright 2026 The ReArc Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// "This Mac" passkeys (local_passkeys, ABI 1.72): the list and the delete of
++// Chromium's own page for them (chrome://settings/passkeys,
++// LocalCredentialManagement), for the host's settings. The keys are in the
++// Secure Enclave, their keychain items in the access group of
++// rearc::WebAuthnKeychainAccessGroup(), and the site and account of each are
++// sealed with the profile's metadata secret (device/fido/mac/
++// credential_store.h), which is why the host cannot list them by itself.
++
++#include <pthread.h>
++
++#include <algorithm>
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/check.h"
++#include "base/functional/bind.h"
++#include "base/json/json_writer.h"
++#include "base/memory/raw_ptr.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/rearc_bridge/rearc_abi_internal.h"
++#include "chrome/browser/rearc_bridge/rearc_engine_abi.h"
++#include "chrome/browser/rearc_bridge/rearc_profile_registry.h"
++#include "chrome/browser/rearc_bridge/rearc_webauthn.h"
++#include "chrome/browser/webauthn/local_credential_management.h"
++#include "crypto/apple/keychain_util.h"
++#include "device/fido/discoverable_credential_metadata.h"
++
++namespace rearc {
++namespace {
++
++using Passkeys = std::optional<std::vector<device::DiscoverableCredentialMetadata>>;
++
++// A credential ID is 32 bytes at this pin; older formats sealed the metadata
++// into it and were longer. Nothing near this limit is a real one.
++constexpr size_t kMaxCredentialIdBytes = 1024;
++
++// The profile authenticator exists for this process: the main executable is
++// signed with its keychain access group. Without the group nothing here
++// touches the keychain or the profile's metadata secret. A bundle in release
++// verification mode never has it (WebAuthnKeychainAccessGroup names a group
++// no build is signed with there).
++bool Available() {
++  return crypto::apple::ExecutableHasKeychainAccessGroupEntitlement(
++      WebAuthnKeychainAccessGroup());
++}
++
++std::string Describe(bool available, const Passkeys& passkeys) {
++  base::DictValue document;
++  document.Set("available", available);
++  base::ListValue list;
++  if (passkeys) {
++    for (const device::DiscoverableCredentialMetadata& passkey : *passkeys) {
++      base::DictValue row;
++      row.Set("id", base::HexEncodeLower(passkey.cred_id));
++      row.Set("rp_id", passkey.rp_id);
++      row.Set("user_name", passkey.user.name.value_or(std::string()));
++      row.Set("user_display_name",
++              passkey.user.display_name.value_or(std::string()));
++      list.Append(std::move(row));
++    }
++  }
++  document.Set("passkeys", std::move(list));
++  return base::WriteJson(document).value_or("{}");
++}
++
++void Deliver(ReArcLocalPasskeysCallback completion,
++             void* context,
++             ReArcStatus status,
++             uint64_t profile_id,
++             std::string json) {
++  completion(context, status, profile_id, json.c_str());
++}
++
++// One call of the host: it owns Chromium's management object, whose answers
++// arrive as posted tasks, and ends with exactly one delivery. It holds no
++// Profile: the object copied what it needs (the group and the secret).
++class Operation {
++ public:
++  Operation(Profile* profile,
++            uint64_t profile_id,
++            ReArcLocalPasskeysCallback completion,
++            void* context)
++      : management_(LocalCredentialManagement::Create(profile)),
++        profile_id_(profile_id),
++        completion_(completion),
++        context_(context) {}
++
++  static void List(std::unique_ptr<Operation> self) {
++    LocalCredentialManagement* management = self->management_.get();
++    management->Enumerate(
++        base::BindOnce(&Operation::Listed, std::move(self),
++                       ReArcStatus{REARC_OK}));
++  }
++
++  static void Delete(std::unique_ptr<Operation> self,
++                     std::vector<uint8_t> credential_id) {
++    LocalCredentialManagement* management = self->management_.get();
++    management->Enumerate(base::BindOnce(&Operation::FoundForDelete,
++                                         std::move(self),
++                                         std::move(credential_id)));
++  }
++
++ private:
++  // Chromium deletes a keychain item by its credential ID alone, in the whole
++  // access group. Only an ID of this profile's own list goes that far, so a
++  // host can never delete another profile's passkey, or anything by a guess.
++  static void FoundForDelete(std::unique_ptr<Operation> self,
++                             std::vector<uint8_t> credential_id,
++                             Passkeys passkeys) {
++    if (!passkeys) {
++      Finish(std::move(self), REARC_INTERNAL, std::nullopt);
++      return;
++    }
++    const bool listed = std::ranges::any_of(
++        *passkeys, [&](const device::DiscoverableCredentialMetadata& passkey) {
++          return passkey.cred_id == credential_id;
++        });
++    if (!listed) {
++      Finish(std::move(self), REARC_NOT_FOUND, std::move(passkeys));
++      return;
++    }
++    LocalCredentialManagement* management = self->management_.get();
++    management->Delete(credential_id,
++                       base::BindOnce(&Operation::Deleted, std::move(self)));
++  }
++
++  static void Deleted(std::unique_ptr<Operation> self, bool deleted) {
++    LocalCredentialManagement* management = self->management_.get();
++    management->Enumerate(base::BindOnce(&Operation::Listed, std::move(self),
++                                         ReArcStatus{deleted ? REARC_OK
++                                                             : REARC_INTERNAL}));
++  }
++
++  static void Listed(std::unique_ptr<Operation> self,
++                     ReArcStatus status,
++                     Passkeys passkeys) {
++    if (!passkeys && status == REARC_OK) {
++      status = REARC_INTERNAL;  // The keychain query failed.
++    }
++    Finish(std::move(self), status, std::move(passkeys));
++  }
++
++  static void Finish(std::unique_ptr<Operation> self,
++                     ReArcStatus status,
++                     Passkeys passkeys) {
++    ABIPost(base::BindOnce(&Deliver, self->completion_, self->context_, status,
++                           self->profile_id_, Describe(true, passkeys)));
++  }
++
++  std::unique_ptr<LocalCredentialManagement> management_;
++  const uint64_t profile_id_;
++  const ReArcLocalPasskeysCallback completion_;
++  const raw_ptr<void> context_;
++};
++
++// Passkeys are the original profile's: a private window signs in with them
++// and makes none of its own to manage.
++ReArcStatus FindProfile(uint64_t profile_id, Profile** profile) {
++  *profile = FindBridgeProfile(profile_id);
++  if (!*profile) {
++    return REARC_PROFILE_NOT_FOUND;
++  }
++  if ((*profile)->IsOffTheRecord()) {
++    return REARC_UNSUPPORTED;
++  }
++  return REARC_OK;
++}
++
++}  // namespace
++}  // namespace rearc
++
++ReArcStatus ReArcProfileGetLocalPasskeys(uint64_t profile_id,
++                                         ReArcLocalPasskeysCallback completion,
++                                         void* context) {
++  CHECK(pthread_main_np());
++  if (!completion) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  Profile* profile = nullptr;
++  if (auto status = rearc::FindProfile(profile_id, &profile)) {
++    return status;
++  }
++  if (!rearc::Available()) {
++    rearc::ABIPost(base::BindOnce(&rearc::Deliver, completion, context,
++                                  REARC_OK, profile_id,
++                                  rearc::Describe(false, std::nullopt)));
++    return REARC_OK;
++  }
++  rearc::Operation::List(std::make_unique<rearc::Operation>(
++      profile, profile_id, completion, context));
++  return REARC_OK;
++}
++
++ReArcStatus ReArcProfileDeleteLocalPasskey(
++    uint64_t profile_id,
++    const char* credential_id,
++    ReArcLocalPasskeysCallback completion,
++    void* context) {
++  CHECK(pthread_main_np());
++  std::vector<uint8_t> id;
++  if (!completion || !credential_id ||
++      !base::HexStringToBytes(credential_id, &id) || id.empty() ||
++      id.size() > rearc::kMaxCredentialIdBytes) {
++    return REARC_INVALID_ARGUMENT;
++  }
++  Profile* profile = nullptr;
++  if (auto status = rearc::FindProfile(profile_id, &profile)) {
++    return status;
++  }
++  if (!rearc::Available()) {
++    return REARC_UNSUPPORTED;
++  }
++  rearc::Operation::Delete(
++      std::make_unique<rearc::Operation>(profile, profile_id, completion,
++                                         context),
++      std::move(id));
++  return REARC_OK;
++}
+diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.cc b/chrome/browser/rearc_bridge/rearc_webauthn.cc
+index 13fb400..ed771e7 100644
+--- a/chrome/browser/rearc_bridge/rearc_webauthn.cc
++++ b/chrome/browser/rearc_bridge/rearc_webauthn.cc
+@@ -824,7 +824,18 @@ std::string WebAuthnKeychainAccessGroup() {
+         }
+       }
+     }
+-    return team + "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn";
++    std::string name = team + "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn";
++    // tab/104: a release bundle in verification mode never has the profile
++    // authenticator (rearc_webauthn.h).
++    if (CFBundleRef bundle = CFBundleGetMainBundle()) {
++      CFTypeRef verification = CFBundleGetValueForInfoDictionaryKey(
++          bundle, CFSTR("ReArcReleaseVerification"));
++      if (verification && CFGetTypeID(verification) == CFBooleanGetTypeID() &&
++          CFBooleanGetValue(static_cast<CFBooleanRef>(verification))) {
++        name += ".never-in-release-verification";
++      }
++    }
++    return name;
+   }());
+   return *group;
+ }
+diff --git a/chrome/browser/rearc_bridge/rearc_webauthn.h b/chrome/browser/rearc_bridge/rearc_webauthn.h
+index 1a4e2ee..fb6c486 100644
+--- a/chrome/browser/rearc_bridge/rearc_webauthn.h
++++ b/chrome/browser/rearc_bridge/rearc_webauthn.h
+@@ -45,6 +45,14 @@ void NoteWebAuthnRefusedNotVisible(content::WebContents* contents);
+ // running app's signature (com.apple.developer.team-identifier). An unsigned
+ // or ad hoc signed build has no team and no profile authenticator, as before.
+ // The app must also be signed with the group, whatever the engine.
++//
++// A release bundle in verification mode (ReArcReleaseVerification in the main
++// bundle's Info.plist: the copy scripts/release.sh runs its gates on, a --qa
++// bundle, the upgrade checks' copies of a previous release) gets a name no
++// build is ever signed with (tab/104). Such a copy is signed by the same team
++// and may be started on a copy of a person's profile; with the real group it
++// could use, list and delete that person's passkeys. The release scripts sign
++// these copies without the group as well; this holds when one slips through.
+ std::string WebAuthnKeychainAccessGroup();
+ 
+ }  // namespace rearc

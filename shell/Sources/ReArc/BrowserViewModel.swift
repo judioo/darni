@@ -749,6 +749,9 @@ final class BrowserViewModel {
     /// the one-time offer (`BrowserViewModel+ContentBlocking.swift`). Hidden
     /// until an engine with the blocking calls attaches.
     let contentBlocking = ContentBlockingController()
+    /// Settings › Profiles › Passkeys on This Mac: which store this launch
+    /// may use, and the engine's when one attached (`LocalPasskeysModel.swift`).
+    let localPasskeys = LocalPasskeysController()
     /// Dark mode for websites: the engine seam, Darni's appearance and the
     /// sites with a choice of their own (`BrowserViewModel+WebsiteDarkMode.swift`).
     /// Hidden until an engine with the call attaches.

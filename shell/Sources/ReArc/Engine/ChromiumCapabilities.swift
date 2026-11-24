@@ -80,6 +80,7 @@ struct ChromiumCapabilities: Equatable {
     static let displayCaptureHiddenTabFeature = "display_capture_hidden_tab"
     static let tabFreezeFeature = "tab_freeze"
     static let websiteDarkModeFeature = "website_dark_mode"
+    static let localPasskeysFeature = "local_passkeys"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -150,6 +151,9 @@ struct ChromiumCapabilities: Equatable {
         displayCaptureHiddenTabFeature: 70,
         tabFreezeFeature: 71,
         websiteDarkModeFeature: 73,
+        // Numbered 1.72 and applied to the engine after 1.73's patch: the minor says an engine
+        // may have it (72 or more), and only the feature's name says it does.
+        localPasskeysFeature: 72,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -324,6 +328,10 @@ struct ChromiumCapabilities: Equatable {
     /// patch `tab/105`). Without it the setting and the site controls row
     /// are hidden and pages are as before.
     var websiteDarkMode: Bool
+    /// The list and the delete of a profile's "this Mac" passkeys, for
+    /// Settings (ABI 1.72, engine patch `tab/104`). Without it Settings has
+    /// no such list; passkey requests are as before.
+    var localPasskeys: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -399,6 +407,7 @@ struct ChromiumCapabilities: Equatable {
         screenSharing = mediaCapture && adopted(Self.displayCaptureFeature)
         screenSharingHiddenTabs = screenSharing && adopted(Self.displayCaptureHiddenTabFeature)
         websiteDarkMode = profiles && adopted(Self.websiteDarkModeFeature)
+        localPasskeys = profiles && adopted(Self.localPasskeysFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -494,6 +503,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.displayCaptureFeature, screenSharing),
             (Self.displayCaptureHiddenTabFeature, screenSharingHiddenTabs),
             (Self.websiteDarkModeFeature, websiteDarkMode),
+            (Self.localPasskeysFeature, localPasskeys),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),
