@@ -19,6 +19,7 @@ final class ReaderEngineAnswerTests: XCTestCase {
         try Data(SelfTestReaderFixture.plainHTML.utf8).write(to: directory.appendingPathComponent("plain.html"))
         try Data(SelfTestReaderFixture.hostileHTML.utf8).write(to: directory.appendingPathComponent("hostile.html"))
         try SelfTestReaderFixture.picturePNG.write(to: directory.appendingPathComponent("picture.png"))
+        try Data(SelfTestReaderFixture.pictureArticleHTML.utf8).write(to: directory.appendingPathComponent("picture-article.html"))
     }
 
     /// What Chromium answered goes through the same checks as any answer, and gives the same reader.
@@ -64,5 +65,16 @@ final class ReaderEngineAnswerTests: XCTestCase {
             }
         }
         XCTAssertFalse(ReaderHTML.document(for: hostile, appearance: ReaderAppearance()).contains("<script"))
+
+        // A <picture>: Chromium's currentSrc (the source it showed) is the reader's picture.
+        let framed = try answer("picture.json")
+        let pictured = try ReaderExtraction.article(json: framed.json, pageURL: framed.url, images: .loadedByPage)
+        XCTAssertEqual(pictured.imagesShown, 1)
+        XCTAssertEqual(pictured.imagesWithheld, 0)
+        let pictureBody = ReaderHTML.fragment(for: pictured.body)
+        XCTAssertTrue(pictureBody.contains("<img src=\"\(origin)\(SelfTestReaderFixture.pictureShownPath)"), pictureBody)
+        for forbidden in ["srcset", "<source", "<picture", SelfTestReaderFixture.pictureUnusedSourcePath, SelfTestReaderFixture.pictureFallbackPath] {
+            XCTAssertFalse(pictureBody.contains(forbidden), "\(forbidden) in \(pictureBody)")
+        }
     }
 }

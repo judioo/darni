@@ -40,7 +40,9 @@ final class ReaderWebKitTests: XCTestCase {
 
     private func routeFixture(on server: WebKitFixtureServer) {
         for path in [SelfTestReaderFixture.articlePath, SelfTestReaderFixture.plainPath, SelfTestReaderFixture.hostilePath,
-                     SelfTestReaderFixture.picturePath, SelfTestReaderFixture.beaconPath] {
+                     SelfTestReaderFixture.picturePath, SelfTestReaderFixture.beaconPath, SelfTestReaderFixture.pictureArticlePath,
+                     SelfTestReaderFixture.pictureShownPath, SelfTestReaderFixture.pictureUnusedSourcePath,
+                     SelfTestReaderFixture.pictureFallbackPath] {
             server.route(path) { request in
                 let full = request.query.isEmpty ? request.path : request.path + "?" + request.query
                 guard let found = SelfTestReaderFixture.response(forPathAndQuery: full) else { return .init(status: 404) }
@@ -195,6 +197,35 @@ final class ReaderWebKitTests: XCTestCase {
         let request = try XCTUnwrap(server.requests(for: SelfTestReaderFixture.picturePath).last)
         XCTAssertNil(request.headers["cookie"])
         XCTAssertNil(request.headers["referer"])
+    }
+
+    /// NPR, the Guardian, Hakai: the photo is a <picture>, and the page shows
+    /// a <source>'s URL, not the <img>'s own src. The reader shows the URL the
+    /// page showed (its currentSrc), and nothing the page did not load.
+    func testAPicturesSourceThePageShowedIsShownAndNoOtherSourceIsTaken() async throws {
+        let center = ReaderCenter(defaults: defaults)
+        let engine = try await engine(showing: SelfTestReaderFixture.pictureArticlePath)
+        try await wait("the page's picture (asked for: \(server.requests.map { $0.path + "?" + $0.query }))") {
+            self.server.requests(for: SelfTestReaderFixture.pictureShownPath).count == 1
+        }
+        let shownText = try await engine.webView.evaluateJavaScript("document.querySelector('picture img').currentSrc") as? String
+        let shown = try XCTUnwrap(shownText)
+        XCTAssertTrue(shown.contains(SelfTestReaderFixture.pictureShownPath), shown)
+        let session = try await center.open(tabID: tabID, url: server.url(SelfTestReaderFixture.pictureArticlePath), engine: engine,
+                                            images: .loadedByPage) { _, _ in }
+        XCTAssertEqual(session.article.imagesShown, 1)
+        XCTAssertEqual(session.article.imagesWithheld, 0)
+        let body = ReaderHTML.fragment(for: session.article.body)
+        XCTAssertTrue(body.contains("<img src=\"\(shown)\" alt=\"The lamp room\""), body)
+        for forbidden in ["srcset", "<source", "<picture", SelfTestReaderFixture.pictureUnusedSourcePath, SelfTestReaderFixture.pictureFallbackPath] {
+            XCTAssertFalse(body.contains(forbidden), "\(forbidden) in \(body)")
+        }
+        // The reader asks for the one URL the page showed, and nothing else.
+        try await wait("the reader's picture") { self.server.requests(for: SelfTestReaderFixture.pictureShownPath).count == 2 }
+        try await settle()
+        XCTAssertEqual(server.requests(for: SelfTestReaderFixture.pictureShownPath).count, 2)
+        XCTAssertEqual(server.requests(for: SelfTestReaderFixture.pictureUnusedSourcePath).count, 0)
+        XCTAssertEqual(server.requests(for: SelfTestReaderFixture.pictureFallbackPath).count, 0)
     }
 
     func testWithImagesOffTheReaderAsksTheNetworkForNothing() async throws {
