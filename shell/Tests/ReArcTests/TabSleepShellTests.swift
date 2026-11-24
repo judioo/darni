@@ -465,9 +465,17 @@ final class TabSleepShellTests: XCTestCase {
         guarded.discardAnswer = .refusedForNow
         model.discardRetryDelays = [0.01, 0.01, 0.01]
         XCTAssertEqual(model.runAutoUnload(now: now), [tabs["guarded"]!.id], "it is due, and asked")
+        // Waits for the three retries (a loaded Mac runs them late), then a moment more: no fifth.
         let retried = expectation(description: "every retry has run")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { retried.fulfill() }
-        wait(for: [retried], timeout: 5)
+        func poll(_ tries: Int) {
+            if guarded.count("discard") >= 4 || tries == 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { retried.fulfill() }
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(tries - 1) }
+        }
+        poll(500)
+        wait(for: [retried], timeout: 15)
         XCTAssertEqual(guarded.count("discard"), 4, "asked, and three more times")
         // Still loaded, with the same page: nothing was dropped and nothing reloaded.
         let engine = model.engineHost.engine(forTabID: tabs["guarded"]!.id, profileID: model.profileID(for: tabs["guarded"]!))
