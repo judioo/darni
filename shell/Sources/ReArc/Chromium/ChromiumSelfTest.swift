@@ -3172,9 +3172,9 @@ final class ChromiumSelfTest {
         let menu = model.siteControlsMenu(for: engine, site: site)
         try check(menu.last == [.cookiesAndSiteData, .siteSettings], "⋯ menu \(menu)")
         let rows = model.siteControlSettingRows(for: engine, site: site)
-        // The content blocking row (an engine with ABI 1.66) has its own actions; the
-        // content blocking checks below test it.
-        let settingRows = rows.filter { $0.kind != .contentBlocking }
+        // The content blocking row (an engine with ABI 1.66) and the dark mode row (ABI 1.73)
+        // have their own actions; the content blocking checks below and the dark mode step test them.
+        let settingRows = rows.filter { $0.kind != .contentBlocking && $0.kind != .websiteDarkMode }
         try check(settingRows.last?.kind == .autoPictureInPicture
                   && settingRows.dropLast().allSatisfy { $0.actions == [.openSiteSettings] }, "settings rows \(rows.map(\.title))")
         let footer = model.siteControlsFooter(for: engine)
