@@ -153,14 +153,17 @@ class SignReleaseTests(Case):
     def groups(self, app):
         return self.fakes.signed_entitlements(app).get("keychain-access-groups")
 
-    def test_the_default_is_off_until_the_switch(self):
+    def test_the_group_is_on_by_default_and_recorded(self):
+        # The switch: releases are signed with the group, and the record names it from then on.
         text = (SCRIPTS / "sign-release.sh").read_text()
-        self.assertIn("export REARC_WEBAUTHN_GROUP_DEFAULT=0\n", text)
-        self.assertNotIn("webauthn", "".join(line for line in (RELEASE_DIR / "shipped-keychain-groups.txt").read_text().splitlines(True)
-                                            if not line.startswith("#")),
-                         "the record names the group only from the commit that turns its signing on")
+        self.assertIn("export REARC_WEBAUTHN_GROUP_DEFAULT=1\n", text)
+        recorded = [line.split()[0] for line in (RELEASE_DIR / "shipped-keychain-groups.txt").read_text().splitlines()
+                    if line.strip() and not line.startswith("#")]
+        self.assertIn("<team>.com.rearc.browser.webauthn", recorded)
 
     def test_a_release_without_the_group_signs_and_passes_while_nothing_has_shipped(self):
+        self.set_default(0)
+        self.record.write_text("# nothing shipped\n")
         app = self.bundle("plain")
         result = self.sign(app)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -169,9 +172,17 @@ class SignReleaseTests(Case):
         self.assertIn("carries no group", result.stdout)
 
     def test_a_group_signed_in_before_it_is_recorded_is_refused(self):
+        self.record.write_text("# nothing shipped\n")
         result = self.sign(self.bundle("early"), REARC_WEBAUTHN_KEYCHAIN_GROUP="1")
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("which the record does not name", result.stderr)
+
+    def test_the_release_default_as_committed_signs_the_group_in(self):
+        # sign-release.sh and the record as they are in the tree, no variable set.
+        app = self.bundle("as-committed")
+        result = self.sign(app)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.groups(app), [OWN, WEBAUTHN])
 
     def test_with_the_switch_on_a_release_carries_the_group_and_its_helpers_none(self):
         self.set_default(1)
@@ -333,8 +344,14 @@ class UpgradeHalfTests(Case):
         self.assertIn("the previous release (build 1400", result.stderr)
         self.assertIn("would lose a keychain access group", result.stderr)
 
-    def test_no_groups_on_either_side_passes(self):
-        result = self.run_check(self.release("new", "1410", None), self.release("old", "1400", None))
+    def test_the_committed_record_counts_even_when_the_previous_release_had_no_group(self):
+        # The first release with the group follows 1338, which had none: the record alone holds it.
+        build = str(int(next(line.split()[1] for line in (RELEASE_DIR / "shipped-keychain-groups.txt").read_text().splitlines()
+                             if line.startswith("<team>.com.rearc.browser.webauthn "))) + 10)
+        result = self.run_check(self.release("without", build, None), self.release("old", "1338", None))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("lacks <team>.com.rearc.browser.webauthn, which has shipped: the record", result.stderr)
+        result = self.run_check(self.release("with", build, (OWN, WEBAUTHN)), self.release("old2", "1338", None))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("keeps every keychain access group", result.stdout)
 
@@ -346,7 +363,7 @@ class UpgradeHalfTests(Case):
         self.assertIn("verification bundle", result.stderr)
 
     def test_nothing_is_launched_or_signed(self):
-        self.run_check(self.release("new", "1410", None), self.release("old", "1400", None))
+        self.run_check(self.release("new", "9999", (OWN, WEBAUTHN)), self.release("old", "1400", None))
         calls = self.fakes.log.read_text()
         self.assertNotIn("--sign", calls)
         self.assertTrue(all(line.startswith(("codesign:-d", "security:")) for line in calls.splitlines()), calls)
