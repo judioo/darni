@@ -30,6 +30,34 @@ final class WebsiteDarkModeController {
     @ObservationIgnored var covers: ((any WebEngine) -> Bool)?
     /// What the engine holds for a tab's page now; nil without one.
     @ObservationIgnored var isDarkInEngine: ((any WebEngine) -> Bool?)?
+    /// The engine's history query for a profile or a container
+    /// (`WebsiteDarkModeHistory.Query`); nil without one.
+    @ObservationIgnored var historyQuery: WebsiteDarkModeHistory.Query?
+    /// The pages that can delete history right now (Chromium's settings and
+    /// History pages), each with the profile whose sites it can orphan.
+    @ObservationIgnored fileprivate var historyPages: [HistoryPage: Profile.ID] = [:]
+    @ObservationIgnored fileprivate var historyTimer: Timer?
+    /// Profiles whose sites are being checked against their history (the
+    /// check's token and start), and those to check once more when that ends.
+    @ObservationIgnored fileprivate var historyChecksRunning: [Profile.ID: (token: UUID, started: Date)] = [:]
+    @ObservationIgnored fileprivate var historyChecksWanted: Set<Profile.ID> = []
+    /// A check whose engine has not answered for this long is given up: the
+    /// next check replaces it, and its late answer is ignored. Without this a
+    /// query the engine never answers would stop every later check.
+    static let historyCheckTimeout: TimeInterval = 60
+
+    /// A tab or a Little Arc window that shows a page.
+    enum HistoryPage: Hashable {
+        case tab(Tab.ID)
+        case littleArc(LittleArcWindow.ID)
+    }
+
+    /// How often the sites are checked while such a page is open: the
+    /// engine does not say when "Clear Browsing Data" has run.
+    static let historyCheckInterval: TimeInterval = 10
+
+    var historyPagesForTesting: [HistoryPage: Profile.ID] { historyPages }
+    var historyTimerIsRunning: Bool { historyTimer != nil }
 
     init(fileURL: URL?) {
         self.fileURL = fileURL
@@ -53,7 +81,9 @@ final class WebsiteDarkModeController {
         return true
     }
 
-    fileprivate func change(_ change: (inout WebsiteDarkModeSites) -> Bool) -> Bool {
+    /// One change to the sites, saved when it changed something.
+    @discardableResult
+    func change(_ change: (inout WebsiteDarkModeSites) -> Bool) -> Bool {
         var next = sites
         guard change(&next) else { return false }
         sites = next
@@ -117,8 +147,20 @@ extension BrowserViewModel {
     /// A persistent engine profile finished loading: it gets its state
     /// before any tab exists. Private windows follow their profile in the
     /// engine and get no call.
+    /// Its sites are then checked against its history: what went while Darni
+    /// did not look (a quit right after Clear Browsing Data, visits Chromium
+    /// let expire) takes its sites with it now.
     func websiteDarkModeProfileOpened(engineProfile: UInt64, profile: Profile.ID) {
         websiteDarkMode.engineSync?.profileOpened(engineProfile: engineProfile, profile: profile)
+        checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+    }
+
+    /// After any sidebar change: a profile that is gone (deleted here, or by
+    /// a sync merge) keeps no sites.
+    func websiteDarkModeProfilesChanged() {
+        guard websiteDarkMode.isAvailable else { return }
+        let known = store.profiles.map(\.id)
+        if !known.isEmpty { _ = websiteDarkMode.change { $0.keepOnly(profiles: known) } }
     }
 
     func websiteDarkModeProfileClosed(engineProfile: UInt64) {
@@ -149,6 +191,86 @@ extension BrowserViewModel {
             choice: websiteDarkMode.sites.choice(forHost: host, profile: store.owningProfileID(of: profileID)),
             isPrivate: engine.pagePrompts.privateSession != nil
         )
+    }
+
+    // MARK: The sites and the profile's history (security DM-1)
+
+    /// A tab or Little Arc window of `profile` committed `url`. While it is
+    /// on a page that can delete history (Chromium's settings, where Clear
+    /// Browsing Data is, or its History page) the profile's sites are
+    /// checked against its history every few seconds, and once more when
+    /// the page is left or closed.
+    func websiteDarkModePageCommitted(_ page: WebsiteDarkModeController.HistoryPage, profile: Profile.ID, url: URL?) {
+        guard websiteDarkMode.isAvailable else { return }
+        if WebsiteDarkModeHistory.canDeleteHistory(pageURL: url) {
+            websiteDarkMode.historyPages[page] = store.owningProfileID(of: profile)
+            guard websiteDarkMode.historyTimer == nil else { return }
+            websiteDarkMode.historyTimer = Timer.scheduledTimer(withTimeInterval: WebsiteDarkModeController.historyCheckInterval, repeats: true) { [weak self] timer in
+                guard let self else { return timer.invalidate() }
+                self.websiteDarkModeHistoryTick()
+            }
+        } else if let left = websiteDarkMode.historyPages.removeValue(forKey: page) {
+            checkWebsiteDarkModeSitesAgainstHistory(profile: left)
+            stopWebsiteDarkModeHistoryTimerIfIdle()
+        }
+    }
+
+    /// The timer's turn: every profile with such a page is checked. A page
+    /// that was closed or unloaded since is checked a last time.
+    func websiteDarkModeHistoryTick() {
+        for (page, profile) in websiteDarkMode.historyPages {
+            let isOpen: Bool
+            switch page {
+            case .tab(let id):
+                isOpen = store.tab(withID: id).map { engineHost.engine(forTabID: id, profileID: profileID(for: $0)) != nil } ?? false
+            case .littleArc(let id):
+                isOpen = store.littleArcWindow(withID: id) != nil
+            }
+            if !isOpen { websiteDarkMode.historyPages[page] = nil }
+            checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        }
+        stopWebsiteDarkModeHistoryTimerIfIdle()
+    }
+
+    private func stopWebsiteDarkModeHistoryTimerIfIdle() {
+        guard websiteDarkMode.historyPages.isEmpty else { return }
+        websiteDarkMode.historyTimer?.invalidate()
+        websiteDarkMode.historyTimer = nil
+    }
+
+    /// Drops the choice of every site of `profile` that its history no
+    /// longer has, in the profile's own storage or a container's. A site is
+    /// kept when a storage has a page of it, and when one cannot say. A
+    /// private window never gets here: it writes no choice and has no history.
+    func checkWebsiteDarkModeSitesAgainstHistory(profile: Profile.ID, now: Date = Date()) {
+        let owner = store.owningProfileID(of: profile)
+        guard websiteDarkMode.isAvailable, let query = websiteDarkMode.historyQuery else { return }
+        let asked = websiteDarkMode.sites.choices(for: owner)
+        guard !asked.isEmpty else { return }
+        if let running = websiteDarkMode.historyChecksRunning[owner],
+           now.timeIntervalSince(running.started) < WebsiteDarkModeController.historyCheckTimeout {
+            websiteDarkMode.historyChecksWanted.insert(owner)
+            return
+        }
+        let token = UUID()
+        websiteDarkMode.historyChecksRunning[owner] = (token, now)
+        let storages = [owner] + store.containers(of: owner).map(\.id)
+        // A reader of its own: what it reads of the history lives as long as this check.
+        let reader = WebsiteDarkModeHistory.Reader(query: query)
+        WebsiteDarkModeHistory.hostsWithoutVisits(asked.keys.sorted(), storages: storages, ask: reader.ask) { [weak self] gone in
+            // A check given up for a newer one: its answer may be stale.
+            guard let self, self.websiteDarkMode.historyChecksRunning[owner]?.token == token else { return }
+            self.websiteDarkMode.historyChecksRunning[owner] = nil
+            // A choice made or changed while the history was asked was made on a page just visited: it stays.
+            let now = self.websiteDarkMode.sites.choices(for: owner)
+            let dropped = gone.filter { now[$0] != nil && now[$0] == asked[$0] }
+            if self.websiteDarkMode.change({ $0.removeHosts(dropped, profile: owner) }) {
+                self.websiteDarkModeStateChanged()
+            }
+            if self.websiteDarkMode.historyChecksWanted.remove(owner) != nil {
+                self.checkWebsiteDarkModeSitesAgainstHistory(profile: owner)
+            }
+        }
     }
 
     /// The row's menu: the site's own choice, or nil for the setting again.

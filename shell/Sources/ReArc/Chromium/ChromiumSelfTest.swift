@@ -2081,6 +2081,44 @@ final class ChromiumSelfTest {
         try check(engineSaysDark() == false && model.websiteDarkMode.sites.choices(for: model.store.owningProfileID(of: model.profileID(for: tab))).isEmpty,
                   "dark mode off: engine \(String(describing: engineSaysDark())), sites left")
 
+        // 6. The sites and the history (security DM-1). A site keeps its choice only while the
+        //    profile's history has it. The fixture's host has this step's visits; the other name
+        //    was never visited. With Chromium's Clear Browsing Data page open the sites are
+        //    checked: the one without a visit goes, the one with visits stays. Nothing is
+        //    deleted from the history here, and the Clear button is never pressed.
+        let owner = store.owningProfileID(of: model.profileID(for: tab))
+        let unvisited = "never-visited.example"
+        guard let fixtureHost = WebsiteDarkModeSites.host(for: url) else { throw Failure(description: "the dark mode fixture has no host") }
+        defer { model.websiteDarkMode.change { $0.removeHosts([unvisited], profile: owner) } }
+        model.setWebsiteDarkMode(.on, forSiteOf: engine, site: site)
+        try check(model.websiteDarkMode.change { $0.set(.on, forHost: unvisited, profile: owner) }
+                      && model.websiteDarkMode.sites.choice(forHost: fixtureHost, profile: owner) == .on,
+                  "dark mode: the two sites' choices were not kept")
+        if model.websiteDarkMode.historyQuery != nil, model.canOpenBrowserPage(.clearBrowsingData) {
+            model.openBrowserPage(.clearBrowsingData)
+            try await wait("Clear Browsing Data starts the checks of the sites against the history", timeout: 20) {
+                model.websiteDarkMode.historyPagesForTesting.values.contains(owner) && model.websiteDarkMode.historyTimerIsRunning
+            }
+            let clearTab = store.selectedTab?.id
+            model.websiteDarkModeHistoryTick()
+            try await wait("the site without a visit loses its choice", timeout: 20) {
+                model.websiteDarkMode.sites.choice(forHost: unvisited, profile: owner) == nil
+            }
+            try check(model.websiteDarkMode.sites.choice(forHost: fixtureHost, profile: owner) == .on,
+                      "dark mode: a site that is in the history lost its choice")
+            if let clearTab, clearTab != tab.id {
+                model.closeTab(clearTab)
+                try await wait("the Clear Browsing Data tab closed") { store.tab(withID: clearTab) == nil }
+            }
+            model.websiteDarkModeHistoryTick()
+            try check(model.websiteDarkMode.historyPagesForTesting.isEmpty && !model.websiteDarkMode.historyTimerIsRunning,
+                      "dark mode: the history is still asked with no settings page open")
+            log("PASS dark mode sites follow the history: with Clear Browsing Data open, a site without a visit lost its choice "
+                + "and a visited one kept it")
+        } else {
+            log("ABI-GAP \(ChromiumCapabilities.historyQueryFeature) not advertised or no settings page: dark mode sites are not checked against the history")
+        }
+
         model.closeTab(tab.id)
         try await wait("the dark mode tab closed") { store.tab(withID: tab.id) == nil }
         if let previous { model.selectTab(previous) }

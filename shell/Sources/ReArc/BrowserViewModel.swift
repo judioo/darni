@@ -1405,6 +1405,7 @@ final class BrowserViewModel {
             self.switchOffFileScriptBoostsScopedToASuffix()
             self.syncAllTabBoosts()
             self.contentBlockingSettingsChanged()
+            self.websiteDarkModeProfilesChanged()
         }
     }
 
@@ -1451,6 +1452,7 @@ final class BrowserViewModel {
         if url.absoluteString == "about:blank", let tab = store.tab(withID: tabID), tab.url.absoluteString != "about:blank",
            engineHost.engine(forTabID: tabID, profileID: profileID(for: tab))?.canGoBack != true { return }
         let title = Self.isBlankDocumentTitle(title, for: url) ? nil : title
+        if let tab = store.tab(withID: tabID) { websiteDarkModePageCommitted(.tab(tabID), profile: profileID(for: tab), url: url) }
         recordVisit(tabID: tabID, url: url, title: title)
         let resolvedTitle = (title?.isEmpty == false) ? title : nil
         let fallback = store.tab(withID: tabID)?.title ?? url.host() ?? "Page"
@@ -1466,6 +1468,9 @@ final class BrowserViewModel {
 
     func handleLittleArcNavigationCommit(windowID: LittleArcWindow.ID, url: URL?, title: String?) {
         guard let url else { return }
+        if let window = store.littleArcWindow(withID: windowID) {
+            websiteDarkModePageCommitted(.littleArc(windowID), profile: window.profileID, url: url)
+        }
         let resolvedTitle = (title?.isEmpty == false) ? title : nil
         store.updateLittleArcWindow(id: windowID, title: resolvedTitle, url: url)
     }

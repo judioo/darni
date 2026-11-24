@@ -310,4 +310,265 @@ final class WebsiteDarkModeShellTests: XCTestCase {
         XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 73, hasFeature: all).summary.contains("website_dark_mode=1"))
         XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 72, hasFeature: all).summary.contains("website_dark_mode=0"))
     }
+
+    // MARK: Clear Browsing Data and deleting a profile (security DM-1)
+
+    /// A profile's history, as the engine would answer its queries.
+    private final class FakeHistory {
+        /// storage -> hosts it has a page of.
+        var visited: [Profile.ID: Set<String>] = [:]
+        /// Every query is refused.
+        var refuses = false
+        /// The text search finds nothing, whatever is in the history.
+        var searchIsBroken = false
+        /// The hosts the list of recent pages does not reach (older visits).
+        var old: Set<String> = []
+        var queries = 0
+        var query: WebsiteDarkModeHistory.Query {
+            { [self] storage, text, reply in
+                queries += 1
+                guard !refuses else { return reply(nil) }
+                let hosts = (visited[storage] ?? []).sorted()
+                if text.isEmpty { return reply(hosts.filter { !old.contains($0) }.map { "https://\($0)/recent" }) }
+                reply(searchIsBroken ? [] : hosts.filter { $0.contains(text) }.map { "https://\($0)/found" })
+            }
+        }
+    }
+
+    /// A model with the engine's dark mode and a history, and a profile
+    /// with two sites that have a choice and a visit each.
+    private func launchWithHistory() throws -> (model: BrowserViewModel, engine: RecordingEngine, history: FakeHistory, profile: Profile.ID) {
+        let model = launch()
+        let engine = RecordingEngine()
+        let history = FakeHistory()
+        model.websiteDarkMode.historyQuery = history.query
+        model.attachWebsiteDarkMode(engine: engine)
+        let profile = model.store.profiles[0].id
+        history.visited[profile] = ["news.example", "bank.example"]
+        for address in ["https://news.example/story", "https://bank.example/"] {
+            let site = try page(model, address)
+            model.setWebsiteDarkMode(.on, forSiteOf: site.engine, site: site.site)
+        }
+        model.websiteDarkModeProfileOpened(engineProfile: 4, profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["news.example": .on, "bank.example": .on], "both are in the history")
+        _ = engine.take()
+        return (model, engine, history, profile)
+    }
+
+    func testClearBrowsingDataTakesTheSitesWhoseHistoryItCleared() throws {
+        let (model, engine, history, profile) = try launchWithHistory()
+        let settings = model.store.addTab(kind: .today, title: "Clear Browsing Data", url: BrowserInternalPage.clearBrowsingData.url)
+        _ = model.engineHost.engine(for: settings, profileID: model.profileID(for: settings))
+
+        // The tab shows Chromium's Clear Browsing Data: from now on the sites are checked.
+        model.handleTabNavigationCommit(tabID: settings.id, url: BrowserInternalPage.clearBrowsingData.url, title: "Settings")
+        XCTAssertEqual(model.websiteDarkMode.historyPagesForTesting, [.tab(settings.id): profile])
+        XCTAssertTrue(model.websiteDarkMode.historyTimerIsRunning)
+        model.websiteDarkModeHistoryTick()
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2, "nothing was cleared yet: nothing goes")
+        XCTAssertEqual(engine.take(), [])
+
+        // "Last hour": the visit to one site goes, the other's stays.
+        history.visited[profile] = ["bank.example"]
+        model.websiteDarkModeHistoryTick()
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["bank.example": .on])
+        XCTAssertEqual(engine.take(), ["4 light on[bank.example] off[]"], "the engine is told at once")
+        XCTAssertEqual(WebsiteDarkModeSites.load(from: sitesFile).choices(for: profile), ["bank.example": .on], "and the file")
+
+        // "All time", and the tab goes on to another page: checked a last time, without waiting for the timer.
+        history.visited[profile] = []
+        model.handleTabNavigationCommit(tabID: settings.id, url: URL(string: "https://elsewhere.example/")!, title: "Elsewhere")
+        XCTAssertTrue(model.websiteDarkMode.sites.isEmpty)
+        XCTAssertEqual(engine.take(), ["4 light on[] off[]"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sitesFile.path), "no site left: no file that names one")
+        XCTAssertEqual(model.websiteDarkMode.historyPagesForTesting, [:])
+        XCTAssertFalse(model.websiteDarkMode.historyTimerIsRunning, "no such page open: nothing is asked any more")
+    }
+
+    func testAClosedSettingsTabIsCheckedOnceMore() throws {
+        let (model, _, history, profile) = try launchWithHistory()
+        // A tab and a Little Arc window on such pages that are gone by the timer's turn.
+        model.websiteDarkModePageCommitted(.tab(UUID()), profile: profile, url: URL(string: "chrome://history")!)
+        model.websiteDarkModePageCommitted(.littleArc(UUID()), profile: profile, url: BrowserInternalPage.clearBrowsingData.url)
+        XCTAssertEqual(model.websiteDarkMode.historyPagesForTesting.count, 2)
+        history.visited[profile] = []
+        model.websiteDarkModeHistoryTick()
+        XCTAssertTrue(model.websiteDarkMode.sites.isEmpty, "the history was cleared before the tab closed")
+        XCTAssertEqual(model.websiteDarkMode.historyPagesForTesting, [:])
+        XCTAssertFalse(model.websiteDarkMode.historyTimerIsRunning)
+    }
+
+    func testAPageThatCannotDeleteHistoryStartsNothing() throws {
+        let (model, _, history, profile) = try launchWithHistory()
+        history.queries = 0
+        model.websiteDarkModePageCommitted(.tab(UUID()), profile: profile, url: URL(string: "https://news.example/")!)
+        model.websiteDarkModePageCommitted(.tab(UUID()), profile: profile, url: URL(string: "chrome://extensions")!)
+        XCTAssertEqual(model.websiteDarkMode.historyPagesForTesting, [:])
+        XCTAssertFalse(model.websiteDarkMode.historyTimerIsRunning)
+        XCTAssertEqual(history.queries, 0, "ordinary browsing asks the history nothing")
+    }
+
+    func testASiteIsKeptWhenTheHistoryCannotSay() throws {
+        let (model, engine, history, profile) = try launchWithHistory()
+        // The visit to one site is gone, but every query is refused.
+        history.visited[profile] = ["bank.example"]
+        history.refuses = true
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2, "a refused query is not an empty history")
+        // The search finds nothing at all, not even a host that is among the recent pages: it cannot say.
+        history.refuses = false
+        history.searchIsBroken = true
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2, "a search that cannot find what is there deletes nothing")
+        // And with no history to ask at all (an engine without the history query).
+        history.searchIsBroken = false
+        model.websiteDarkMode.historyQuery = nil
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2)
+        XCTAssertEqual(engine.take(), [])
+        // The same history, with a search that works: the site whose visit is gone goes.
+        model.websiteDarkMode.historyQuery = history.query
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["bank.example": .on])
+    }
+
+    func testASiteVisitedLongAgoIsFoundByTheSearch() throws {
+        let (model, _, history, profile) = try launchWithHistory()
+        // Its visit is older than the list of recent pages reaches; other pages are newer.
+        history.visited[profile] = ["news.example", "bank.example", "recent.example"]
+        history.old = ["news.example", "bank.example"]
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2, "both are still in the history")
+        history.visited[profile] = ["bank.example", "recent.example"]
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["bank.example": .on], "the one whose visit was deleted goes")
+    }
+
+    func testAnotherProfilesHistoryIsItsOwn() throws {
+        let (model, _, history, profile) = try launchWithHistory()
+        let work = model.store.addProfile(name: "Work")
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(.off, forHost: "news.example", profile: work.id) })
+        history.visited[work.id] = ["news.example"]
+        history.visited[profile] = []
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertTrue(model.websiteDarkMode.sites.choices(for: profile).isEmpty, "this profile's history was cleared")
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: work.id), ["news.example": .off], "the other profile's was not")
+    }
+
+    func testSitesWhoseHistoryWentWhileDarniDidNotLookGoWhenTheProfileLoads() throws {
+        var (model, _, _, profile) = try launchWithHistory()
+        model.persistence.flush()
+        XCTAssertEqual(WebsiteDarkModeSites.load(from: sitesFile).choices(for: profile).count, 2)
+
+        // Clear Browsing Data, then a quit before the next check; the next launch.
+        model = launch()
+        let engine = RecordingEngine()
+        let history = FakeHistory()
+        history.visited[profile] = ["bank.example"]
+        model.websiteDarkMode.historyQuery = history.query
+        model.attachWebsiteDarkMode(engine: engine)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile).count, 2, "not before the engine's profile can answer")
+        model.websiteDarkModeProfileOpened(engineProfile: 9, profile: profile)
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["bank.example": .on])
+        XCTAssertEqual(engine.take(), ["9 light on[bank.example,news.example] off[]", "9 light on[bank.example] off[]"],
+                       "the profile is told its sites, then the one that is left")
+    }
+
+    func testAChoiceMadeWhileTheHistoryIsAskedStays() throws {
+        let (model, _, _, profile) = try launchWithHistory()
+        // An engine that answers later: the queries wait here.
+        var replies: [(text: String, reply: ([String]?) -> Void)] = []
+        model.websiteDarkMode.historyQuery = { _, text, reply in replies.append((text, reply)) }
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile)
+        XCTAssertEqual(replies.map(\.text), [""], "one check at a time for a profile, one query at a time")
+        // While the engine answers, the person turns one of the two off: they are on that site now.
+        let news = try page(model, "https://news.example/again")
+        model.setWebsiteDarkMode(.off, forSiteOf: news.engine, site: news.site)
+        replies[0].reply([])  // no web page in the history: both sites are without a visit
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["news.example": .off], "the answer was about the choice before")
+        // The second request runs after the first, and finds the site in the history again.
+        XCTAssertEqual(replies.count, 2)
+        replies[1].reply(["https://news.example/again"])
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["news.example": .off])
+    }
+
+    func testDeletingAProfileDeletesItsSitesAndLeavesTheOthers() throws {
+        let model = launch()
+        let engine = RecordingEngine()
+        model.attachWebsiteDarkMode(engine: engine)
+        let kept = model.store.profiles[0].id
+        let work = model.store.addProfile(name: "Work")
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(.on, forHost: "work-intranet.example", profile: work.id) })
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(.off, forHost: "news.example", profile: kept) })
+        XCTAssertTrue(try String(contentsOf: sitesFile, encoding: .utf8).contains("work-intranet.example"))
+
+        XCTAssertNil(model.deleteProfile(work.id, deletingSpaces: true))
+        XCTAssertNil(model.websiteDarkMode.sites.scopes[work.id.uuidString])
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: kept), ["news.example": .off])
+        let file = try String(contentsOf: sitesFile, encoding: .utf8)
+        XCTAssertFalse(file.contains("work-intranet.example"), "gone from the file")
+        XCTAssertFalse(file.contains(work.id.uuidString), "and the profile is not named in it")
+        XCTAssertTrue(file.contains("news.example"))
+
+        // The last profile with sites: the file goes.
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(nil, forHost: "news.example", profile: kept) })
+        let other = model.store.addProfile(name: "Other")
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(.on, forHost: "other.example", profile: other.id) })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sitesFile.path))
+        XCTAssertNil(model.deleteProfile(other.id, deletingSpaces: true))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sitesFile.path))
+    }
+
+    func testDeletingAProfileDeletesItsSitesWithoutAnEngineThatHasDarkMode() throws {
+        // A build with the feature on an engine without it (or WebKit): the file a
+        // dark-mode engine left still loses a deleted profile's sites.
+        var model = launch()
+        let work = model.store.addProfile(name: "Work")
+        model.persistence.flush()
+        var file = WebsiteDarkModeSites()
+        file.set(.on, forHost: "work-intranet.example", profile: work.id)
+        try file.save(to: sitesFile)
+
+        model = launch()
+        XCTAssertFalse(model.websiteDarkMode.isAvailable)
+        XCTAssertNotNil(model.store.profiles.first { $0.id == work.id })
+        XCTAssertNil(model.deleteProfile(work.id, deletingSpaces: true))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sitesFile.path))
+    }
+
+    func testAProfileThatGoesByAnotherWayKeepsNoSites() throws {
+        // A sync merge takes a profile out of the store without the delete command.
+        let model = launch()
+        model.attachWebsiteDarkMode(engine: RecordingEngine())
+        let work = model.store.addProfile(name: "Work", createInitialSpace: false)
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(.on, forHost: "work-intranet.example", profile: work.id) })
+        XCTAssertNil(model.store.deleteProfile(work.id, deletingSpaces: true))
+        model.websiteDarkModeProfilesChanged()
+        XCTAssertTrue(model.websiteDarkMode.sites.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sitesFile.path))
+    }
+
+    func testACheckTheEngineNeverAnswersDoesNotStopTheNextOnes() throws {
+        let (model, _, history, profile) = try launchWithHistory()
+        // An engine that takes the first query and never answers it.
+        var unanswered: [([String]?) -> Void] = []
+        model.websiteDarkMode.historyQuery = { _, _, reply in unanswered.append(reply) }
+        let start = Date()
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile, now: start)
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile, now: start.addingTimeInterval(30))
+        XCTAssertEqual(unanswered.count, 1, "a check still in time is waited for")
+
+        // A minute on, the history was cleared, and the engine answers again.
+        history.visited[profile] = []
+        model.websiteDarkMode.historyQuery = history.query
+        model.checkWebsiteDarkModeSitesAgainstHistory(profile: profile, now: start.addingTimeInterval(61))
+        XCTAssertTrue(model.websiteDarkMode.sites.isEmpty, "the stuck check is given up for a new one")
+
+        // The old answer arrives at last, saying the sites were there: it is ignored.
+        XCTAssertTrue(model.websiteDarkMode.change { $0.set(.on, forHost: "news.example", profile: profile) })
+        unanswered[0](["https://news.example/", "https://bank.example/"])
+        XCTAssertEqual(model.websiteDarkMode.sites.choices(for: profile), ["news.example": .on])
+    }
 }
+
