@@ -3340,3 +3340,62 @@ own colour; `only light` stays white; a private window's tab follows its profile
 change nothing. `engine/tests/check_abi173_imports.py`: layouts kept, two functions added, gated
 Swift adoption typechecks. The self-test step "dark mode" (`ChromiumSelfTest.websiteDarkModeChecks`)
 goes through Settings' setting and the site controls row.
+
+## "This Mac" passkeys (ABI 1.72, bridge 0.86.0)
+
+Patch `tab/104-local-passkeys`, feature `local_passkeys`. **Built, and run on a host without
+the keychain group**: overlay faf0faf7a4 on 577e70cef2 (`tab/103`, `tab/105`), built on
+2026-11-25 in `out/ReArc-codecs-arm64`; `run_c_abi.py local_passkeys` passes on that engine.
+No struct; one callback type, `ReArcLocalPasskeysCallback`, the shape of
+`ReArcSitePermissionsCallback`.
+
+**The number.** The patch is numbered 1.72 and lies on the overlay after `tab/105` (1.73), so
+the header's minor is 73 before and after it. The minor is the highest the bridge has, not a
+list: a host asks `ReArcEngineHasFeature("local_passkeys")`, and treats `minor >= 72` only as
+"this engine may have it". An engine with `tab/105` and without this patch also says 73.
+
+A passkey made on "this Mac" (the "this_mac" way of a WebAuthn request, Chromium's profile
+authenticator) is a key in the Secure Enclave. Its keychain item is in the access group
+`<team>.<bundle id>.webauthn` and carries the site and the account sealed with a secret in the
+profile's preferences, so only the engine can name them. These two calls are Chromium's own
+page for them (`chrome://settings/passkeys`, `LocalCredentialManagement`) without the page.
+The shell's side is `docs/FEATURE-SPECS/PASSKEYS-AND-SITE-PERMISSIONS.md`, 1.7.
+
+| Function | Contract |
+|---|---|
+| `ReArcProfileGetLocalPasskeys(profile_id, completion, context)` | The profile's passkeys as JSON, delivered deferred, exactly once, borrowed: `{"available":true,"passkeys":[{"id":"…","rp_id":"example.com","user_name":"…","user_display_name":"…"}]}`. `available`: the app is signed with the access group. `id`: the credential ID, lower-case hex. `rp_id`: the site (the relying party's ID). The two names are what the site called the account; either may be empty. Chromium's order: by site, then account. Asks for no Touch ID. The keychain refused: the completion gets `internal` and an empty list. |
+| `ReArcProfileDeleteLocalPasskey(profile_id, credential_id, completion, context)` | Deletes one for good: the keychain item and its key. The completion carries the list as it is afterwards: `ok` (gone), `not_found` (no such passkey in this profile's list), `internal` (the keychain refused). |
+
+- **Refused at once, and then no completion.** `invalid_argument`: a null completion; a
+  credential ID that is null, empty, not hex or over 1024 bytes. `profile_not_found`.
+  `unsupported`: a private profile (it uses its original profile's passkeys), and a delete when
+  `available` is false.
+- **Without the access group** (a build signed without it, a C ABI test host, a development
+  bundle): `available` is false, the list is empty, and these calls ask the keychain nothing.
+- **A delete reaches only the profile's own passkeys.** Chromium deletes a keychain item by
+  its credential ID alone, anywhere in the access group. The bridge lists the profile's
+  passkeys first and deletes only an ID it finds there. Another profile's ID, or a guess, is
+  `not_found` and reaches no `SecItemDelete`.
+- **A release bundle in verification mode never has the profile authenticator.** With
+  `ReArcReleaseVerification` true in the main bundle's Info.plist,
+  `rearc::WebAuthnKeychainAccessGroup()` (`tab/097`) names a group no build is signed with.
+  Chromium's own check then finds "this Mac" unavailable for requests, and these calls say
+  `available` false. The copies the release scripts make for their gates are signed by the same
+  team and may run on a copy of a person's profile; they must not use, list or delete that
+  person's passkeys. The scripts also sign them without the group
+  (`shell/scripts/release/check-keychain-groups.py none`).
+- **Untrusted text.** The site chose both account names. The host shows them as it shows the
+  names of a WebAuthn step: cleaned, cut, on a line of their own.
+- **Logs.** The engine logs nothing here. The host logs counts and outcomes, never a site or
+  an account.
+- **Persisted state.** None new. The profile's `webauthn.touchid.metadata_secret` is written
+  by Chromium when a profile starts (its profile statistics), in every build.
+
+**Tests.** `engine/tests/c_abi_local_passkeys_host.mm`: a host without the group gets the
+empty answer twice (deferred, once per call), delete is `unsupported`, the argument checks,
+a private profile, an unknown profile; every connection on loopback.
+`engine/tests/check_abi172_imports.py`: layouts kept, two functions and one callback type
+added, gated Swift adoption typechecks. Nothing in the tree makes a passkey: the store's
+fakes are test-only targets of Chromium, so the list with content and a real delete are
+tested in the shell with an injected store (`LocalPasskeysTests`), and unexercised in the
+engine.
