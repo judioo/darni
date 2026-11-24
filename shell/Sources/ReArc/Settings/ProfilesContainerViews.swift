@@ -72,6 +72,8 @@ struct ContainerSettingsDetail: View {
             }
         }
         ProfileCloudStatusGroup(model: model, profileID: container.id)
+        // A container signs in on its own, so it has its own passkeys.
+        LocalPasskeysSettingsGroup(model: model, profileID: container.id, profileName: model.store.containerTitle(container.id))
         SettingsGroup {
             if model.canOpenBrowserPage(.clearBrowsingData) {
                 SettingsLabeledRow(label: BrowserInternalPage.clearBrowsingData.title, detail: "Opens in the container's space, for its data only.") {

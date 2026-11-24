@@ -529,11 +529,16 @@ struct ProfilesSettingsPane: View {
         ].filter { model.canOpenBrowserPage($0.0) }
         // Ad and tracker blocking, when the engine has it (CONTENT-BLOCKING.md §3).
         let blocking = model.contentBlocking.isAvailable
-        if !dataRows.isEmpty || blocking {
+        // The profile's "this Mac" passkeys, when this build keeps them (PASSKEYS-AND-SITE-PERMISSIONS.md, 1.7).
+        let passkeys = model.localPasskeys.isOffered
+        if !dataRows.isEmpty || blocking || passkeys {
             SettingsHeader(title: "Your Data and Settings")
         }
         if blocking {
             ContentBlockingSettingsGroup(model: model, profile: profile)
+        }
+        if passkeys {
+            LocalPasskeysSettingsGroup(model: model, profileID: profile.id, profileName: profile.name)
         }
         if !dataRows.isEmpty {
             if let status = capabilities.safeBrowsingStatus?() {

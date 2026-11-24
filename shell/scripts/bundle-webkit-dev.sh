@@ -106,7 +106,8 @@ PLIST
 plutil -lint "$PLIST" >/dev/null
 if [[ $ICLOUD == 1 ]]; then
   ENTITLEMENTS="$SHELL_DIR/.build/ReArc.webkit-dev.icloud.entitlements"
-  icloud_prepare "$APP" com.rearc.browser.webkit-dev "$REARC_WEBKIT_PROVISIONING_PROFILE" "$SHELL_DIR/scripts/ReArc.entitlements" "$ENTITLEMENTS"
+  # WebKit has no profile authenticator: never the "this Mac" passkey group (PK-08).
+  REARC_WEBAUTHN_KEYCHAIN_GROUP=0 icloud_prepare "$APP" com.rearc.browser.webkit-dev "$REARC_WEBKIT_PROVISIONING_PROFILE" "$SHELL_DIR/scripts/ReArc.entitlements" "$ENTITLEMENTS"
   codesign --force --sign "$SIGN_IDENTITY" --identifier com.rearc.browser.webkit-dev --timestamp=none \
     --entitlements "$ENTITLEMENTS" "$APP"
   icloud_verify "$APP/Contents/MacOS/ReArc"

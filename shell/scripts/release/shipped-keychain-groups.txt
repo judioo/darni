@@ -1,0 +1,17 @@
+# The keychain access groups that have shipped in a published build (security review PK-01).
+#
+# A passkey made on "this Mac" lives in the group <team>.com.rearc.browser.webauthn, and only an
+# app signed with that group reaches it. Once a group is listed here, every later release must
+# be signed with it: sign-release.sh and release.sh fail without it
+# (release/check-keychain-groups.py), so people never lose the passkeys they made.
+#
+# One line per group: `<team>.<group> <first build>`.
+#   <team>         written as it stands; it means the signing team (its identifier is not committed)
+#   <first build>  the lowest build number that may carry the group
+#
+# APPEND-ONLY. A line never changes, moves or goes: tests/test_check_keychain_groups.py and
+# release.sh compare this file with every earlier version of it in git and fail otherwise. A
+# group is added in the same commit that turns its signing on. A group is dropped, if it ever
+# must be, with REARC_DROP_KEYCHAIN_GROUP and REARC_DROP_KEYCHAIN_GROUP_REASON at release time,
+# and its line stays. Every change to this file goes to the security review.
+<team>.com.rearc.browser.webauthn 1357

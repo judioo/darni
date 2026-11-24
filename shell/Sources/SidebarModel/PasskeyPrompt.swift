@@ -417,8 +417,10 @@ public struct PasskeyStep: Equatable, Sendable {
             return attempts.map { "\($0) attempt\($0 == 1 ? "" : "s") left." } ?? ""
         case .createThisMac:
             // The account's name is the page's text: it has a line of its own (`accountLine`).
-            let kept = "The passkey will be kept by Darni on this Mac, protected by Touch ID or your Mac password. "
-                + "It does not sync to your other devices."
+            // Said before it is made (security review PK-07): where it lives, that it goes
+            // nowhere else, and where to find it again.
+            let kept = "The passkey will be kept by Darni in this profile on this Mac, protected by Touch ID or your Mac password. "
+                + "It does not sync to your other devices or to iCloud. You can see and delete it in Settings › Profiles."
             return isPrivate ? kept + " It stays after you close this private window." : kept
         case .unsupported: return canChooseAnother ? "Choose another way to sign in." : ""
         case .failure(let failure):

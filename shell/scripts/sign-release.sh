@@ -18,8 +18,13 @@
 #   iCloud, as bundle-chromium.sh: REARC_ICLOUD_CONTAINER, REARC_ICLOUD_ENVIRONMENT and a
 #   profile, REARC_RELEASE_PROVISIONING_PROFILE (Developer ID profile) or else
 #   REARC_PROVISIONING_PROFILE (development profile, this Mac only).
-#   REARC_WEBAUTHN_KEYCHAIN_GROUP=1 also signs in the keychain group for "this Mac" passkeys,
-#   when the profile allows it. Off by default (icloud-signing.sh).
+#   Passkeys on "this Mac": REARC_WEBAUTHN_KEYCHAIN_GROUP=1 signs in their keychain access
+#   group and =0 leaves it out; unset, REARC_WEBAUTHN_GROUP_DEFAULT below decides. A bundle in
+#   release verification mode (ReArcReleaseVerification in its Info.plist) never gets the
+#   group and is refused if it has one: such a copy must not reach a person's real passkeys.
+#   Any other bundle must carry every group in release/shipped-keychain-groups.txt
+#   (release/check-keychain-groups.py; security review PK-01). Dropping a shipped group takes
+#   REARC_DROP_KEYCHAIN_GROUP and REARC_DROP_KEYCHAIN_GROUP_REASON, both.
 # Environment wins over shell/signing.local.env, which is read the same way as by
 # bundle-chromium.sh.
 set -euo pipefail
@@ -126,14 +131,22 @@ if [[ -d $SPARKLE ]]; then
   sign "$SPARKLE" --options runtime
 fi
 
+# Whether a release is signed with the keychain access group of "this Mac" passkeys when
+# REARC_WEBAUTHN_KEYCHAIN_GROUP does not say. 1 since build 1357: the same commit added the group
+# to release/shipped-keychain-groups.txt, and from then on no release may lose it (PK-01).
+export REARC_WEBAUTHN_GROUP_DEFAULT=1
 ENTITLEMENTS="$(mktemp "${TMPDIR:-/tmp}/rearc-release-entitlements.XXXXXX")"
 trap 'rm -f "$ENTITLEMENTS"' EXIT
+# shellcheck source=icloud-signing.sh
+source "$SHELL_DIR/scripts/icloud-signing.sh"
 if [[ -n $REARC_ICLOUD_CONTAINER ]]; then
-  # shellcheck source=icloud-signing.sh
-  source "$SHELL_DIR/scripts/icloud-signing.sh"
   icloud_prepare "$APP" "$BUNDLE_ID" "${REARC_RELEASE_PROVISIONING_PROFILE:-$REARC_PROVISIONING_PROFILE}" \
     "$RELEASE_DIR/entitlements/app.entitlements" "$ENTITLEMENTS"
 else
+  # The group is a restricted entitlement and needs the profile, which comes with iCloud.
+  if webauthn_group_wanted "$APP" >/dev/null; then
+    die "the keychain access group for \"this Mac\" passkeys is wanted, and without REARC_ICLOUD_CONTAINER there is no provisioning profile to allow it; set the container and the profile, or REARC_WEBAUTHN_KEYCHAIN_GROUP=0 for a build that must not have the group"
+  fi
   cp "$RELEASE_DIR/entitlements/app.entitlements" "$ENTITLEMENTS"
   rm -f "$APP/Contents/embedded.provisionprofile"
   plutil -remove ReArcICloudContainer "$PLIST" 2>/dev/null || true
@@ -164,6 +177,19 @@ for helper in "Chromium Helper (Renderer).app" "Chromium Helper (GPU).app"; do
 done
 [[ -z $REARC_ICLOUD_CONTAINER ]] || icloud_verify "$APP/Contents/MacOS/ReArc"
 [[ $problems == 0 ]] || die "signature checks failed"
+# What was signed, read back from the signature (security review PK-01, advance read 2026-11-24).
+# The entitlements against the embedded profile: an app that outruns its profile is killed at
+# launch, and signing succeeds all the same.
+GROUPS_CHECK=(python3 -I "$RELEASE_DIR/check-keychain-groups.py")
+"${GROUPS_CHECK[@]}" profile "$APP" || die "the signed entitlements do not fit the provisioning profile"
+if [[ "$(plutil -extract ReArcReleaseVerification raw "$PLIST" 2>/dev/null || true)" == true ]]; then
+  # A copy for tests: no keychain access group anywhere in it.
+  "${GROUPS_CHECK[@]}" none "$APP" || die "a bundle in release verification mode carries a keychain access group"
+else
+  # A bundle that may reach people: every group that has shipped, and only on the app itself.
+  "${GROUPS_CHECK[@]}" gate "$APP" --record "$RELEASE_DIR/shipped-keychain-groups.txt" \
+    || die "the keychain access groups are not those that have shipped (release/shipped-keychain-groups.txt)"
+fi
 echo "==> ${#signed[@]} code objects signed; codesign --verify --deep --strict: pass"
 echo "==> Gatekeeper assessment (spctl -a -vv; needs Developer ID and notarization to pass):"
 spctl -a -vv -t exec "$APP" 2>&1 | sed 's/^/    /' || true

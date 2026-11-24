@@ -149,6 +149,21 @@ final class PasskeyPromptTests: XCTestCase {
         XCTAssertTrue(busy.message.contains("does not sync"))
     }
 
+    /// Security review PK-07: before a "this Mac" passkey is made, the sheet says that it
+    /// stays in this profile on this Mac, that it does not sync, and where it is managed.
+    func testTheCreateStepSaysWhereThePasskeyLivesBeforeItIsMade() throws {
+        for isPrivate in [false, true] {
+            let json = #"{"step":"create_this_mac","request":"create","rp_id":"example.com","private":\#(isPrivate),"user":{"name":"ada@example.com"}}"#
+            let step = try XCTUnwrap(PasskeyStep(json: json))
+            XCTAssertEqual(step.title, "Save a passkey on this Mac?")
+            XCTAssertTrue(step.message.contains("in this profile on this Mac"), step.message)
+            XCTAssertTrue(step.message.contains("does not sync to your other devices or to iCloud"), step.message)
+            XCTAssertTrue(step.message.contains("Settings › Profiles"), step.message)
+            XCTAssertEqual(step.primary?.title, "Continue", "nothing is made before the person goes on")
+            XCTAssertEqual(step.message.contains("stays after you close this private window"), isPrivate)
+        }
+    }
+
     /// Security review PK-03: a request can open on any of these steps, and a
     /// touch or a scan is consent to the site. Each one names it, the same way.
     func testEveryStepNamesTheSiteTheRequestIsFor() throws {

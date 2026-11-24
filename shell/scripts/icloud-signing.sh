@@ -9,13 +9,38 @@
 #   - the iCloud/CloudKit entitlements, merged into scripts/ReArc.entitlements,
 #   - Info.plist ReArcICloudContainer = the container, which the shell checks against
 #     its signed entitlements before it creates anything CloudKit,
-#   - keychain-access-groups with <team>.<bundle id>.webauthn, only with
-#     REARC_WEBAUTHN_KEYCHAIN_GROUP=1 and when the profile allows that group: "this Mac"
-#     passkeys (below). Off by default: no published build gets the group until a release
-#     fails when a later one would lose it (security review PK-01, 2026-11-18).
+#   - keychain-access-groups with <team>.<bundle id>.webauthn, when the group is wanted
+#     (webauthn_group_wanted below): "this Mac" passkeys. A bundle in release verification
+#     mode never gets it, and a wanted group the profile does not cover stops the build.
 # iCloud entitlements are restricted: macOS kills an app at launch unless an embedded
 # profile allows them for this Mac, so the profile is checked first and the build stops
 # on any mismatch.
+
+# webauthn_group_wanted APP: whether APP is signed with the keychain access group of "this Mac"
+# passkeys. Prints why not, and returns 1, when it is not; returns 2 for a setting it cannot read.
+#
+# REARC_WEBAUTHN_KEYCHAIN_GROUP=1 asks for the group and =0 refuses it; unset, the caller's
+# REARC_WEBAUTHN_GROUP_DEFAULT decides (sign-release.sh sets it; a development bundle has none,
+# so it gets the group only when asked).
+#
+# A bundle in release verification mode (ReArcReleaseVerification in its Info.plist: the
+# bundle release.sh runs its gates on, a --qa bundle, the copies upgrade-bundles.sh and
+# check-rename-update.sh make of a previous release) never gets it, whatever is asked. Such a
+# copy is signed by the same team, so with the group it shares the access group of the
+# person's own Darni, and started on a copy of their profile it could use, list and delete
+# their real passkeys (security advance read 2026-11-24, point 5).
+webauthn_group_wanted() {
+  local app="$1"
+  if [[ "$(plutil -extract ReArcReleaseVerification raw "$app/Contents/Info.plist" 2>/dev/null || true)" == true ]]; then
+    echo "a bundle in release verification mode never gets it"
+    return 1
+  fi
+  case "${REARC_WEBAUTHN_KEYCHAIN_GROUP:-${REARC_WEBAUTHN_GROUP_DEFAULT:-0}}" in
+    1) return 0 ;;
+    0) echo "REARC_WEBAUTHN_KEYCHAIN_GROUP is not 1"; return 1 ;;
+    *) echo "REARC_WEBAUTHN_KEYCHAIN_GROUP must be 0 or 1"; return 2 ;;
+  esac
+}
 
 # icloud_prepare APP BUNDLE_ID PROFILE BASE_ENTITLEMENTS OUT_ENTITLEMENTS
 # Needs SIGN_IDENTITY and TEAM_ID. Writes OUT_ENTITLEMENTS; embeds the profile and marker.
@@ -80,13 +105,25 @@ icloud_prepare() {
   # Chromium's profile authenticator keeps its keys in the keychain access group
   # <team>.<bundle id>.webauthn and is offered only when the app is signed with that group
   # (device/fido/mac/touch_id_context.mm). It needs no Apple browser entitlement, but the
-  # group is a restricted entitlement like iCloud's: only when the profile allows it.
-  # And only when asked for (PK-01): a passkey made with the group is lost to every later
-  # build signed without it, so the group ships once a release cannot drop it by accident.
-  local webauthn_group="$TEAM_ID.$bundle_id.webauthn" has_webauthn_group=0
-  if [[ ${REARC_WEBAUTHN_KEYCHAIN_GROUP:-0} == 1 ]] \
-      && $pb -c "Print :Entitlements:keychain-access-groups" "$decoded" 2>/dev/null \
-      | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | grep -qxF -e "$TEAM_ID.*" -e "$webauthn_group"; then
+  # group is a restricted entitlement like iCloud's: the profile has to allow it.
+  # The key lists two groups, the app's own identifier and the passkey group, and the
+  # profile has to cover both: an app whose entitlements outrun its profile is killed at
+  # launch. (The condition here once accepted a profile with the passkey group alone.)
+  # A wanted group the profile does not cover stops the build; it is never left out quietly,
+  # because a release without a group that has shipped loses people their passkeys (PK-01).
+  local webauthn_group="$TEAM_ID.$bundle_id.webauthn" has_webauthn_group=0 webauthn_why webauthn_status=0
+  webauthn_why="$(webauthn_group_wanted "$app")" || webauthn_status=$?
+  [[ $webauthn_status != 2 ]] || { rm -f "$decoded"; die "$webauthn_why"; }
+  if [[ $webauthn_status == 0 ]]; then
+    local profile_groups group
+    profile_groups="$($pb -c "Print :Entitlements:keychain-access-groups" "$decoded" 2>/dev/null \
+      | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' || true)"
+    for group in "$TEAM_ID.$bundle_id" "$webauthn_group"; do
+      if ! grep -qxF -e "$TEAM_ID.*" -e "$group" <<<"$profile_groups"; then
+        rm -f "$decoded"
+        die "the keychain access group for \"this Mac\" passkeys is wanted, and the profile does not allow $group (it needs $TEAM_ID.* or both $TEAM_ID.$bundle_id and $webauthn_group); regenerate the profile, or set REARC_WEBAUTHN_KEYCHAIN_GROUP=0 for a build that must not have the group"
+      fi
+    done
     has_webauthn_group=1
   fi
   rm -f "$decoded"
@@ -117,7 +154,7 @@ icloud_prepare() {
   if [[ $has_webauthn_group == 1 ]]; then
     echo "==> passkeys: keychain access group $webauthn_group (this Mac)"
   else
-    echo "==> passkeys: no keychain access group for this Mac (REARC_WEBAUTHN_KEYCHAIN_GROUP is not 1, or the profile does not allow $webauthn_group)"
+    echo "==> passkeys: no keychain access group for this Mac ($webauthn_why)"
   fi
 }
 
