@@ -264,6 +264,36 @@ final class WebKitWindowsAndSharingTests: XCTestCase {
         XCTAssertNotEqual(look.background, "rgb(255, 255, 255)", "a site with no dark theme is darkened")
     }
 
+    // MARK: - Reader view (00b0ebac, b867a1f1)
+
+    // parity: pages.reader
+    func testTheReaderButtonOpensAWebKitTabsArticleAndClosesAgain() async throws {
+        for path in [SelfTestReaderFixture.articlePath, SelfTestReaderFixture.picturePath] {
+            server.route(path) { request in
+                let full = request.query.isEmpty ? request.path : request.path + "?" + request.query
+                guard let found = SelfTestReaderFixture.response(forPathAndQuery: full) else { return .init(status: 404) }
+                return .init(type: found.type, body: found.body)
+            }
+        }
+        let b = try makeBrowser()
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let tab = b.store.addTab(kind: .today, title: "Article", url: server.url(SelfTestReaderFixture.articlePath), in: b.first)
+        b.store.selectTab(tab.id)
+        let engine = try webKitEngine(b.model, tab, profile: profile)
+        engine.load(server.url(SelfTestReaderFixture.articlePath))
+        try await wait("the article") { !engine.isLoading && engine.currentURL?.path == SelfTestReaderFixture.articlePath && engine.webView.title?.isEmpty == false }
+
+        // The address field asks a page that finished loading whether it is an article.
+        b.model.detectReaderArticle(forPage: tab.id, engine: engine)
+        try await wait("the reader button", timeout: 20) { b.model.readerButtonState(for: tab, engine: engine) == .available }
+        b.model.toggleReader(tabID: tab.id)
+        try await wait("the reader to open", timeout: 20) { b.model.reader.isShowing(tab.id) }
+        XCTAssertEqual(b.model.readerButtonState(for: tab, engine: engine), .showing)
+        b.model.toggleReader(tabID: tab.id)
+        XCTAssertFalse(b.model.reader.isShowing(tab.id), "the button closes it again")
+        XCTAssertEqual(engine.currentURL?.path, SelfTestReaderFixture.articlePath, "the page is as it was")
+    }
+
     // MARK: - Gaps, stated as Chromium behaves (expected failures)
 
     // parity: tabs.popups
