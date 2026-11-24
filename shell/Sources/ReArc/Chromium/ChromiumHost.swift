@@ -390,6 +390,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         }
         // Built-in ad and tracker blocking, when the engine has its calls (CONTENT-BLOCKING.md §5).
         ChromiumContentBlockingEngine.attach(to: model, runtime: runtime)
+        ChromiumWebsiteDarkModeEngine.attach(to: model, runtime: runtime)
         ChromiumHostSites.attach(runtime: runtime)
         // With the engine's suffix list at hand: a file's script boost scoped to a public suffix goes off.
         model.switchOffFileScriptBoostsScopedToASuffix()

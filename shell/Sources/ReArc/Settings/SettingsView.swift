@@ -189,6 +189,12 @@ struct GeneralSettingsPane: View {
                     SettingsPopUp(label: "Space icons", selection: $model.spaceIconStyle,
                                   options: SpaceIconStyle.allCases.map { ($0, $0.title) })
                 }
+                if model.websiteDarkMode.isAvailable {
+                    SettingsLabeledRow(label: WebsiteDarkModeController.settingLabel, detail: WebsiteDarkModeController.settingDetail) {
+                        SettingsPopUp(label: WebsiteDarkModeController.settingLabel, selection: $model.websiteDarkModeSetting,
+                                      options: WebsiteDarkModeSetting.allCases.map { ($0, $0.title) })
+                    }
+                }
                 SettingsLabeledRow(label: "Sidebar position", detail: "The traffic lights stay at the window's top left.") {
                     Picker("Sidebar position", selection: Binding(
                         get: { model.pendingSidebarSide ?? model.sidebarSide },

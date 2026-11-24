@@ -47,6 +47,7 @@ extension BrowserViewModel {
         let access = siteAccessModel(for: engine)
         return SiteControlCenter.settingRows(
             contentBlocking: contentBlockingRow(for: engine, site: site),
+            websiteDarkMode: websiteDarkModeRow(for: engine, site: site),
             // An answer for another site (the page moved on, the next answer is on its way) is not shown.
             siteAccess: access.map { $0.access.flatMap { $0.origin == site.origin ? $0 : nil } ?? SiteAccess(origin: site.origin) },
             needsReload: access?.needsReload ?? false,
@@ -73,7 +74,16 @@ extension BrowserViewModel {
             case .block: store.setAutoPiPDisabled(forHost: host)
             case .snoozeOneHour: store.snoozeAutoPiP(forHost: host)
             case .reset, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings,
-                 .turnOffBlockingForSiteOnly, .removeDevice, .reloadPage: break
+                 .turnOffBlockingForSiteOnly, .removeDevice, .reloadPage,
+                 .darkModeOnForSite, .darkModeOffForSite, .darkModeDefaultForSite: break
+            }
+        case .websiteDarkMode:
+            switch action {
+            case .darkModeOnForSite: setWebsiteDarkMode(.on, forSiteOf: engine, site: site)
+            case .darkModeOffForSite: setWebsiteDarkMode(.off, forSiteOf: engine, site: site)
+            case .darkModeDefaultForSite: setWebsiteDarkMode(nil, forSiteOf: engine, site: site)
+            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .turnOffBlockingForSite, .turnOnBlockingForSite,
+                 .openBlockingSettings, .turnOffBlockingForSiteOnly, .removeDevice, .reloadPage: break
             }
         case .contentBlocking:
             switch action {
@@ -81,7 +91,8 @@ extension BrowserViewModel {
             case .turnOnBlockingForSite: setContentBlocking(true, forSiteOf: engine, site: site)
             case .turnOffBlockingForSiteOnly: narrowContentBlockingException(forSiteOf: engine, site: site)
             case .openBlockingSettings: showSettings(.profiles)
-            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .removeDevice, .reloadPage: break
+            case .allow, .block, .reset, .snoozeOneHour, .openSiteSettings, .removeDevice, .reloadPage,
+                 .darkModeOnForSite, .darkModeOffForSite, .darkModeDefaultForSite: break
             }
         case .sitePermission, .siteDevice:
             // The engine's own state: it checks that the page is still on the site the row was shown for.
@@ -102,7 +113,7 @@ extension BrowserViewModel {
             case .openSiteSettings:
                 openSiteSettings(origin: site.origin)
             case .snoozeOneHour, .turnOffBlockingForSite, .turnOnBlockingForSite, .openBlockingSettings, .turnOffBlockingForSiteOnly,
-                 .removeDevice, .reloadPage:
+                 .removeDevice, .reloadPage, .darkModeOnForSite, .darkModeOffForSite, .darkModeDefaultForSite:
                 break
             }
         }
