@@ -106,7 +106,7 @@ class CheckWebKitTests(unittest.TestCase):
         calls = self.swift_calls()
         self.assertEqual(len(calls), 2)
         self.assertTrue(calls[0].startswith("build "))
-        self.assertIn("--filter ReArcTests\\.WebKitEngine", calls[1])
+        self.assertIn("--filter ReArcTests\\.WebKit", calls[1], "every WebKit parity suite, whatever its file")
 
     def test_swift_never_sees_the_chromium_variables(self):
         self.run_check()
@@ -187,7 +187,7 @@ class CheckWebKitTests(unittest.TestCase):
         result = self.run_check("--full", STUB_OTHER_FAILS="1")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.made()["result"], "pass")
-        self.assertIn("outside the WebKit engine tests", result.stderr)
+        self.assertIn("outside the WebKit parity tests", result.stderr)
         self.assertIn("syncWaits", result.stderr)
 
     def test_a_document_that_disagrees_with_the_index_stops_before_any_build(self):
@@ -239,6 +239,67 @@ class CheckWebKitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 64)
         self.assertIn("is not a release commit", result.stderr)
         self.assertEqual(self.swift_calls(), [])
+
+    # --log: the orchestrator's run of the release, read instead of building and testing.
+
+    def write_log(self, text):
+        path = Path(self.temp.name) / "rc-swift-test.log"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_a_given_log_is_read_and_nothing_is_built(self):
+        log = self.write_log("Test Case '-[ReArcTests.WebKitEngineSmokeTests testAPageLoads]' passed (0.1 seconds).\n")
+        result = self.run_check("--log", str(log))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.swift_calls(), [], "no build and no swift test")
+        self.assertEqual(self.made()["result"], "pass")
+        self.assertEqual(self.resolved.read_text(), '{"pins": ["sparkle"]}\n')
+
+    def test_a_given_log_without_the_parity_tests_fails_as_not_run(self):
+        result = self.run_check("--log", str(self.write_log("Test Case '-[ReArcTests.Other testX]' passed (0.1 seconds).\n")))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("NOT RUN navigation.load", result.stderr)
+
+    def test_a_given_log_with_another_failure_fails_the_pass_but_not_the_report(self):
+        log = self.write_log("Test Case '-[ReArcTests.WebKitEngineSmokeTests testAPageLoads]' passed (0.1 seconds).\n"
+                             "✘ Test syncWaits() recorded an issue\n")
+        result = self.run_check("--log", str(log))
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.made()["result"], "pass")
+        self.assertIn("outside the WebKit parity tests", result.stderr)
+
+    def test_full_and_log_together_are_refused(self):
+        result = self.run_check("--full", "--log", str(self.write_log("")))
+        self.assertEqual(result.returncode, 64)
+        self.assertEqual(self.swift_calls(), [])
+
+    def test_record_with_a_given_log_needs_the_releases_own_parity_tests(self):
+        tests = self.repo / "shell" / "Tests" / "ReArcTests" / "WebKitEngine" / "WebKitEngineSmokeTests.swift"
+        tests.write_text(TESTS + "// a test added after the release\n", encoding="utf-8")
+        log = self.write_log("Test Case '-[ReArcTests.WebKitEngineSmokeTests testAPageLoads]' passed (0.1 seconds).\n")
+        result = self.run_check("--record", "HEAD", "--log", str(log))
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("shell/Tests/ReArcTests/WebKitEngine", result.stderr)
+        self.assertFalse(self.record_folder().exists())
+        tests.write_text(TESTS, encoding="utf-8")
+        result = self.run_check("--record", "HEAD", "--log", str(log))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.record_folder() / "REPORT.md").exists())
+
+    # --coverage: a merge range's commits, without a build.
+
+    def test_coverage_lists_the_range_and_builds_nothing(self):
+        base = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        (self.repo / "shell" / "Sources" / "ReArc").mkdir(parents=True)
+        (self.repo / "shell" / "Sources" / "ReArc" / "Popups.swift").write_text("// new tabs\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-q", "-m", "new tabs from pages"], check=True)
+        result = self.run_check("--coverage", f"{base}..HEAD")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.swift_calls(), [])
+        self.assertIn("| new tabs from pages | - | **flagged**: no entry in docs/engine-parity-changes.json |", result.stdout)
+        self.assertFalse(self.report.exists(), "nothing written")
 
     def test_an_unknown_option_is_refused(self):
         result = self.run_check("--screen")
