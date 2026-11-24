@@ -61,8 +61,20 @@ enum ChromiumScreenShareChannel {
     /// How the last request ended, in the log's words.
     private(set) static var lastOutcome = ""
 
+    /// Whether this build answers a page's request to share. Off, the shell never installs the
+    /// engine's display-capture callback, so the engine has no host and refuses every request at
+    /// once (`NotSupportedError`, as in 1255), and no sheet, bar or card code runs (security
+    /// review MERGE-aa000bfd..3a8e98c8: switch it off at the engine boundary, not in the sheet).
+    /// Off since 2026-11-24: sharing a tab other than the asking one starts and stops at once
+    /// (the release self-test of 1323); it comes back with that fix.
+    static let isEnabled = false
+
     /// At `ready`, before any tab exists, so no request falls to the engine's no-host refusal.
     static func register(runtime: ChromiumRuntime, context: UnsafeMutableRawPointer) {
+        guard isEnabled else {
+            ChromiumLog.info("screen sharing: off in this build; a page's request to share fails at once")
+            return
+        }
         guard runtime.capabilities.screenSharing, let calls = ChromiumScreenShareCalls.resolve() else {
             let missing = ChromiumScreenShareCalls.missingSymbols
             ChromiumLog.info("screen sharing: no channel in this engine (feature \(runtime.capabilities.screenSharing ? "advertised" : "not advertised")"

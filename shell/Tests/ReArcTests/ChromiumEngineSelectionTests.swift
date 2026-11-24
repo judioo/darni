@@ -243,7 +243,7 @@ final class ReleaseLaunchSecurityTests: XCTestCase {
     /// engine runs the testing config with Safe Browsing's v5 lists turned off (608), so every
     /// launch passes both, after whatever argv says.
     func testPersistedProfileFeaturesReachTheEngineInEveryLaunch() {
-        let feature = ChromiumLaunchArguments.persistedProfileFeatures
+        let feature = ChromiumLaunchArguments.enabledEngineFeatures
         let disabled = ChromiumLaunchArguments.disabledEngineFeatures
         XCTAssertTrue(feature.contains("PrepopulatedEnginesMigration") && feature.contains("ApplySearchEngineTypeMigration"))
         XCTAssertEqual(disabled, "--disable-features=SafeBrowsingLocalListsUseSBv5,LazyBrowserInterfaceBroker,PreemptiveSodaDownload")
@@ -261,6 +261,28 @@ final class ReleaseLaunchSecurityTests: XCTestCase {
         }
         XCTAssertEqual(Array(ChromiumLaunchArguments.engineArguments(["ReArc"], defaultUserDataDir: { "/d" }, keychain: .devMock,
                                                                      isRelease: false).suffix(2)), [feature, disabled])
+    }
+
+    /// Chromium 156 lets a page call `getDisplayMedia` with no click or key press, so a page could
+    /// put the sharing sheet up unasked. Every launch turns on the engine feature that makes it need
+    /// one (the self-test's screen-sharing step checks the engine refuses such a request), in the
+    /// one `--enable-features` Chromium keeps, after anything argv carried, and next to the
+    /// profile features that must stay on.
+    func testAPageCanAskToShareTheScreenOnlyAfterAClick() throws {
+        XCTAssertEqual(ChromiumLaunchArguments.enabledEngineFeatures,
+                       "--enable-features=PrepopulatedEnginesMigration,ApplySearchEngineTypeMigration,GetDisplayMediaRequiresUserActivation")
+        for (isRelease, isShipped) in [(false, false), (true, false), (true, true)] {
+            let launch = ChromiumLaunchArguments.engineArguments(["ReArc", "--enable-features=Other"], defaultUserDataDir: { "/data" },
+                                                                 keychain: .system, isRelease: isRelease, isShipped: isShipped)
+            for arguments in [launch, ChromiumLaunchArguments.benchArguments(launch), ChromiumLaunchArguments.selfTestArguments(launch)] {
+                let last = try XCTUnwrap(arguments.last { $0.hasPrefix("--enable-features=") })
+                let features = last.dropFirst("--enable-features=".count).split(separator: ",").map(String.init)
+                XCTAssertTrue(features.contains("GetDisplayMediaRequiresUserActivation"), "release \(isRelease), shipped \(isShipped): \(last)")
+                XCTAssertTrue(features.contains("PrepopulatedEnginesMigration") && features.contains("ApplySearchEngineTypeMigration"))
+                let disabled = arguments.last { $0.hasPrefix("--disable-features=") } ?? ""
+                XCTAssertFalse(disabled.contains("GetDisplayMediaRequiresUserActivation"))
+            }
+        }
     }
 
     /// The testing config turns on `PreemptiveSodaDownload`: a new profile then fetches the speech
@@ -294,7 +316,7 @@ final class ReleaseLaunchSecurityTests: XCTestCase {
             let features = Set(last.dropFirst("--disable-features=".count).split(separator: ",").map(String.init))
             XCTAssertTrue(features.isSuperset(of: ChromiumLaunchArguments.disabledEngineFeatureNames), last)
             XCTAssertTrue(features.contains("RWHVMacHasFocusReturnsFalseForNonKeyWindow"), last)
-            XCTAssertTrue(selfTest.contains(ChromiumLaunchArguments.persistedProfileFeatures))
+            XCTAssertTrue(selfTest.contains(ChromiumLaunchArguments.enabledEngineFeatures))
             XCTAssertEqual(ChromiumLaunchArguments.benchArguments(launch).last { $0.hasPrefix("--disable-features=") },
                            ChromiumLaunchArguments.disabledEngineFeatures, "the bench adds none")
         }

@@ -124,13 +124,15 @@ final class LoopbackFixtureServer {
         // A button that asks to share a tab, a window or the screen with its sound (getDisplayMedia
         // needs the click's user activation). window.shareState: idle, pending, live:<surface>:<audio
         // tracks>, ended, error:<name>; window.shareFrames counts the shared picture's frames.
+        // selfBrowserSurface 'include': Chromium leaves the asking tab out of the list by default, and the
+        // self-test shares that tab too.
         "/share": """
         <!doctype html><html><head><title>share-ready</title></head><body style="margin:0;font:24px -apple-system">
         <button id="go" style="position:absolute;left:0;top:0;width:400px;height:300px">share</button><script>
         window.shareState = 'idle'; window.shareFrames = 0;
         function ask() {
           window.shareState = 'pending'; window.shareFrames = 0;
-          navigator.mediaDevices.getDisplayMedia({video: true, audio: true}).then(function (stream) {
+          navigator.mediaDevices.getDisplayMedia({video: true, audio: true, selfBrowserSurface: 'include'}).then(function (stream) {
             window.shareStream = stream;
             var track = stream.getVideoTracks()[0];
             track.addEventListener('ended', function () { window.shareState = 'ended'; });
