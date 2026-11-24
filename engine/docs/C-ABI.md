@@ -1,6 +1,6 @@
 # ReArc engine C ABI
 
-ABI **1.70** (major remains 1 for existing hosts), bridge **0.81.0**, compiled Chromium **156.0.8078.109**
+ABI **1.70** (major remains 1 for existing hosts), bridge **0.81.0**, compiled Chromium **156.0.8078.114**
 (1.70 and bridge 0.81.0 are patch `tab/101`, overlay fe57d24b7e, built on 2026-11-23 in `out/ReArc-codecs-arm64`; see "Screen sharing". 1.66 and bridge 0.76.0 are patch `tab/095`, 1.67 and 0.77.0 `tab/096`, 1.68 and 0.78.0 `tab/097`; the release engine of 2026-11-18, overlay e6f031f180, has all three; 096 and 097 have run on screen, without a phone or a security key. 1.69 and 0.79.0 are patch `tab/098`: built on 2026-11-19 in `out/ReArc-codecs-arm64`, overlay 9f2767b4c1, shipped in Darni 2026.1119.1080, where the self-test's steps for it pass. Bridge 0.80.0 is patch `tab/099`, overlay 6274321b22, built on 2026-11-20 and not yet run). Public header:
 `chrome/browser/rearc_bridge/rearc_engine_abi.h`; adjacent `module.modulemap`
 imports it as `ReArcEngine`. This is an in-process typed adapter for
@@ -41,7 +41,7 @@ when a header function is missing from `nm -gU` of the framework). Release
 packaging and its validation are in RELEASE.md.
 
 Use the upstream `.app/Contents/Frameworks/Chromium Framework.framework/Versions/
-156.0.8078.109` layout, including resources and all helper bundles and their
+156.0.8078.114` layout, including resources and all helper bundles and their
 Info.plists. Preserve helper `LSUIElement`, executable names, entitlements,
 sandbox and framework-relative paths. The shell's executable must be in an
 app bundle; pass its real argv, selecting `--user-data-dir` before startup.

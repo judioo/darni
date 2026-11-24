@@ -33,6 +33,8 @@ with tempfile.TemporaryDirectory(prefix='rearc-replay-') as temp:
     forward = git('write-tree')
     assert forward == git('rev-parse', head + '^{tree}')
     print('FORWARD TREE', forward, 'MATCHES HEAD', head, flush=True)
-    assert git('diff', '--name-only') == ''
+    # Sub-project checkouts (v8, ANGLE, ffmpeg) carry their own security patches
+    # (engine/patches/series-subprojects), so their gitlinks differ from src's on purpose.
+    assert git('diff', '--name-only', '--ignore-submodules=all') == ''
     assert git('rev-parse', 'HEAD') == head
     print(f'REPLAY PASS {len(series)}/{len(series)} reverse and forward; real index/worktree untouched', flush=True)
