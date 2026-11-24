@@ -41,6 +41,9 @@ The record: one line per group, `<team>.<rest> <first build>`. `<team>` is writt
 stands here (the team identifier is not committed) and means the signing team. The first build
 is the lowest build number that may carry the group. `#` starts a comment.
 
+REARC_TEAM_ID: the signing team, when the app names none (neither in its entitlements nor in
+its signature).
+
 Reads signatures with `codesign -d --entitlements - --xml` and profiles with `security cms -D`;
 launches nothing and reads no keychain. No network.
 """
