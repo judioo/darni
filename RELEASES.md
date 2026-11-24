@@ -24,6 +24,33 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1125.1371 — 2026-11-25
+
+**New**
+- Reader view. On an article, click the page icon in the address field, or press ⌥⌘R, to read
+  the text alone. Choose the font, size, width and theme (light, sepia, dark, or following the
+  Mac). It is scripted, not AI. In private windows and containers it shows the text without
+  pictures.
+- Dark mode for websites, in Settings › General. Sites with a dark theme of their own use it,
+  and other sites are darkened, with photos and videos left as they are. Change it for one site
+  in the site controls beside the address. Clearing your history clears these choices too.
+- Every way you copy a link now gives a clean link without tracking tags: Peek, Little Darni,
+  the Archive, the command bar, split view and a page's Copy Link Address, as well as ⇧⌘C.
+  Switch it off in Settings › Advanced.
+- Tabs you haven't looked at for 30 minutes now go to sleep: they stop running in the background
+  but stay loaded, and wake at once when you open them. After 4 hours a sleeping tab is unloaded
+  to free memory, as before. Choose both times in Settings › General. A tab that is playing
+  sound, being shared, on a call, downloading or waiting on you never sleeps.
+- Passkeys on this Mac. When a site offers to create a passkey, you can now keep it on this Mac,
+  protected by Touch ID or your Mac password. A passkey made this way stays in that profile on
+  this Mac: it does not sync to your other devices or to iCloud. See and delete them in
+  Settings › Profiles › Passkeys on This Mac. Signing in with your phone or a security key works
+  as before.
+
+**Good to know**
+- If you go back to an older version of Darni, it cannot use passkeys made on this Mac. Install
+  this version or a later one again to use them.
+
 ## Darni 2026.1124.1338 — 2026-11-24
 
 **New**
