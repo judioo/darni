@@ -476,6 +476,8 @@ final class ChromiumEngine: WebEngine, NavigationCommitReporting, TabDiscarding,
 
     var isFreezeRequested: Bool { queryFreezeState()?.requested ?? false }
 
+    var isPageFrozen: Bool? { queryFreezeState()?.frozen }
+
     /// `ReArcTabGetFreezeState`: whether a request is held, and whether the
     /// page's renderer has reported it frozen. nil when the engine cannot say.
     func queryFreezeState() -> (requested: Bool, frozen: Bool)? {

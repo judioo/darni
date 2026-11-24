@@ -2044,6 +2044,16 @@ final class ChromiumSelfTest {
         let boot = (try await engine.evaluate("sleepMark()", in: .page)) as? String ?? ""
         let document = runtime.documentIdentity(tab: engine.tabID)
 
+        // Tab sleep's file log, into a scratch file for this step (NIGHT-1125 point 7).
+        let savedSleepLog = model.tabSleepLog
+        let sleepLogFile = FileManager.default.temporaryDirectory.appendingPathComponent("darni-selftest-sleep-\(UUID().uuidString).log")
+        model.tabSleepLog = TabSleepLog(url: sleepLogFile)
+        defer {
+            model.tabSleepLog = savedSleepLog
+            try? FileManager.default.removeItem(at: sleepLogFile)
+        }
+        func sleepLog() -> String { (try? String(contentsOf: sleepLogFile, encoding: .utf8)) ?? "" }
+
         // Not due: seen a moment ago.
         model.tabLastShown[sleeper.id] = Date()
         try check(!model.runAutoFreeze().contains(sleeper.id) && !model.isTabFrozen(sleeper.id), "a tab seen a moment ago was frozen")
@@ -2059,6 +2069,9 @@ final class ChromiumSelfTest {
                   "the frozen page's timer ran: \(frozenAt) -> \(ticks()) ticks in 3 s")
         try check(!model.isTabUnloaded(sleeper.id) && !engine.isDiscarded && engine.activity == .idle,
                   "a frozen tab shows as unloaded")
+        model.observeTabFreezes()
+        try check(sleepLog().contains("tab \(sleeper.id.uuidString) freeze requested") && sleepLog().contains("tab \(sleeper.id.uuidString) frozen"),
+                  "the file log does not say the tab froze: \(sleepLog())")
         let silentTicks = ticks()
 
         // Shown: it runs again at once, and it is the same document.
@@ -2076,6 +2089,11 @@ final class ChromiumSelfTest {
         try check(document != nil && documentAfter.map { $0.isSameDocument(as: document!) } == true && !engine.isLoading,
                   "showing a frozen tab loaded a document: \(String(describing: document)) -> \(String(describing: documentAfter))")
         try check(engine.freeze() == .refusedForNow && !model.isTabFrozen(sleeper.id), "the engine took a freeze request for the tab on screen")
+        model.noteVisibleTabsShown()
+        try check(sleepLog().contains("tab \(sleeper.id.uuidString) thawed (shown); it had frozen") && !sleepLog().contains("http")
+                    && !sleepLog().contains("Sleeper"),
+                  "the file log does not say the tab thawed, or names its page: \(sleepLog())")
+        log("PASS tab sleep: the file log says freeze requested, frozen and thawed (shown) for the tab's id, with no address or title")
 
         // A page that plays is not frozen: not by the check, and not by the engine.
         let playURL = URL(string: "\(base)/pip")!

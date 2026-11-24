@@ -33,6 +33,8 @@ private final class SleepEngine: WebEngine, TabDiscarding, TabFreezing {
     var discardAnswer = DiscardOutcome.discarded
     var isFreezeRequested = false
     var isDiscarded = false
+    /// What the renderer reports; nil: the engine cannot say.
+    var isPageFrozen: Bool?
 
     init(url: URL) { currentURL = url }
 
@@ -62,6 +64,7 @@ private final class SleepEngine: WebEngine, TabDiscarding, TabFreezing {
     func unfreeze() {
         calls.append("unfreeze")
         isFreezeRequested = false
+        isPageFrozen = false
     }
 
     func discard() -> DiscardOutcome {
@@ -296,7 +299,7 @@ final class TabSleepShellTests: XCTestCase {
         model.screenShareStarted(ScreenShare(kind: .tab, target: tabs["docs"]!.id), site: "meet.test", from: prompts)
         XCTAssertEqual(model.runAutoFreeze(now: now), [tabs["meet"]!.id], "only the asking tab, which shares nothing yet")
         XCTAssertEqual(engines["docs"]!.calls, [])
-        model.thawTab(tabs["meet"]!.id)
+        model.thawTab(tabs["meet"]!.id, reason: .due)
         // Live: neither the page that captures nor the tab it shows.
         model.screenShareCaptureChanged(tabs["meet"]!.id, live: true)
         XCTAssertEqual(model.runAutoFreeze(now: now), [])
@@ -499,5 +502,74 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertTrue(model.isTabFrozen(tabs["guarded"]!.id), "the refusal does not wake it")
         XCTAssertFalse(model.isTabUnloaded(tabs["guarded"]!.id))
         XCTAssertTrue(model.engineHost.engine(forTabID: tabs["guarded"]!.id, profileID: model.profileID(for: tabs["guarded"]!)) === guarded)
+    }
+
+    // MARK: The file log (NIGHT-1125 point 7)
+
+    private func logLines(_ url: URL) -> [String] {
+        // Each line: timestamp, "pid N", then the journal's words.
+        ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").map {
+            $0.split(separator: " ", maxSplits: 3).dropFirst(3).joined()
+        }
+    }
+
+    func testFreezeFrozenAndThawGoToTheFileLogWithTheTabIdOnly() throws {
+        let (model, tabs, engines) = makeModel(["idle", "other"])
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("darni-sleep-log-\(UUID().uuidString)/Logs/tab-sleep.log")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent().deletingLastPathComponent()) }
+        model.tabSleepLog = TabSleepLog(url: file)
+        let idle = tabs["idle"]!.id, other = tabs["other"]!.id
+
+        XCTAssertEqual(Set(model.runAutoFreeze(now: now)), [idle, other])
+        XCTAssertEqual(Set(logLines(file)), ["tab \(idle.uuidString) freeze requested", "tab \(other.uuidString) freeze requested"])
+
+        // The renderer reports the freeze; the next look says so, once.
+        engines["idle"]!.isPageFrozen = true
+        model.observeTabFreezes()
+        model.observeTabFreezes()
+        XCTAssertEqual(logLines(file).last, "tab \(idle.uuidString) frozen")
+        XCTAssertEqual(logLines(file).count, 3)
+
+        // Shown: the shell ends the request and says the page had frozen.
+        model.selectTab(idle)
+        model.noteVisibleTabsShown(at: now)
+        XCTAssertEqual(logLines(file).last, "tab \(idle.uuidString) thawed (shown); it had frozen")
+
+        // The engine ended the other request by itself (the page was used).
+        engines["other"]!.isFreezeRequested = false
+        model.observeTabFreezes()
+        XCTAssertEqual(logLines(file).last, "tab \(other.uuidString) thawed (the engine ended it: the tab was used or unloaded); not seen frozen")
+        XCTAssertEqual(logLines(file).count, 5)
+
+        let text = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertFalse(text.contains("http") || text.contains(".test") || text.contains("idle") || text.contains("other"),
+                       "no address and no title: \(text)")
+        XCTAssertTrue(text.contains("pid \(ProcessInfo.processInfo.processIdentifier) "))
+        let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(mode.intValue & 0o777, 0o600, "the person's only")
+    }
+
+    func testATestProcessWritesNoTabSleepLogOfItsOwn() {
+        XCTAssertNil(TabSleepLog.standard.url, "tests never write into the real data folder")
+        XCTAssertNil(BrowserViewModel(store: SidebarStore(spaces: [Space(name: "Main", sortRank: "a")]),
+                                      persistence: SidebarFilePersistence(fileURL: FileManager.default.temporaryDirectory
+                                          .appendingPathComponent("darni-sleep-\(UUID().uuidString)/sidebar.json")),
+                                      syncEngine: LocalSyncEngine(), faviconStore: FaviconStore(directory: nil)).tabSleepLog.url)
+    }
+
+    func testTheJournalSaysEachThingOnce() {
+        var journal = TabFreezeJournal()
+        let id = UUID()
+        XCTAssertNil(journal.observed(id, frozen: true), "no request, nothing to say")
+        XCTAssertNil(journal.thawed(id, reason: .shown))
+        XCTAssertEqual(journal.freezeRequested(id), "tab \(id.uuidString) freeze requested")
+        XCTAssertNil(journal.freezeRequested(id))
+        XCTAssertNil(journal.observed(id, frozen: false))
+        XCTAssertNil(journal.observed(id, frozen: nil))
+        XCTAssertEqual(journal.thawed(id, reason: .due, frozenNow: false), "tab \(id.uuidString) thawed (in use again or no longer due); it had not frozen yet")
+        XCTAssertNil(journal.thawed(id, reason: .due))
+        _ = journal.freezeRequested(id)
+        journal.forget(id)
+        XCTAssertEqual(journal, TabFreezeJournal())
     }
 }
