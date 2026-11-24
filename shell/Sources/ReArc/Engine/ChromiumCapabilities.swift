@@ -77,6 +77,7 @@ struct ChromiumCapabilities: Equatable {
     static let sitePermissionsFeature = "site_permissions"
     static let webAuthnPromptsFeature = "webauthn_prompts"
     static let displayCaptureFeature = "display_capture"
+    static let displayCaptureHiddenTabFeature = "display_capture_hidden_tab"
 
     /// ABI minor version that introduced each adopted feature (C-ABI.md).
     static let introducedIn: [String: UInt32] = [
@@ -143,6 +144,8 @@ struct ChromiumCapabilities: Equatable {
         contentBlockingHostsFeature: 69,
         hostSitesFeature: 69,
         displayCaptureFeature: 70,
+        // Bridge 0.82.0 (engine patch tab/102): a behaviour of the 1.70 calls, no new minor.
+        displayCaptureHiddenTabFeature: 70,
     ]
 
     /// nil when the engine does not export `ReArcEngineABIMinorVersion`.
@@ -302,6 +305,12 @@ struct ChromiumCapabilities: Equatable {
     /// (`getDisplayMedia`), for the shell's own sheet, and the call that ends
     /// a share (ABI 1.70). Without it the request fails at once, as before.
     var screenSharing: Bool
+    /// The engine can share a tab nobody looks at, and its page stays hidden
+    /// to its own scripts while it is shared (bridge 0.82.0, engine patch
+    /// `tab/102`). An engine with `screenSharing` and without this one fails
+    /// such a share after ten seconds (a tab it never showed), or tells the
+    /// shared page it is visible; the shell does not share with it at all.
+    var screenSharingHiddenTabs: Bool
 
     static let none = ChromiumCapabilities(abiMinorVersion: nil, hasFeature: { _ in false })
 
@@ -374,6 +383,7 @@ struct ChromiumCapabilities: Equatable {
         passkeyPrompts = adopted(Self.webAuthnPromptsFeature)
         // What is shared shows from media_capture: without it there would be no bar and no Stop.
         screenSharing = mediaCapture && adopted(Self.displayCaptureFeature)
+        screenSharingHiddenTabs = screenSharing && adopted(Self.displayCaptureHiddenTabFeature)
         extensionBackgroundTabs = extensionWindows && adopted(Self.extensionBackgroundTabsFeature)
     }
 
@@ -466,6 +476,7 @@ struct ChromiumCapabilities: Equatable {
             (Self.sitePermissionsFeature, sitePermissions),
             (Self.webAuthnPromptsFeature, passkeyPrompts),
             (Self.displayCaptureFeature, screenSharing),
+            (Self.displayCaptureHiddenTabFeature, screenSharingHiddenTabs),
             (Self.pageThemeColorFeature, pageThemeColor),
             (Self.devToolsDockingFeature, devToolsDocking),
             (Self.extensionBackgroundTabsFeature, extensionBackgroundTabs),

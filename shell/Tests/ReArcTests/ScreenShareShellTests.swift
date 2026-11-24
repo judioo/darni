@@ -20,6 +20,22 @@ final class ScreenShareShellTests: XCTestCase {
         XCTAssertFalse(ChromiumCapabilities.none.screenSharing)
     }
 
+    /// The shell shares only with an engine that can share a tab nobody looks at and keeps its
+    /// page hidden meanwhile (engine patch tab/102): the channel is registered on this flag.
+    func testSharingATabNobodyLooksAtNeedsItsOwnEngineFeature() {
+        let all: (String) -> Bool = { _ in true }
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 70, hasFeature: all).screenSharingHiddenTabs)
+        let before102 = ChromiumCapabilities(abiMinorVersion: 70, hasFeature: { $0 != "display_capture_hidden_tab" })
+        XCTAssertTrue(before102.screenSharing, "the 1.70 calls are there")
+        XCTAssertFalse(before102.screenSharingHiddenTabs, "the engine of 1323: a tab never shown is not shared")
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 70, hasFeature: { $0 != "display_capture" }).screenSharingHiddenTabs)
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 70, hasFeature: { $0 != "media_capture" }).screenSharingHiddenTabs)
+        XCTAssertFalse(ChromiumCapabilities(abiMinorVersion: 69, hasFeature: all).screenSharingHiddenTabs)
+        XCTAssertFalse(ChromiumCapabilities.none.screenSharingHiddenTabs)
+        XCTAssertTrue(ChromiumCapabilities(abiMinorVersion: 70, hasFeature: all).summary.contains("display_capture_hidden_tab=1"))
+        XCTAssertTrue(before102.summary.contains("display_capture_hidden_tab=0"))
+    }
+
     // MARK: The sheet
 
     private final class Router: ScreenShareRouting {
