@@ -4704,6 +4704,9 @@ extension ChromiumSelfTest {
             try check(model.readerImageMode(for: tab, engine: engine) == .loadedByPage, "reader: an ordinary tab's reader has pictures off")
             _ = try await engine.evaluate("(function () { window.rearcReaderKept = 'kept'; window.scrollTo(0, 30); return 1; })()", in: .page)
             let before = try await engine.evaluate("document.documentElement.outerHTML.length", in: .page) as? NSNumber
+            // The tab may have had other pages before this one (setup can navigate it more
+            // than once), so "no history entry added" is the page's history length, unchanged.
+            let historyBefore = try await engine.evaluate("history.length", in: .page) as? NSNumber
 
             model.toggleReader(tabID: tab.id)
             try await wait("the reader to open") { model.reader.isShowing(tab.id) }
@@ -4728,8 +4731,10 @@ extension ChromiumSelfTest {
             try check(!model.reader.isShowing(tab.id), "reader: it did not close")
             let kept = try await engine.evaluate("window.rearcReaderKept + '|' + location.pathname", in: .page) as? String
             let after = try await engine.evaluate("document.documentElement.outerHTML.length", in: .page) as? NSNumber
-            try check(kept == "kept|\(Fixture.articlePath)" && before == after && !engine.canGoBack,
-                      "reader: the page is not as it was left (state \(kept ?? "?"), length \(String(describing: before)) -> \(String(describing: after)), can go back \(engine.canGoBack))")
+            let historyAfter = try await engine.evaluate("history.length", in: .page) as? NSNumber
+            try check(kept == "kept|\(Fixture.articlePath)" && before == after && historyBefore != nil && historyBefore == historyAfter,
+                      "reader: the page is not as it was left (state \(kept ?? "?"), length \(String(describing: before)) -> \(String(describing: after)), "
+                        + "history length \(String(describing: historyBefore)) -> \(String(describing: historyAfter)))")
             log("PASS reader: leaving it shows the page as it was left (its state kept, its document unchanged, no history entry)")
 
             // Links: only a web address, and only as a page link in the tab.
