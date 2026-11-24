@@ -214,6 +214,28 @@ class HeavyJobTests(unittest.TestCase):
             self.assertEqual(contender.wait(timeout=20), 0)
         self.assertEqual(log.read_text().split(), ["start", "end"] * 4, "no two ran at once")
 
+    def silent_ps(self):
+        """A PATH whose ps answers nothing, as ps can for a live process under heavy load."""
+        bin_dir = self.dir / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "ps"
+        fake.write_text("#!/bin/sh\nexit 0\n")
+        fake.chmod(0o755)
+        return f"{bin_dir}:{os.environ['PATH']}"
+
+    def test_a_live_holder_that_ps_does_not_answer_for_keeps_the_lock(self):
+        # The holder is alive (this test's own pid); only ps is silent. It must not look stale.
+        self.stale_lock(os.getpid(), name="busy", pstart=started(os.getpid()))
+        result = self.heavy("--try", "second", "--", "true", PATH=self.silent_ps())
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertIn("name=busy\n", (self.lock / "owner").read_text())
+
+    def test_a_dead_holder_is_still_taken_over_when_ps_is_silent(self):
+        self.stale_lock(self.dead_pid())
+        result = self.heavy("--try", "second", "--", "true", PATH=self.silent_ps())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("took over a stale lock", result.stderr)
+
     # Nesting
 
     def test_inside_a_heavy_job_the_command_runs_directly(self):

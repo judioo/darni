@@ -55,11 +55,20 @@ _hj_pstart() {
 }
 
 _hj_alive() {
-  local pid recorded now
+  local pid recorded now tries=0
   pid="$(_hj_field pid "$1")"
   [[ $pid =~ ^[0-9]+$ ]] || return 1
   now="$(_hj_pstart "$pid")"
-  [[ -n $now ]] || return 1
+  # An empty answer from ps is not proof the holder is gone: under heavy load ps can come back
+  # empty for a live process, and two waiters then took over one lock together. Only a pid that
+  # kill -0 no longer finds is gone; while it is found, ask ps again, and if ps still says
+  # nothing, count the holder alive.
+  while [[ -z $now ]]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    (( tries++ < 3 )) || return 0
+    sleep 0.2
+    now="$(_hj_pstart "$pid")"
+  done
   recorded="$(_hj_field pstart "$1")"
   [[ -z $recorded || $recorded == "$now" ]]
 }
