@@ -125,7 +125,8 @@ chmod 600 "$OUT_DIR/args.gn"
 python3 "$ENGINE_DIR/scripts/google-api-keys.py" append "$OUT_DIR/args.gn"
 gn gen "$OUT_DIR" --fail-on-unused-args
 [[ $GEN_ONLY == 0 ]] || exit 0
-"${BUILD_COMMAND[@]}" -C "$OUT_DIR" chrome_framework chrome
+# The build is a heavy job: one at a time on this Mac (shell/scripts/heavy-job.sh).
+"$SHELL_DIR/scripts/heavy-job.sh" engine-build -- "${BUILD_COMMAND[@]}" -C "$OUT_DIR" chrome_framework chrome
 FRAMEWORK="$CHROMIUM_SRC/$OUT_DIR/Chromium Framework.framework"
 [[ -d "$FRAMEWORK/Versions/$PIN/Helpers" ]] || die 'expected pinned framework layout missing'
 [[ ! -e "$CHROMIUM_SRC/$OUT_DIR/libchrome_dll.dylib" ]] || die 'component output found; expected a monolithic framework'

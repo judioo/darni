@@ -141,6 +141,11 @@ if [[ -z $GATE_ONLY ]]; then
     MEASURE+=(--darni-app "$QA")
   fi
 
+  # The weekly measurement is a heavy job: nothing else heavy runs with it, and it waits for
+  # one that is running (scripts/heavy-job.sh). Inside a `--hold perf` window it starts at once.
+  heavy_job() { if [[ $WEEKLY == 1 ]]; then source "$SHELL_DIR/scripts/heavy-job.sh"; "heavy_job_$1" perf; fi; }
+  heavy_job begin
+
   # The probe (arc-vs-rearc probe): built from this checkout; Package.resolved is kept as it was.
   RESOLVED="$SHELL_DIR/Package.resolved"
   cp "$RESOLVED" "$OUT/Package.resolved.bak"
@@ -188,6 +193,7 @@ if [[ -z $GATE_ONLY ]]; then
     set -e
     [[ $CSTATUS == 0 ]] || echo "perf-check: the comparison session ended with $CSTATUS" >&2
   fi
+  heavy_job end
 else
   RESULT="$GATE_ONLY"
   [[ -f $RESULT ]] || die "no result $RESULT"

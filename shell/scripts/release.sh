@@ -172,6 +172,10 @@ fi
 # 2. Release shell build + bundle. iCloud entitlements are added by sign-release.sh, which
 #    signs every code object again; the bundle step only signs the executable and, ad hoc,
 #    the helpers it renames (rebrand-bundle.py).
+# The build and the checks are a heavy job, one at a time on this Mac (scripts/heavy-job.sh):
+# the lock is held from here to the end of step 5c, and freed if the run stops before that.
+source "$LIVE_SHELL/scripts/heavy-job.sh"
+heavy_job_begin release
 START=$SECONDS
 REARC_ICLOUD_CONTAINER="" "$SHELL_DIR/scripts/bundle-chromium.sh" --release --engine-out "$OUT" --dist "$DIST"
 APP="$DIST/Darni.app"
@@ -333,6 +337,7 @@ if [[ $DMG == 1 ]]; then
     done
   fi
 fi
+heavy_job_end
 
 # 5d. The shipped bundle: without the verification key, signed again (Info.plist is sealed by
 #     the signature). Its code is the code the gates ran; it takes no REARC_DATA_DIR,
