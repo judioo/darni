@@ -3726,6 +3726,28 @@ extension ChromiumSelfTest {
         // A retried click can land late as a second menu; let it finish first.
         try await Task.sleep(nanoseconds: 400_000_000)
 
+        // Copy Link Address on a link with trackers: the shell copies it, clean, to a private
+        // pasteboard and dismisses the engine's request (whose own copy would be the link as it is).
+        if let model = prompts.router as? BrowserViewModel, model.copiesCleanLinks {
+            let realPasteboard = model.linkPasteboard
+            model.linkPasteboard = NSPasteboard(name: NSPasteboard.Name("rearc-selftest-link-\(UUID().uuidString)"))
+            defer { model.linkPasteboard = realPasteboard }
+            _ = try await engine.evaluate("(document.getElementById('link').href = '/a?utm_source=news&id=7&fbclid=x#top', true)", in: .page)
+            menus.choice = .copyLink
+            let trackedBase = menus.plans.count
+            try await rightClickUntil(window, engine: engine, at: link, "tracked link menu") { menus.plans.count > trackedBase }
+            let clean = "\(base)/a?id=7#top"
+            try await wait("Copy Link Address copied the clean link") { model.linkPasteboard.string(forType: .string) == clean }
+            try await wait("the clean copy dismissed the engine's menu") { engine.contextMenuRequestID == nil }
+            menus.choice = nil
+            _ = try await engine.evaluate("(document.getElementById('link').href = '/a', true)", in: .page)
+            // A retried click can land late as a second menu; let it finish before the pasteboard goes back.
+            try await Task.sleep(nanoseconds: 400_000_000)
+            log("PASS Copy Link Address: a link with trackers is copied without them (\(clean)), by the shell")
+        } else {
+            log("NOTE Copy Link Address: this page's menu has no browser model (or clean links are off); the clean copy is not exercised")
+        }
+
         // Page menu: Reload runs in the engine.
         _ = try await engine.evaluate("(window.rearcMarker = 1, true)", in: .page)
         menus.choice = .reload

@@ -197,6 +197,10 @@ final class BrowserViewModel {
     var restoresWindows = WindowRestorePreference.isEnabled(in: .standard) {
         didSet { externalLinkDefaults.set(restoresWindows, forKey: WindowRestorePreference.defaultsKey) }
     }
+    /// Settings › Advanced: copied links lose their trackers (`BrowserViewModel+CleanLinks`).
+    var copiesCleanLinks = CleanLinksPreference.isEnabled(in: .standard) {
+        didSet { externalLinkDefaults.set(copiesCleanLinks, forKey: CleanLinksPreference.defaultsKey) }
+    }
     /// Settings › Max: which rule-based helpers are on (MaxFeatures.swift).
     var maxPreferences: MaxPreferences = .load(from: .standard) {
         didSet { if maxPreferences != oldValue { maxPreferences.save(to: externalLinkDefaults) } }
@@ -1761,8 +1765,7 @@ final class BrowserViewModel {
 
     func peekCopyLink() {
         guard let url = peekSession?.url else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        copyLink(url)
     }
 
     /// The open Peek's page, while there is one.
@@ -2215,9 +2218,7 @@ final class BrowserViewModel {
         guard let url = result.destinationURL else { return }
         switch action {
         case .copyURL:
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(url.absoluteString, forType: .string)
+            copyLink(url)
         case .deleteFromHistory:
             deleteFromHistory(url)
         }

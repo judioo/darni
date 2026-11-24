@@ -577,6 +577,37 @@ def merge_disabled_features(args):
     return rest + ([f"--disable-features={','.join(features)}"] if features else [])
 
 
+def ignored_test_switches(text):
+    """Test switches the engine says it dropped. A release engine keeps them only after the
+    host's ReArcEngineAllowTestSwitches; without it --host-resolver-rules is dropped and a host
+    reaches the real network (security review MERGE-4c70b536..ced5841e, M-2)."""
+    import re
+    # The engine logs never-allowed switches the same way (--remote-debugging-port, which some
+    # hosts pass and do without on a release engine); only the test set (ClassifyLaunchSwitch's
+    # kTest) means the host forgot to ask.
+    test_set = {"--load-extension", "--disable-extensions-except", "--host-resolver-rules",
+                "--ignore-certificate-errors-spki-list"}
+    return sorted(set(re.findall(r"ReArc engine: ignoring launch switch (\S+)", text)) & test_set)
+
+
+def drops_test_switches(out):
+    """True for an engine built with NDEBUG (is_debug=false): it drops the test switches,
+    --host-resolver-rules among them, unless the host calls ReArcEngineAllowTestSwitches."""
+    args = out / "args.gn"
+    text = args.read_text(errors="replace") if args.exists() else ""
+    import re
+    return not re.search(r"^\s*is_debug\s*=\s*true\b", text, re.M)
+
+
+def refuse_offline_unsafe_host(kind, source_text, out):
+    """Before anything starts: on such an engine a host that does not ask for the test switches
+    would run with the real network (security M-2), so it is refused, not run and audited."""
+    if drops_test_switches(out) and "ReArcEngineAllowTestSwitches" not in source_text:
+        raise SystemExit(f"{kind}: {out} is a release engine and c_abi_{kind}_host.mm does not call "
+                         f"ReArcEngineAllowTestSwitches, so --host-resolver-rules would be dropped and the host "
+                         f"could reach the outside network. Not run. Use a debug engine or add the call.")
+
+
 def outside_connects(path):
     """Non-loopback peers a net log shows traffic to (should be none): any TCP
     connect attempt, and UDP sockets that sent bytes. A bare UDP connect()
@@ -633,6 +664,7 @@ def main():
     try:
         for kind in (sys.argv[1:] or ("launch", "devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "history", "danger", "discard", "passwords", "context", "permissions", "files", "dialogs", "helpers", "find", "downloads", "webui", "migration", "shutdown", "shutdown_veto", "fast_quit", "core", "services", "urls", "eval", "scheme_return", "profiles", "containers", "identity", "zoom", "messages", "branding", "theme", "display_capture")):
             source = ENGINE / f"tests/c_abi_{kind}_host.mm"
+            refuse_offline_unsafe_host(kind, source.read_text(errors="replace"), OUT)
             subprocess.run([
                 "xcrun", "clang++", "-std=c++20", "-fobjc-arc", f"-I{BRIDGE}",
                 str(source), "-framework", "AppKit", "-framework", "QuartzCore", "-framework", "ImageIO", f"-F{OUT}", "-framework",
@@ -691,6 +723,7 @@ def main():
                     result = subprocess.run(merge_disabled_features([
                         "timeout", "-k", "5", "120" if kind in ("devtools", "client_certificates", "links", "interstitials", "auth", "save", "leak", "autofill", "extensions", "pip", "pip_embedded", "perf", "drops", "print", "fullscreen", "search", "helpers", "webui", "urls", "profiles", "migration", "dialogs", "files", "permissions", "context", "passwords", "display_capture") else "45", str(executable),
                         f"--user-data-dir={profile}", "--use-mock-keychain", f"--log-net-log={netlog}",
+                        "--enable-logging=stderr",  # so an ignored test switch shows in the log (below)
                         *NO_OUTSIDE_NETWORK,
                         *(["--process-per-site", *(["--disable-features=WebContentsDiscard"] if phase else [])] if kind == "discard" else []),
                         *(["--safebrowsing-manual-download-blacklist=" + hashlib.sha256(b"a" * 65536).hexdigest()] if kind == "danger" else []),
@@ -711,6 +744,9 @@ def main():
                            f"--apps-gallery-url=http://localhost:{server.server_port}/",
                            f"--apps-gallery-update-url=http://localhost:{server.server_port}/webstore/extension.crx"] if kind == "extensions" else []),
                     ]), stdout=output, stderr=subprocess.STDOUT, env=env)
+                ignored = ignored_test_switches(log.read_text(errors="replace"))
+                assert not ignored, (f"{kind}: the engine ignored test switch(es) {ignored}; the host must call "
+                                     f"ReArcEngineAllowTestSwitches, or it may reach the outside network; {log}")
                 assert result.returncode == 0, f"{kind}: rc={result.returncode}; {log}"
                 print(f"{kind} phase={phase} PASS ({log})", flush=True)
                 outside = audit_netlog(netlog, f"{kind}{suffix}")

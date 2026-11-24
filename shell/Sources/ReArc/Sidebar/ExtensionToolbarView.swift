@@ -108,7 +108,8 @@ private struct ExtensionsMenu: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 if let url {
-                    ShareLink(item: url) { squareLabel("Share", "square.and.arrow.up") }
+                    // Share's own Copy gives the link as Copy URL does: without trackers.
+                    ShareLink(item: model.linkForCopying(url).url) { squareLabel("Share", "square.and.arrow.up") }
                         .buttonStyle(.plain)
                 } else {
                     squareLabel("Share", "square.and.arrow.up").opacity(0.4)
