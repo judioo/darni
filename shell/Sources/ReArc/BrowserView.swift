@@ -626,6 +626,7 @@ struct BrowserView: View {
                         .id(tab.id)
                         .pageStatus(engine.activity) { engine.reload() }
                         .findBar(model.findBar, for: engine)
+                        .readerOverlay(model, tabID: tab.id, engine: engine)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let frontend = model.dockedDevTools(for: tab.id) {
@@ -634,6 +635,7 @@ struct BrowserView: View {
                         .id(tab.id)
                         .pageStatus(engine.activity) { engine.reload() }
                         .findBar(model.findBar, for: engine)
+                        .readerOverlay(model, tabID: tab.id, engine: engine)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -642,6 +644,7 @@ struct BrowserView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .pageStatus(engine.activity) { engine.reload() }
                     .findBar(model.findBar, for: engine)
+                    .readerOverlay(model, tabID: tab.id, engine: engine)
             }
     }
 }

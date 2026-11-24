@@ -161,6 +161,16 @@ enum ShellMenus {
         ]]
     }
 
+    /// View menu: Show Reader / Hide Reader, ⌥⌘R as in Firefox. No Arc
+    /// command and no other Darni item has that key (docs/SHORTCUTS.md).
+    static func reader(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
+        [[
+            ShellMenuItem("Show Reader", .character(BrowserViewModel.readerMenuKey), BrowserViewModel.readerMenuModifiers,
+                          liveTitle: { model.readerMenuTitle(in: model.store.keyWindowID) },
+                          isEnabled: { model.canToggleReader(in: model.store.keyWindowID) }) { model.toggleReader() },
+        ]]
+    }
+
     /// Edit menu: find in page (Chrome/Safari shortcuts). Esc and Return live in the bar.
     static func find(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
         [[
@@ -227,7 +237,7 @@ enum ShellMenus {
     /// The View menu's page groups on both engines: the page navigation,
     /// then Arc's split view items (Arc has them in View, not in a tab menu).
     static func viewPageAndSplit(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
-        navigation(model) + split(model)
+        navigation(model) + reader(model) + split(model)
     }
 
     /// File menu: print the key page (⌘P, as every browser) and Export as PDF… (Safari's name).
