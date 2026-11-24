@@ -13,13 +13,18 @@
 # No app is launched, no window opens and no input is posted, so it needs no screen token.
 # It builds, so mind the Mac's load (not during a performance slot).
 #
-# Usage: scripts/check-webkit.sh [--report DIR] [--full] [--label TEXT] [--scratch-path DIR]
+# Usage: scripts/check-webkit.sh [--report DIR] [--full] [--record REV] [--label TEXT] [--scratch-path DIR]
 #   --report DIR        where the report and logs go (default dist/webkit-check)
 #   --full              run the whole `swift test` suite, not only the WebKit engine tests
+#   --record REV        for a release: also keep its record in docs/releases/<build>/engine-parity
+#                       (REPORT.md, report.json, a NOTES.md to fill in, the document as it stood)
+#                       and add its line to docs/releases/ENGINE-PARITY-HISTORY.md. REV is the
+#                       release's commit, with its RELEASES.md entry; shell/Sources here must be
+#                       that commit's. Commit the folder afterwards. A failed pass is recorded too.
 #   --label TEXT        the build's name in the report (default: the commit's version)
 #   --scratch-path DIR  SwiftPM's build directory (default: the package's own .build)
 # Exit status: 0 pass; 1 the build or a test failed; 2 the index, the document or a test's
-# row ID is wrong.
+# row ID is wrong; 64 a wrong option, or --record on sources that are not the release's.
 set -euo pipefail
 
 SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,14 +32,16 @@ REPO="$(cd "$SHELL_DIR/.." && pwd)"
 REPORT="$SHELL_DIR/dist/webkit-check"
 FULL=0
 LABEL=""
+RECORD=""
 SCRATCH=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --report) REPORT="${2:?--report needs a directory}"; shift ;;
     --full) FULL=1 ;;
+    --record) RECORD="${2:?--record needs a release commit}"; shift ;;
     --label) LABEL="${2:?--label needs text}"; shift ;;
     --scratch-path) SCRATCH=(--scratch-path "${2:?--scratch-path needs a directory}"); shift ;;
-    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "check-webkit: unknown option: $1" >&2; exit 64 ;;
   esac
   shift
@@ -46,6 +53,24 @@ REPORTER=(python3 -I "$SHELL_DIR/scripts/release/webkit-parity-report.py"
 
 echo "==> index, document and tests"
 "${REPORTER[@]}" --check || exit 2
+
+RECORD_FLAGS=()
+if [[ -n $RECORD ]]; then
+  if ! stamp="$(python3 -I "$SHELL_DIR/scripts/release/version.py" release --repo "$REPO" --revision "$RECORD" 2>&1)"; then
+    echo "check-webkit: $RECORD is not a release commit: $stamp" >&2
+    exit 64
+  fi
+  read -r release_version release_build <<<"$stamp"
+  release_commit="$(git -C "$REPO" rev-parse --short=8 "$RECORD^{commit}")"
+  if ! git -C "$REPO" diff --quiet "$RECORD" -- shell/Sources; then
+    echo "check-webkit: shell/Sources here is not $release_commit's, so this would not be Darni $release_version's pass." >&2
+    echo "check-webkit: check the release out (its tests and scripts may be newer), then record." >&2
+    exit 64
+  fi
+  release_date="${release_version:0:4}-${release_version:5:2}-${release_version:7:2}"
+  RECORD_FLAGS=(--record-release "$release_version" --releases "$REPO/docs/releases" --commit "$release_commit" --date "$release_date")
+  if [[ -z $LABEL ]]; then LABEL="Darni $release_version (main $release_commit), WebKit shell"; fi
+fi
 
 if [[ -z $LABEL ]]; then
   LABEL="Darni (WebKit shell)"
@@ -98,7 +123,8 @@ fi
 flags=()
 if [[ $build_failed == 1 ]]; then flags+=(--build-failed); fi
 report_status=0
-"${REPORTER[@]}" --log "$TEST_LOG" --out "$REPORT" --label "$LABEL" ${flags[@]+"${flags[@]}"} || report_status=$?
+"${REPORTER[@]}" --log "$TEST_LOG" --out "$REPORT" --label "$LABEL" ${flags[@]+"${flags[@]}"} \
+  ${RECORD_FLAGS[@]+"${RECORD_FLAGS[@]}"} || report_status=$?
 echo "==> $((SECONDS - start))s"
 
 if [[ $report_status != 0 ]]; then exit "$report_status"; fi

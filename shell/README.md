@@ -55,7 +55,11 @@ loopback server, with no window) and writes a parity report for the build, every
 its verdict on each engine and whether a WebKit test covers it. `--full` runs the whole
 `swift test` suite. It launches no app and needs no screen. What each feature does on each
 engine, with evidence, is in [docs/ENGINE-PARITY.md](../docs/ENGINE-PARITY.md); its index is
-`docs/engine-parity.json`, and the check fails when the two disagree.
+`docs/engine-parity.json`, and the check fails when the two disagree. For a release,
+`scripts/check-webkit.sh --full --record <release commit>` also keeps the pass where people can
+read it later: `docs/releases/<build>/engine-parity/` (the report, notes written by hand and
+the document as it stood) and a line in `docs/releases/ENGINE-PARITY-HISTORY.md`
+([docs/releases/README.md](../docs/releases/README.md)).
 
 ### Build and run with Chromium
 
