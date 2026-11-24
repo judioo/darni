@@ -253,14 +253,32 @@ final class ReleaseLaunchSecurityTests: XCTestCase {
                 let arguments = ChromiumLaunchArguments.engineArguments(argv, defaultUserDataDir: { "/data" }, keychain: .system,
                                                                        isRelease: isRelease, isShipped: isShipped)
                 let mode = "release \(isRelease), shipped \(isShipped), argv \(argv)"
-                XCTAssertEqual(Array(arguments.suffix(2)), [feature, disabled], mode)
+                XCTAssertEqual(Array(arguments.suffix(3)), [ChromiumLaunchArguments.enabledBlinkFeatures, feature, disabled], mode)
                 XCTAssertEqual(arguments.last { $0.hasPrefix("--disable-features=") }, disabled, "Chromium keeps the last one; \(mode)")
-                XCTAssertEqual(Array(arguments.dropLast(2)), ChromiumLaunchArguments.browserArguments(
+                XCTAssertEqual(Array(arguments.dropLast(3)), ChromiumLaunchArguments.browserArguments(
                     argv, defaultUserDataDir: { "/data" }, keychain: .system, isRelease: isRelease, isShipped: isShipped))
             }
         }
         XCTAssertEqual(Array(ChromiumLaunchArguments.engineArguments(["ReArc"], defaultUserDataDir: { "/d" }, keychain: .devMock,
                                                                      isRelease: false).suffix(2)), [feature, disabled])
+    }
+
+    /// Chromium 156 lets a page call `getDisplayMedia` with no click or key press, so a page could
+    /// put the sharing sheet up unasked. Every launch turns on Blink's rule that it needs one (the
+    /// self-test's screen-sharing step checks the engine refuses such a request), after anything
+    /// argv carried, since Chromium keeps the last `--enable-blink-features`.
+    func testAPageCanAskToShareTheScreenOnlyAfterAClick() throws {
+        XCTAssertEqual(ChromiumLaunchArguments.enabledBlinkFeatures, "--enable-blink-features=GetDisplayMediaRequiresUserActivation")
+        for (isRelease, isShipped) in [(false, false), (true, false), (true, true)] {
+            let launch = ChromiumLaunchArguments.engineArguments(["ReArc", "--enable-blink-features=Other"], defaultUserDataDir: { "/data" },
+                                                                 keychain: .system, isRelease: isRelease, isShipped: isShipped)
+            for arguments in [launch, ChromiumLaunchArguments.benchArguments(launch), ChromiumLaunchArguments.selfTestArguments(launch)] {
+                let last = try XCTUnwrap(arguments.last { $0.hasPrefix("--enable-blink-features=") })
+                XCTAssertTrue(last.split(separator: "=", maxSplits: 1)[1].split(separator: ",").contains("GetDisplayMediaRequiresUserActivation"),
+                              "release \(isRelease), shipped \(isShipped): \(last)")
+                XCTAssertFalse(arguments.contains { $0.hasPrefix("--disable-blink-features=") && $0.contains("GetDisplayMediaRequiresUserActivation") })
+            }
+        }
     }
 
     /// The testing config turns on `PreemptiveSodaDownload`: a new profile then fetches the speech
