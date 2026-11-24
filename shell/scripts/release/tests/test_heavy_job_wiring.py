@@ -169,6 +169,9 @@ class ReleaseTests(Wiring):
         stub(self.scripts / "release" / "check-rename.sh", "rename-gate")
         stub(self.scripts / "sign-release.sh", "sign")
         stub(self.scripts / "check-launch.sh", "launch-check", '[[ -z ${STUB_LAUNCH_FAILS:-} ]] || exit 1\n')
+        # The keychain access group gate of the bundle as it ships (python3 -I, so a Python stub).
+        (self.scripts / "release" / "check-keychain-groups.py").write_text(
+            "import sys\nsys.argv[1:] = ['keychain-groups-' + sys.argv[1]]\n" + FAKE_PERF.replace("import os, sys\n", "import os\n"))
         blocklists = self.scripts / "blocklists" / "build-blocklists.py"
         blocklists.parent.mkdir()
         blocklists.write_text('print("packed")\n')
@@ -196,6 +199,7 @@ class ReleaseTests(Wiring):
         self.assertEqual(self.seen_by("selftest"), [held])
         self.assertEqual(self.seen_by("sign"), [held, free], "the bundle the checks run on, then the one that ships")
         self.assertEqual(self.seen_by("rename-gate"), [held, free])
+        self.assertEqual(self.seen_by("keychain-groups-gate"), [free], "once, on the bundle that ships")
         self.assertFalse(self.lock.exists())
 
     def test_a_failed_check_frees_the_lock(self):

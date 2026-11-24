@@ -44,8 +44,10 @@
 #   REARC_PROVISIONING_PROFILE  development profile (.provisionprofile) for the bundle id,
 #                               with the container, CloudKit and this Mac.
 #   REARC_ICLOUD_ENVIRONMENT    Development (default) or Production CloudKit environment.
-#   REARC_WEBAUTHN_KEYCHAIN_GROUP=1  also sign in the keychain group for "this Mac" passkeys,
-#                               when the profile allows it. Off by default (icloud-signing.sh).
+#   REARC_WEBAUTHN_KEYCHAIN_GROUP=1  also sign in the keychain group for "this Mac" passkeys;
+#                               the profile must allow it. Off by default (icloud-signing.sh).
+#                               Such a bundle shares the group with the installed Darni: never
+#                               start it on a copy of a real profile, and delete what it makes.
 #
 # Built-in blocklists (docs/FEATURE-SPECS/CONTENT-BLOCKING.md, section 4):
 #   REARC_BLOCKLISTS_BUNDLE     a signed bundle to put in the app instead of the committed
@@ -77,7 +79,7 @@ while [[ $# -gt 0 ]]; do
     --selftest) SELFTEST=1 ;;
     --dev-mock-keychain) DEV_MOCK_KEYCHAIN=1 ;;
     --launch-check) LAUNCH_CHECK=1 ;;
-    -h|--help) sed -n '2,53p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 64 ;;
   esac
   shift

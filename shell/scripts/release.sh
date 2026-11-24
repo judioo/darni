@@ -28,6 +28,10 @@
 #   --previous-app PATH  the app of the release now on the feed (ReArc.app up to build 1053,
 #                     Darni.app after); a DMG needs it for the upgrade check
 #                     (scripts/release/check-upgrade.sh). Also REARC_PREVIOUS_RELEASE_APP.
+#                     It must be the release people have: a shipped bundle whose signature
+#                     verifies and, with --appcast, the newest build of that directory's
+#                     signed feed, which is compared with the live feed when that can be
+#                     reached (scripts/release/check-previous-release.py).
 #   --allow-no-upgrade-check  make a DMG without the upgrade check (recorded as an override)
 #   --allow-no-safe-browsing  make a DMG from an engine without a real Google API key, and
 #                     skip the live list-download check (Safe Browsing may not work; warns
@@ -36,7 +40,8 @@
 #   --qa              keep the verification mode in the bundle, for test launches on a throwaway
 #                     REARC_DATA_DIR (a shipped bundle refuses them); never distributed, so no
 #                     --dmg, --appcast or --notarize
-# Signing settings: see sign-release.sh (REARC_RELEASE_IDENTITY, REARC_TEAM_ID, iCloud).
+# Signing settings: see sign-release.sh (REARC_RELEASE_IDENTITY, REARC_TEAM_ID, iCloud, and the
+# keychain access group of "this Mac" passkeys, which no release may lose once it has shipped).
 set -euo pipefail
 
 SHELL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -80,7 +85,7 @@ while [[ $# -gt 0 ]]; do
     --blocklists) mkdir -p "$2"; BLOCKLISTS_COPY="$(cd "$2" && pwd)"; shift ;;
     --selftest-timeout) SELFTEST_TIMEOUT="$2"; shift ;;
     --qa) QA=1 ;;
-    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
   shift
@@ -137,6 +142,33 @@ fi
 source "$SHELL_DIR/scripts/release/signing-env.sh"
 load_signing_env "$SHELL_DIR"
 [[ -n "$(release_identity)" ]] || die "no signing identity (REARC_RELEASE_IDENTITY or REARC_SIGN_IDENTITY)"
+
+if [[ $DMG == 1 ]]; then
+  # The record of shipped keychain access groups at HEAD is well formed and append-only in
+  # git: no line of an earlier version is gone, changed or moved (security review PK-01).
+  KEYCHAIN_RECORD_PATH=shell/scripts/release/shipped-keychain-groups.txt
+  KEYCHAIN_RECORD="$(mktemp "${TMPDIR:-/tmp}/rearc-keychain-record.XXXXXX")"
+  git -C "$REPO" show "HEAD:$KEYCHAIN_RECORD_PATH" >"$KEYCHAIN_RECORD" \
+    || { rm -f "$KEYCHAIN_RECORD"; die "HEAD has no $KEYCHAIN_RECORD_PATH"; }
+  python3 -I "$SHELL_DIR/scripts/release/check-keychain-groups.py" record "$KEYCHAIN_RECORD" \
+    --repo "$REPO" --path "$KEYCHAIN_RECORD_PATH" \
+    || { rm -f "$KEYCHAIN_RECORD"; die "the record of shipped keychain access groups was edited; it is append-only"; }
+  rm -f "$KEYCHAIN_RECORD"
+  # The previous release is the one people have, checked before anything is built and before
+  # this run adds its own item to the feed.
+  if [[ $ALLOW_NO_UPGRADE_CHECK == 0 ]]; then
+    [[ -n $PREVIOUS_APP && -d $PREVIOUS_APP ]] \
+      || die "a DMG needs --previous-app PATH (the app of the release now on the feed, ReArc.app or Darni.app) for the upgrade check, or --allow-no-upgrade-check for a build that is not distributed"
+    previous_check=(python3 -I "$SHELL_DIR/scripts/release/check-previous-release.py" "$PREVIOUS_APP")
+    [[ -z ${REARC_TEAM_ID:-} ]] || previous_check+=(--team "$REARC_TEAM_ID")
+    if [[ -n $APPCAST && -f $APPCAST/appcast.xml ]]; then
+      previous_check+=(--feed "$APPCAST/appcast.xml")
+    elif [[ -n $APPCAST ]]; then
+      echo "==> NOTE: $APPCAST has no appcast.xml yet, so --previous-app is not compared with a feed" >&2
+    fi
+    "${previous_check[@]}" || die "--previous-app is not the release people have"
+  fi
+fi
 
 # 1. Source: the committed shell/ at HEAD, so uncommitted work never ships. The stage keeps
 #    unchanged files' timestamps (rsync --checksum), so the release build stays incremental.
@@ -351,6 +383,26 @@ elif [[ $VERIFICATION_BUNDLE == 1 ]]; then
 fi
 if [[ $QA == 0 ]] && plutil -extract ReArcReleaseVerification raw "$PLIST" >/dev/null 2>&1; then
   die "the bundle still has ReArcReleaseVerification; it must never ship"
+fi
+
+# 5e. The keychain access groups of the bundle as it ships (security review PK-01). The gates
+#     above ran on the verification bundle, which is signed without any group on purpose (a
+#     test copy must never reach a real passkey), so this is the first look at what people
+#     get: every group the record names and every group the previous release was shipped
+#     with, on the app only. sign-release.sh has already checked the record and the profile;
+#     this adds the previous release, read as it was shipped. Not skipped by
+#     --allow-no-upgrade-check when a previous app is given.
+if [[ $QA == 0 ]]; then
+  if [[ -n $PREVIOUS_APP && -d $PREVIOUS_APP ]]; then
+    "$SHELL_DIR/scripts/release/check-upgrade.sh" --keychain-groups "$APP" "$PREVIOUS_APP" 2>&1 \
+      | tee "$DIST/check-keychain-groups.log" \
+      || die "the shipped bundle would lose a keychain access group (log $DIST/check-keychain-groups.log)"
+  else
+    python3 -I "$SHELL_DIR/scripts/release/check-keychain-groups.py" gate "$APP" \
+      --record "$SHELL_DIR/scripts/release/shipped-keychain-groups.txt" --build "$BUILD_NUMBER" 2>&1 \
+      | tee "$DIST/check-keychain-groups.log" \
+      || die "the shipped bundle's keychain access groups are not those that have shipped (log $DIST/check-keychain-groups.log)"
+  fi
 fi
 
 # The rename gate again, on the bundle as it ships (signed, with its iCloud container).
