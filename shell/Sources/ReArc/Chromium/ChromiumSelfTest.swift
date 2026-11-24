@@ -2001,6 +2001,9 @@ final class ChromiumSelfTest {
     /// step checks that they are offered and never opens that picker.
     @MainActor
     private func screenShareChecks(model: BrowserViewModel, store: SidebarStore, window: NSWindow, base: String) async throws {
+        if !ChromiumScreenShareChannel.isEnabled {
+            return try await screenShareOffChecks(model: model, store: store, window: window, base: base)
+        }
         guard ChromiumScreenShareChannel.calls != nil else {
             let missing = ChromiumScreenShareCalls.missingSymbols
             return log("ABI-GAP display_capture not advertised\(missing.isEmpty ? "" : " (missing \(missing.joined(separator: ", ")))"): "
@@ -2176,6 +2179,42 @@ final class ChromiumSelfTest {
             + "\(Int(PagePromptCenter.screenShareInputDelay * 1000)) ms; other tab with sound -> \(live), \(shownFrames) frame(s), bars on both tabs, "
             + "Stop Sharing -> ended; own tab -> \(ownLive), page stop clears the bar; navigation withdraws the sheet; "
             + "last outcome \(ChromiumScreenShareChannel.lastOutcome)")
+    }
+
+    /// Screen sharing switched off (`ChromiumScreenShareChannel.isEnabled`): the shell installs no
+    /// display-capture callback, so a page that asks right after a click is refused by the engine
+    /// at once with NotSupportedError, as in 1255, and nothing of Darni's sharing UI appears.
+    @MainActor private func screenShareOffChecks(model: BrowserViewModel, store: SidebarStore, window: NSWindow, base: String) async throws {
+        try check(ChromiumScreenShareChannel.calls == nil, "screen sharing is off but the channel is registered")
+        let previous = store.selectedTab?.id
+        let shareURL = URL(string: "\(base)/share")!
+        let tab = store.addTab(kind: .today, title: "Share", url: shareURL)
+        _ = model.engineHost.engine(for: tab, profileID: model.profileID(for: tab))
+        let engine = try shellEngine(model, tab)
+        model.selectTab(tab.id)
+        engine.load(shareURL)
+        try await wait("share fixture", timeout: 20) { engine.pageTitle == "share-ready" && !engine.isLoading && engine.attachmentID != nil }
+        func state() async -> String { ((try? await engine.evaluate("window.shareState", in: .page)) as? String) ?? "" }
+        let prompts = engine.pagePrompts
+        let events = ChromiumScreenShareChannel.events
+        _ = await bringToFront(window, for: "screen sharing (off)")
+        let button = try await cssCenter(of: "#go", in: engine)
+        var outcome = "idle"
+        for _ in 0 ..< 3 {
+            focus(window)
+            click(window, engine: engine, at: button)
+            if await eventuallyAsync(timeout: 5, { await state().hasPrefix("error:") }) { outcome = await state(); break }
+            outcome = await state()
+        }
+        try check(outcome == "error:NotSupportedError" && prompts.screenShare == nil && !prompts.screenShareSheetShown
+                      && ChromiumScreenShareChannel.events == events && !engine.mediaCapture.isCapturingDisplay
+                      && prompts.sharingLine == nil && model.screenShares.isEmpty,
+                  "screen sharing off: a clicked request -> \(outcome), sheet \(prompts.screenShare != nil), "
+                      + "\(ChromiumScreenShareChannel.events - events) event(s)")
+        model.closeTab(tab.id)
+        try await wait("the sharing tab closed") { store.tab(withID: tab.id) == nil }
+        if let previous { model.selectTab(previous) }
+        log("PASS screen sharing off: a clicked request -> \(outcome) at once; no sheet, no bar, no event reached the shell")
     }
 
     // MARK: Passkey requests from a tab that is not shown (ABI 1.68, security review PK-10)
