@@ -14,6 +14,8 @@ struct PeekOverlayView: View {
     let layout: PeekLayout
     let bounds: CGRect
     let accent: Color
+    /// The window's toast while this Peek shows (`BrowserViewModel.peekToast`), drawn on the card.
+    var toast: ShellToast? = nil
     @Environment(\.themeChrome) private var chrome
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var grown = false
@@ -48,6 +50,9 @@ struct PeekOverlayView: View {
             }
 
             card(surface: surface)
+                .shellToast(grown || fullscreen ? toast : nil,
+                            toolbarHeight: fullscreen ? 0 : PeekLayout.addressLineHeight,
+                            openSettings: { model.showSettings($0) }, undo: { model.runToastUndo() })
                 .frame(width: max(0, rect.width), height: max(0, rect.height))
                 .position(x: rect.midX, y: rect.midY)
 

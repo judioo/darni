@@ -134,7 +134,7 @@ public struct ReaderSanitiser {
         case .br, .hr:
             break
         case .img:
-            guard let image = image(attributes, state: state) else { return [] }
+            guard let image = image(attributes, shown: element["cs"] as? String, state: state) else { return [] }
             result = image
         case .a:
             let inner = children(at: depth + 1)
@@ -169,8 +169,12 @@ public struct ReaderSanitiser {
         return [.node(.element(result))]
     }
 
-    private func image(_ attributes: [String: Any], state: State) -> ReaderElement? {
+    /// `shown` is the URL the page showed for this image (its `currentSrc`,
+    /// which a `<picture>`'s `<source>` may have chosen): the first candidate,
+    /// checked as every other one is. `<source>` itself is never written out.
+    private func image(_ attributes: [String: Any], shown: String?, state: State) -> ReaderElement? {
         var candidates: [String] = []
+        if let shown { candidates.append(shown) }
         if let src = attributes["src"] as? String { candidates.append(src) }
         // srcset is never written out. Its URLs are only further candidates,
         // each checked as `src` is.

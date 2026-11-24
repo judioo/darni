@@ -12,6 +12,13 @@ enum SelfTestReaderFixture {
     static let hostilePath = "/reader/hostile"
     static let beaconPath = "/reader/beacon"
     static let picturePath = "/reader/picture.png"
+    /// An article whose photo is a <picture>: the page shows `pictureShownPath`
+    /// (its second <source>; the first is for windows 100000 px wide); the other source and the
+    /// <img>'s own src are never loaded.
+    static let pictureArticlePath = "/reader/picture-article"
+    static let pictureShownPath = "/reader/picture-shown.png"
+    static let pictureUnusedSourcePath = "/reader/picture-unused-source.png"
+    static let pictureFallbackPath = "/reader/picture-fallback.png"
 
     static let articleTitle = "The Keeper of Skerry Light"
     static let articleByline = "Marit Halvorsen"
@@ -49,7 +56,8 @@ enum SelfTestReaderFixture {
         case articlePath: return (Data(articleHTML.utf8), "text/html; charset=utf-8")
         case plainPath: return (Data(plainHTML.utf8), "text/html; charset=utf-8")
         case hostilePath: return (Data(hostileHTML.utf8), "text/html; charset=utf-8")
-        case picturePath: return (picturePNG, "image/png")
+        case pictureArticlePath: return (Data(pictureArticleHTML.utf8), "text/html; charset=utf-8")
+        case picturePath, pictureShownPath, pictureUnusedSourcePath, pictureFallbackPath: return (picturePNG, "image/png")
         default: return nil
         }
     }
@@ -86,6 +94,21 @@ enum SelfTestReaderFixture {
     <p>\(paragraphs[3])</p>
     <table><thead><tr><th>Year</th><th>Nights of fog</th></tr></thead><tbody><tr><td>1931</td><td>42</td></tr></tbody></table>
     <pre><code>wind: W light\nvisibility: good</code></pre>
+    <p>\(paragraphs[4])</p>
+    </article><footer><p>Copyright The Coastal Review.</p></footer></body></html>
+    """
+
+    static let pictureArticleHTML = """
+    <!doctype html><html lang="en"><head><meta charset="utf-8"><title>\(articleTitle) | \(articleSite)</title>
+    <meta property="og:site_name" content="\(articleSite)"><meta name="author" content="\(articleByline)">
+    <meta property="og:title" content="\(articleTitle)"></head>
+    <body><nav><a href="/a">Home</a> <a href="/search">Search</a></nav>
+    <article><h1>\(articleTitle)</h1>
+    <p>\(paragraphs[0])</p>
+    <figure><picture><source media="(min-width: 100000px)" srcset="\(pictureUnusedSourcePath) 1x"><source srcset="\(pictureShownPath) 1x, \(pictureShownPath)?density=2 2x, \(pictureShownPath)?density=3 3x"><img src="\(pictureFallbackPath)" width="16" height="16" alt="The lamp room"></picture><figcaption>The lamp room in winter.</figcaption></figure>
+    <p>\(paragraphs[1])</p>
+    <p>\(paragraphs[2])</p>
+    <p>\(paragraphs[3])</p>
     <p>\(paragraphs[4])</p>
     </article><footer><p>Copyright The Coastal Review.</p></footer></body></html>
     """
