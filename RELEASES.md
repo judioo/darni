@@ -24,7 +24,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1124.1321 — 2026-11-24
+## Darni 2026.1124.1323 — 2026-11-24
 
 **New**
 - Sites can share your screen. When a site such as Google Meet asks to share, Darni shows a sheet
