@@ -107,7 +107,7 @@ if [[ -n $RC_TARGET ]]; then
   [[ ! -f $DATA/thresholds.json ]] || RC+=(--thresholds "$DATA/thresholds.json")
   HEAVY="$SHELL_DIR/scripts/heavy-job.sh"
   if [[ -x $HEAVY ]]; then
-    "$HEAVY" "rc-speedometer $BUILD" -- bash -c 'cd "$1" && shift && exec python3 -m darni_perf "$@"' _ "$PERF" "${RC[@]}"
+    "$HEAVY" "rc-speedometer-$BUILD" -- bash -c 'cd "$1" && shift && exec python3 -m darni_perf "$@"' _ "$PERF" "${RC[@]}"
   else
     echo "perf-check: no scripts/heavy-job.sh yet: running without the machine-wide lock" >&2
     py "${RC[@]}"
