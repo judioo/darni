@@ -3027,6 +3027,50 @@ Tests: `engine/tests/check_abi170_imports.py` (layouts, three functions, one cal
 adoption); the shell's `ScreenShareTests` and `ScreenShareShellTests`; self-test step "screen
 sharing" (`ChromiumSelfTest.screenShareChecks`).
 
+### A tab nobody looks at (bridge 0.82.0)
+
+Feature `display_capture_hidden_tab`, patch `tab/102-display-capture-hidden-tab`. No signature or
+struct changes; the minor stays 1.70.
+
+**What failed.** In the release self-test of 2026.1124.1323 a share of another tab was reported
+(`capturing_display` true) and ended ten seconds later; the page's `getDisplayMedia()` never
+resolved. The tab had never been attached. A bridge tab gets its size from the host's first
+attachment, so that tab's view was 0 x 0 and its compositor drew nothing; Chromium reports a tab
+capture as started with its first frame, and the asking renderer gives up after ten seconds
+(`VideoCaptureImpl::kCaptureStartTimeout`).
+
+**A size.** When the host answers with a tab that has no size, the engine gives it the asking
+tab's size (`WebContents::Resize`) before the share starts. The host's first attachment sizes the
+view again, as for any tab. The page sees one resize, as it does when it is first shown.
+
+**The page stays hidden.** Chromium's capture of a tab counts as a visible capturer: the page of a
+tab in the background is told it is visible (`document.visibilityState`, `visibilitychange`) when
+the share starts, and hidden again when it ends. A bridge tab's capture is a hidden capturer
+instead (`WebContents::IncrementCapturerCount` with `stay_hidden`, chosen by the new
+`WebContentsDelegate::KeepsPageHiddenWhileCaptured`, which the bridge's delegate answers with
+true). The page is painted for the share (`PageVisibilityState::kHiddenButPainting`) and its
+scripts read `hidden`, with no event, from before the share to after it. The tab itself is never
+marked visible (`WebContents::GetVisibility` is unchanged). A tab that is on screen is visible
+because it is on screen, shared or not.
+
+**For the host.** Nothing to call. A host should offer screen sharing only with this feature:
+without it a share of a tab it never attached fails after ten seconds, and a shared tab in the
+background is told it is visible. The shell installs its display-capture callback only with it
+(`ChromiumCapabilities.screenSharingHiddenTabs`), so an older engine refuses every request at
+once, as before 1.70.
+
+**What a shared page can still tell.** Its size, if it had none. Its device scale factor may rise
+while it is shared (Chromium's `WebContentsAutoScaler`, unchanged). Neither says whether anybody
+looks at the tab.
+
+Tests: `engine/tests/c_abi_display_capture_host.mm` (`run_c_abi.py display_capture`; it shows a
+small window and sends no input): a tab never attached and a tab shown and then detached, each
+with and without sound, and the asking tab itself; every share must be live with frames, and the
+shared page's `document.hidden` and its count of `visibilitychange` events must not change from
+before the share to after it. `REARC_CAPTURE_REPORT=1` prints what an engine without the patch
+does. The shell's `ScreenShareShellTests` (the capability) and the self-test step "screen sharing"
+(a tab never shown, and the same tab once it was shown).
+
 ## Blocked hosts (ABI 1.69, bridge 0.79.0)
 
 Patch `tab/098-blocked-hosts`, features `content_blocking_hosts` (this section) and
