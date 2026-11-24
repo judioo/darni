@@ -182,8 +182,12 @@ final class PasskeysAndSiteAccessShellTests: XCTestCase {
 
         prompts.presentPasskey(id: 7, step: step(#"{"step":"qr","qr":"FIDO:/123"}"#)) { answers.append($0); return true }
         XCTAssertEqual(prompts.passkey?.step.kind, .qr)
-        // macOS shows its own prompt: the request stays, the sheet goes.
+        // macOS shows its own prompt: the request stays, and the sheet waits for it.
         prompts.presentPasskey(id: 7, step: step(#"{"step":"system"}"#)) { answers.append($0); return true }
+        XCTAssertTrue(prompts.passkeySheetShown && prompts.permissionCovered)
+        XCTAssertTrue(prompts.hasPendingPrompt)
+        // Nothing to show: the sheet goes, the request stays.
+        prompts.presentPasskey(id: 7, step: step(#"{"step":"hidden"}"#)) { answers.append($0); return true }
         XCTAssertFalse(prompts.passkeySheetShown)
         XCTAssertTrue(prompts.hasPendingPrompt)
 
@@ -191,6 +195,18 @@ final class PasskeysAndSiteAccessShellTests: XCTestCase {
         XCTAssertNil(prompts.passkey)
         XCTAssertEqual(answers, [.chooseMechanism(0)], "the end of a request needs no reply")
         XCTAssertEqual(prompts.answered["passkey"], 1)
+    }
+
+    /// While macOS shows its own prompt, the waiting sheet's Cancel ends the request
+    /// (the engine takes Cancel at every step), and no other answer is sent.
+    func testTheWaitingSheetOverTheMacOSPromptOnlyCancels() {
+        let prompts = PagePromptCenter()
+        var answers: [PasskeyAction] = []
+        prompts.presentPasskey(id: 9, step: step(#"{"step":"system","rp_id":"example.com"}"#)) { answers.append($0); return true }
+        XCTAssertTrue(prompts.passkeySheetShown)
+        prompts.answerPasskey(.cancel)
+        XCTAssertNil(prompts.passkey)
+        XCTAssertEqual(answers, [.cancel])
     }
 
     func testCancelClosesTheSheetAtOnceAndTheEndThatFollowsIsIgnored() {

@@ -128,8 +128,18 @@ final class PasskeyPromptTests: XCTestCase {
     }
 
     func testStepsWithoutASheetAndStepsThisShellDoesNotKnow() throws {
-        XCTAssertEqual(PasskeyStep(json: #"{"step":"system"}"#)?.showsSheet, false, "macOS shows its own prompt")
         XCTAssertEqual(PasskeyStep(json: #"{"step":"hidden"}"#)?.showsSheet, false)
+        // macOS shows its own prompt: the sheet stays and waits, so the page does not look idle.
+        let system = try XCTUnwrap(PasskeyStep(json: #"{"step":"system","request":"create","rp_id":"webauthn.io"}"#))
+        XCTAssertTrue(system.showsSheet && system.showsProgress)
+        XCTAssertEqual(system.requestLine, "Create a passkey for webauthn.io", "it names the site, as every step does (PK-03)")
+        XCTAssertEqual(system.title, "Continue in the macOS prompt")
+        XCTAssertEqual(system.waitingLine, "Waiting for macOS…")
+        XCTAssertFalse(system.message.isEmpty)
+        XCTAssertNil(system.primary, "only Cancel")
+        XCTAssertFalse(system.offersAnotherWay)
+        XCTAssertEqual(system.dismissTitle, "Cancel")
+        XCTAssertEqual(PasskeyStep(json: #"{"step":"security_key"}"#)?.waitingLine, "Waiting for your device…")
         let later = try XCTUnwrap(PasskeyStep(json: #"{"step":"a_later_step","can_choose_another":true}"#))
         XCTAssertEqual(later.kind, .unsupported)
         XCTAssertTrue(later.showsSheet && later.offersAnotherWay)

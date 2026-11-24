@@ -278,7 +278,7 @@ final class PagePromptCenter {
     /// The screen sharing sheet is drawn (not while the macOS picker has the request).
     var screenShareSheetShown: Bool { screenShare != nil && !screenShareAwaitsOutcome }
 
-    /// The passkey sheet is drawn (not while macOS shows its own prompt for the request).
+    /// The passkey sheet is drawn (also, waiting, while macOS shows its own prompt for the request).
     var passkeySheetShown: Bool { passkey?.step.showsSheet == true }
 
     /// The page is asking the user something (a permission, automatic downloads included, a

@@ -141,7 +141,7 @@ struct PasskeySheet: View {
         if step.showsProgress || prompts.passkeyAwaitsStep {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text(isLocked ? "Working…" : "Waiting for your device…")
+                Text(isLocked ? "Working…" : step.waitingLine)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
