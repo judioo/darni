@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --release) CONFIG=release ;;
     --open) OPEN=1 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 64 ;;
   esac
   shift

@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     --no-commit) COMMIT=0 ;;
     --no-guards) GUARDS=0 ;;
     --gate-only) GATE_ONLY="$2"; shift ;;
-    -h|--help) sed -n '2,47p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,44p' "$0"; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
