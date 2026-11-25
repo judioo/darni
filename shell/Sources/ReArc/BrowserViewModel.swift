@@ -1804,9 +1804,17 @@ final class BrowserViewModel {
         openLittleArc(url: url, profileID: originProfile)
     }
 
+    /// The page the Peek shows now (it may have followed a link since it opened).
     func peekCopyLink() {
-        guard let url = peekSession?.url else { return }
-        copyLink(url)
+        guard let session = peekSession else { return }
+        copyLink(peekEngine?.currentURL ?? session.url)
+    }
+
+    /// The Peek over the key browser window, when one shows there: ⇧⌘C and the
+    /// other Copy commands copy its page, which is the page in front.
+    var keyWindowPeek: (session: PeekSession, engine: (any WebEngine)?)? {
+        guard keyLittleArcID == nil, let session = peekSession, showsPeek(in: store.keyWindowID) else { return nil }
+        return (session, peekEngine)
     }
 
     /// The open Peek's page, while there is one.

@@ -142,6 +142,12 @@ extension BrowserViewModel {
     /// Shift+Cmd+C (plain), Option+Shift+Cmd+C (Markdown) and Copy as Quote.
     /// Quote reads the page's selection first; it falls back to the link.
     func copyURL(of tabID: Tab.ID? = nil, format: PageLinkCopyFormat) {
+        // A Peek over the key window is the page in front: its link, not the tab's under it.
+        if tabID == nil, let peek = keyWindowPeek {
+            let (url, cleaned) = linkForCopying(peek.engine?.currentURL ?? peek.session.url)
+            return copyPageLink(url: url, cleaned: cleaned, title: peek.engine?.pageTitle ?? peek.session.title,
+                                engine: peek.engine, format: format)
+        }
         // A selection's links, one per line; a quote needs one page's text.
         if tabID == nil, format != .quote, let ids = keySelectionIDs { return copyLinks(of: ids, format: format) }
         guard let id = tabID ?? store.selectedTabID, let tab = store.tab(withID: id) else { return }
@@ -149,6 +155,11 @@ extension BrowserViewModel {
         // Arc copies the link "without any trackers".
         let (url, cleaned) = linkForCopying(engine?.currentURL ?? tab.url)
         let title = tab.customTitle ?? engine?.pageTitle ?? tab.title
+        copyPageLink(url: url, cleaned: cleaned, title: title, engine: engine, format: format)
+    }
+
+    /// Writes one page's link in `format`; a quote reads the page's selection first.
+    private func copyPageLink(url: URL, cleaned: Bool, title: String, engine: (any WebEngine)?, format: PageLinkCopyFormat) {
         guard format == .quote, let reader = engine as? PageSelectionReading else {
             writeToPasteboard(format.text(url: url, title: title), toast: format, cleaned: cleaned, url: url)
             return

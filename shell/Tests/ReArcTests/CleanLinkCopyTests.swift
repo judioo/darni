@@ -150,6 +150,62 @@ final class CleanLinkCopyTests: XCTestCase {
         XCTAssertEqual(model.toast?.message, cleanToast)
     }
 
+    /// The owner's report (2026-11-25): with a Peek open, ⇧⌘C copied the tab under
+    /// it. The copy commands take the page in front: the Peek's.
+    func testTheCopyCommandsTakeThePeeksPageNotTheTabUnderIt() {
+        let model = makeModel()
+        let window = SidebarWindowID()
+        model.store.registerWindow(window)
+        model.windowBecameKey(window)
+        let tab = model.store.addTab(kind: .today, title: "Compare", url: URL(string: "https://darni.test/compare")!)
+        model.store.selectTab(tab.id)
+        model.peekSession = BrowserViewModel.PeekSession(url: tracked, title: "Item", engineID: UUID(),
+                                                         profileID: model.store.activeProfileID, windowID: window)
+        model.copyURL(format: .plain)
+        XCTAssertEqual(copied(model), clean, "the Peek's page, cleaned")
+        model.copyURL(format: .markdown)
+        XCTAssertEqual(copied(model), "[Item](\(clean))")
+
+        // The Peek closed: the tab's own link again.
+        model.peekSession = nil
+        model.copyURL(format: .plain)
+        XCTAssertEqual(copied(model), "https://darni.test/compare")
+        // A Peek shown in another window does not take the key window's copy.
+        let other = SidebarWindowID()
+        model.store.registerWindow(other)
+        model.peekSession = BrowserViewModel.PeekSession(url: tracked, title: "Item", engineID: UUID(),
+                                                         profileID: model.store.activeProfileID, windowID: other)
+        model.copyURL(format: .plain)
+        XCTAssertEqual(copied(model), "https://darni.test/compare")
+    }
+
+    /// A Peek that followed a link copies where it is now, not where it opened.
+    @MainActor func testAPeekThatFollowedALinkCopiesWhereItIsNow() async throws {
+        let server = try WebKitFixtureServer()
+        server.route("/first", .page(title: "First"))
+        server.route("/second", .page(title: "Second"))
+        let model = makeModel()
+        let window = SidebarWindowID()
+        model.store.registerWindow(window)
+        model.windowBecameKey(window)
+        let profile = model.store.activeProfileID
+        let (id, engine) = model.engineHost.ephemeralEngine(profileID: profile)
+        model.peekSession = BrowserViewModel.PeekSession(url: server.url("/first"), title: "First", engineID: id,
+                                                         profileID: profile, windowID: window)
+        let followed = URL(string: server.url("/second").absoluteString + "?utm_source=peek&page=2")!
+        engine.load(followed)
+        let deadline = Date().addingTimeInterval(10)
+        while engine.currentURL?.path != "/second" && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(engine.currentURL?.path, "/second", "the Peek's page followed the link")
+        let expected = server.url("/second").absoluteString + "?page=2"
+        model.peekCopyLink()
+        XCTAssertEqual(copied(model), expected)
+        model.linkPasteboard.clearContents()
+        model.copyURL(format: .plain)
+        XCTAssertEqual(copied(model), expected)
+        server.stop()
+    }
+
     /// Peek › Copy Link's toast is drawn on the Peek's card, not on the
     /// window's card under the Peek (where it was dimmed and mostly hidden).
     func testAPeeksCopyLinkToastsOnThePeekNotUnderIt() {
