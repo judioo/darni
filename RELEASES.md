@@ -24,6 +24,18 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1125.1431 — 2026-11-25
+
+**Fixed**
+- With a Peek open, Copy URL (⇧⌘C), Copy as Markdown and Copy as Quote copied the tab underneath.
+  They now copy the page the Peek shows, also after you follow a link inside it.
+- The reader keeps your place when you change its font or text size.
+- While the reader is open, the toolbar takes the reader's colour (light, sepia or dark) instead
+  of the page's.
+- When you save a passkey on this Mac, Darni's sheet stays up and says "Waiting for macOS…" while
+  macOS asks for Touch ID or your password, so the page no longer looks idle.
+- Closing the welcome screen while its music played could crash Darni. It no longer can.
+
 ## Darni 2026.1125.1377 — 2026-11-25
 
 **New**
