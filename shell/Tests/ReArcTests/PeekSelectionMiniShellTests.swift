@@ -135,9 +135,10 @@ final class PeekSelectionMiniShellTests: XCTestCase {
         XCTAssertNotNil(f.model.store.multiSelection(in: f.window))
     }
 
-    /// While a Peek is open the selection is set aside: ⇧⌘C, ⌘C and ⌘W
-    /// act as they do without one (the shown tab), and on the selection
-    /// again once the Peek has closed.
+    /// While a Peek is open the selection is set aside: ⌘C and ⌘W act as
+    /// they do without one, ⇧⌘C copies the page in front (the Peek's, owner
+    /// report 2026-11-25), and all act on the selection again once the Peek
+    /// has closed.
     func testTheSelectionsKeysWaitBehindAPeek() {
         let f = makeFixture()
         select(f)
@@ -150,7 +151,7 @@ final class PeekSelectionMiniShellTests: XCTestCase {
         XCTAssertFalse(keys.onCopy())
         XCTAssertEqual(f.model.closeTabMenuTitle, "Archive Tab", "⌘W names one tab")
         f.model.copyURL()
-        XCTAssertEqual(f.model.linkPasteboard.string(forType: .string), f.google[0].url.absoluteString, "⇧⌘C copies the shown tab")
+        XCTAssertEqual(f.model.linkPasteboard.string(forType: .string), link.absoluteString, "⇧⌘C copies the Peek's page, the page in front")
         XCTAssertNotNil(f.model.store.multiSelection(in: f.window), "and the selection is still drawn")
 
         f.model.dismissPeek(animated: false)
