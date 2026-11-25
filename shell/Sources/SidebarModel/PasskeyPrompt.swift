@@ -37,7 +37,7 @@ public struct PasskeyStep: Equatable, Sendable {
         case pin(PinMode)
         case touchAgain, fingerprintEnroll, verifyAgain
         case account, createThisMac
-        /// macOS shows its own prompt (Touch ID); the shell shows nothing.
+        /// macOS shows its own prompt (Touch ID); the sheet stays and says it waits for it.
         case system
         case hidden
         case failure(Failure)
@@ -325,9 +325,12 @@ public struct PasskeyStep: Equatable, Sendable {
 
     // MARK: What the sheet shows
 
-    /// The shell shows a sheet for this step. Not for the system's own
-    /// prompt, nor while the engine has nothing to show.
-    public var showsSheet: Bool { kind != .system && kind != .hidden }
+    /// The shell shows a sheet for this step: not while the engine has
+    /// nothing to show. While macOS shows its own prompt the sheet stays,
+    /// waiting, so the page does not look idle behind the prompt
+    /// (NIGHT-1125 point 9); it names the site as every step does (PK-03),
+    /// and Cancel there ends the request as the engine allows at every step.
+    public var showsSheet: Bool { kind != .hidden }
 
     /// The site as the sheet names it: the relying party, else the asking page's host.
     public var site: String {
@@ -369,7 +372,8 @@ public struct PasskeyStep: Equatable, Sendable {
         case .verifyAgain: return "Try your fingerprint again"
         case .account: return "Choose an account"
         case .createThisMac: return "Save a passkey on this Mac?"
-        case .system, .hidden: return ""
+        case .system: return "Continue in the macOS prompt"
+        case .hidden: return ""
         case .unsupported: return "This way to sign in is not available in Darni"
         case .failure(let failure):
             switch failure {
@@ -390,7 +394,8 @@ public struct PasskeyStep: Equatable, Sendable {
 
     public var message: String {
         switch kind {
-        case .choose, .confirm, .account, .system, .hidden, .touchAgain: return ""
+        case .choose, .confirm, .account, .hidden, .touchAgain: return ""
+        case .system: return "macOS asks for Touch ID or your Mac password in a window of its own."
         case .securityKey: return "Plug it into this Mac if it is not already, then touch its button or sensor."
         case .qr:
             let scan = "Scan this code with the camera of the device. Keep the device near this Mac with Bluetooth on."
@@ -491,8 +496,8 @@ public struct PasskeyStep: Equatable, Sendable {
         case .bluetoothOff, .bluetoothDenied: return SiteAccessType.bluetoothSymbol
         case .privateNotice: return "eyeglasses"
         case .pin: return "lock.fill"
-        case .fingerprintEnroll, .verifyAgain, .createThisMac: return "touchid"
-        case .system, .hidden: return "person.badge.key.fill"
+        case .fingerprintEnroll, .verifyAgain, .createThisMac, .system: return "touchid"
+        case .hidden: return "person.badge.key.fill"
         case .phoneError, .failure, .unsupported: return "exclamationmark.triangle.fill"
         }
     }
@@ -547,7 +552,12 @@ public struct PasskeyStep: Equatable, Sendable {
 
     /// A step that waits for the person at a device, with a spinner.
     public var showsProgress: Bool {
-        isBusy || kind == .phoneConnecting || kind == .securityKey || kind == .touchAgain
+        isBusy || kind == .phoneConnecting || kind == .securityKey || kind == .touchAgain || kind == .system
+    }
+
+    /// The words beside the spinner while the sheet waits for the person.
+    public var waitingLine: String {
+        kind == .system ? "Waiting for macOS…" : "Waiting for your device…"
     }
 }
 

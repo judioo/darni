@@ -63,33 +63,59 @@ final class ReaderCenter {
     }
 
     /// Asks the page once per address. A page still building itself when it
-    /// finished loading is asked a second time a moment later.
+    /// finished loading is asked a second time a moment later. A page too busy
+    /// to answer in time (a heavy long read just after loading) is not taken
+    /// for "not an article": it is asked again with a longer wait, and if it
+    /// never answers its address stays unknown, so the next look asks again.
     @MainActor
     func detect(tabID: UUID, url: URL, engine: any ReaderScriptEvaluating,
                 retryAfter delay: Duration = .seconds(2)) async {
         guard ReaderURLPolicy.isReadable(url), availability(for: tabID, url: url) == .unknown else { return }
         answers[tabID] = (url, .checking)
-        var found = await looksLikeArticle(engine)
-        if !found, !Task.isCancelled, delay > .zero {
+        var answer = await probe(engine, timeoutMS: ReaderScripts.detectionTimeoutMS)
+        var asked = 1
+        // A "no" is asked once more; a page that did not answer, up to twice more.
+        while answer != .article, !Task.isCancelled, delay > .zero,
+              asked < (answer == .noAnswer ? ReaderScripts.detectionMaxAsks : 2) {
             try? await Task.sleep(for: delay)
-            if !Task.isCancelled, answers[tabID]?.url == url { found = await looksLikeArticle(engine) }
+            guard !Task.isCancelled, answers[tabID]?.url == url else { break }
+            answer = await probe(engine, timeoutMS: ReaderScripts.detectionRetryTimeoutMS)
+            asked += 1
         }
         // The tab moved on while the page was asked: the answer is for a page no longer shown.
         guard answers[tabID]?.url == url else { return }
-        answers[tabID] = Task.isCancelled && !found ? nil : (url, found ? .article : .notArticle)
+        switch answer {
+        case .article: answers[tabID] = (url, .article)
+        case .notArticle: answers[tabID] = Task.isCancelled ? nil : (url, .notArticle)
+        case .noAnswer: answers[tabID] = nil
+        }
+    }
+
+    enum DetectionAnswer: Equatable {
+        case article, notArticle
+        /// The script failed or timed out: the page said nothing either way.
+        case noAnswer
     }
 
     @MainActor
-    private func looksLikeArticle(_ engine: any ReaderScriptEvaluating) async -> Bool {
-        guard let source = try? ReaderScripts.detection(),
-              let json = try? await engine.evaluateReaderScript(source, timeoutMS: ReaderScripts.detectionTimeoutMS) else { return false }
-        return ReaderExtraction.looksLikeArticle(json: json)
+    private func probe(_ engine: any ReaderScriptEvaluating, timeoutMS: UInt32) async -> DetectionAnswer {
+        guard let source = try? ReaderScripts.detection() else { return .notArticle }
+        guard let json = try? await engine.evaluateReaderScript(source, timeoutMS: timeoutMS) else { return .noAnswer }
+        return ReaderExtraction.looksLikeArticle(json: json) ? .article : .notArticle
     }
 
     // MARK: Open and close
 
     func session(for tabID: UUID) -> Session? { sessions[tabID] }
     func isShowing(_ tabID: UUID) -> Bool { sessions[tabID] != nil }
+
+    /// The toolbar's colour over a page: the reader theme's while a reader
+    /// shows there, else the page's own (NIGHT-1125 bug 6: the strip kept the
+    /// site's colour above the reader).
+    func toolbarTint(forPage id: UUID?, pageColor: PageColor?, isDark: Bool) -> PageColor? {
+        guard let id, isShowing(id) else { return pageColor }
+        return appearance.backgroundColor(isDark: isDark)
+    }
 
     /// Extracts the page's article and opens its reader. `url` is the address
     /// the engine reports, never one the page's script gave. `onLink` gets a

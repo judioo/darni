@@ -24,7 +24,9 @@ for (const name of ["chromium", "fixtures", "profile", "out"]) {
   if (!args[name]) { console.error(`missing --${name}`); process.exit(2); }
 }
 const fixture = (name) => readFileSync(join(args.fixtures, name));
-const pages = { "/reader/article": "article.html", "/reader/plain": "plain.html", "/reader/hostile": "hostile.html" };
+const pages = { "/reader/article": "article.html", "/reader/plain": "plain.html", "/reader/hostile": "hostile.html",
+                "/reader/picture-article": "picture-article.html" };
+const pictureRequests = {};
 const beacons = {};
 let failures = 0;
 function check(ok, what) {
@@ -41,7 +43,10 @@ const server = createServer((request, response) => {
     response.writeHead(200, { "Content-Type": "image/gif", "Cache-Control": "no-store" });
     return response.end(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
   }
-  if (url.pathname === "/reader/picture.png") {
+  if (url.pathname.startsWith("/reader/picture-") && url.pathname.endsWith(".png")) {
+    pictureRequests[url.pathname] = (pictureRequests[url.pathname] ?? 0) + 1;
+  }
+  if (url.pathname === "/reader/picture.png" || (url.pathname.startsWith("/reader/picture-") && url.pathname.endsWith(".png"))) {
     response.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
     return response.end(fixture("picture.png"));
   }
@@ -155,6 +160,22 @@ try {
   await sleep(1200);
   check(JSON.stringify(beacons) === settled, "extraction made the page ask for nothing (the copy of the document loads and runs nothing)");
   writeFileSync(join(args.out, "hostile.json"), JSON.stringify({ url: base + "/reader/hostile", answer: hostileText }));
+  // A <picture>: the page shows its second <source>; the first and the <img>'s own src are never loaded.
+  await load("/reader/picture-article");
+  const pictureText = await isolated(extraction);
+  const pictured = JSON.parse(pictureText);
+  const shownImages = [];
+  const findImages = (node) => {
+    if (node && typeof node === "object") { if (node.t === "img") shownImages.push(node); (node.c ?? []).forEach(findImages); }
+  };
+  findImages(pictured.content);
+  check(pictured.ok === true && shownImages.length === 1 && typeof shownImages[0].cs === "string"
+        && shownImages[0].cs.startsWith(base + "/reader/picture-shown.png") && pictured.loaded.includes(shownImages[0].cs),
+        `the <picture>'s image carries the URL the page showed: ${JSON.stringify(shownImages)} loaded ${JSON.stringify(pictured.loaded)}`);
+  check(!pictureRequests["/reader/picture-unused-source.png"] && !pictureRequests["/reader/picture-fallback.png"],
+        `the page asked for no other source: ${JSON.stringify(pictureRequests)}`);
+  writeFileSync(join(args.out, "picture.json"), JSON.stringify({ url: base + "/reader/picture-article", answer: pictureText }));
+
   socket.close();
   exitCode = failures === 0 ? 0 : 1;
 } catch (error) {

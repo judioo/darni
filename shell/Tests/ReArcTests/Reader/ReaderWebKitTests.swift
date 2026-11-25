@@ -40,7 +40,9 @@ final class ReaderWebKitTests: XCTestCase {
 
     private func routeFixture(on server: WebKitFixtureServer) {
         for path in [SelfTestReaderFixture.articlePath, SelfTestReaderFixture.plainPath, SelfTestReaderFixture.hostilePath,
-                     SelfTestReaderFixture.picturePath, SelfTestReaderFixture.beaconPath] {
+                     SelfTestReaderFixture.picturePath, SelfTestReaderFixture.beaconPath, SelfTestReaderFixture.pictureArticlePath,
+                     SelfTestReaderFixture.pictureShownPath, SelfTestReaderFixture.pictureUnusedSourcePath,
+                     SelfTestReaderFixture.pictureFallbackPath] {
             server.route(path) { request in
                 let full = request.query.isEmpty ? request.path : request.path + "?" + request.query
                 guard let found = SelfTestReaderFixture.response(forPathAndQuery: full) else { return .init(status: 404) }
@@ -195,6 +197,35 @@ final class ReaderWebKitTests: XCTestCase {
         let request = try XCTUnwrap(server.requests(for: SelfTestReaderFixture.picturePath).last)
         XCTAssertNil(request.headers["cookie"])
         XCTAssertNil(request.headers["referer"])
+    }
+
+    /// NPR, the Guardian, Hakai: the photo is a <picture>, and the page shows
+    /// a <source>'s URL, not the <img>'s own src. The reader shows the URL the
+    /// page showed (its currentSrc), and nothing the page did not load.
+    func testAPicturesSourceThePageShowedIsShownAndNoOtherSourceIsTaken() async throws {
+        let center = ReaderCenter(defaults: defaults)
+        let engine = try await engine(showing: SelfTestReaderFixture.pictureArticlePath)
+        try await wait("the page's picture (asked for: \(server.requests.map { $0.path + "?" + $0.query }))") {
+            self.server.requests(for: SelfTestReaderFixture.pictureShownPath).count == 1
+        }
+        let shownText = try await engine.webView.evaluateJavaScript("document.querySelector('picture img').currentSrc") as? String
+        let shown = try XCTUnwrap(shownText)
+        XCTAssertTrue(shown.contains(SelfTestReaderFixture.pictureShownPath), shown)
+        let session = try await center.open(tabID: tabID, url: server.url(SelfTestReaderFixture.pictureArticlePath), engine: engine,
+                                            images: .loadedByPage) { _, _ in }
+        XCTAssertEqual(session.article.imagesShown, 1)
+        XCTAssertEqual(session.article.imagesWithheld, 0)
+        let body = ReaderHTML.fragment(for: session.article.body)
+        XCTAssertTrue(body.contains("<img src=\"\(shown)\" alt=\"The lamp room\""), body)
+        for forbidden in ["srcset", "<source", "<picture", SelfTestReaderFixture.pictureUnusedSourcePath, SelfTestReaderFixture.pictureFallbackPath] {
+            XCTAssertFalse(body.contains(forbidden), "\(forbidden) in \(body)")
+        }
+        // The reader asks for the one URL the page showed, and nothing else.
+        try await wait("the reader's picture") { self.server.requests(for: SelfTestReaderFixture.pictureShownPath).count == 2 }
+        try await settle()
+        XCTAssertEqual(server.requests(for: SelfTestReaderFixture.pictureShownPath).count, 2)
+        XCTAssertEqual(server.requests(for: SelfTestReaderFixture.pictureUnusedSourcePath).count, 0)
+        XCTAssertEqual(server.requests(for: SelfTestReaderFixture.pictureFallbackPath).count, 0)
     }
 
     func testWithImagesOffTheReaderAsksTheNetworkForNothing() async throws {
@@ -472,6 +503,63 @@ final class ReaderWebKitTests: XCTestCase {
         XCTAssertEqual(reloads, 0, "the place in the article is kept")
         // The next reader starts with it, and so does the next launch.
         XCTAssertTrue(ReaderHTML.document(for: sampleArticle(), appearance: ReaderCenter(defaults: defaults).appearance).contains("data-theme=\"dark\""))
+    }
+
+    /// NIGHT-1125 bug 4: a new font or size kept the scroll offset, so the text
+    /// under the view's top moved away. Now the paragraph there stays there.
+    func testANewFontOrSizeKeepsTheReadingPlace() async throws {
+        let words = Array(repeating: "words that wrap across the column and reflow when the type changes", count: 6).joined(separator: " ")
+        let article = ReaderArticle(sourceURL: server.url(SelfTestReaderFixture.articlePath), title: "Long", siteName: "example",
+                                    body: (0..<60).map { .element(ReaderElement(.p, children: [.text("Paragraph \($0): \(words)")])) })
+        let center = ReaderCenter(defaults: defaults)
+        let session = center.show(article, tabID: tabID) { _, _ in }
+        session.page.webView.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        _ = try await contents(of: session.page)
+        _ = try await ReaderWebKitEvaluation.evaluate(
+            "document.querySelectorAll('article p')[30].scrollIntoView(); window.scrollBy(0, 8); 'ok'", in: session.page.webView)
+        let before = try await session.page.readingPlace()
+        XCTAssertTrue(before.topText.hasPrefix("Paragraph 30:"), "set up: \(before.topText)")
+        XCTAssertGreaterThan(before.scrollY, 0)
+
+        var last = before.scrollY
+        for next in [ReaderAppearance(font: .sans, size: 3, width: .medium, theme: .auto),
+                     ReaderAppearance(font: .sans, size: 6, width: .medium, theme: .auto),
+                     ReaderAppearance(font: .serif, size: 2, width: .narrow, theme: .sepia)] {
+            center.appearance = next
+            var place = try await session.page.readingPlace()
+            for _ in 0..<100 where place.scrollY == last {
+                try await Task.sleep(nanoseconds: 20_000_000)
+                place = try await session.page.readingPlace()
+            }
+            XCTAssertNotEqual(place.scrollY, last, "the text reflowed under \(next)")
+            last = place.scrollY
+            XCTAssertTrue(place.topText.hasPrefix("Paragraph 30:"), "under \(next) the top of the view shows: \(place.topText)")
+        }
+
+        // At the very top the title stays in view.
+        _ = try await ReaderWebKitEvaluation.evaluate("window.scrollTo(0, 0); 'ok'", in: session.page.webView)
+        center.appearance = ReaderAppearance(font: .serif, size: 7, width: .wide, theme: .light)
+        try await settle(0.3)
+        let top = try await session.page.readingPlace()
+        XCTAssertEqual(top.scrollY, 0)
+    }
+
+    /// NIGHT-1125 bug 6: with the reader open the toolbar keeps the reader theme's colour, not the page's.
+    func testTheToolbarTakesTheReadersColourWhileItIsOpen() async throws {
+        let center = ReaderCenter(defaults: defaults)
+        let teal = PageColor(red: 0, green: 0.45, blue: 0.5)
+        let other = UUID()
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: teal, isDark: false), teal, "no reader: the page's colour")
+        XCTAssertNil(center.toolbarTint(forPage: tabID, pageColor: nil, isDark: false))
+        _ = center.show(sampleArticle(), tabID: tabID) { _, _ in }
+        center.appearance = ReaderAppearance(font: .serif, size: 3, width: .medium, theme: .sepia)
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: teal, isDark: false), center.appearance.backgroundColor(isDark: false))
+        XCTAssertEqual(center.toolbarTint(forPage: other, pageColor: teal, isDark: false), teal, "another pane's page keeps its own")
+        center.appearance = ReaderAppearance(font: .serif, size: 3, width: .medium, theme: .auto)
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: nil, isDark: true), center.appearance.backgroundColor(isDark: true),
+                       "a page with no colour still gets the reader's")
+        center.close(tabID: tabID)
+        XCTAssertEqual(center.toolbarTint(forPage: tabID, pageColor: teal, isDark: false), teal, "closed: the page's colour again")
     }
 
     func testAClickedLinkIsHandedToTheShellAndTheReaderGoesNowhere() async throws {

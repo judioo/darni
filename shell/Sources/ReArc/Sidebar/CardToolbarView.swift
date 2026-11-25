@@ -26,7 +26,8 @@ struct CardToolbarView: View {
         let tab = model.selectedTab(in: window)
         let url = engine?.currentURL ?? tab?.url
         let site = SiteControlCenter.site(for: url)
-        let tint = matchesPageColor ? engine?.pageColor : nil
+        // Over an open reader, the reader theme's colour.
+        let tint = matchesPageColor ? model.reader.toolbarTint(forPage: tab?.id, pageColor: engine?.pageColor, isDark: chrome.isWindowDark) : nil
         let palette = CardToolbarInk(chrome: chrome, tint: tint)
         let ink = palette.ink, quietInk = palette.quiet
         let container = model.containerLabel(for: engine, tab: tab)

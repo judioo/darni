@@ -237,6 +237,26 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertFalse(appearance.canShrink)
     }
 
+    /// The toolbar's colour over a reader is the reader page's own `--bg`, theme by theme.
+    func testTheReadersToolbarColourIsItsPagesBackground() throws {
+        func hex(_ c: PageColor) -> String {
+            String(format: "#%02x%02x%02x", Int((c.red * 255).rounded()), Int((c.green * 255).rounded()), Int((c.blue * 255).rounded()))
+        }
+        func bg(_ selector: String) throws -> String {
+            let rule = try XCTUnwrap(ReaderHTML.stylesheet.components(separatedBy: "\n").first { $0.hasPrefix(selector) }, selector)
+            let start = try XCTUnwrap(rule.range(of: "--bg:"))
+            return String(rule[start.upperBound...].prefix(7))
+        }
+        func theme(_ t: ReaderAppearance.Theme) -> ReaderAppearance { ReaderAppearance(font: .serif, size: 3, width: .medium, theme: t) }
+        XCTAssertEqual(hex(theme(.light).backgroundColor(isDark: true)), try bg(":root{"))
+        XCTAssertEqual(hex(theme(.sepia).backgroundColor(isDark: true)), try bg("html[data-theme=\"sepia\"]"))
+        XCTAssertEqual(hex(theme(.dark).backgroundColor(isDark: false)), try bg("html[data-theme=\"dark\"]"))
+        XCTAssertEqual(theme(.auto).backgroundColor(isDark: false), theme(.light).backgroundColor(isDark: false))
+        XCTAssertEqual(theme(.auto).backgroundColor(isDark: true), theme(.dark).backgroundColor(isDark: true))
+        XCTAssertTrue(theme(.dark).backgroundColor(isDark: false).prefersLightInk, "light glyphs on the dark reader's strip")
+        XCTAssertFalse(theme(.sepia).backgroundColor(isDark: true).prefersLightInk)
+    }
+
     // MARK: The pinned Readability files
 
     func testTheVendoredFilesAreThePinnedOnes() throws {

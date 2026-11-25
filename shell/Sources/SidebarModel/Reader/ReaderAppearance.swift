@@ -60,6 +60,21 @@ public struct ReaderAppearance: Equatable, Sendable {
         ReaderAppearance(font: font, size: size + steps, width: width, theme: theme)
     }
 
+    /// The theme as drawn: `auto` follows the window's light or dark appearance.
+    public func resolvedTheme(isDark: Bool) -> Theme {
+        theme == .auto ? (isDark ? .dark : .light) : theme
+    }
+
+    /// The reader's page colour (`--bg` in `ReaderHTML.stylesheet`): what the
+    /// toolbar takes while the reader is open, in place of the page's colour.
+    public func backgroundColor(isDark: Bool) -> PageColor {
+        switch resolvedTheme(isDark: isDark) {
+        case .sepia: return PageColor(red: 0xF6 / 255, green: 0xEF / 255, blue: 0xE0 / 255)
+        case .dark: return PageColor(red: 0x1C / 255, green: 0x1C / 255, blue: 0x1E / 255)
+        default: return PageColor(red: 0xFB / 255, green: 0xFB / 255, blue: 0xF9 / 255)
+        }
+    }
+
     /// The attributes the stylesheet's selectors read on the page's root element.
     public var rootAttributes: [(name: String, value: String)] {
         [("data-font", font.rawValue), ("data-size", String(size)), ("data-width", width.rawValue), ("data-theme", theme.rawValue)]

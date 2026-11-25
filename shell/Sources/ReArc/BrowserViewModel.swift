@@ -780,6 +780,9 @@ final class BrowserViewModel {
     var unloadedTabIDs: Set<Tab.ID> = []
     /// Last time each tab was on screen, for the automatic unload.
     @ObservationIgnored var tabLastShown: [Tab.ID: Date] = [:]
+    /// Freeze requests this shell made, for tab sleep's file log lines.
+    @ObservationIgnored var tabFreezeJournal = TabFreezeJournal()
+    @ObservationIgnored var tabSleepLog = TabSleepLog.standard
     /// Unload inactive tabs after this long unseen (remembered).
     var tabUnloadThreshold: TabUnloadThreshold = .load(from: .standard) {
         didSet { tabUnloadThreshold.save(to: tabUnloadDefaults) }

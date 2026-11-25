@@ -61,18 +61,7 @@ public struct OnboardingResumeTicket: Codable, Equatable, Sendable {
     /// log is never followed through a symlink, and the line loses its control
     /// characters: parts of it come from the environment (RC-0.1.0-602 T-09).
     public static func log(_ line: String, to url: URL = logURL) {
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let clean = String(String.UnicodeScalarView(line.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : $0 }).prefix(1000))
-        let text = "\(ISO8601DateFormatter().string(from: Date())) pid \(ProcessInfo.processInfo.processIdentifier) \(clean)\n"
-        var info = stat()
-        if lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_size > 64_000 {
-            unlink(url.path)
-        }
-        let fd = open(url.path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { return }
-        defer { close(fd) }
-        guard fstat(fd, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, info.st_uid == getuid() else { return }
-        _ = Array(text.utf8).withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+        ShellFileLog.append(line, to: url)
     }
 
     /// Owner-only, so only the person (and what runs as them) can read or replace it.

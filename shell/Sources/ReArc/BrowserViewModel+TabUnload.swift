@@ -19,6 +19,9 @@ extension BrowserViewModel {
     /// screen or loading (the view detaches after the selection moves).
     static let discardRetryDelays: [TimeInterval] = [0.25, 0.75, 2]
 
+    /// How long after a freeze request the file log asks whether the page froze.
+    static let freezeObservationDelay: TimeInterval = 2
+
     /// The context-menu Unload Tab and the Unload command: the tab stays where it is.
     func unloadTab(_ id: Tab.ID) {
         guard let tab = store.tab(withID: id) else { return }
@@ -107,14 +110,37 @@ extension BrowserViewModel {
         for id in visibleTabIDs {
             tabLastShown[id] = date
             unloadedTabIDs.remove(id)
-            thawTab(id)
+            thawTab(id, reason: .shown)
         }
     }
 
-    /// Ends the tab's freeze request, if its engine holds one.
-    func thawTab(_ id: Tab.ID) {
-        guard let freezing = liveEngine(for: id) as? TabFreezing, freezing.isFreezeRequested else { return }
+    /// Ends the tab's freeze request, if its engine holds one. A request the
+    /// engine already ended (it thaws a page it shows) gets its log line too.
+    func thawTab(_ id: Tab.ID, reason: TabFreezeJournal.ThawReason) {
+        guard let freezing = liveEngine(for: id) as? TabFreezing else { return }
+        guard freezing.isFreezeRequested else {
+            tabSleepLog.write(tabFreezeJournal.thawed(id, reason: reason))
+            return
+        }
+        let frozenNow = freezing.isPageFrozen
         freezing.unfreeze()
+        tabSleepLog.write(tabFreezeJournal.thawed(id, reason: reason, frozenNow: frozenNow))
+    }
+
+    /// Tab sleep's file log: which requested tabs the engine reports frozen
+    /// now, and which requests it ended by itself (the tab used or unloaded).
+    func observeTabFreezes() {
+        for id in tabFreezeJournal.requested {
+            guard let freezing = liveEngine(for: id) as? TabFreezing else {
+                tabFreezeJournal.forget(id)
+                continue
+            }
+            if freezing.isFreezeRequested {
+                tabSleepLog.write(tabFreezeJournal.observed(id, frozen: freezing.isPageFrozen))
+            } else {
+                tabSleepLog.write(tabFreezeJournal.thawed(id, reason: .engine))
+            }
+        }
     }
 
     /// Whether the tab's engine holds a freeze request (its page is frozen, or about to be).
@@ -177,14 +203,22 @@ extension BrowserViewModel {
     @discardableResult
     func runAutoFreeze(now: Date = Date()) -> [Tab.ID] {
         noteVisibleTabsShown(at: now)
+        observeTabFreezes()
         let candidates = tabSleepCandidates(now: now)
         for id in TabUnloadPolicy.tabsToThaw(candidates, threshold: tabFreezeThreshold, now: now) {
-            thawTab(id)
+            thawTab(id, reason: .due)
         }
         var frozen: [Tab.ID] = []
         for id in TabUnloadPolicy.tabsToFreeze(candidates, threshold: tabFreezeThreshold, now: now) {
             guard let freezing = liveEngine(for: id) as? TabFreezing else { continue }
-            if freezing.freeze() == .requested { frozen.append(id) }
+            if freezing.freeze() == .requested {
+                frozen.append(id)
+                tabSleepLog.write(tabFreezeJournal.freezeRequested(id))
+            }
+        }
+        if !frozen.isEmpty {
+            // The renderer reports the freeze a moment later: a line for it then, not five minutes on.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.freezeObservationDelay) { [weak self] in self?.observeTabFreezes() }
         }
         return frozen
     }

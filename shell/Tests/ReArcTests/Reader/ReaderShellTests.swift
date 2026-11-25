@@ -229,12 +229,87 @@ final class ReaderShellTests: XCTestCase {
             item.identifier = NSUserInterfaceItemIdentifier(id)
             return item
         }
+        // WebKit's own menu (the keyboard's menu key) loses every item but Darni's two.
         let menu = NSMenu()
         for id in ["WKMenuItemIdentifierOpenLinkInNewWindow", "WKMenuItemIdentifierCopyLink", "WKMenuItemIdentifierCopy",
-                   "WKMenuItemIdentifierDownloadImage", "WKMenuItemIdentifierLookUp", "WKMenuItemIdentifierReload"] {
+                   "WKMenuItemIdentifierDownloadImage", "WKMenuItemIdentifierLookUp", "WKMenuItemIdentifierReload",
+                   "WKMenuItemIdentifierShareMenu", "WKMenuItemIdentifierSpeechMenu"] {
             menu.addItem(item(id))
         }
-        ReaderWKWebView.trim(menu)
-        XCTAssertEqual(menu.items.map { $0.identifier?.rawValue ?? "" }, ["WKMenuItemIdentifierCopy", "WKMenuItemIdentifierLookUp"])
+        let view = ReaderWKWebView(frame: .zero, configuration: ReaderPage.makeConfiguration())
+        ReaderWKWebView.fill(menu, target: view, selection: nil)
+        XCTAssertEqual(menu.items.map(\.title), ["Copy", "Look Up"])
+        XCTAssertEqual(menu.items.map(\.identifier), [ReaderWKWebView.copyIdentifier, ReaderWKWebView.lookUpIdentifier])
+        XCTAssertEqual(menu.items.map(\.action), [#selector(NSText.copy(_:)), #selector(ReaderWKWebView.lookUpSelection(_:))])
+        XCTAssertTrue(menu.items.allSatisfy { $0.target === view && $0.isEnabled })
+        XCTAssertFalse(menu.items.contains { $0.title.localizedCaseInsensitiveContains("link") })
+    }
+
+    func testTheReadersMenuHasNoSiriWritingToolsOrServicesItem() {
+        // Whatever was in the menu (AppKit's additions included) goes, and AppKit may add nothing more.
+        let menu = NSMenu()
+        for title in ["Ask Siri", "Writing Tools", "Services", "Search With Google", "Translate", "Copy"] {
+            menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+        }
+        let selection = ReaderWKWebView.Selection(text: "lamp", origin: CGPoint(x: 10, y: 20))
+        ReaderWKWebView.fill(menu, target: nil, selection: selection)
+        XCTAssertEqual(menu.items.map(\.title), ["Copy", "Look Up"])
+        XCTAssertTrue(menu.items.allSatisfy(\.isEnabled))
+        for word in ["Siri", "Writing", "Services", "Translate", "Search", "Share", "Speech"] {
+            XCTAssertFalse(menu.items.contains { $0.title.localizedCaseInsensitiveContains(word) || $0.hasSubmenu }, word)
+        }
+        XCTAssertFalse(menu.allowsContextMenuPlugIns)
+        XCTAssertFalse(menu.autoenablesItems)
+        if #available(macOS 15.2, *) { XCTAssertFalse(menu.automaticallyInsertsWritingToolsItems) }
+
+        // Nothing selected: the two items show, off.
+        ReaderWKWebView.fill(menu, target: nil, selection: ReaderWKWebView.Selection(text: "", origin: .zero))
+        XCTAssertEqual(menu.items.map(\.title), ["Copy", "Look Up"])
+        XCTAssertFalse(menu.items.contains(where: \.isEnabled))
+    }
+
+    // MARK: Is it an article? (a page too busy to answer)
+
+    /// Answers from a list, one per ask: a string is the script's answer, nil a timeout.
+    @MainActor
+    private final class ScriptedEvaluator: ReaderScriptEvaluating {
+        var answers: [String?]
+        private(set) var timeouts: [UInt32] = []
+        init(_ answers: [String?]) { self.answers = answers }
+        struct TimedOut: Error {}
+        func evaluateReaderScript(_ source: String, timeoutMS: UInt32) async throws -> String {
+            timeouts.append(timeoutMS)
+            guard !answers.isEmpty, let answer = answers.removeFirst() else { throw TimedOut() }
+            return answer
+        }
+    }
+
+    func testABusyPageThatTimesOutIsAskedAgainWithALongerWait() async {
+        let defaults = UserDefaults(suiteName: "darni-reader-detect-\(UUID().uuidString)")!
+        let center = ReaderCenter(defaults: defaults)
+        let url = URL(string: "https://news.example/long-read")!
+        let tab = UUID()
+        // The Guardian long read: the first ask timed out, the second said "article".
+        let busy = ScriptedEvaluator([nil, "{\"article\":true}"])
+        await center.detect(tabID: tab, url: url, engine: busy, retryAfter: .milliseconds(1))
+        XCTAssertEqual(center.availability(for: tab, url: url), .article)
+        XCTAssertEqual(busy.timeouts, [ReaderScripts.detectionTimeoutMS, ReaderScripts.detectionRetryTimeoutMS])
+
+        // Never answering: the address stays unknown, so the next look asks again.
+        let other = UUID()
+        let silent = ScriptedEvaluator([nil, nil, nil, nil])
+        await center.detect(tabID: other, url: url, engine: silent, retryAfter: .milliseconds(1))
+        XCTAssertEqual(silent.timeouts.count, ReaderScripts.detectionMaxAsks)
+        XCTAssertEqual(center.availability(for: other, url: url), .unknown)
+        let later = ScriptedEvaluator(["{\"article\":true}"])
+        await center.detect(tabID: other, url: url, engine: later, retryAfter: .milliseconds(1))
+        XCTAssertEqual(center.availability(for: other, url: url), .article)
+
+        // A plain "no" is asked once more (a page still building), then believed.
+        let third = UUID()
+        let plain = ScriptedEvaluator(["{\"article\":false}", "{\"article\":false}", "{\"article\":true}"])
+        await center.detect(tabID: third, url: url, engine: plain, retryAfter: .milliseconds(1))
+        XCTAssertEqual(plain.timeouts.count, 2)
+        XCTAssertEqual(center.availability(for: third, url: url), .notArticle)
     }
 }

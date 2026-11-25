@@ -84,7 +84,8 @@ struct BrowserView: View {
             if model.showsPeek(in: windowID), let session = model.peekSession {
                 GeometryReader { proxy in
                     PeekOverlayView(model: model, session: session, layout: peekLayout(windowSize: proxy.size),
-                                    bounds: CGRect(origin: .zero, size: proxy.size), accent: model.themeColor(in: windowID))
+                                    bounds: CGRect(origin: .zero, size: proxy.size), accent: model.themeColor(in: windowID),
+                                    toast: model.peekToast(in: windowID))
                 }
                 .ignoresSafeArea()
                 .id(session.engineID)
@@ -513,7 +514,7 @@ struct BrowserView: View {
         } toolbar: {
             CardToolbarView(model: model, trafficLightsClearance: cardToolbarTrafficLightsClearance)
         }
-        .shellToast(model.isKeyBrowserWindow(windowID) ? model.toast : nil,
+        .shellToast(model.cardToast(in: windowID),
                     toolbarHeight: showsCardToolbar ? CardToolbarView.height : 0,
                     openSettings: { model.showSettings($0) }, undo: { model.runToastUndo() }) { start in
             if start { model.startPendingExtensionReinstall() } else { model.postponePendingExtensionReinstall() }

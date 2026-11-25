@@ -17,6 +17,10 @@ enum ReaderScripts {
     /// no boost and not the boost editor's (`ChromiumScriptWorld.boost`).
     static let worldID = UUID(uuidString: "5EADE200-0D1E-4A11-9E0A-52EAD3B00001")!
     static let detectionTimeoutMS: UInt32 = 3000
+    /// A page that did not answer in time is asked again with this long.
+    static let detectionRetryTimeoutMS: UInt32 = 8000
+    /// The most times one address is asked when it does not answer.
+    static let detectionMaxAsks = 3
     static let extractionTimeoutMS: UInt32 = 12000
     /// Readability gives up on a document with more elements than this.
     static let maxElements = 40_000
@@ -99,6 +103,11 @@ enum ReaderScripts {
     var localName = getter(Element.prototype, "localName"), namespaceURI = getter(Element.prototype, "namespaceURI");
     var attributeNames = Element.prototype.getAttributeNames, attribute = Element.prototype.getAttribute;
     var budget = 60000;
+    // The copy's <img> elements the page had already shown, each with the URL
+    // the page itself showed (its `currentSrc`, chosen from a <picture>'s
+    // <source> or a srcset). Kept apart from the attributes ("cs", not "a"),
+    // so no attribute a page writes can stand in for it.
+    var currentSources = new Map();
     function walk(node, depth) {
       if (budget-- <= 0 || depth > 250) return null;
       var type = nodeType.call(node);
@@ -113,6 +122,8 @@ enum ReaderScripts {
         if (typeof value === "string" && value.length <= 8192) { a[String(names[i])] = value; count++; }
       }
       if (count) out.a = a;
+      var shown = currentSources.get(node);
+      if (typeof shown === "string" && shown.length <= 8192) out.cs = shown;
       var c = [];
       for (var child = firstChild.call(node); child; child = nextSibling.call(child)) {
         var walked = walk(child, depth + 1);
@@ -135,14 +146,20 @@ enum ReaderScripts {
         try {
           if (location.protocol !== "http:" && location.protocol !== "https:") return JSON.stringify({ok: false, reason: "scheme"});
           // The images the page itself has loaded: the only ones the reader may show.
-          var loaded = [], images = document.images;
+          // A copy keeps the document's tree order, so the copy's n-th <img> is the
+          // page's n-th: it is given the URL the page showed (`currentSources`).
+          var byTag = Document.prototype.getElementsByTagName;
+          var copy = document.cloneNode(true);
+          var loaded = [], images = byTag.call(document, "img"), copies = byTag.call(copy, "img");
+          var paired = copies.length === images.length;
           for (var i = 0; i < images.length && loaded.length < 2000; i++) {
             var image = images[i];
             if (image.complete && image.naturalWidth > 1 && image.naturalHeight > 1 && typeof image.currentSrc === "string" && image.currentSrc) {
               loaded.push(image.currentSrc);
+              if (paired) currentSources.set(copies[i], image.currentSrc);
             }
           }
-          var article = new Readability(document.cloneNode(true), {
+          var article = new Readability(copy, {
             maxElemsToParse: \(maxElements),
             serializer: function (element) { return element; }
           }).parse();

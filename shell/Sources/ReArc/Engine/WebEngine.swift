@@ -216,6 +216,12 @@ protocol TabFreezing: AnyObject {
     func freeze() -> FreezeOutcome
     /// Ends the request: the page runs again. Nothing is loaded.
     func unfreeze()
+    /// Whether the page's renderer reports it frozen; nil when the engine cannot say.
+    var isPageFrozen: Bool? { get }
+}
+
+extension TabFreezing {
+    var isPageFrozen: Bool? { nil }
 }
 
 /// Engines whose pages can ask for fullscreen through the shell window

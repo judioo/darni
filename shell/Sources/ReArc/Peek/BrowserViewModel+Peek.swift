@@ -9,6 +9,22 @@ extension BrowserViewModel {
         return session.windowID == nil ? isKeyBrowserWindow(window) : session.windowID == window
     }
 
+    /// Window `window`'s toast on its card, nil while a Peek shows there: the
+    /// card's toast would be drawn under the Peek, dimmed (`peekToast`).
+    func cardToast(in window: SidebarWindowID?) -> ShellToast? {
+        guard isKeyBrowserWindow(window), !showsPeek(in: window) else { return nil }
+        return toast
+    }
+
+    /// While a Peek shows in `window`, the window's toast is drawn on the
+    /// Peek's own card, centred under its address line (Peek › Copy Link's
+    /// "trackers removed"), as a Little Darni window draws its own.
+    func peekToast(in window: SidebarWindowID?) -> ShellToast? {
+        guard isKeyBrowserWindow(window), showsPeek(in: window), var shown = toast else { return nil }
+        shown.placement = .belowToolbar
+        return shown
+    }
+
     /// The sidebar width the Peek is centred beside in `window`: the mini
     /// column or the full width, and while ⇧⌘S moves the edge, the edge as
     /// drawn, so the card moves with it (`SidebarWidthMorph`).

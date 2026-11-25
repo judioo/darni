@@ -37,7 +37,7 @@ struct SplitPaneToolbarView: View, Equatable {
 
     var body: some View {
         // Each pane's row takes its own page's colour.
-        let tint = matchesPageColor ? engine.pageColor : nil
+        let tint = matchesPageColor ? model.reader.toolbarTint(forPage: tab.id, pageColor: engine.pageColor, isDark: chrome.isWindowDark) : nil
         let ink = CardToolbarInk(chrome: chrome, tint: tint)
         let url = engine.currentURL ?? tab.url
         let side = model.sidebarSide
