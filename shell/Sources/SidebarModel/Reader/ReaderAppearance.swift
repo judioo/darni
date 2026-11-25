@@ -65,14 +65,21 @@ public struct ReaderAppearance: Equatable, Sendable {
         theme == .auto ? (isDark ? .dark : .light) : theme
     }
 
+    /// Each drawn theme's page colour, as the stylesheet's `--bg` writes it
+    /// (`ReaderHTML.stylesheet`) and the toolbar takes it: one place for both.
+    public static func backgroundHex(_ theme: Theme) -> String {
+        switch theme {
+        case .sepia: return "#f6efe0"
+        case .dark: return "#1c1c1e"
+        case .light, .auto: return "#fbfbf9"
+        }
+    }
+
     /// The reader's page colour (`--bg` in `ReaderHTML.stylesheet`): what the
     /// toolbar takes while the reader is open, in place of the page's colour.
     public func backgroundColor(isDark: Bool) -> PageColor {
-        switch resolvedTheme(isDark: isDark) {
-        case .sepia: return PageColor(red: 0xF6 / 255, green: 0xEF / 255, blue: 0xE0 / 255)
-        case .dark: return PageColor(red: 0x1C / 255, green: 0x1C / 255, blue: 0x1E / 255)
-        default: return PageColor(red: 0xFB / 255, green: 0xFB / 255, blue: 0xF9 / 255)
-        }
+        let value = UInt32(Self.backgroundHex(resolvedTheme(isDark: isDark)).dropFirst(), radix: 16) ?? 0
+        return PageColor(red: Double(value >> 16 & 0xFF) / 255, green: Double(value >> 8 & 0xFF) / 255, blue: Double(value & 0xFF) / 255)
     }
 
     /// The attributes the stylesheet's selectors read on the page's root element.

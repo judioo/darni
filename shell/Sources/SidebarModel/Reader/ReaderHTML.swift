@@ -10,10 +10,10 @@ public enum ReaderHTML {
     /// root element, so changing it needs no new style text and the policy
     /// below can name this exact sheet by its hash.
     public static let stylesheet = """
-    :root{color-scheme:light;--bg:#fbfbf9;--fg:#1f1f1d;--muted:#6f6f6b;--rule:#e4e4df;--link:#2f5fd0;--wash:#f0f0eb}
-    html[data-theme="sepia"]{--bg:#f6efe0;--fg:#3d3226;--muted:#7d6f5d;--rule:#e2d6bf;--link:#8a4b12;--wash:#ede3cf}
-    html[data-theme="dark"]{color-scheme:dark;--bg:#1c1c1e;--fg:#e6e6e3;--muted:#98989d;--rule:#38383c;--link:#8ab4ff;--wash:#2a2a2d}
-    @media (prefers-color-scheme:dark){html[data-theme="auto"]{color-scheme:dark;--bg:#1c1c1e;--fg:#e6e6e3;--muted:#98989d;--rule:#38383c;--link:#8ab4ff;--wash:#2a2a2d}}
+    :root{color-scheme:light;--bg:\(ReaderAppearance.backgroundHex(.light));--fg:#1f1f1d;--muted:#6f6f6b;--rule:#e4e4df;--link:#2f5fd0;--wash:#f0f0eb}
+    html[data-theme="sepia"]{--bg:\(ReaderAppearance.backgroundHex(.sepia));--fg:#3d3226;--muted:#7d6f5d;--rule:#e2d6bf;--link:#8a4b12;--wash:#ede3cf}
+    html[data-theme="dark"]{color-scheme:dark;--bg:\(ReaderAppearance.backgroundHex(.dark));--fg:#e6e6e3;--muted:#98989d;--rule:#38383c;--link:#8ab4ff;--wash:#2a2a2d}
+    @media (prefers-color-scheme:dark){html[data-theme="auto"]{color-scheme:dark;--bg:\(ReaderAppearance.backgroundHex(.dark));--fg:#e6e6e3;--muted:#98989d;--rule:#38383c;--link:#8ab4ff;--wash:#2a2a2d}}
     html{background:var(--bg);color:var(--fg);-webkit-text-size-adjust:100%;font-size:18px}
     html[data-size="1"]{font-size:14px}html[data-size="2"]{font-size:16px}html[data-size="3"]{font-size:18px}
     html[data-size="4"]{font-size:20px}html[data-size="5"]{font-size:22px}html[data-size="6"]{font-size:25px}html[data-size="7"]{font-size:28px}
