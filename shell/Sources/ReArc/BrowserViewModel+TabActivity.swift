@@ -143,8 +143,8 @@ extension BrowserViewModel {
     /// Quote reads the page's selection first; it falls back to the link.
     func copyURL(of tabID: Tab.ID? = nil, format: PageLinkCopyFormat) {
         // A Peek over the key window is the page in front: its link, not the tab's under it.
-        if tabID == nil, let peek = keyWindowPeek {
-            let (url, cleaned) = linkForCopying(peek.engine?.currentURL ?? peek.session.url)
+        if tabID == nil, let peek = keyWindowPeek, let peekURL = peekPageURL {
+            let (url, cleaned) = linkForCopying(peekURL)
             return copyPageLink(url: url, cleaned: cleaned, title: peek.engine?.pageTitle ?? peek.session.title,
                                 engine: peek.engine, format: format)
         }
