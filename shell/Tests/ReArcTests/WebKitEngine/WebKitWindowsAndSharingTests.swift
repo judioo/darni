@@ -162,6 +162,198 @@ final class WebKitWindowsAndSharingTests: XCTestCase {
         XCTAssertNil(engine.pagePrompts.screenShare, "no Darni sheet is up")
     }
 
+    // MARK: - Clean link copy (f41e5de1)
+
+    // parity: links.clean-copy
+    func testCopyURLOfAWebKitPageCopiesItWithoutTrackers() async throws {
+        server.route("/a", .page(title: "page A"))
+        let b = try makeBrowser()
+        b.model.copiesCleanLinks = true
+        b.model.linkPasteboard = NSPasteboard(name: NSPasteboard.Name("rearc-webkit-clean-\(UUID().uuidString)"))
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let tracked = URL(string: server.url("/a").absoluteString + "?id=7&utm_source=news&fbclid=abc")!
+        let tab = b.store.addTab(kind: .today, title: "A", url: tracked, in: b.first)
+        b.store.selectTab(tab.id)
+        let engine = try webKitEngine(b.model, tab, profile: profile)
+        engine.load(tracked)
+        try await wait("page A") { engine.webView.title == "page A" && !engine.isLoading }
+        XCTAssertEqual(engine.currentURL, tracked, "the WebKit page is on the address with its trackers")
+
+        b.model.copyURL(of: tab.id, format: .plain)
+        XCTAssertEqual(b.model.linkPasteboard.string(forType: .string), server.url("/a").absoluteString + "?id=7",
+                       "Copy URL takes the WebKit page's address and drops its trackers")
+        b.model.copyLink(tracked)
+        XCTAssertEqual(b.model.linkPasteboard.string(forType: .string), server.url("/a").absoluteString + "?id=7",
+                       "a row's Copy Link drops them too")
+    }
+
+    // parity: links.clean-copy
+    func testWebKitsOwnCopyLinkInThePageMenuCopiesItClean() {
+        // WebKit's page menu as it builds it for a link; Darni rewrites some items in place.
+        func item(_ title: String, _ id: String) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.identifier = NSUserInterfaceItemIdentifier(id)
+            return item
+        }
+        let menu = NSMenu()
+        menu.addItem(item("Open Link in New Window", ReArcWebView.openLinkInNewWindow))
+        menu.addItem(item("Copy Link", "WKMenuItemIdentifierCopyLink"))
+        let params = PageContextMenuParams(linkURL: "https://a.test/x?utm_source=news")
+        ReArcWebView.customize(menu, params: params, options: PageContextMenuPlan.Options()) { entry in
+            let made = NSMenuItem(title: entry.title, action: nil, keyEquivalent: "")
+            made.identifier = NSUserInterfaceItemIdentifier("darni.\(entry.title)")
+            return made
+        }
+        let copy = menu.items.first { $0.title.hasPrefix("Copy Link") }
+        XCTExpectFailure("links.clean-copy: the WebKit page menu keeps WebKit's own Copy Link, which copies the link with its trackers")
+        XCTAssertEqual(copy?.identifier?.rawValue, "darni.Copy Link Address", "Darni's Copy Link Address, which copies the clean link")
+    }
+
+    // MARK: - Dark mode for websites (d4532c1c, engine tab/105)
+
+    /// A page that reports whether it is in its own dark theme, and its background as drawn.
+    private func darkModePages() {
+        server.route("/themed", .page(title: "themed", head: """
+        <style>body { background: rgb(255, 255, 255); } @media (prefers-color-scheme: dark) { body { background: rgb(20, 20, 20); } }</style>
+        """))
+        server.route("/plain", .page(title: "plain", body: "<p>No dark theme</p>", head: "<style>body { background: rgb(255, 255, 255); }</style>"))
+    }
+
+    private func pageLooksDark(_ engine: WKEngine) async throws -> (prefersDark: Bool, background: String) {
+        let prefers = try await engine.webView.evaluateJavaScript("matchMedia('(prefers-color-scheme: dark)').matches") as? Bool ?? false
+        let background = try await engine.webView.evaluateJavaScript("getComputedStyle(document.body).backgroundColor") as? String ?? ""
+        return (prefers, background)
+    }
+
+    // parity: pages.dark-mode
+    func testAWebKitTabUsesASitesOwnDarkThemeWhenDarniIsDark() async throws {
+        darkModePages()
+        let engine = WKEngine(context: EngineProfileContext(profileID: UUID(), isEphemeral: true))
+        engine.webView.appearance = NSAppearance(named: .darkAqua)
+        engine.load(server.url("/themed"))
+        try await wait("the themed page") { engine.webView.title == "themed" && !engine.isLoading }
+        var look = try await pageLooksDark(engine)
+        XCTAssertTrue(look.prefersDark, "a WebKit page follows Darni's appearance")
+        XCTAssertEqual(look.background, "rgb(20, 20, 20)", "so a site with a dark theme of its own uses it")
+
+        engine.webView.appearance = NSAppearance(named: .aqua)
+        var light = false
+        for _ in 0..<100 where !light {
+            light = try await !isDarkNow(engine)
+            if !light { try await Task.sleep(nanoseconds: 20_000_000) }
+        }
+        XCTAssertTrue(light, "the page goes light again with Darni")
+        look = try await pageLooksDark(engine)
+        XCTAssertEqual(look.background, "rgb(255, 255, 255)", "and back, without a reload")
+    }
+
+    private func isDarkNow(_ engine: WKEngine) async throws -> Bool {
+        try await engine.webView.evaluateJavaScript("matchMedia('(prefers-color-scheme: dark)').matches") as? Bool ?? false
+    }
+
+    // parity: pages.dark-mode
+    func testAWebKitTabDarkensASiteWithoutADarkTheme() async throws {
+        darkModePages()
+        let engine = WKEngine(context: EngineProfileContext(profileID: UUID(), isEphemeral: true))
+        engine.webView.appearance = NSAppearance(named: .darkAqua)
+        engine.load(server.url("/plain"))
+        try await wait("the plain page") { engine.webView.title == "plain" && !engine.isLoading }
+        let look = try await pageLooksDark(engine)
+        XCTAssertTrue(look.prefersDark)
+        XCTExpectFailure("pages.dark-mode: WebKit has no public call to darken a page; Chromium's engine does it (tab/105)")
+        XCTAssertNotEqual(look.background, "rgb(255, 255, 255)", "a site with no dark theme is darkened")
+    }
+
+    // MARK: - Reader view (00b0ebac, b867a1f1)
+
+    // parity: pages.reader
+    func testTheReaderButtonOpensAWebKitTabsArticleAndClosesAgain() async throws {
+        for path in [SelfTestReaderFixture.articlePath, SelfTestReaderFixture.picturePath] {
+            server.route(path) { request in
+                let full = request.query.isEmpty ? request.path : request.path + "?" + request.query
+                guard let found = SelfTestReaderFixture.response(forPathAndQuery: full) else { return .init(status: 404) }
+                return .init(type: found.type, body: found.body)
+            }
+        }
+        let b = try makeBrowser()
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let tab = b.store.addTab(kind: .today, title: "Article", url: server.url(SelfTestReaderFixture.articlePath), in: b.first)
+        b.store.selectTab(tab.id)
+        let engine = try webKitEngine(b.model, tab, profile: profile)
+        engine.load(server.url(SelfTestReaderFixture.articlePath))
+        try await wait("the article") { !engine.isLoading && engine.currentURL?.path == SelfTestReaderFixture.articlePath && engine.webView.title?.isEmpty == false }
+
+        // The address field asks a page that finished loading whether it is an article.
+        b.model.detectReaderArticle(forPage: tab.id, engine: engine)
+        try await wait("the reader button", timeout: 20) { b.model.readerButtonState(for: tab, engine: engine) == .available }
+        b.model.toggleReader(tabID: tab.id)
+        try await wait("the reader to open", timeout: 20) { b.model.reader.isShowing(tab.id) }
+        XCTAssertEqual(b.model.readerButtonState(for: tab, engine: engine), .showing)
+        b.model.toggleReader(tabID: tab.id)
+        XCTAssertFalse(b.model.reader.isShowing(tab.id), "the button closes it again")
+        XCTAssertEqual(engine.currentURL?.path, SelfTestReaderFixture.articlePath, "the page is as it was")
+    }
+
+    // MARK: - Tab sleep (93443277, engine tab/103)
+
+    /// A browser with a WebKit tab left unseen (on page B, with A behind it) and the selected tab beside it.
+    private func browserWithAnUnseenWebKitTab() async throws -> (Browser, SidebarModel.Tab, WKEngine) {
+        server.route("/a", .page(title: "page A"))
+        server.route("/b", .page(title: "page B", body: "<script>window.ticks = 0; setInterval(() => window.ticks++, 50);</script>"))
+        let b = try makeBrowser()
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let unseen = b.store.addTab(kind: .today, title: "B", url: server.url("/b"), in: b.first)
+        let front = b.store.addTab(kind: .today, title: "Front", url: URL(string: "about:blank")!, in: b.first)
+        let engine = try webKitEngine(b.model, unseen, profile: profile)
+        engine.load(server.url("/a"))
+        try await wait("page A") { engine.webView.title == "page A" && !engine.isLoading }
+        engine.load(server.url("/b"))
+        try await wait("page B") { engine.webView.title == "page B" && engine.canGoBack && !engine.isLoading }
+        b.model.selectTab(front.id)
+        return (b, unseen, engine)
+    }
+
+    // parity: tabs.unload
+    func testAnUnseenWebKitTabIsUnloadedAfterTheThresholdAndLoadsAgainWhenShown() async throws {
+        let (b, tab, engine) = try await browserWithAnUnseenWebKitTab()
+        let profile = try XCTUnwrap(b.store.space(withID: b.first)?.profileID)
+        let now = Date()
+        b.model.tabLastShown[tab.id] = now.addingTimeInterval(-5 * 3600)
+        b.model.tabUnloadThreshold = .twelveHours
+        XCTAssertEqual(b.model.runAutoUnload(now: now), [], "not unseen long enough")
+        XCTAssertTrue(b.model.engineHost.engine(forTabID: tab.id, profileID: profile) === engine)
+
+        b.model.tabUnloadThreshold = .fourHours
+        XCTAssertEqual(b.model.runAutoUnload(now: now), [tab.id])
+        XCTAssertTrue(b.model.isTabUnloaded(tab.id))
+        XCTAssertNil(b.model.engineHost.engine(forTabID: tab.id, profileID: profile), "WebKit drops the page: it cannot discard one in place")
+
+        let loads = server.requests(for: "/b").count
+        b.model.selectTab(tab.id)
+        let again = try XCTUnwrap(b.model.engineHost.engine(forTabID: tab.id, profileID: profile) as? WKEngine)
+        try await wait("the tab's page again") { again.webView.title == "page B" && !again.isLoading }
+        XCTAssertFalse(b.model.isTabUnloaded(tab.id))
+        XCTAssertEqual(server.requests(for: "/b").count, loads + 1, "shown again, it loads its address anew")
+        XCTAssertFalse(again.canGoBack, "and its back history is gone (tabs.unload: partial)")
+    }
+
+    // parity: tabs.freeze
+    func testAnUnseenWebKitTabIsFrozenBeforeItIsUnloaded() async throws {
+        let (b, tab, engine) = try await browserWithAnUnseenWebKitTab()
+        b.model.tabFreezeThreshold = .thirtyMinutes
+        b.model.tabUnloadThreshold = .twelveHours
+        let now = Date()
+        b.model.tabLastShown[tab.id] = now.addingTimeInterval(-3600)
+        let frozen = b.model.runAutoFreeze(now: now)
+        XCTAssertEqual(b.model.runAutoUnload(now: now), [], "an hour unseen is not twelve: the page stays loaded")
+        let before = try await engine.webView.evaluateJavaScript("window.ticks") as? Int ?? 0
+        try await Task.sleep(nanoseconds: 400_000_000)
+        let after = try await engine.webView.evaluateJavaScript("window.ticks") as? Int ?? 0
+        XCTExpectFailure("tabs.freeze: WKEngine is not TabFreezing; WebKit's inactiveSchedulingPolicy is not used")
+        XCTAssertEqual(frozen, [tab.id], "the tab is frozen")
+        XCTAssertEqual(after, before, "a frozen page runs no timers")
+    }
+
     // MARK: - Gaps, stated as Chromium behaves (expected failures)
 
     // parity: tabs.popups
