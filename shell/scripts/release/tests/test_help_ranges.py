@@ -1,19 +1,29 @@
-"""Every script whose --help prints its own header (`sed -n '2,Np' "$0"`) prints exactly that
+"""Every script whose --help prints its own header (`sed -n '2,Np' "$0"`, or `"${BASH_SOURCE[0]}"`
+in a script that can be sourced) prints exactly that
 header: lines 2 to N are comments, and line N+1 is code or a paragraph break of the header. A line added to the header moves N, and
 PATTERNS §7 asks for that to be noticed; this test notices it (check-webkit.sh printed its
 `set -euo pipefail` twice before it)."""
 from pathlib import Path
 import re
+import subprocess
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[2]
-RANGE = re.compile(r"""sed -n '2,(\d+)p' "\$0\"""")
+RANGE = re.compile(r"""sed -n '2,(\d+)p' "(?:\$0|\$\{BASH_SOURCE\[0\]\})\"""")
+# A script that finds its header end itself (`sed -n '2,/^set -euo pipefail/…'`, perf-check.sh) cannot drift.
+
+
+def tracked_scripts():
+    """The shell scripts git tracks: a stray local script is no one's header."""
+    listed = subprocess.run(["git", "-C", str(SCRIPTS), "ls-files", "-z", "--", "*.sh"],
+                            capture_output=True, text=True, check=True).stdout
+    return sorted(SCRIPTS / path for path in listed.split("\0") if path)
 
 
 class HelpRangeTests(unittest.TestCase):
     def test_help_prints_the_whole_header_and_nothing_else(self):
         checked = 0
-        for script in sorted(SCRIPTS.rglob("*.sh")):
+        for script in tracked_scripts():
             match = RANGE.search(script.read_text(encoding="utf-8"))
             if not match:
                 continue

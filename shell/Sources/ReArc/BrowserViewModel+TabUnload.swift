@@ -39,8 +39,7 @@ extension BrowserViewModel {
     /// True for a tab the shell unloaded (or whose page Chromium discarded) that has not been shown since.
     func isTabUnloaded(_ id: Tab.ID) -> Bool {
         if unloadedTabIDs.contains(id) { return true }
-        guard let tab = store.tab(withID: id),
-              let discarding = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabDiscarding else { return false }
+        guard let discarding = liveEngine(for: id) as? TabDiscarding else { return false }
         return discarding.isDiscarded
     }
 
@@ -118,8 +117,7 @@ extension BrowserViewModel {
     /// Ends the tab's freeze request, if its engine holds one. A request the
     /// engine already ended (it thaws a page it shows) gets its log line too.
     func thawTab(_ id: Tab.ID, reason: TabFreezeJournal.ThawReason) {
-        guard let tab = store.tab(withID: id),
-              let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { return }
+        guard let freezing = liveEngine(for: id) as? TabFreezing else { return }
         guard freezing.isFreezeRequested else {
             tabSleepLog.write(tabFreezeJournal.thawed(id, reason: reason))
             return
@@ -133,8 +131,7 @@ extension BrowserViewModel {
     /// now, and which requests it ended by itself (the tab used or unloaded).
     func observeTabFreezes() {
         for id in tabFreezeJournal.requested {
-            guard let tab = store.tab(withID: id),
-                  let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else {
+            guard let freezing = liveEngine(for: id) as? TabFreezing else {
                 tabFreezeJournal.forget(id)
                 continue
             }
@@ -148,8 +145,7 @@ extension BrowserViewModel {
 
     /// Whether the tab's engine holds a freeze request (its page is frozen, or about to be).
     func isTabFrozen(_ id: Tab.ID) -> Bool {
-        guard let tab = store.tab(withID: id),
-              let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { return false }
+        guard let freezing = liveEngine(for: id) as? TabFreezing else { return false }
         return freezing.isFreezeRequested
     }
 
@@ -214,8 +210,7 @@ extension BrowserViewModel {
         }
         var frozen: [Tab.ID] = []
         for id in TabUnloadPolicy.tabsToFreeze(candidates, threshold: tabFreezeThreshold, now: now) {
-            guard let tab = store.tab(withID: id),
-                  let freezing = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) as? TabFreezing else { continue }
+            guard let freezing = liveEngine(for: id) as? TabFreezing else { continue }
             if freezing.freeze() == .requested {
                 frozen.append(id)
                 tabSleepLog.write(tabFreezeJournal.freezeRequested(id))

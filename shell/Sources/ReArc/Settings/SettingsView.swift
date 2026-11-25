@@ -448,8 +448,7 @@ struct ProfilesSettingsPane: View {
             .frame(height: 30)
         }
         .frame(width: Self.listWidth, height: 445)
-        .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous).strokeBorder(SettingsColors.border))
+        .settingsBox()
     }
 
     /// A profile iCloud has too asks where to delete it from; one only here
@@ -556,8 +555,7 @@ struct ProfilesSettingsPane: View {
                 }
             }
             .padding(.vertical, 5)
-            .background(SettingsColors.box, in: RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: SettingsMetrics.boxRadius, style: .continuous).strokeBorder(SettingsColors.border))
+            .settingsBox()
         }
     }
 

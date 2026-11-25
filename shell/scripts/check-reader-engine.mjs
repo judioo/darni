@@ -43,10 +43,10 @@ const server = createServer((request, response) => {
     response.writeHead(200, { "Content-Type": "image/gif", "Cache-Control": "no-store" });
     return response.end(Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"));
   }
-  if (url.pathname.startsWith("/reader/picture-") && url.pathname.endsWith(".png")) {
-    pictureRequests[url.pathname] = (pictureRequests[url.pathname] ?? 0) + 1;
-  }
-  if (url.pathname === "/reader/picture.png" || (url.pathname.startsWith("/reader/picture-") && url.pathname.endsWith(".png"))) {
+  // The <picture> article's images, counted: the check below says which were asked for.
+  const pictureArticleImage = url.pathname.startsWith("/reader/picture-") && url.pathname.endsWith(".png");
+  if (pictureArticleImage) pictureRequests[url.pathname] = (pictureRequests[url.pathname] ?? 0) + 1;
+  if (url.pathname === "/reader/picture.png" || pictureArticleImage) {
     response.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "no-store" });
     return response.end(fixture("picture.png"));
   }

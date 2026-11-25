@@ -62,18 +62,14 @@ extension BrowserViewModel {
         )
         for id in plan.exit {
             autoPiPEnteredTabIDs.remove(id)
-            engine(forTabID: id)?.setPictureInPicture(false)
+            liveEngine(for: id)?.setPictureInPicture(false)
         }
-        if let id = plan.enter, let engine = engine(forTabID: id) {
+        if let id = plan.enter, let engine = liveEngine(for: id) {
             autoPiPEnteredTabIDs.insert(id)
             engine.setPictureInPicture(true)
         }
     }
 
-    private func engine(forTabID id: Tab.ID) -> (any WebEngine)? {
-        guard let tab = store.tab(withID: id) else { return nil }
-        return engineHost.engine(forTabID: id, profileID: profileID(for: tab))
-    }
 
     /// PiP's back-to-tab button (Chromium phase 2): show that tab in its space.
     func revealTab(showing engine: AnyObject) {
