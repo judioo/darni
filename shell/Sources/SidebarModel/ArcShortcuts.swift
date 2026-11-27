@@ -106,6 +106,9 @@ public enum ArcShortcuts {
         ArcShortcut("newIncognitoWindow", "New Incognito Window", "n", [.shift, .command], .arcWins),
         ArcShortcut("showLittleArc", "New Little Darni Window", "n", [.option, .command], .arcWins),
         ArcShortcut("addressBar", "Open Command Bar", "l", .command, .arcWins),
+        // Darni's own: the command bar in Peek mode. Arc has no key for it and
+        // nothing on ⇧⌘P; website first, as a page's own ⇧⌘P (a command palette) is common.
+        ArcShortcut("peekAtURL", "Peek at URL…", "p", [.shift, .command], .websiteFirst),
         ArcShortcut("reopenLastClosedTab", "Restore Last Closed Tab", "t", [.shift, .command], .arcWins),
         ArcShortcut("archiveTab", "Archive Tab", "w", .command, .arcWins),
         ArcShortcut("closeWindow", "Close Window", "w", [.shift, .command], .arcWins),
@@ -214,7 +217,7 @@ public enum ArcShortcuts {
     ]
 
     /// Bindings that are ReArc's, not Arc's (not in Arc's nib).
-    public static let reArcIDs: Set<String> = ["toggleMiniSidebar"]
+    public static let reArcIDs: Set<String> = ["toggleMiniSidebar", "peekAtURL"]
 
     /// Arc's bindings that ReArc dropped, and the ReArc binding that took
     /// their keys (docs/SHORTCUTS.md).

@@ -30,6 +30,8 @@ struct CommandBarOverlay: View {
     let highlightedIndex: Int
     var errorMessage: String?
     var siteSearch: SiteSearchEngine?
+    /// Peek at URL…: what is typed opens in a Peek (the placeholder says so).
+    var peekMode = false
     var siteSearchSuggestion: SiteSearchEngine?
     /// The chip's and its rows' fill (`BrowserViewModel.commandBarSiteFill`).
     var siteSearchFill: SpaceColor?
@@ -103,6 +105,9 @@ struct CommandBarOverlay: View {
     }
 
     private var isCommandMode: Bool { text.hasPrefix(">") }
+
+    /// Peek at URL…'s field.
+    static let peekPlaceholder = "Peek: Search or Enter URL…"
 
     @FocusState private var isFieldFocused: Bool
     @State private var earlyKeys = EarlyKeyCatcher()
@@ -381,12 +386,13 @@ struct CommandBarOverlay: View {
         }
     }
 
-    private var placeholder: String { Self.placeholder(text: text, siteSearch: siteSearch) }
+    private var placeholder: String { Self.placeholder(text: text, siteSearch: siteSearch, peek: peekMode) }
 
     /// The field's placeholder, which also tells the bar's field from any
     /// other in the window (`field(in:placeholder:)`).
-    static func placeholder(text: String, siteSearch: SiteSearchEngine?) -> String {
+    static func placeholder(text: String, siteSearch: SiteSearchEngine?, peek: Bool = false) -> String {
         if let siteSearch { return siteSearch.placeholder }
+        if peek { return peekPlaceholder }
         return text.hasPrefix(">") ? "Type a command…" : "Search or Enter URL…"
     }
 }

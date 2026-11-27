@@ -587,6 +587,10 @@ final class BrowserViewModel {
                                                       completion: commandBarSiteSearchCompletion)
         }
         let (mode, needle) = CommandBarSearch.parseMode(commandBarText)
+        // Peek at URL… with nothing typed: the copied link, if any.
+        if mode == .blended, needle.isEmpty, commandBarURLIntent == .peek, let offer = commandBarCopiedLink {
+            return [CommandBarCopiedLink.result(offer)]
+        }
         // An empty ⌘T bar lists recent tabs, as Arc's does.
         if mode == .blended && needle.isEmpty {
             return commandBarCreatesNewTab && commandBarURLIntent == nil ? CommandBarSearch.recentTabResults(in: store) : []
@@ -678,6 +682,12 @@ final class BrowserViewModel {
 
     var commandBarError: String?
     var commandBarURLIntent: CommandBarURLIntent?
+    /// Peek at URL… with a link on the pasteboard: the bar's first row (`BrowserViewModel+PeekAtURL`).
+    var commandBarCopiedLink: CommandBarCopiedLink.Offer?
+    /// Whether reading `linkPasteboard` may ask the person first; tests replace it.
+    @ObservationIgnored var copiedLinkReadAsks: (NSPasteboard) -> Bool = BrowserViewModel.pasteboardReadAsks
+    /// Whether the pasteboard holds a link, without reading it; tests replace it.
+    @ObservationIgnored var copiedLinkDetect: (NSPasteboard) async -> Bool = BrowserViewModel.pasteboardHasLink
     var pendingProfileRenameID: Profile.ID?
     var pendingProfileRenameName = ""
 
@@ -2033,6 +2043,7 @@ final class BrowserViewModel {
         commandBarHighlightedIndex = 0
         commandBarError = nil
         commandBarURLIntent = nil
+        commandBarCopiedLink = nil
         restorePageFocus()
     }
 
@@ -2058,6 +2069,7 @@ final class BrowserViewModel {
             submitCommandBarSiteSearch(route: route)
             return
         }
+        if commandBarURLIntent == .peek, submitCopiedLinkPeek() { return }
         if let intent = commandBarURLIntent {
             guard let url = URLEntry.resolve(commandBarText, engine: engineHost.navigationSchemes, provider: searchProvider) else {
                 commandBarError = "Enter a valid URL"
@@ -2174,7 +2186,7 @@ final class BrowserViewModel {
         }
     }
 
-    private func openCommandBar(target: Tab.ID?, text: String) {
+    func openCommandBar(target: Tab.ID?, text: String) {
         commandBarMenuSnapshot = nil
         commandBarCreatesNewTab = false
         commandBarNewTabGroupID = nil
@@ -2182,6 +2194,9 @@ final class BrowserViewModel {
         resetCommandBarSiteSearch()
         commandBarSplitAnchorID = nil
         commandBarTargetID = target
+        // ⌘T over Peek at URL… is a plain bar again.
+        commandBarURLIntent = nil
+        commandBarCopiedLink = nil
         commandBarPrefill = text.isEmpty ? nil : text
         commandBarText = text
         commandBarHighlightedIndex = 0
@@ -2399,10 +2414,7 @@ final class BrowserViewModel {
         case .previousTab:
             selectPreviousTab()
         case .peekAtURL:
-            commandBarURLIntent = .peek
-            commandBarText = ""
-            commandBarHighlightedIndex = 0
-            commandBarError = nil
+            beginPeekAtURL()
         case .openLittleArcWindow:
             commandBarURLIntent = .littleArc
             commandBarText = ""

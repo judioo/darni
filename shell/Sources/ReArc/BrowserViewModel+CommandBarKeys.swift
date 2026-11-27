@@ -102,7 +102,8 @@ extension BrowserViewModel {
         guard isCommandBarPresented, tabGroupEditor == nil, let window,
               !(window is NSPanel), window.attachedSheet == nil,
               let field = CommandBarOverlay.field(
-                  in: window, placeholder: CommandBarOverlay.placeholder(text: commandBarText, siteSearch: commandBarSiteSearch)
+                  in: window, placeholder: CommandBarOverlay.placeholder(text: commandBarText, siteSearch: commandBarSiteSearch,
+                                                                         peek: commandBarURLIntent == .peek)
               ) else { return false }
         guard let editor = window.firstResponder as? NSTextView else { return true }
         return editor.delegate === field
