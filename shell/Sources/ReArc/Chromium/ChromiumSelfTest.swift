@@ -8040,6 +8040,9 @@ extension ChromiumSelfTest {
         // link (this run's private pasteboard, read at once) as its first row;
         // Return peeks it and the page under the Peek stays as it was.
         let copied = "\(base)/a"
+        // The page as it is now (its own address keeps its utm_source; only
+        // copies are cleaned), to check the Peek leaves it where it was.
+        let pageBefore = engine.currentURL?.absoluteString
         model.linkPasteboard.clearContents()
         model.linkPasteboard.setString(copied, forType: .string)
         let pKeysBefore = await pageKeys().filter { $0 == "MS:p" }.count
@@ -8053,7 +8056,8 @@ extension ChromiumSelfTest {
         try await waitForCommandBarField("⇧⌘P")
         model.submitCommandBar()
         try await wait("Return peeked the copied link") { model.peekSession?.url.absoluteString == copied && !model.isCommandBarPresented }
-        try check(engine.currentURL?.absoluteString == "\(base)/keys", "peeking moved the page under it to \(engine.currentURL?.absoluteString ?? "-")")
+        try check(pageBefore != nil && engine.currentURL?.absoluteString == pageBefore,
+                  "peeking moved the page under it from \(pageBefore ?? "-") to \(engine.currentURL?.absoluteString ?? "-")")
         model.dismissPeek(animated: false)
         try await wait("the Peek closed") { model.peekSession == nil }
         try await focusPage()
