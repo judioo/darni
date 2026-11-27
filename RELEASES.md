@@ -24,7 +24,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1127.1440 — 2026-11-27
+## Darni 2026.1127.1442 — 2026-11-27
 
 **New**
 - Peek at URL… has a shortcut: ⇧⌘P (also in the File menu) opens the command bar in Peek
