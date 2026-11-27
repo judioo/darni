@@ -20,15 +20,15 @@ protocol TaskManagerSource: AnyObject {
     /// Ends the process as Chrome's End task does. False: it was not ended
     /// (already gone, or not one of the engine's).
     func endProcess(_ pid: Int32) async -> Bool
-    /// Whether the engine tab is a page of the shell's that can be brought forward.
-    func canShowTab(_ engineTabID: UInt64) -> Bool
+    /// Whether the tab is a page of the shell's (or an unloaded sidebar tab) that can be brought forward.
+    func canShowTab(_ tab: TaskManagerTabRef) -> Bool
     /// Brings the last focused browser window forward and selects the tab there, in its space.
-    func showTab(_ engineTabID: UInt64)
+    func showTab(_ tab: TaskManagerTabRef)
 }
 
 extension TaskManagerSource {
-    func canShowTab(_ engineTabID: UInt64) -> Bool { false }
-    func showTab(_ engineTabID: UInt64) {}
+    func canShowTab(_ tab: TaskManagerTabRef) -> Bool { false }
+    func showTab(_ tab: TaskManagerTabRef) {}
 }
 
 /// ReArc itself as the only process: the WebKit shell, and the Chromium
@@ -89,18 +89,26 @@ final class TaskManagerController {
     /// Chrome reads about once a second.
     static let refreshInterval: TimeInterval = 1
 
-    var category: TaskManagerCategory = .tabsAndExtensions
+    var filter: TaskManagerFilter = .all
     var search = ""
     var sort: TaskManagerSort?
     /// The header menu's choice; saved when it changes.
     var columns: TaskManagerColumns {
         didSet { if columns != oldValue { columns.save(to: defaults) } }
     }
+    /// The engine's processes, one group each.
     private(set) var groups: [TaskManagerGroup] = []
+    /// The groups' tasks under their tabs, and the tabs with no page in memory.
+    private(set) var stacks: [TaskManagerStack] = []
+    /// Tab sleep's settings at the last reading, for the State column's help.
+    private(set) var sleepSettings: TaskManagerSleepSettings?
+    /// The stacks whose processes show under them. Closed by default.
+    var expanded: Set<String> = []
     /// False until the first reading has arrived, so the window does not open on "No tasks".
     private(set) var hasReading = false
-    /// The selected processes, by pid: a click on any task selects its process.
-    var selection: Set<Int32> = []
+    /// What is selected: processes (a click on any row of a process selects
+    /// every row of it), or a row with no process to end of its own.
+    var selection: Set<TaskManagerSelectionKey> = []
 
     @ObservationIgnored var source: any TaskManagerSource
     /// Seconds on a clock that never goes back.
@@ -120,7 +128,15 @@ final class TaskManagerController {
     }
 
     var rows: [TaskManagerRow] {
-        TaskManagerRows.rows(groups, category: category, search: search, sort: sort)
+        TaskManagerRows.rows(stacks, filter: filter, search: search, sort: sort, expanded: expanded)
+    }
+
+    /// A stack's disclosure: opens or closes it. `all` (⌥-click, as in a
+    /// Finder list) opens or closes every stack with processes under it.
+    func toggleExpanded(_ stackID: String, all: Bool = false) {
+        let open = !expanded.contains(stackID)
+        let ids = all ? Set(stacks.filter(\.hasChildren).map(\.id)) : [stackID]
+        if open { expanded.formUnion(ids) } else { expanded.subtract(ids) }
     }
 
     var isPolling: Bool { timer != nil }
@@ -163,30 +179,34 @@ final class TaskManagerController {
     func apply(_ sample: TaskManagerSample, at time: TimeInterval) {
         let usage = sampler.usage(of: sample.processes, at: time)
         let groups = TaskManagerRows.groups(processes: sample.processes, usage: usage, directory: sample.directory)
+        let stacks = TaskManagerRows.stacks(groups, directory: sample.directory)
         if groups != self.groups { self.groups = groups }
+        if stacks != self.stacks { self.stacks = stacks }
+        if sample.directory.sleepSettings != sleepSettings { sleepSettings = sample.directory.sleepSettings }
         if !hasReading { hasReading = true }
-        let live = Set(groups.map(\.pid))
+        let live = Set(groups.map { TaskManagerSelectionKey.process($0.pid) }).union(stacks.map { .row($0.id) })
         if !selection.isSubset(of: live) { selection.formIntersection(live) }
     }
 
     // MARK: Show Tab
 
-    /// A "Tab:" or "Subframe:" row whose tab can be brought forward.
+    /// A tab's row, or a row of a process under it, whose tab can be brought forward.
     @MainActor func canShowTab(of row: TaskManagerRow) -> Bool {
-        row.engineTabID.map(source.canShowTab) ?? false
+        row.tab.map(source.canShowTab) ?? false
     }
 
-    /// Double-click or Show Tab: the row's tab, in its window and space.
+    /// Double-click or Show Tab: the row's tab, in its window and space. An
+    /// unloaded tab loads as it is shown.
     @MainActor func showTab(of row: TaskManagerRow) {
-        guard let id = row.engineTabID, source.canShowTab(id) else { return }
-        source.showTab(id)
+        guard let tab = row.tab, source.canShowTab(tab) else { return }
+        source.showTab(tab)
     }
 
     // MARK: End task
 
     /// The selected processes End task would end: never ReArc itself.
     var endableSelection: [TaskManagerGroup] {
-        groups.filter { selection.contains($0.pid) && $0.isKillable }
+        groups.filter { selection.contains(.process($0.pid)) && $0.isKillable }
     }
 
     var canEndSelection: Bool { !endableSelection.isEmpty }
@@ -223,5 +243,51 @@ extension BrowserViewModel {
     func showTabFromTaskManager(_ tabID: Tab.ID) {
         if let window = store.keyWindowID { windowPresenter?.focusBrowserWindow(window) }
         showTab(tabID)
+    }
+
+    /// Tab sleep as the Task Manager shows it: the State and Idle of every
+    /// sidebar tab with a live page, by sidebar tab, and a row for each
+    /// sidebar tab with no page in memory. Only looks: no wait starts, no
+    /// tab is frozen, thawed or loaded. Idle is in whole minutes, so a
+    /// reading changes it once a minute.
+    func taskManagerTabSleep(now: Date = Date()) -> (byTab: [Tab.ID: TaskManagerTabSleep], unloaded: [TaskManagerUnloadedTab]) {
+        func idle(_ id: Tab.ID, since: Date?) -> TimeInterval? {
+            guard let since else { return nil }
+            return (max(0, now.timeIntervalSince(since)) / 60).rounded(.down) * 60
+        }
+        var byTab: [Tab.ID: TaskManagerTabSleep] = [:]
+        for candidate in tabSleepCandidates(now: now, recordsFirstSight: false) {
+            let id = candidate.tabID
+            let state = TaskManagerTabState.of(
+                candidate, isDiscarded: isTabUnloaded(id), isPageFrozen: (liveEngine(for: id) as? TabFreezing)?.isPageFrozen
+            )
+            let since = tabLastShown[id] ?? store.tab(withID: id)?.lastActiveAt
+            byTab[id] = TaskManagerTabSleep(state: state, idle: candidate.isVisible ? 0 : idle(id, since: since), isOnScreen: candidate.isVisible)
+        }
+        var unloaded: [TaskManagerUnloadedTab] = []
+        var listed: Set<Tab.ID> = []
+        // Every tab of every space, in folders and tab groups too; a tab
+        // group shared by several spaces and the favorites are listed once.
+        for space in store.spaces {
+            for tab in store.displayTabs(in: space.id) where listed.insert(tab.id).inserted {
+                if let sleep = byTab[tab.id], sleep.state != .unloaded { continue }
+                let profile = store.profile(withID: store.owningProfileID(of: profileID(for: tab)))?.name ?? ""
+                unloaded.append(TaskManagerUnloadedTab(
+                    id: tab.id.uuidString, title: tab.displayTitle, profile: profile,
+                    idle: idle(tab.id, since: tabLastShown[tab.id] ?? tab.lastActiveAt)
+                ))
+            }
+        }
+        return (byTab, unloaded)
+    }
+
+    /// Tab sleep's settings for the Task Manager's help.
+    func taskManagerSleepSettings(canFreeze: Bool) -> TaskManagerSleepSettings {
+        TaskManagerSleepSettings(freeze: tabFreezeThreshold, unload: tabUnloadThreshold, canFreeze: canFreeze)
+    }
+
+    /// The sidebar tab of an unloaded tab's row, if it is still in the sidebar.
+    func sidebarTab(fromTaskManager id: String) -> Tab.ID? {
+        UUID(uuidString: id).flatMap { store.tab(withID: $0)?.id }
     }
 }

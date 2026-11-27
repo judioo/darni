@@ -2069,6 +2069,14 @@ final class ChromiumSelfTest {
                   "the frozen page's timer ran: \(frozenAt) -> \(ticks()) ticks in 3 s")
         try check(!model.isTabUnloaded(sleeper.id) && !engine.isDiscarded && engine.activity == .idle,
                   "a frozen tab shows as unloaded")
+        // The Task Manager: Sleeping, still with its process and its memory.
+        let reading = await ChromiumTaskManagerSource(runtime: runtime, model: model).sample()
+        let sleeping = TaskManagerRows.stacks(TaskManagerRows.groups(processes: reading.processes, directory: reading.directory),
+                                              directory: reading.directory).first { $0.id == "tab/\(engine.tabID)" }
+        try check(sleeping?.sleep?.state == .sleeping && (sleeping?.memoryFootprint ?? 0) > 0
+                    && (sleeping?.sleep?.idle ?? 0) >= 30 * 60 && reading.directory.sleepSettings?.canFreeze == true,
+                  "the Task Manager's row for the frozen tab: \(String(describing: sleeping?.sleep)) memory \(sleeping?.memoryFootprint ?? 0)")
+        try check(!reading.directory.unloadedTabs.contains { $0.id == sleeper.id.uuidString }, "the Task Manager lists a frozen tab as unloaded")
         model.observeTabFreezes()
         try check(sleepLog().contains("tab \(sleeper.id.uuidString) freeze requested") && sleepLog().contains("tab \(sleeper.id.uuidString) frozen"),
                   "the file log does not say the tab froze: \(sleepLog())")
@@ -2111,6 +2119,8 @@ final class ChromiumSelfTest {
         }
         model.tabLastShown[player.id] = Date().addingTimeInterval(-31 * 60)
         try check(!model.runAutoFreeze().contains(player.id) && !model.isTabFrozen(player.id), "the check froze a tab that plays")
+        try check(model.taskManagerTabSleep().byTab[player.id]?.state == .keptAwake(.playingSound),
+                  "the Task Manager's state for the hidden player: \(String(describing: model.taskManagerTabSleep().byTab[player.id]))")
         let direct = playerEngine.freeze()
         try check(direct == .refusedForNow && playerEngine.queryFreezeState()?.requested == false,
                   "the engine took a freeze request for a playing tab: \(direct)")
@@ -2135,7 +2145,7 @@ final class ChromiumSelfTest {
         try await wait("the freeze tabs closed") { store.tab(withID: player.id) == nil && store.tab(withID: sleeper.id) == nil }
         if let previous { model.selectTab(previous) }
         log("PASS tab freezing (ABI 1.71): a tab unseen for 31 minutes -> frozen by the check (timer \(frozenAt) -> \(silentTicks) ticks in 3 s, "
-            + "row not dimmed); shown -> running at once in the same document (longest gap \(shown[2]) ms, one freeze and one resume event, "
+            + "row not dimmed, Task Manager: Sleeping with its process); the player kept awake; shown -> running at once in the same document (longest gap \(shown[2]) ms, one freeze and one resume event, "
             + "no load); a playing tab -> not asked, engine \(direct); hidden again -> frozen again; Never -> thawed")
     }
 
@@ -5860,25 +5870,27 @@ extension ChromiumSelfTest {
     }
 
     /// Window › Task Manager (docs/briefs/2026-11-17-chrome-features.md).
-    /// Opening it twice shows one window. Its reading lists ReArc first, the
-    /// GPU process and a page of this step as "Tab: <title>" in a process
-    /// of its own; the next reading has CPU figures; the segments and the
-    /// search narrow the rows as Chrome's do. Closing the window stops the
-    /// readings. End task on the page's renderer leaves the tab crashed, as
-    /// in Chrome, and takes the process off the list. An engine without
-    /// `task_manager` logs what the rows lack.
+    /// Opening it twice shows one window. Its reading lists Darni's own stack
+    /// first (the browser, the GPU process), and a page of this step as
+    /// "Tab: <title>", Active and idle "Now"; the next reading has CPU
+    /// figures; the filter and the search narrow the rows. A tab unloaded by
+    /// hand is a row of its own, Unloaded, with no process and no figures.
+    /// Closing the window stops the readings. End task on the page's renderer
+    /// leaves the tab crashed, as in Chrome, and takes the process off the
+    /// list. An engine without `task_manager` logs what the rows lack.
     @MainActor
     private func taskManagerChecks(model: BrowserViewModel, store: SidebarStore, window: NSWindow) async throws {
         let pageTitle = "search results"
         let previous = store.selectedTab?.id
         let (tab, engine) = try openFixtureTab(model, store, title: "Task manager page", path: "/search")
         let manager = model.taskManager
-        let saved = (category: manager.category, search: manager.search, sort: manager.sort)
+        let saved = (filter: manager.filter, search: manager.search, sort: manager.sort, expanded: manager.expanded)
         defer {
             model.taskManagerWindow?.close()
-            manager.category = saved.category
+            manager.filter = saved.filter
             manager.search = saved.search
             manager.sort = saved.sort
+            manager.expanded = saved.expanded
             manager.selection = []
             model.closeTab(tab.id)
             if let previous { model.selectTab(previous) }
@@ -5892,42 +5904,68 @@ extension ChromiumSelfTest {
         // Its own windows only: a browser window can carry a page's title.
         let shown = NSApp.windows.filter { $0.isVisible && $0.windowController is TaskManagerWindowController }
         try check(shown.count == 1 && manager.isPolling, "Task Manager opened twice: \(shown.count) windows, reading \(manager.isPolling)")
-        manager.category = .all
+        manager.filter = .all
         manager.search = ""
         manager.sort = nil
-        func rows() -> String { manager.rows.map { "\($0.pid) \($0.title)" }.joined(separator: " | ") }
+        manager.expanded = [TaskManagerRows.browserStackID]
+        func rows() -> String { manager.rows.map { "\($0.pids) \($0.title)" }.joined(separator: " | ") }
         // By its engine tab, not its title: another page of this run may be called the same.
-        func pageRow() -> TaskManagerRow? { manager.rows.first { $0.icon == .tab(engine.tabID) } }
+        let stackID = "tab/\(engine.tabID)"
+        func pageRow() -> TaskManagerRow? { manager.rows.first { $0.id == stackID } }
         try await wait("the Task Manager's reading with the page", timeout: 10) { pageRow()?.title == "Tab: \(pageTitle)" }
-        guard let row = pageRow(), let group = manager.groups.first(where: { $0.pid == row.pid }) else {
+        guard let row = pageRow(), let pid = row.pids.first, let group = manager.groups.first(where: { $0.pid == pid }) else {
             throw Failure(description: "no row for the page: \(rows())")
         }
-        try check(manager.rows.filter { $0.icon == .tab(engine.tabID) }.count == 1, "a page of one frame has more than one row: \(rows())")
-        try check(manager.rows.first?.title == "Browser" && manager.rows.first?.pid == getpid() && manager.rows.first?.isKillable == false,
-                  "All tasks starts with ReArc itself: \(rows())")
-        try check(manager.rows.contains { $0.title == "GPU Process" }, "All tasks has no GPU process: \(rows())")
-        try check(row.pid != getpid() && row.isKillable && row.memoryFootprint > 0,
-                  "the page's row: pid \(row.pid) killable \(row.isKillable) memory \(row.memoryFootprint)")
+        try check(row.pids.count == 1 && row.disclosure == .none, "a page of one frame has processes under it: \(rows())")
+        try check(manager.rows.first?.title == Brand.name && manager.rows.first?.isKillable == false
+                    && manager.rows.dropFirst().first.map { $0.title == "Browser" && $0.pid == getpid() && !$0.isKillable } == true,
+                  "All starts with Darni's own stack, the browser first: \(rows())")
+        try check(manager.rows.contains { $0.title == "GPU Process" && $0.stackID == TaskManagerRows.browserStackID },
+                  "Darni's stack has no GPU process: \(rows())")
+        try check(pid != getpid() && row.isKillable && (row.memoryFootprint ?? 0) > 0,
+                  "the page's row: pid \(pid) killable \(row.isKillable) memory \(row.memoryFootprint ?? 0)")
+        try check(row.sleep?.state == .active && row.text(for: .idle) == "Now",
+                  "the tab on screen: state \(row.text(for: .state)), idle \(row.text(for: .idle))")
         try await wait("CPU figures from the second reading", timeout: 10) {
-            manager.rows.first?.usage.cpuPercent != nil && manager.groups.first { $0.pid == row.pid }?.usage.cpuPercent != nil
+            manager.rows.dropFirst().first?.usage.cpuPercent != nil && manager.groups.first { $0.pid == pid }?.usage.cpuPercent != nil
         }
 
-        manager.category = .tabsAndExtensions
-        try check(manager.rows.contains { $0.id == row.id } && !manager.rows.contains { $0.title == "Browser" || $0.title == "GPU Process" },
-                  "Tabs and extensions: \(rows())")
-        manager.category = .browser
+        manager.filter = .tabs
+        try check(manager.rows.contains { $0.id == row.id } && !manager.rows.contains { $0.stackID == TaskManagerRows.browserStackID },
+                  "Tabs: \(rows())")
+        manager.filter = .browser
         try check(manager.rows.first?.title == "Browser" && !manager.rows.contains { $0.title.hasPrefix("Tab: ") }, "Browser: \(rows())")
-        manager.category = .all
+        manager.filter = .all
         manager.search = "SEARCH res"
-        try check(manager.rows.contains { $0.id == row.id } && !manager.rows.contains { $0.title == "Browser" || $0.title == "GPU Process" },
+        try check(manager.rows.contains { $0.id == row.id } && !manager.rows.contains { $0.title == Brand.name || $0.title == "GPU Process" },
                   "search for the page's title: \(rows())")
         manager.search = ""
 
+        // Unloaded by hand: the tab has no process, and is a row of its own with no figures.
+        let (other, otherEngine) = try openFixtureTab(model, store, title: "Task manager unloaded", path: "/search")
+        try await wait("the second page loaded", timeout: 15) { otherEngine.pageTitle == pageTitle && !otherEngine.isLoading }
+        model.selectTab(tab.id)
+        model.unloadTab(other.id)
+        try await wait("the second tab unloaded", timeout: 10) { model.isTabUnloaded(other.id) }
+        manager.filter = .tabs
+        func unloadedRow() -> TaskManagerRow? { manager.rows.first { $0.tab == .sidebar(other.id.uuidString) } }
+        try await wait("the unloaded tab's row", timeout: 10) { unloadedRow() != nil }
+        let unloaded = unloadedRow()!
+        try check(unloaded.text(for: .state) == "Unloaded" && unloaded.pids.isEmpty && unloaded.text(for: .memoryFootprint).isEmpty
+                    && unloaded.title.hasPrefix("Tab: ") && unloaded.selectionKeys == [.row("unloaded/\(other.id.uuidString)")],
+                  "the unloaded tab's row: \(unloaded.title) \(unloaded.text(for: .state)) pids \(unloaded.pids)")
+        try check(!manager.rows.contains { $0.engineTabID == otherEngine.tabID }, "the unloaded tab is also listed with a process: \(rows())")
+        try check(manager.canShowTab(of: unloaded), "Show Tab is off for an unloaded tab")
+        model.closeTab(other.id)
+        try await wait("the closed tab's row gone", timeout: 10) { unloadedRow() == nil }
+        manager.filter = .all
+
         if runtime.capabilities.taskManager {
-            try await wait("network figures", timeout: 10) { manager.rows.first?.usage.networkBytesPerSecond != nil }
+            try await wait("network figures", timeout: 10) { manager.rows.dropFirst().first?.usage.networkBytesPerSecond != nil }
             try check(manager.rows.contains { $0.title.hasPrefix("Utility: ") }, "no utility process is named: \(rows())")
         } else {
-            try check(manager.rows.first?.text(for: .network) == "–", "Network without task_manager shows \(manager.rows.first?.text(for: .network) ?? "nil")")
+            let browser = manager.rows.dropFirst().first
+            try check(browser?.text(for: .network) == "–", "Network without task_manager shows \(browser?.text(for: .network) ?? "nil")")
             log("ABI-GAP task_manager not advertised (ABI minor \(runtime.capabilities.abiMinorVersion.map(String.init) ?? "absent") < 65): "
                 + "the Task Manager's Network column shows –, a tab is listed in every process with one of its frames, "
                 + "and extensions and the spare renderer have no names")
@@ -5942,14 +5980,17 @@ extension ChromiumSelfTest {
         // End task, only when the page has its renderer to itself: the other
         // pages of this run must stay up.
         guard group.tabTitles == [pageTitle] else {
-            log("NOTE task manager: the page shares process \(row.pid) with \(group.tabTitles); End task not exercised")
-            log("PASS task manager: one window, ReArc first, GPU process, the page's row with memory and CPU, segments, search, no reading while closed")
+            log("NOTE task manager: the page shares process \(pid) with \(group.tabTitles); End task not exercised")
+            log("PASS task manager: one window, Darni's stack first, GPU process, the page's row Active with memory and CPU, filter, "
+                + "search, an unloaded tab's row, no reading while closed")
             return
         }
-        try await wait("the page's process listed again", timeout: 10) { manager.groups.contains { $0.pid == row.pid } }
-        manager.selection = [getpid()]
-        try check(!manager.canEndSelection, "End task is on for ReArc itself")
-        manager.selection = [row.pid]
+        try await wait("the page's process listed again", timeout: 10) { manager.groups.contains { $0.pid == pid } }
+        manager.selection = [.process(getpid())]
+        try check(!manager.canEndSelection, "End task is on for Darni itself")
+        manager.selection = [.row(TaskManagerRows.browserStackID)]
+        try check(!manager.canEndSelection, "End task is on for Darni's own stack")
+        manager.selection = Set(row.selectionKeys)
         try check(manager.canEndSelection, "End task is off for the page's process")
         var asked = false
         manager.endSelection { _, answer in
@@ -5958,10 +5999,10 @@ extension ChromiumSelfTest {
         }
         try check(!asked, "End task asked before ending a process with one tab")
         try await wait("the page crashed after End task", timeout: 10) { engine.isCrashed }
-        try await wait("the ended process off the list", timeout: 10) { !manager.groups.contains { $0.pid == row.pid } }
+        try await wait("the ended process off the list", timeout: 10) { !manager.groups.contains { $0.pid == pid } }
         try check(manager.selection.isEmpty, "the ended process is still selected")
-        log("PASS task manager: one window, ReArc first, GPU process, the page's row with memory and CPU, segments, search, "
-            + "no reading while closed, End task left the tab crashed and took process \(row.pid) off the list")
+        log("PASS task manager: one window, Darni's stack first, GPU process, the page's row Active with memory and CPU, filter, search, "
+            + "an unloaded tab's row, no reading while closed, End task left the tab crashed and took process \(pid) off the list")
     }
 
     /// H.264/AAC (media/001, security RC-811 AD-02): a clip the page records

@@ -557,6 +557,67 @@ final class TabSleepShellTests: XCTestCase {
                                       syncEngine: LocalSyncEngine(), faviconStore: FaviconStore(directory: nil)).tabSleepLog.url)
     }
 
+    // MARK: What the Task Manager shows
+
+    func testTheTaskManagerSeesEachTabsStateAndIdleTimeAndChangesNothing() {
+        let (model, tabs, engines) = makeModel(["idle", "heard", "asleep", "drowsy", "gone", "new"])
+        model.mediaStateByTab[tabs["heard"]!.id] = WebMediaState(isAudible: true)
+        engines["asleep"]!.isFreezeRequested = true
+        engines["asleep"]!.isPageFrozen = true
+        engines["drowsy"]!.isFreezeRequested = true
+        engines["drowsy"]!.isPageFrozen = false
+        model.unloadTab(tabs["gone"]!.id)
+        XCTAssertTrue(model.isTabUnloaded(tabs["gone"]!.id))
+        // A tab whose wait has not started: the Task Manager reads its last use, and starts nothing.
+        model.tabLastShown[tabs["new"]!.id] = nil
+        for engine in engines.values { engine.calls = [] }
+        let waits = model.tabLastShown
+
+        let sleep = model.taskManagerTabSleep(now: now)
+        let state = { (name: String) in sleep.byTab[tabs[name]!.id] }
+        XCTAssertEqual(state("front"), TaskManagerTabSleep(state: .active, idle: 0, isOnScreen: true))
+        XCTAssertEqual(state("idle"), TaskManagerTabSleep(state: .active, idle: 45 * 60), "unseen, not asleep yet: active")
+        XCTAssertEqual(state("heard")?.state, .keptAwake(.playingSound))
+        XCTAssertEqual(state("asleep")?.state, .sleeping)
+        XCTAssertEqual(state("drowsy")?.state, .fallingAsleep, "asked, but the renderer has not frozen")
+        XCTAssertEqual(state("gone")?.state, .unloaded)
+        XCTAssertNotNil(state("new")?.idle, "the tab's own last use")
+
+        XCTAssertEqual(sleep.unloaded.map(\.id), [tabs["gone"]!.id.uuidString], "only the tab with no page in memory gets a row of its own")
+        XCTAssertEqual(sleep.unloaded.first?.title, "gone")
+        XCTAssertEqual(sleep.unloaded.first?.idle, 45 * 60)
+
+        XCTAssertEqual(model.tabLastShown, waits, "looking starts no wait")
+        for (name, engine) in engines { XCTAssertEqual(engine.calls, [], name) }
+        XCTAssertFalse(model.isTabFrozen(tabs["idle"]!.id))
+    }
+
+    func testATabNotOpenedSinceLaunchIsListedUnloadedWithItsLastUse() throws {
+        let (model, _, _) = makeModel([])
+        model.store.now = { self.now.addingTimeInterval(-2 * 3600 - 59) }
+        let folderless = model.store.addTab(kind: .today, title: "Report", url: URL(string: "https://report.test/")!)
+        let pinned = model.store.addTab(kind: .pinned, title: "Wiki", url: URL(string: "https://wiki.test/")!)
+        let sleep = model.taskManagerTabSleep(now: now)
+        XCTAssertNil(sleep.byTab[folderless.id], "no engine: nothing for the sleep checks")
+        XCTAssertEqual(Set(sleep.unloaded.map(\.id)), [folderless.id.uuidString, pinned.id.uuidString])
+        let report = try XCTUnwrap(sleep.unloaded.first { $0.id == folderless.id.uuidString })
+        XCTAssertEqual(report.title, "Report")
+        XCTAssertEqual(report.idle, 2 * 3600, "whole minutes")
+        XCTAssertEqual(model.sidebarTab(fromTaskManager: folderless.id.uuidString), folderless.id)
+        XCTAssertNil(model.sidebarTab(fromTaskManager: UUID().uuidString), "a tab closed since the reading")
+        XCTAssertNil(model.sidebarTab(fromTaskManager: "not an id"))
+    }
+
+    func testTheTaskManagersHelpFollowsTheSleepSettings() {
+        let (model, _, _) = makeModel([])
+        model.tabFreezeThreshold = .oneHour
+        model.tabUnloadThreshold = .twelveHours
+        XCTAssertEqual(model.taskManagerSleepSettings(canFreeze: true),
+                       TaskManagerSleepSettings(freezeAfter: 3600, unloadAfter: 12 * 3600, canFreeze: true))
+        model.tabFreezeThreshold = .never
+        XCTAssertNil(model.taskManagerSleepSettings(canFreeze: false).freezeAfter)
+    }
+
     func testTheJournalSaysEachThingOnce() {
         var journal = TabFreezeJournal()
         let id = UUID()

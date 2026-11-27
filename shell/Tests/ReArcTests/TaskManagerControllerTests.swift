@@ -35,11 +35,11 @@ private final class FakeTaskManagerSource: TaskManagerSource {
         return true
     }
 
-    /// Engine tabs that are pages of a space; the others (a private window's) cannot be shown.
-    var showable: Set<UInt64> = []
-    private(set) var shown: [UInt64] = []
-    func canShowTab(_ engineTabID: UInt64) -> Bool { showable.contains(engineTabID) }
-    func showTab(_ engineTabID: UInt64) { shown.append(engineTabID) }
+    /// Tabs that are pages of a space, or sidebar tabs; the others (a private window's) cannot be shown.
+    var showable: Set<TaskManagerTabRef> = []
+    private(set) var shown: [TaskManagerTabRef] = []
+    func canShowTab(_ tab: TaskManagerTabRef) -> Bool { showable.contains(tab) }
+    func showTab(_ tab: TaskManagerTabRef) { shown.append(tab) }
 }
 
 /// Window › Task Manager: the window's state over a made-up process list.
@@ -81,28 +81,31 @@ final class TaskManagerControllerTests: XCTestCase {
 
     // MARK: Show Tab
 
-    func testShowTabBringsATabOrAFramesTabForwardAndNothingElse() {
+    func testShowTabBringsATabOrAFramesTabForwardAndLoadsAnUnloadedOne() {
         let source = makeSource()
-        source.showable = [1, 3]
+        source.showable = [.engine(1), .engine(3), .sidebar("U-1")]
         source.processes.append(TaskManagerProcess(
             pid: 320, kind: .renderer, tabIDs: [1],
             details: .init(mainFrameTabIDs: [], subframeTabIDs: [1], site: "https://accounts.example")
         ))
+        source.directory.unloadedTabs = [.init(id: "U-1", title: "Docs")]
         let controller = makeController(source)
-        controller.category = .all
+        controller.expanded = ["tab/1"]
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
         let row = { (title: String) in controller.rows.first { $0.title == title }! }
 
         XCTAssertTrue(controller.canShowTab(of: row("Tab: Mail")))
         XCTAssertTrue(controller.canShowTab(of: row("Subframe: https://accounts.example")), "a frame shows the tab it sits in")
+        XCTAssertTrue(controller.canShowTab(of: row("Tab: Docs")), "an unloaded tab loads as it is shown")
         XCTAssertFalse(controller.canShowTab(of: row("Tab: News")), "a page the shell cannot show")
-        XCTAssertFalse(controller.canShowTab(of: row("GPU Process")))
+        XCTAssertFalse(controller.canShowTab(of: row("Darni")))
 
         controller.showTab(of: row("Subframe: https://accounts.example"))
         controller.showTab(of: row("Tab: News"))
-        controller.showTab(of: row("Browser"))
+        controller.showTab(of: row("Darni"))
+        controller.showTab(of: row("Tab: Docs"))
         controller.showTab(of: row("Tab: Bank"))
-        XCTAssertEqual(source.shown, [1, 3])
+        XCTAssertEqual(source.shown, [.engine(1), .sidebar("U-1"), .engine(3)])
     }
 
     // MARK: Readings
@@ -111,31 +114,68 @@ final class TaskManagerControllerTests: XCTestCase {
         let source = makeSource()
         let controller = makeController(source)
         XCTAssertFalse(controller.hasReading)
-        controller.category = .all
+        controller.expanded = [TaskManagerRows.browserStackID]
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
         XCTAssertTrue(controller.hasReading)
-        XCTAssertEqual(controller.rows.map(\.title), ["Browser", "GPU Process", "Tab: Mail", "Tab: News", "Tab: Bank"])
-        XCTAssertEqual(controller.rows.map { $0.text(for: .cpu) }, ["–", "–", "–", "", "–"])
-        XCTAssertEqual(controller.rows.map { $0.text(for: .network) }, ["–", "–", "–", "", "–"], "this engine does not count network bytes")
+        XCTAssertEqual(controller.rows.map(\.title), ["Darni", "Browser", "GPU Process", "Tab: Mail", "Tab: News", "Tab: Bank"])
+        XCTAssertEqual(controller.rows.map { $0.text(for: .cpu) }, ["–", "–", "–", "–", "–", "–"])
+        XCTAssertEqual(controller.rows.map { $0.text(for: .network) }, ["–", "–", "–", "–", "–", "–"], "this engine does not count network bytes")
 
         source.processes[2].cpuMicros += 500_000
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 51)
-        XCTAssertEqual(controller.rows.map { $0.text(for: .cpu) }, ["0.0", "0.0", "50.0", "", "0.0"])
+        XCTAssertEqual(controller.rows.map { $0.text(for: .cpu) }, ["≈ 0.0", "0.0", "0.0", "≈ 25.0", "≈ 25.0", "0.0"],
+                       "two tabs of one process count half of it each")
+    }
+
+    func testStacksOpenAndCloseAndOptionClickOpensThemAll() {
+        let source = makeSource()
+        source.processes.append(TaskManagerProcess(pid: 320, kind: .renderer, tabIDs: [3], details: .init(subframeTabIDs: [3], site: "https://ads.example")))
+        let controller = makeController(source)
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
+        XCTAssertEqual(controller.rows.map(\.title), ["Darni", "Tab: Mail", "Tab: News", "Tab: Bank"])
+        controller.toggleExpanded("tab/3")
+        XCTAssertEqual(controller.rows.map(\.title), ["Darni", "Tab: Mail", "Tab: News", "Tab: Bank", "Page", "Subframe: https://ads.example"])
+        controller.toggleExpanded("tab/3")
+        XCTAssertEqual(controller.rows.count, 4)
+        controller.toggleExpanded("tab/3", all: true)
+        XCTAssertEqual(controller.expanded, [TaskManagerRows.browserStackID, "tab/3"], "every stack with processes under it")
+        controller.toggleExpanded(TaskManagerRows.browserStackID, all: true)
+        XCTAssertEqual(controller.expanded, [])
+    }
+
+    func testTheReadingCarriesTabSleepToTheRowsAndTheHelp() {
+        let source = makeSource()
+        source.directory.tabs[1]?.sleep = .init(state: .active, idle: 0, isOnScreen: true)
+        source.directory.tabs[3]?.sleep = .init(state: .sleeping, idle: 40 * 60)
+        source.directory.unloadedTabs = [.init(id: "U-1", title: "Docs", idle: 5 * 3600)]
+        source.directory.sleepSettings = .init(freeze: .oneHour, unload: .twelveHours, canFreeze: true)
+        let controller = makeController(source)
+        controller.filter = .tabs
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
+        XCTAssertEqual(controller.rows.map { "\($0.title) \($0.text(for: .state)) \($0.text(for: .idle))" },
+                       ["Tab: Mail Active Now", "Tab: News  ", "Tab: Bank Sleeping 40 min", "Tab: Docs Unloaded 5 h"])
+        XCTAssertEqual(controller.sleepSettings, .init(freeze: .oneHour, unload: .twelveHours, canFreeze: true))
+        XCTAssertTrue(TaskManagerHelp.state(controller.sleepSettings).contains("for 1 hour"))
+        // Shown again, the tab leaves the unloaded rows.
+        source.directory.unloadedTabs = []
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 51)
+        XCTAssertFalse(controller.rows.contains { $0.isUnloaded })
     }
 
     func testTheWindowOpensOnTabsAndExtensionsAndFollowsSegmentSearchAndSort() {
         let source = makeSource()
         let controller = makeController(source)
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
-        XCTAssertEqual(controller.rows.map(\.title), ["Tab: Mail", "Tab: News", "Tab: Bank"])
+        XCTAssertEqual(controller.filter, .all)
+        XCTAssertEqual(controller.rows.map(\.title), ["Darni", "Tab: Mail", "Tab: News", "Tab: Bank"])
         controller.search = "bank"
         XCTAssertEqual(controller.rows.map(\.title), ["Tab: Bank"])
         controller.search = ""
-        controller.category = .browser
+        controller.filter = .browser
         XCTAssertEqual(controller.rows.map(\.title), ["Browser", "GPU Process"])
-        controller.category = .all
+        controller.filter = .all
         controller.sort = TaskManagerSort(column: .processID, ascending: false)
-        XCTAssertEqual(controller.rows.map(\.pid), [310, 300, 300, 200, 100])
+        XCTAssertEqual(controller.rows.map(\.title), ["Tab: Bank", "Tab: Mail", "Tab: News", "Darni"])
     }
 
     func testRefreshReadsTheSourceOnceAtATime() async {
@@ -184,7 +224,6 @@ final class TaskManagerControllerTests: XCTestCase {
         controller.startPolling()
         await settle { controller.hasReading }
         XCTAssertEqual(source.samples, 2)
-        controller.category = .all
         XCTAssertEqual(controller.rows.first?.text(for: .cpu), "–")
         controller.stopPolling()
     }
@@ -193,10 +232,10 @@ final class TaskManagerControllerTests: XCTestCase {
         let source = makeSource()
         let controller = makeController(source)
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
-        controller.selection = [300, 310]
+        controller.selection = [.process(300), .process(310), .row("darni"), .row("unloaded/gone")]
         source.processes.removeAll { $0.pid == 310 }
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 51)
-        XCTAssertEqual(controller.selection, [300])
+        XCTAssertEqual(controller.selection, [.process(300), .row("darni")])
     }
 
     // MARK: End task
@@ -206,11 +245,13 @@ final class TaskManagerControllerTests: XCTestCase {
         let controller = makeController(source)
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
         XCTAssertFalse(controller.canEndSelection)
-        controller.selection = [100]
+        controller.selection = [.process(100)]
         XCTAssertFalse(controller.canEndSelection, "Darni itself")
-        controller.selection = [200]
+        controller.selection = [.row(TaskManagerRows.browserStackID)]
+        XCTAssertFalse(controller.canEndSelection, "Darni's own stack")
+        controller.selection = [.process(200)]
         XCTAssertTrue(controller.canEndSelection)
-        controller.selection = [100, 310]
+        controller.selection = [.process(100), .process(310)]
         XCTAssertEqual(controller.endableSelection.map(\.pid), [310])
     }
 
@@ -218,18 +259,18 @@ final class TaskManagerControllerTests: XCTestCase {
         let source = makeSource()
         let controller = makeController(source)
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
-        controller.selection = [100, 310]
+        controller.selection = [.process(100), .process(310)]
         controller.endSelection { _, _ in XCTFail("one tab: nothing to ask") }
         await settle("the process to end") { source.ended == [310] }
         await settle("the reading after it") { !controller.groups.contains { $0.pid == 310 } }
-        XCTAssertEqual(controller.selection, [100])
+        XCTAssertEqual(controller.selection, [.process(100)])
     }
 
     func testEndingAProcessOfSeveralTabsAsksFirst() async {
         let source = makeSource()
         let controller = makeController(source)
         controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
-        controller.selection = [300]
+        controller.selection = [.process(300)]
 
         var asked: [TaskManagerEndConfirmation] = []
         controller.endSelection { question, answer in
@@ -244,6 +285,54 @@ final class TaskManagerControllerTests: XCTestCase {
         await settle("the process to end") { source.ended == [300] }
     }
 
+    // MARK: The table
+
+    func testTheTableDrawsStacksWithAChevronAndTheArrowKeysOpenAndCloseThem() async throws {
+        let source = makeSource()
+        source.directory.unloadedTabs = [.init(id: "U-1", title: "Docs")]
+        let controller = makeController(source)
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
+        let tableController = TaskManagerTableController(controller: controller)
+        let table = try XCTUnwrap(tableController.makeScrollView().documentView as? TaskManagerTableView)
+        defer { tableController.invalidate() }
+        func column(_ column: TaskManagerColumn) -> NSTableColumn { table.tableColumns.first { $0.identifier.rawValue == column.rawValue }! }
+        func taskCell(_ row: Int) -> TaskManagerTaskCell { tableController.tableView(table, viewFor: column(.task), row: row) as! TaskManagerTaskCell }
+        func chevron(_ row: Int) -> NSButton { taskCell(row).subviews.compactMap { $0 as? NSButton }.first! }
+        func text(_ row: Int) -> String { taskCell(row).textField?.stringValue ?? "" }
+
+        XCTAssertEqual((0 ..< table.numberOfRows).map(text), ["Darni", "Tab: Mail", "Tab: News", "Tab: Bank", "Tab: Docs"])
+        XCTAssertEqual((0 ..< table.numberOfRows).map { chevron($0).isHidden }, [false, true, true, true, true])
+        XCTAssertEqual(taskCell(1).subviews.compactMap { ($0 as? NSTextField)?.stringValue }, ["Tab: Mail", "shares its process with 1 other tab"])
+        XCTAssertEqual(taskCell(4).imageView?.alphaValue, 0.45, "an unloaded tab is dimmed, as in the sidebar")
+        XCTAssertEqual(column(.state).headerToolTip, TaskManagerHelp.state(nil))
+        XCTAssertEqual(column(.idle).headerToolTip, TaskManagerHelp.idle)
+        XCTAssertEqual(column(.memoryFootprint).headerToolTip, TaskManagerHelp.estimate)
+        let state = tableController.tableView(table, viewFor: column(.state), row: 4) as! TaskManagerFigureCell
+        XCTAssertEqual(state.textField?.stringValue, "Unloaded")
+        XCTAssertEqual(state.toolTip, TaskManagerTabState.unloaded.explanation)
+        XCTAssertNotNil(tableController.tableView(table, viewFor: column(.memoryFootprint), row: 0)?.toolTip, "a total says it is an estimate")
+        XCTAssertNil(tableController.tableView(table, viewFor: column(.memoryFootprint), row: 3)?.toolTip, "one process's own figure")
+
+        chevron(0).performClick(nil)
+        XCTAssertEqual(controller.expanded, [TaskManagerRows.browserStackID])
+        await settle("the open stack") { table.numberOfRows == 7 }
+        XCTAssertEqual((0 ..< 3).map(text), ["Darni", "Browser", "GPU Process"])
+        XCTAssertEqual(chevron(0).accessibilityLabel(), "Hide processes")
+
+        table.selectRowIndexes([0], byExtendingSelection: false)
+        XCTAssertEqual(controller.selection, [.row(TaskManagerRows.browserStackID)], "Darni's row selects itself, not its processes")
+        func key(_ code: Int, _ keyCode: UInt16) -> NSEvent {
+            let characters = String(Character(UnicodeScalar(code)!))
+            return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                    characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)!
+        }
+        table.keyDown(with: key(NSLeftArrowFunctionKey, 123))
+        XCTAssertEqual(controller.expanded, [])
+        await settle("the closed stack") { table.numberOfRows == 5 }
+        table.keyDown(with: key(NSRightArrowFunctionKey, 124))
+        XCTAssertEqual(controller.expanded, [TaskManagerRows.browserStackID])
+    }
+
     // MARK: Columns
 
     func testTheColumnChoiceIsSavedWhenItChanges() {
@@ -252,7 +341,7 @@ final class TaskManagerControllerTests: XCTestCase {
         controller.columns.toggle(.network)
         controller.columns.toggle(.profile)
         let reopened = makeController(makeSource())
-        XCTAssertEqual(reopened.columns.ordered, [.task, .memoryFootprint, .cpu, .processID])
+        XCTAssertEqual(reopened.columns.ordered, [.task, .state, .idle, .memoryFootprint, .cpu, .processID])
     }
 
     // MARK: Without an engine
@@ -263,9 +352,10 @@ final class TaskManagerControllerTests: XCTestCase {
         XCTAssertEqual(sample.processes.map(\.kind), [.browser])
         XCTAssertGreaterThan(sample.processes[0].memoryFootprint, 0)
         XCTAssertGreaterThan(sample.processes[0].cpuMicros, 0)
-        let rows = TaskManagerRows.rows(TaskManagerRows.groups(processes: sample.processes, directory: sample.directory))
-        XCTAssertEqual(rows.map(\.title), ["Browser"])
-        XCTAssertEqual(rows.map(\.isKillable), [false])
+        let stacks = TaskManagerRows.stacks(TaskManagerRows.groups(processes: sample.processes, directory: sample.directory), directory: sample.directory)
+        XCTAssertEqual(TaskManagerRows.rows(stacks).map(\.title), ["Darni"])
+        XCTAssertEqual(TaskManagerRows.rows(stacks).map(\.isKillable), [false])
+        XCTAssertEqual(TaskManagerRows.rows(stacks, filter: .browser).map(\.title), ["Browser"])
     }
 
     func testOnlyAChildOfReArcIsEverSignalled() {

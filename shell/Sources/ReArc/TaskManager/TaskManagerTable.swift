@@ -52,7 +52,8 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
     }
 
     func makeScrollView() -> NSScrollView {
-        let table = NSTableView()
+        let table = TaskManagerTableView()
+        table.disclose = { [weak self] open in self?.discloseSelectedStacks(open) }
         for column in TaskManagerColumn.allCases {
             let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.rawValue))
             let width = TaskManagerMetrics.width(of: column)
@@ -60,8 +61,9 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
             tableColumn.width = width.ideal
             tableColumn.minWidth = width.minimum
             tableColumn.headerCell.alignment = Self.alignment(of: column)
+            tableColumn.headerToolTip = headerHelp(column)
             // Names sort from A first, figures from the largest first.
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: !column.isSharedByGroup)
+            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: !column.isFigure)
             tableColumn.resizingMask = column == .task ? [.autoresizingMask, .userResizingMask] : .userResizingMask
             tableColumn.isHidden = !controller.columns.isVisible(column)
             table.addTableColumn(tableColumn)
@@ -111,11 +113,12 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
 
     /// Reads what the table shows under observation; any change rebuilds
     /// once, on the next main turn.
-    private func observedState() -> (rows: [TaskManagerRow], columns: TaskManagerColumns, selection: Set<Int32>) {
+    private func observedState()
+        -> (rows: [TaskManagerRow], columns: TaskManagerColumns, selection: Set<TaskManagerSelectionKey>, sleep: TaskManagerSleepSettings?) {
         generation += 1
         let current = generation
         return withObservationTracking {
-            (controller.rows, controller.columns, controller.selection)
+            (controller.rows, controller.columns, controller.selection, controller.sleepSettings)
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -133,6 +136,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
             guard let column = TaskManagerColumn(rawValue: tableColumn.identifier.rawValue) else { continue }
             let hidden = !state.columns.isVisible(column)
             if tableColumn.isHidden != hidden { tableColumn.isHidden = hidden }
+            if column == .state, tableColumn.headerToolTip != headerHelp(column) { tableColumn.headerToolTip = headerHelp(column) }
         }
         let old = rows
         rows = state.rows
@@ -146,12 +150,22 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         } else {
             table.reloadData()
         }
-        let selected = IndexSet(rows.indices.filter { state.selection.contains(rows[$0].pid) })
+        let selected = TaskManagerSelection.selected(keys: rows.map(\.selectionKeys), by: state.selection)
         if table.selectedRowIndexes != selected { table.selectRowIndexes(selected, byExtendingSelection: false) }
     }
 
     private static func alignment(of column: TaskManagerColumn) -> NSTextAlignment {
-        column.isSharedByGroup ? .right : .left
+        column.isFigure ? .right : .left
+    }
+
+    /// The header's tooltip: what State, Idle and a stack's figures mean.
+    private func headerHelp(_ column: TaskManagerColumn) -> String? {
+        switch column {
+        case .state: return TaskManagerHelp.state(controller.sleepSettings)
+        case .idle: return TaskManagerHelp.idle
+        case .memoryFootprint, .cpu, .network: return TaskManagerHelp.estimate
+        case .task, .profile, .processID: return nil
+        }
     }
 
     /// The stock pictures, made once: a cell keeps its picture from one
@@ -163,25 +177,55 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         if let image = controller.source.icon(for: icon) { return image }
         switch icon {
         case .browser: return NSApp.applicationIconImage
-        case .tab: return Self.pageSymbol
+        case .tab, .sidebarTab: return Self.pageSymbol
+        case .frame: return Self.frameSymbol
         // Chrome's puzzle piece, for extensions and for the engine's helpers.
         case .browserExtension, .system: return Self.helperSymbol
         }
     }
 
+    private static let frameSymbol = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: nil)
+
+    // MARK: Stacks
+
+    private func toggle(_ row: TaskManagerRow) {
+        controller.toggleExpanded(row.stackID, all: NSApp.currentEvent?.modifierFlags.contains(.option) ?? false)
+    }
+
+    /// → and ← on the selected stacks, as in a Finder list.
+    private func discloseSelectedStacks(_ open: Bool) {
+        guard let table = tableView else { return }
+        for index in table.selectedRowIndexes where rows.indices.contains(index) {
+            let row = rows[index]
+            guard row.level == 0, row.disclosure != .none, (row.disclosure == .expanded) != open else { continue }
+            controller.toggleExpanded(row.stackID)
+        }
+    }
+
     // MARK: Show Tab
 
+    /// A tab's row shows the tab; Darni's own row opens or closes.
     @objc private func showClickedTab(_ sender: Any?) {
         guard let table = tableView, rows.indices.contains(table.clickedRow) else { return }
-        controller.showTab(of: rows[table.clickedRow])
+        let row = rows[table.clickedRow]
+        if row.tab == nil, row.disclosure != .none { return toggle(row) }
+        controller.showTab(of: row)
     }
 
     private func fillRowMenu(_ menu: NSMenu) {
         guard let table = tableView, rows.indices.contains(table.clickedRow) else { return }
         let row = rows[table.clickedRow]
-        let show = ClosureMenuItem("Show Tab") { [weak self] in self?.controller.showTab(of: row) }
+        let show = ClosureMenuItem(row.isUnloaded ? "Show and Load Tab" : "Show Tab") { [weak self] in self?.controller.showTab(of: row) }
         show.isEnabled = controller.canShowTab(of: row)
         menu.addItem(show)
+        menu.addItem(.separator())
+        let ids = controller.stacks.filter(\.hasChildren).map(\.id)
+        let expand = ClosureMenuItem("Expand All") { [weak self] in self?.controller.expanded.formUnion(ids) }
+        expand.isEnabled = !Set(ids).isSubset(of: controller.expanded)
+        let collapse = ClosureMenuItem("Collapse All") { [weak self] in self?.controller.expanded = [] }
+        collapse.isEnabled = !controller.expanded.isEmpty
+        menu.addItem(expand)
+        menu.addItem(collapse)
     }
 
     // MARK: Header menu
@@ -207,11 +251,17 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         let item = rows[row]
         if column == .task {
             let cell = tableView.makeView(withIdentifier: Self.taskCellID, owner: nil) as? TaskManagerTaskCell ?? TaskManagerTaskCell()
-            cell.configure(title: item.title, icon: image(for: item.icon))
+            cell.configure(item, icon: image(for: item.icon)) { [weak self] in self?.toggle(item) }
             return cell
         }
         let cell = tableView.makeView(withIdentifier: Self.figureCellID, owner: nil) as? TaskManagerFigureCell ?? TaskManagerFigureCell()
-        cell.configure(text: item.text(for: column), alignment: Self.alignment(of: column))
+        let tip: String?
+        switch column {
+        case .state: tip = item.sleep?.state.explanation
+        case .memoryFootprint, .cpu, .network: tip = item.isEstimate ? "Estimate: the total of the processes under this row. Shared processes count their share." : nil
+        default: tip = nil
+        }
+        cell.configure(text: item.text(for: column), alignment: Self.alignment(of: column), toolTip: tip)
         return cell
     }
 
@@ -225,53 +275,111 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
     /// A process is selected whole (`TaskManagerSelection`).
     func tableView(_ tableView: NSTableView, selectionIndexesForProposedSelection proposed: IndexSet) -> IndexSet {
         TaskManagerSelection.rows(
-            proposed: proposed, current: tableView.selectedRowIndexes, pids: rows.map(\.pid),
+            proposed: proposed, current: tableView.selectedRowIndexes, keys: rows.map(\.selectionKeys),
             toggles: NSApp.currentEvent?.modifierFlags.contains(.command) ?? false
         )
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !appliesSelection, let table = tableView else { return }
-        let selection = Set(table.selectedRowIndexes.compactMap { rows.indices.contains($0) ? rows[$0].pid : nil })
+        let selection = Set(table.selectedRowIndexes.filter(rows.indices.contains).flatMap { rows[$0].selectionKeys })
         if controller.selection != selection { controller.selection = selection }
     }
 }
 
-/// The Task column's cell: the task's icon and its name.
+/// The table: → and ← open and close the selected stacks.
+final class TaskManagerTableView: NSTableView {
+    var disclose: ((Bool) -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        switch event.specialKey {
+        case .rightArrow?: disclose?(true)
+        case .leftArrow?: disclose?(false)
+        default: super.keyDown(with: event)
+        }
+    }
+}
+
+/// The Task column's cell: a stack's disclosure chevron, the task's icon,
+/// its name, and a grey note (which tab a frame is in, who shares the process).
 final class TaskManagerTaskCell: NSTableCellView {
+    private let disclosure = NSButton()
+    private let note = NSTextField(labelWithString: "")
+    private var leading: NSLayoutConstraint!
+    private var onToggle: (() -> Void)?
+
+    private static let closed = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Show processes")
+    private static let open = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Hide processes")
+
     init() {
         super.init(frame: .zero)
         identifier = TaskManagerTableController.taskCellID
+        disclosure.isBordered = false
+        disclosure.imagePosition = .imageOnly
+        disclosure.imageScaling = .scaleProportionallyDown
+        disclosure.contentTintColor = .secondaryLabelColor
+        disclosure.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+        disclosure.target = self
+        disclosure.action = #selector(toggle)
+        disclosure.translatesAutoresizingMaskIntoConstraints = false
         let icon = NSImageView()
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         let label = NSTextField(labelWithString: "")
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The title gives way after the note.
+        label.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
+        label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        note.lineBreakMode = .byTruncatingTail
+        note.textColor = .secondaryLabelColor
+        note.translatesAutoresizingMaskIntoConstraints = false
+        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(disclosure)
         addSubview(icon)
         addSubview(label)
+        addSubview(note)
         imageView = icon
         textField = label
+        leading = disclosure.leadingAnchor.constraint(equalTo: leadingAnchor, constant: TaskManagerMetrics.cellInset)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: TaskManagerMetrics.cellInset),
+            leading,
+            disclosure.centerYAnchor.constraint(equalTo: centerYAnchor),
+            disclosure.widthAnchor.constraint(equalToConstant: TaskManagerMetrics.disclosureWidth),
+            disclosure.heightAnchor.constraint(equalToConstant: TaskManagerMetrics.iconSize),
+            icon.leadingAnchor.constraint(equalTo: disclosure.trailingAnchor, constant: 2),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: TaskManagerMetrics.iconSize),
             icon.heightAnchor.constraint(equalToConstant: TaskManagerMetrics.iconSize),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: TaskManagerMetrics.cellInset),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -TaskManagerMetrics.cellInset),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -TaskManagerMetrics.cellInset),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            note.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: TaskManagerMetrics.cellInset),
+            note.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -TaskManagerMetrics.cellInset),
+            note.firstBaselineAnchor.constraint(equalTo: label.firstBaselineAnchor),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(title: String, icon: NSImage?) {
-        if textField?.stringValue != title { textField?.stringValue = title }
+    @objc private func toggle() { onToggle?() }
+
+    func configure(_ row: TaskManagerRow, icon: NSImage?, onToggle: @escaping () -> Void) {
+        self.onToggle = onToggle
+        let inset = TaskManagerMetrics.cellInset + CGFloat(row.level) * TaskManagerMetrics.indent
+        if leading.constant != inset { leading.constant = inset }
+        disclosure.isHidden = row.disclosure == .none
+        let chevron = row.disclosure == .expanded ? Self.open : Self.closed
+        if disclosure.image !== chevron { disclosure.image = chevron }
+        disclosure.setAccessibilityLabel(row.disclosure == .expanded ? "Hide processes" : "Show processes")
+        if textField?.stringValue != row.title { textField?.stringValue = row.title }
+        if note.stringValue != row.note { note.stringValue = row.note }
         if imageView?.image !== icon { imageView?.image = icon }
+        // Unloaded: dimmed, as its row in the sidebar.
+        imageView?.alphaValue = row.isUnloaded ? 0.45 : 1
         // A long page title is cut short; the tooltip has all of it.
-        toolTip = title
+        toolTip = row.note.isEmpty ? row.title : "\(row.title)\n\(row.note)"
     }
 }
 
@@ -298,8 +406,9 @@ final class TaskManagerFigureCell: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func configure(text: String, alignment: NSTextAlignment) {
+    func configure(text: String, alignment: NSTextAlignment, toolTip: String? = nil) {
         if textField?.stringValue != text { textField?.stringValue = text }
         if textField?.alignment != alignment { textField?.alignment = alignment }
+        if self.toolTip != toolTip { self.toolTip = toolTip }
     }
 }

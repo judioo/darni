@@ -4,17 +4,22 @@ import SwiftUI
 
 /// Sizes of the Task Manager window and its table.
 enum TaskManagerMetrics {
-    static let windowSize = NSSize(width: 760, height: 480)
+    static let windowSize = NSSize(width: 940, height: 520)
     static let minimumSize = NSSize(width: 520, height: 280)
     static let barPadding: CGFloat = 12
     static let searchWidth: CGFloat = 200
     static let rowHeight: CGFloat = 24
     static let iconSize: CGFloat = 16
     static let cellInset: CGFloat = 6
+    /// A stack's chevron, and how far a process under a stack sits in.
+    static let disclosureWidth: CGFloat = 12
+    static let indent: CGFloat = 18
 
     static func width(of column: TaskManagerColumn) -> (ideal: CGFloat, minimum: CGFloat) {
         switch column {
         case .task: return (300, 160)
+        case .state: return (150, 70)
+        case .idle: return (80, 50)
         case .profile: return (110, 60)
         case .memoryFootprint: return (120, 80)
         case .cpu: return (60, 44)
@@ -102,8 +107,8 @@ final class TaskManagerWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// The window's content: Chrome's three segments and search field over the
-/// table, End task under it.
+/// The window's content: the filter (everything in stacks, or one kind of
+/// task) and the search field over the table, End task under it.
 struct TaskManagerView: View {
     @Bindable var controller: TaskManagerController
     let endTask: () -> Void
@@ -111,8 +116,8 @@ struct TaskManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: TaskManagerMetrics.barPadding) {
-                Picker("Show", selection: $controller.category) {
-                    ForEach(TaskManagerCategory.allCases, id: \.self) { Text($0.title).tag($0) }
+                Picker("Show", selection: $controller.filter) {
+                    ForEach(TaskManagerFilter.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -132,10 +137,17 @@ struct TaskManagerView: View {
                 }
             Divider()
             HStack {
+                // What "≈" on a tab's row means, where the figures are read.
+                Text("≈ A tab's total is an estimate: a process tabs share is split evenly between them.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(TaskManagerHelp.estimate)
                 Spacer()
                 Button("End task", action: endTask)
                     .disabled(!controller.canEndSelection)
-                    .help("Ends the selected process. Its tabs stop until you reload them.")
+                    .help("Ends the selected processes. Their tabs stop until you reload them.")
             }
             .padding(TaskManagerMetrics.barPadding)
         }
