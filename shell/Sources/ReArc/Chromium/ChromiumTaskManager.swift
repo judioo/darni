@@ -105,9 +105,10 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         for id in listed {
             directory.tabs[id] = tab(id, sleep: sleep.byTab)
         }
-        // A tab the engine lists has a page: never also a row of its own.
-        let live = Set(listed.compactMap { runtime.engine(forTab: $0)?.shellID.uuidString })
-        directory.unloadedTabs = sleep.unloaded.filter { !live.contains($0.id) }
+        // A discarded tab is still in the engine's list (its emptied main
+        // frame stays in the renderer): the rows tell it by its State, and
+        // leave out only the unloaded tabs listed with a page.
+        directory.unloadedTabs = sleep.unloaded
         directory.sleepSettings = model.taskManagerSleepSettings(canFreeze: runtime.capabilities.tabFreeze)
         for id in Set(processes.map(\.profileID)) where id != 0 {
             directory.profiles[id] = profileName(id)
@@ -130,7 +131,8 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         let title = [engine.pageTitle, saved, url?.absoluteString].compactMap { $0 }.first { !$0.isEmpty } ?? "New Tab"
         return TaskManagerDirectory.Tab(
             title: title, isPrivate: engine.profileKey.isOffTheRecord,
-            extensionID: url?.scheme == "chrome-extension" ? url?.host : nil, sleep: sleep[engine.shellID]
+            extensionID: url?.scheme == "chrome-extension" ? url?.host : nil, sleep: sleep[engine.shellID],
+            sidebarID: engine.shellID.uuidString
         )
     }
 

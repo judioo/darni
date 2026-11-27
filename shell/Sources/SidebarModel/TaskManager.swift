@@ -115,13 +115,25 @@ public struct TaskManagerDirectory: Equatable, Sendable {
         /// Tab sleep: a tab of the sidebar's. nil for the others (a private
         /// window's, Developer Tools).
         public var sleep: TaskManagerTabSleep?
+        /// The shell's tab this page is (its `TaskManagerUnloadedTab.id`), so
+        /// a tab listed with a page is not also listed as unloaded.
+        public var sidebarID: String?
 
-        public init(title: String, isPrivate: Bool = false, extensionID: String? = nil, sleep: TaskManagerTabSleep? = nil) {
+        public init(
+            title: String, isPrivate: Bool = false, extensionID: String? = nil, sleep: TaskManagerTabSleep? = nil,
+            sidebarID: String? = nil
+        ) {
             self.title = title
             self.isPrivate = isPrivate
             self.extensionID = extensionID
             self.sleep = sleep
+            self.sidebarID = sidebarID
         }
+
+        /// Unloaded: Chromium's discard keeps the tab's main frame, emptied,
+        /// in its renderer, so the engine still lists the tab in that
+        /// process. Nothing of the page is in memory: no task of the process.
+        public var hasPage: Bool { sleep?.state != .unloaded }
     }
 
     /// By engine tab ID. A tab the shell has no page for is left out.
@@ -130,8 +142,8 @@ public struct TaskManagerDirectory: Equatable, Sendable {
     public var profiles: [UInt64: String]
     /// Extension names by extension ID.
     public var extensions: [String: String]
-    /// Tabs of the sidebar with no page in memory: no process, so the
-    /// engine's list does not have them. Each shows as a row of its own.
+    /// Tabs of the sidebar with no page in memory. Each shows as a row of
+    /// its own, unless a tab in `tabs` with a page is the same sidebar tab.
     public var unloadedTabs: [TaskManagerUnloadedTab]
     /// Tab sleep's settings, for the State column's help. nil: no tab sleeps (no engine).
     public var sleepSettings: TaskManagerSleepSettings?
@@ -409,7 +421,7 @@ public enum TaskManagerRows {
             break
         }
 
-        let known = process.tabIDs.compactMap { id in directory.tabs[id].map { (id: id, tab: $0) } }
+        let known = process.tabIDs.compactMap { id in directory.tabs[id].flatMap { $0.hasPage ? (id: id, tab: $0) : nil } }
         if process.isExtension {
             let id = process.details.map(\.extensionID).flatMap { $0.isEmpty ? nil : $0 }
                 ?? known.lazy.compactMap(\.tab.extensionID).first
