@@ -677,6 +677,15 @@ public struct PageContextMenuPlan: Equatable, Sendable {
         /// Show Inspect (disabled) at all when it cannot run.
         public var showsDisabledInspect = true
 
+        /// The link's places after its new tab and window, in Arc's order: Split
+        /// View, Little Arc, (Darni's Peek,) private window. WebKit's menu
+        /// (`ReArcWebView.customize`) inserts the same list after its New Tab.
+        public var linkOpeners: [PageContextMenuItem] {
+            [(canOpenSplit, PageContextMenuItem.openLinkInNewSplit), (canOpenLittleArc, .openLinkInLittleArc),
+             (canOpenPeek, .openLinkInPeek), (canOpenPrivateWindow, .openLinkInPrivateWindow)]
+                .compactMap { $0.0 ? $0.1 : nil }
+        }
+
         public init(
             canGoBack: Bool = false, canGoForward: Bool = false, canOpenLittleArc: Bool = true, canOpenSplit: Bool = true,
             canOpenPeek: Bool = true, canOpenWindow: Bool = true, canOpenPrivateWindow: Bool = true, canSaveLink: Bool = false, imageSearchName: String? = nil,
@@ -707,10 +716,7 @@ public struct PageContextMenuPlan: Equatable, Sendable {
         if link != nil {
             var section = [on(.openLinkInNewTab)]
             if options.canOpenWindow { section.append(on(.openLinkInNewWindow)) }
-            if options.canOpenSplit { section.append(on(.openLinkInNewSplit)) }
-            if options.canOpenLittleArc { section.append(on(.openLinkInLittleArc)) }
-            if options.canOpenPeek { section.append(on(.openLinkInPeek)) }
-            if options.canOpenPrivateWindow { section.append(on(.openLinkInPrivateWindow)) }
+            section += options.linkOpeners.map { on($0) }
             sections.append(section)
             sections.append(options.canSaveLink ? [on(.saveLinkAs), on(.copyLink)] : [on(.copyLink)])
         }

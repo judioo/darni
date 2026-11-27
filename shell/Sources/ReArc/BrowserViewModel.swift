@@ -2186,6 +2186,15 @@ final class BrowserViewModel {
         }
     }
 
+    /// The open bar turns to a mode where what is typed opens somewhere else
+    /// (a Peek, a Little Darni window), with an empty field.
+    func beginURLIntent(_ intent: CommandBarURLIntent) {
+        commandBarURLIntent = intent
+        commandBarText = ""
+        commandBarHighlightedIndex = 0
+        commandBarError = nil
+    }
+
     func openCommandBar(target: Tab.ID?, text: String) {
         commandBarMenuSnapshot = nil
         commandBarCreatesNewTab = false
@@ -2416,10 +2425,7 @@ final class BrowserViewModel {
         case .peekAtURL:
             beginPeekAtURL()
         case .openLittleArcWindow:
-            commandBarURLIntent = .littleArc
-            commandBarText = ""
-            commandBarHighlightedIndex = 0
-            commandBarError = nil
+            beginURLIntent(.littleArc)
         case .openInLittleArc:
             openInLittleArcFromContext()
         case .promoteLittleArcToTab:
