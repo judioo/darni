@@ -270,7 +270,7 @@ extension BrowserViewModel {
         // group shared by several spaces and the favorites are listed once.
         for space in store.spaces {
             for tab in store.displayTabs(in: space.id) where listed.insert(tab.id).inserted {
-                if let sleep = byTab[tab.id], sleep.state != .unloaded { continue }
+                if let sleep = byTab[tab.id], !sleep.isUnloaded { continue }
                 let profile = store.profile(withID: store.owningProfileID(of: profileID(for: tab)))?.name ?? ""
                 unloaded.append(TaskManagerUnloadedTab(
                     id: tab.id.uuidString, title: tab.displayTitle, profile: profile,

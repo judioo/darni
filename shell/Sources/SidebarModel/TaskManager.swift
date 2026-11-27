@@ -133,7 +133,7 @@ public struct TaskManagerDirectory: Equatable, Sendable {
         /// Unloaded: Chromium's discard keeps the tab's main frame, emptied,
         /// in its renderer, so the engine still lists the tab in that
         /// process. Nothing of the page is in memory: no task of the process.
-        public var hasPage: Bool { sleep?.state != .unloaded }
+        public var hasPage: Bool { sleep?.isUnloaded != true }
     }
 
     /// By engine tab ID. A tab the shell has no page for is left out.

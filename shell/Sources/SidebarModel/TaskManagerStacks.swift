@@ -94,6 +94,9 @@ public struct TaskManagerTabSleep: Equatable, Sendable {
     /// On screen now: idle "Now".
     public var isOnScreen: Bool
 
+    /// No page in memory: an Unloaded row, no task of any process.
+    public var isUnloaded: Bool { state == .unloaded }
+
     public init(state: TaskManagerTabState, idle: TimeInterval? = nil, isOnScreen: Bool = false) {
         self.state = state
         self.idle = idle
@@ -335,7 +338,7 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
     /// The row's one process, if it has exactly one.
     public var pid: Int32? { pids.count == 1 ? pids[0] : nil }
 
-    public var isUnloaded: Bool { sleep?.state == .unloaded }
+    public var isUnloaded: Bool { sleep?.isUnloaded == true }
 
     /// Grey words after the title: which tab a frame is in, who shares the process.
     public var note: String {
