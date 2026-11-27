@@ -42,11 +42,15 @@ public enum ShortcutConflict: Hashable, Sendable {
     case binding(ArcShortcut)
     /// macOS takes the chord before any app (Mission Control, Spotlight, screenshots).
     case system(String)
+    /// This binding's default chord is one the user gave another binding, so
+    /// it has none (a key someone set before a new default came in keeps working).
+    case displaced(by: ArcShortcut, chord: ShortcutChord)
 
     public var message: String {
         switch self {
         case .binding(let other): return "Also used by \(other.title)"
         case .system(let owner): return "macOS uses this shortcut for \(owner)"
+        case .displaced(let other, let chord): return "No shortcut: you set \(chord.display) for \(other.title)"
         }
     }
 }
@@ -94,19 +98,34 @@ public struct ShortcutOverrides: Equatable, Sendable {
 
     public func isCustomized(_ id: String) -> Bool { overrides[id] != nil }
 
-    /// The chord that runs `id` now; nil when unbound or unknown.
+    /// The chord that runs `id` now; nil when unbound or unknown. A chord the
+    /// user set beats another binding's default: that binding then has none,
+    /// so a key set on an earlier build is not taken by a new default
+    /// (⇧⌘P for Peek at URL… in 1447).
     public func chord(for id: String) -> ShortcutChord? {
         switch overrides[id] {
         case .chord(let chord): return chord
         case .unbound: return nil
-        case nil: return defaults[id]
+        case nil:
+            guard let chord = defaults[id] else { return nil }
+            return userOwner(of: chord, excluding: id) == nil ? chord : nil
         }
     }
 
-    /// Records `chord` for `id`; the default chord clears the override.
+    /// The binding, first in menu-bar order, the user gave `chord` to.
+    public func userOwner(of chord: ShortcutChord, excluding id: String) -> ArcShortcut? {
+        let owners = overrides.filter { $0.key != id && $0.value == .chord(chord) }
+        guard !owners.isEmpty else { return nil }
+        return table.first { owners[$0.id] != nil }
+    }
+
+    /// Records `chord` for `id`; the default chord clears the override, unless
+    /// the user gave that chord to another binding (then it is kept as set, so
+    /// the choice is not lost under the other binding's claim).
     public mutating func set(_ chord: ShortcutChord, for id: String) {
         guard let shortcut = table.first(where: { $0.id == id }) else { return }
-        overrides[id] = ShortcutChord(of: shortcut) == chord ? nil : .chord(chord)
+        let isDefault = ShortcutChord(of: shortcut) == chord && userOwner(of: chord, excluding: id) == nil
+        overrides[id] = isDefault ? nil : .chord(chord)
     }
 
     public mutating func unbind(_ id: String) {
@@ -152,12 +171,17 @@ public struct ShortcutOverrides: Equatable, Sendable {
     public func rows(matching query: String = "") -> [ShortcutListRow] {
         let rows = table.map { shortcut -> ShortcutListRow in
             let chord = chord(for: shortcut.id)
+            var conflicts = chord.map { conflicts(for: $0, excluding: shortcut.id) } ?? []
+            if chord == nil, !isCustomized(shortcut.id), let original = defaults[shortcut.id],
+               let owner = userOwner(of: original, excluding: shortcut.id) {
+                conflicts.append(.displaced(by: owner, chord: original))
+            }
             return ShortcutListRow(
                 shortcut: shortcut,
                 title: Self.listTitle(for: shortcut),
                 chord: chord,
                 isCustomized: isCustomized(shortcut.id),
-                conflicts: chord.map { conflicts(for: $0, excluding: shortcut.id) } ?? []
+                conflicts: conflicts
             )
         }
         .filter { ShortcutSearch.matches($0, query: query) }

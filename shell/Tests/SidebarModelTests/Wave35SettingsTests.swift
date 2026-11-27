@@ -86,9 +86,34 @@ final class Wave35SettingsTests: XCTestCase {
 
     // MARK: Conflicts
 
-    func testATakenChordIsAConflictAndTheFirstInMenuOrderWins() {
+    /// Taking another binding's default chord: the user's choice wins, the
+    /// other binding has no key, and its row says why (security, RC 1447:
+    /// before, the binding first in menu order kept the key even when it was
+    /// only a default).
+    func testTakingADefaultChordMovesItAndTheOtherRowSaysWhy() throws {
         var overrides = ShortcutOverrides()
         overrides.set(cmdShiftK, for: "newTab")
+        XCTAssertEqual(overrides.conflicts(for: cmdShiftK, excluding: "newTab"), [])
+        XCTAssertNil(overrides.chord(for: "clearExplore"))
+        XCTAssertEqual(overrides.binding(for: .character("k"), modifiers: [.shift, .command])?.id, "newTab")
+        let rows = overrides.rows()
+        XCTAssertEqual(rows.first { $0.id == "newTab" }?.conflicts, [])
+        let clear = try XCTUnwrap(rows.first { $0.id == "clearExplore" })
+        XCTAssertEqual(clear.chipText, "—")
+        XCTAssertEqual(clear.conflicts, [.displaced(by: ArcShortcuts.binding(id: "newTab")!, chord: cmdShiftK)])
+        // A binding later in menu order takes an earlier one's default too.
+        var later = ShortcutOverrides()
+        later.set(ShortcutChord(.character("t"), .command), for: "clearExplore")
+        XCTAssertEqual(later.binding(for: .character("t"), modifiers: .command)?.id, "clearExplore")
+        XCTAssertNil(later.chord(for: "newTab"))
+    }
+
+    /// Two chords the user set: a real conflict, flagged on both, and the
+    /// first in menu order wins, as AppKit resolves duplicate key equivalents.
+    func testTwoUserChordsConflictAndTheFirstInMenuOrderWins() {
+        var overrides = ShortcutOverrides()
+        overrides.set(cmdShiftK, for: "newTab")
+        overrides.set(cmdShiftK, for: "clearExplore")
         XCTAssertEqual(overrides.conflicts(for: cmdShiftK, excluding: "newTab"),
                        [.binding(ArcShortcuts.binding(id: "clearExplore")!)])
         XCTAssertEqual(overrides.conflicts(for: cmdShiftK, excluding: "clearExplore"),
