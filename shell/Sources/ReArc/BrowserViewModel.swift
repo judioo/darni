@@ -2147,6 +2147,8 @@ final class BrowserViewModel {
     /// (no `webui_daily_pages` for the daily-use hosts) do nothing.
     func openBrowserPage(_ page: BrowserInternalPage) {
         guard page.isAvailable(engine: engineHost.navigationSchemes) else { return }
+        // About to clear history: the Task Manager drops the closed tabs it keeps for 10 minutes.
+        if page == .clearBrowsingData { taskManager.forgetClosedTabs() }
         if let existing = store.displayTabs().first(where: { page.isShown(by: $0.url) }) {
             store.updateTab(existing.id, title: page.title, url: page.url)
             store.focusTab(existing.id)

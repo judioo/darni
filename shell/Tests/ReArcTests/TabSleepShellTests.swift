@@ -454,6 +454,42 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertFalse(model.canSleepTab(id), "in use")
     }
 
+    /// Security N-3 (PRE-task-manager-history-insights): Sleep from the Task
+    /// Manager is refused, and its action does nothing, for every reason the
+    /// rule counts a tab as in use.
+    func testSleepIsRefusedForEveryInUseReason() {
+        let reasons = ["heard", "playing", "pip", "prompt", "camera", "microphone", "sharing", "shareTarget", "download", "peek", "littleArc"]
+        let (model, tabs, engines) = makeModel(["idle"] + reasons)
+        let id = { (name: String) in tabs[name]!.id }
+        model.mediaStateByTab[id("heard")] = WebMediaState(isAudible: true)
+        model.mediaStateByTab[id("playing")] = WebMediaState(isPlaying: true)
+        model.mediaStateByTab[id("pip")] = WebMediaState(isPictureInPicture: true)
+        engines["prompt"]!.pagePrompts.presentDialog(
+            JavaScriptDialogRequest(id: 1, kind: .confirm, message: "Sure?", origin: "https://prompt.test")) { _ in }
+        model.captureStateByTab[id("camera")] = MediaCaptureState(isCapturingVideo: true)
+        model.captureStateByTab[id("microphone")] = MediaCaptureState(isCapturingAudio: true)
+        model.screenShareCaptureChanged(id("sharing"), live: true)
+        let prompts = PagePromptCenter()
+        prompts.ownerTabID = id("idle")
+        model.screenShareStarted(ScreenShare(kind: .tab, target: id("shareTarget")), site: "meet.test", from: prompts)
+        let created = DownloadEvent(kind: .created, guid: "n3", url: "https://download.test/big.zip", targetPath: "/tmp/big.zip", totalBytes: 100)
+        model.downloads.apply(created, source: .webKit)
+        model.downloads.noteOrigin(DownloadOrigin(page: TidyDownloads.Origin(), isPrivate: false, engine: ObjectIdentifier(engines["download"]!)), for: "n3")
+        engines["peek"]!.pagePrompts.role = .peek
+        engines["littleArc"]!.pagePrompts.role = .littleArc
+
+        XCTAssertFalse(model.canSleepTab(id("front")), "on screen")
+        XCTAssertFalse(model.sleepTab(id("front")), "on screen")
+        for name in reasons {
+            XCTAssertFalse(model.canSleepTab(id(name)), "\(name): Sleep is offered for a tab in use")
+            XCTAssertFalse(model.sleepTab(id(name)), "\(name): the action froze a tab in use")
+            XCTAssertEqual(engines[name]!.calls, [], name)
+        }
+        // The control: a tab with none of them sleeps.
+        XCTAssertTrue(model.canSleepTab(id("idle")))
+        XCTAssertTrue(model.sleepTab(id("idle")))
+    }
+
     func testAnEngineThatCannotFreezeOffersNoSleep() throws {
         let (model, tabs, engines) = makeModel(["idle"])
         engines["idle"]!.freezeAnswer = .refusedForNow

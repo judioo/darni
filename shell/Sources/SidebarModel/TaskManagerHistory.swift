@@ -532,6 +532,14 @@ public struct TaskManagerHistory: Equatable, Sendable {
         stacks[key] = nil
     }
 
+    /// History was cleared (Clear Browsing Data opened, or the command bar's
+    /// history cleared): the closed tabs kept for 10 minutes go now, with
+    /// their titles and addresses (security N-2). Tabs still open keep theirs.
+    public mutating func forgetGone() {
+        guard let lastReading else { return stacks = [:] }
+        stacks = stacks.filter { $0.value.lastSeen >= lastReading }
+    }
+
     /// Settings › Advanced turned the background history off: what the 60 s
     /// readings kept while the window was closed goes, with the events noted then.
     public mutating func clearClosedWindowHistory() {

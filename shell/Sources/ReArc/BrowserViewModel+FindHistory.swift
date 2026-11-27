@@ -71,6 +71,7 @@ extension BrowserViewModel {
     }
 
     func clearVisitHistory() {
+        taskManager.forgetClosedTabs()
         visitHistory.removeAll()
         lastRecordedVisit = [:]
         scheduleVisitHistorySave()

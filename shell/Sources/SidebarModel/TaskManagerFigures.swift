@@ -28,8 +28,9 @@ public enum TaskManagerViewMode: String, CaseIterable, Sendable {
 public enum TaskManagerFigures {
     public static func text(stack: TaskManagerStack, history: TaskManagerHistory, timeline: TaskManagerTimeline) -> String {
         let approx = stack.isEstimate ? "≈ " : ""
-        var lines = ["\(Brand.name) Task Manager · \(stack.title)"]
-        if !stack.site.isEmpty { lines.append("Site: \(stack.site)") }
+        // A private window's page: no title, site or address on the pasteboard (security N-1).
+        var lines = ["\(Brand.name) Task Manager · \(stack.isPrivate ? "Private tab" : stack.title)"]
+        if !stack.site.isEmpty, !stack.isPrivate { lines.append("Site: \(stack.site)") }
         if let sleep = stack.sleep {
             lines.append("State: \(sleep.state.title) · idle \(sleep.idleText)")
         }
@@ -40,7 +41,8 @@ public enum TaskManagerFigures {
                 + " · Processes: \(stack.pids.count)")
             lines.append("By process:")
             for member in stack.members {
-                var line = "  \(member.task.title) · \(TaskManagerFormat.memory(member.memoryFootprint)) · pid \(member.pid)"
+                let name = stack.isPrivate ? "Process" : member.task.title
+                var line = "  \(name) · \(TaskManagerFormat.memory(member.memoryFootprint)) · pid \(member.pid)"
                 if member.sharedBy > 1 { line += " (shared by \(member.sharedBy), counted \(TaskManagerFormat.memory(UInt64(Double(member.memoryFootprint) * member.share))))" }
                 lines.append(line)
             }

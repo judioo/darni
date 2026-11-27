@@ -348,6 +348,15 @@ final class TaskManagerController {
         }
     }
 
+    /// History was cleared: closed tabs are forgotten now, not after 10 minutes.
+    func forgetClosedTabs() {
+        let before = history
+        history.forgetGone()
+        guard history != before else { return }
+        if let focusedKey, history[focusedKey] == nil { self.focusedKey = nil }
+        historyRevision &+= 1
+    }
+
     /// A private window closed: its page's history goes now.
     func forgetTab(sidebarID: String) {
         let key = TaskManagerStack.historyKey(sidebarID: sidebarID)

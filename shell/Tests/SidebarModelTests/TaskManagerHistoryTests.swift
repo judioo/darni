@@ -604,6 +604,40 @@ final class TaskManagerHistoryTests: XCTestCase {
         XCTAssertTrue(unloaded.contains("from the Task Manager · freed 100 MB"), unloaded)
     }
 
+    /// Security N-1: a private window's page copies no title, site or address.
+    func testCopyFiguresOfAPrivatePageLeavesOutItsTitleAndAddress() throws {
+        var f = fixture()
+        f.directory.tabs[3] = tab("Secret Plans", "S", url: "https://plans.example/q3", isPrivate: true)
+        f.processes.append(TaskManagerProcess(pid: 30, kind: .renderer, tabIDs: [3], memoryFootprint: 50 * mb,
+                                              details: .init(mainFrameTabIDs: [3], site: "https://plans.example")))
+        var history = TaskManagerHistory()
+        history.record(f.stacks, at: 1000, source: .window)
+        let stack = try XCTUnwrap(f.stacks.first { $0.isPrivate })
+        let text = TaskManagerFigures.text(stack: stack, history: history, timeline: timeline(1000))
+        XCTAssertTrue(text.hasPrefix("Darni Task Manager · Private tab\n"), text)
+        XCTAssertFalse(text.contains("Secret"), text)
+        XCTAssertFalse(text.contains("plans.example"), text)
+        XCTAssertTrue(text.contains("By process:\n  Process · 50.0 MB · pid 30"), text)
+    }
+
+    /// Security N-2: clearing history drops the closed tabs kept for 10
+    /// minutes (titles and addresses with them); open tabs keep theirs.
+    func testForgetGoneDropsClosedTabsAtOnce() {
+        var f = fixture()
+        var history = TaskManagerHistory()
+        history.record(f.stacks, at: 1000, source: .window)
+        f.processes.removeAll { $0.pid == 20 }
+        f.directory.tabs[2] = nil
+        history.record(f.stacks, at: 1010, source: .window)
+        XCTAssertNotNil(history[news], "kept 10 minutes after it closed")
+        history.forgetGone()
+        XCTAssertNil(history[news])
+        XCTAssertNotNil(history[mail], "an open tab keeps its history")
+        var empty = TaskManagerHistory()
+        empty.forgetGone()
+        XCTAssertEqual(empty, TaskManagerHistory())
+    }
+
     // MARK: Preferences
 
     func testTheBackgroundHistoryIsOnByDefaultAndTheViewChoiceIsKept() throws {
