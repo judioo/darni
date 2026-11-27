@@ -118,16 +118,23 @@ public struct TaskManagerDirectory: Equatable, Sendable {
         /// The shell's tab this page is (its `TaskManagerUnloadedTab.id`), so
         /// a tab listed with a page is not also listed as unloaded.
         public var sidebarID: String?
+        /// The page's committed address without its fragment, for the history:
+        /// a new one starts the growth rule's window again (`TaskManagerHistory`).
+        public var pageURL: String?
+        /// The page is loading (a reload or a navigation): the growth rule's window starts again.
+        public var isLoading: Bool
 
         public init(
             title: String, isPrivate: Bool = false, extensionID: String? = nil, sleep: TaskManagerTabSleep? = nil,
-            sidebarID: String? = nil
+            sidebarID: String? = nil, pageURL: String? = nil, isLoading: Bool = false
         ) {
             self.title = title
             self.isPrivate = isPrivate
             self.extensionID = extensionID
             self.sleep = sleep
             self.sidebarID = sidebarID
+            self.pageURL = pageURL
+            self.isLoading = isLoading
         }
 
         /// Unloaded: Chromium's discard keeps the tab's main frame, emptied,
@@ -280,13 +287,15 @@ public struct TaskManagerGroup: Equatable, Sendable {
     public var usage: TaskManagerUsage
     /// The tabs that stop working when this process ends, by title.
     public var tabTitles: [String]
+    /// CPU time since the process started (the engine's running total).
+    public var cpuMicros: Int64 = 0
 
     /// Everything but ReArc itself can be ended.
     public var isKillable: Bool { kind != .browser && pid > 0 }
 }
 
 public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
-    case task, state, idle, profile, memoryFootprint, cpu, network, processID
+    case task, state, idle, profile, memoryFootprint, memoryHistory, cpu, cpuHistory, network, processID
 
     public var title: String {
         switch self {
@@ -295,7 +304,9 @@ public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
         case .idle: return "Idle"
         case .profile: return "Profile"
         case .memoryFootprint: return "Memory footprint"
+        case .memoryHistory: return "Memory 10 min"
         case .cpu: return "CPU"
+        case .cpuHistory: return "CPU 10 min"
         case .network: return "Network"
         case .processID: return "Process ID"
         }
@@ -307,10 +318,13 @@ public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
     /// A number: drawn on the right, and sorted from the largest first.
     public var isFigure: Bool {
         switch self {
-        case .task, .state, .profile: return false
+        case .task, .state, .profile, .memoryHistory, .cpuHistory: return false
         case .idle, .memoryFootprint, .cpu, .network, .processID: return true
         }
     }
+
+    /// A sparkline of the stack's last 10 minutes (`TaskManagerHistory`), not text: not sorted.
+    public var isSparkline: Bool { self == .memoryHistory || self == .cpuHistory }
 
     /// The columns of the first Task Manager, before a saved choice listed the columns it knew.
     static let firstColumns: [TaskManagerColumn] = [.task, .profile, .memoryFootprint, .cpu, .network, .processID]
@@ -379,7 +393,7 @@ public enum TaskManagerRows {
                 return TaskManagerGroup(
                     pid: process.pid, kind: process.kind, tasks: tasks,
                     profile: directory.profiles[process.profileID] ?? "", memoryFootprint: process.memoryFootprint,
-                    usage: usage[process.pid] ?? TaskManagerUsage(), tabTitles: tabTitles
+                    usage: usage[process.pid] ?? TaskManagerUsage(), tabTitles: tabTitles, cpuMicros: process.cpuMicros
                 )
             }
             .sorted(by: inDefaultOrder)

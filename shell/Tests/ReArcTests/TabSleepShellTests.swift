@@ -399,6 +399,68 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertEqual(engines["idle"]!.calls, [])
     }
 
+    // MARK: The Task Manager's history
+
+    private func events(_ model: BrowserViewModel, _ tab: Tab) -> [String] {
+        (model.taskManager.history[TaskManagerStack.historyKey(sidebarID: tab.id.uuidString)]?.events ?? [])
+            .map { "\($0.kind.rawValue) \($0.cause.rawValue)" }
+    }
+
+    func testTheTaskManagerHearsWhatTabSleepDidAndWhatDidIt() {
+        let (model, tabs, _) = makeModel(["idle", "other"])
+        // As with its window open (or the history kept while it's closed).
+        model.taskManager.startPolling()
+        defer { model.taskManager.stopPolling() }
+        model.runAutoFreeze(now: now)
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep automatic"])
+        model.selectTab(tabs["idle"]!.id)
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep automatic", "woke shown"])
+        model.unloadTab(tabs["other"]!.id)
+        XCTAssertEqual(events(model, tabs["other"]!), ["fellAsleep automatic", "unloaded sidebar"], "an unload ends its sleep")
+        model.selectTab(tabs["other"]!.id)
+        XCTAssertEqual(events(model, tabs["other"]!), ["fellAsleep automatic", "unloaded sidebar", "loaded shown"])
+        XCTAssertEqual(events(model, tabs["front"]!), [], "showing a tab that never slept is no news")
+    }
+
+    func testTheTaskManagerHearsNothingWithItsWindowClosedAndItsHistoryOff() {
+        let (model, tabs, _) = makeModel()
+        XCTAssertFalse(model.taskManager.isPolling)
+        XCTAssertFalse(model.taskManager.isReadingInBackground, "no engine attached in a test")
+        model.runAutoFreeze(now: now)
+        XCTAssertEqual(events(model, tabs["idle"]!), [])
+    }
+
+    func testSleepFromTheTaskManagerHoldsUntilTheTabIsUsedOrShown() {
+        // Seen 5 minutes ago: the rule would not freeze it for another 25.
+        let (model, tabs, engines) = makeModel(["idle"], shown: 5)
+        let id = tabs["idle"]!.id
+        model.taskManager.startPolling()
+        defer { model.taskManager.stopPolling() }
+        XCTAssertFalse(model.canSleepTab(tabs["front"]!.id), "on screen")
+        XCTAssertTrue(model.canSleepTab(id))
+        XCTAssertTrue(model.sleepTab(id))
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze"])
+        XCTAssertFalse(model.canSleepTab(id), "already asleep")
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep taskManager"])
+        // The rule's next check finds it "not due" and leaves it asleep.
+        model.runAutoFreeze(now: now.addingTimeInterval(60))
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze"])
+        XCTAssertTrue(model.isTabFrozen(id))
+        // In use: it runs again.
+        model.captureStateByTab[id] = MediaCaptureState(isCapturingAudio: true)
+        model.runAutoFreeze(now: now.addingTimeInterval(120))
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze", "unfreeze"])
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep taskManager", "woke rule"])
+        XCTAssertFalse(model.canSleepTab(id), "in use")
+    }
+
+    func testAnEngineThatCannotFreezeOffersNoSleep() throws {
+        let (model, tabs, engines) = makeModel(["idle"])
+        engines["idle"]!.freezeAnswer = .refusedForNow
+        XCTAssertFalse(model.sleepTab(tabs["idle"]!.id), "the engine said not now")
+        XCTAssertFalse(model.isTabFrozen(tabs["idle"]!.id))
+    }
+
     func testTurningFreezingOffThawsEveryFrozenTabAtOnce() {
         let (model, tabs, engines) = makeModel(["one", "two"])
         model.runAutoFreeze(now: now)

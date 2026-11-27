@@ -75,6 +75,8 @@ extension BrowserViewModel {
     func privateWindowClosed(_ id: UUID) {
         guard let window = privateWindows.removeValue(forKey: id) else { return }
         reader.forget(tabID: id)
+        // The Task Manager forgets the private page's history with its window.
+        taskManager.forgetTab(sidebarID: id.uuidString)
         if !privateWindows.values.contains(where: { $0.session == window.session }) {
             sitePermissions.dropScope(SitePermissionStore.ephemeralPrefix + window.session.uuidString)
             onPrivateSessionEnded?(window)

@@ -387,6 +387,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         if runtime.capabilities.perfMetrics {
             // Window › Task Manager lists the engine's processes; before ABI 1.44 it shows ReArc alone.
             model.taskManager.source = ChromiumTaskManagerSource(runtime: runtime, model: model)
+            // The history's 60 s reading while the window is closed (Settings › Advanced; on by default).
+            model.taskManager.engineDidAttach()
         }
         // Built-in ad and tracker blocking, when the engine has its calls (CONTENT-BLOCKING.md §5).
         ChromiumContentBlockingEngine.attach(to: model, runtime: runtime)
@@ -492,6 +494,8 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
                     self?.hideWindowsForQuit()
                 }
             }
+            // The Task Manager's 60 s reading stops with the engine.
+            MainActor.assumeIsolated { model?.taskManager.engineDidDetach() }
             model?.prepareForQuit()
         }
         runtime.onTerminateCancelled = { [weak self, weak model] in
@@ -500,6 +504,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
             MainActor.assumeIsolated {
                 self?.revealWindowsHiddenByQuit()
                 self?.resumeWindowSession()
+                if self?.runtime.capabilities.perfMetrics == true { model?.taskManager.engineDidAttach() }
             }
             model?.resumeAfterCancelledQuit()
         }

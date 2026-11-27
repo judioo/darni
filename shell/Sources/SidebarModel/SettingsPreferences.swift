@@ -139,3 +139,20 @@ public enum NewSpaceContainerPolicy: String, CaseIterable, Sendable {
         defaults.set(rawValue, forKey: Self.defaultsKey)
     }
 }
+
+/// Settings › Advanced "Keep Task Manager history while it's closed": one
+/// process-list reading a minute while Darni runs, so the Task Manager's
+/// memory history reaches back 3 hours and tab sleep's effects are measured
+/// with its window closed (docs/TASK-MANAGER-INSIGHTS.md §5.1). In memory
+/// only: nothing is saved or sent, and it is gone at quit. On by default
+/// (owner, 2026-11-27). Off stops the readings at once and clears what they kept.
+public enum TaskManagerHistoryPreference {
+    public static let defaultsKey = "rearc.taskManagerBackgroundHistory"
+    public static let defaultValue = true
+    public static let label = "Keep Task Manager history while it's closed"
+    public static let detail = "Reads the process list once a minute and keeps it in memory only. Nothing is saved or sent."
+
+    public static func isEnabled(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: defaultsKey) as? Bool ?? defaultValue
+    }
+}

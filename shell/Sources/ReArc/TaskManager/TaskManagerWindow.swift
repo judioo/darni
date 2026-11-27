@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Sizes of the Task Manager window and its table.
 enum TaskManagerMetrics {
-    static let windowSize = NSSize(width: 940, height: 520)
+    static let windowSize = NSSize(width: 1220, height: 680)
     static let minimumSize = NSSize(width: 520, height: 280)
     static let barPadding: CGFloat = 12
     static let searchWidth: CGFloat = 200
@@ -25,8 +25,12 @@ enum TaskManagerMetrics {
         case .cpu: return (60, 44)
         case .network: return (90, 60)
         case .processID: return (90, 60)
+        case .memoryHistory, .cpuHistory: return (78, 50)
         }
     }
+
+    /// The table keeps this much beside the inspector; narrower, the inspector is a sheet.
+    static let tableMinimumWidth: CGFloat = 520
 }
 
 /// Window › Task Manager: Chrome's task manager for ReArc. One window for
@@ -108,26 +112,100 @@ final class TaskManagerWindowController: NSWindowController, NSWindowDelegate {
 }
 
 /// The window's content: the filter (everything in stacks, or one kind of
-/// task) and the search field over the table, End task under it.
+/// task), the view (List, Heat grid, Memory map) and the search field; tab
+/// sleep's summary strip; the view with the inspector beside it; End task
+/// under it. Darni-styled: the focused space's tint and accent (§4.3).
 struct TaskManagerView: View {
     @Bindable var controller: TaskManagerController
     let endTask: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: TaskManagerMetrics.barPadding) {
-                Picker("Show", selection: $controller.filter) {
-                    ForEach(TaskManagerFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+        let ink = TaskManagerInk(theme: controller.spaceTheme, dark: colorScheme == .dark)
+        GeometryReader { proxy in
+            let wide = proxy.size.width >= TaskManagerMetrics.tableMinimumWidth + TaskManagerInspector.width
+            VStack(spacing: 0) {
+                toolbar
+                Divider()
+                if controller.stacks.contains(where: { $0.kind == .tab }) {
+                    TaskManagerSummaryStrip(summary: controller.summary)
+                    Divider()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                Spacer(minLength: 0)
-                TaskManagerSearchField(text: $controller.search)
-                    .frame(width: TaskManagerMetrics.searchWidth)
+                HStack(spacing: 0) {
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if wide, controller.isInspectorShown, let stack = controller.focusedStack {
+                        Divider()
+                        TaskManagerInspector(controller: controller, stack: stack) { controller.isInspectorCollapsed = true }
+                            .frame(width: TaskManagerInspector.width)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: controller.isInspectorShown)
+                Divider()
+                bottomBar
             }
-            .padding(TaskManagerMetrics.barPadding)
-            Divider()
+            .sheet(isPresented: Binding(
+                get: { !wide && controller.isInspectorShown },
+                set: { if !$0 { controller.isInspectorCollapsed = true } }
+            )) {
+                if let stack = controller.focusedStack {
+                    VStack(spacing: 0) {
+                        TaskManagerInspector(controller: controller, stack: stack)
+                        Divider()
+                        HStack {
+                            Spacer()
+                            Button("Done") { controller.isInspectorCollapsed = true }.keyboardShortcut(.defaultAction)
+                        }
+                        .padding(TaskManagerMetrics.barPadding)
+                    }
+                    .frame(width: TaskManagerInspector.width, height: max(320, proxy.size.height - 80))
+                    .environment(\.taskManagerInk, ink)
+                    .background(TaskManagerBackground(ink: ink))
+                }
+            }
+        }
+        .environment(\.taskManagerInk, ink)
+        .background(TaskManagerBackground(ink: ink))
+        .frame(minWidth: TaskManagerMetrics.minimumSize.width, minHeight: TaskManagerMetrics.minimumSize.height)
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: TaskManagerMetrics.barPadding) {
+            Picker("Show", selection: $controller.filter) {
+                ForEach(TaskManagerFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            Picker("View", selection: $controller.viewMode) {
+                ForEach(TaskManagerViewMode.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityLabel("View")
+            Spacer(minLength: 0)
+            Button {
+                controller.isInspectorCollapsed.toggle()
+            } label: {
+                Image(systemName: "sidebar.trailing")
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("i", modifiers: [.option, .command])
+            .disabled(controller.focusedStack == nil)
+            .help(controller.isInspectorCollapsed ? "Show the inspector (⌥⌘I)" : "Hide the inspector (⌥⌘I)")
+            .accessibilityLabel(controller.isInspectorCollapsed ? "Show the inspector" : "Hide the inspector")
+            TaskManagerSearchField(text: $controller.search)
+                .frame(width: TaskManagerMetrics.searchWidth)
+        }
+        .padding(TaskManagerMetrics.barPadding)
+    }
+
+    @ViewBuilder private var content: some View {
+        switch controller.viewMode {
+        case .list:
             TaskManagerTable(controller: controller)
                 .overlay {
                     if controller.hasReading, controller.rows.isEmpty {
@@ -135,23 +213,70 @@ struct TaskManagerView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-            Divider()
-            HStack {
-                // What "≈" on a tab's row means, where the figures are read.
-                Text("≈ A tab's total is an estimate: a process tabs share is split evenly between them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(TaskManagerHelp.estimate)
-                Spacer()
-                Button("End task", action: endTask)
-                    .disabled(!controller.canEndSelection)
-                    .help("Ends the selected processes. Their tabs stop until you reload them.")
-            }
-            .padding(TaskManagerMetrics.barPadding)
+        case .heatGrid:
+            TaskManagerHeatGridView(controller: controller)
+        case .memoryMap:
+            TaskManagerMemoryMapView(controller: controller)
         }
-        .frame(minWidth: TaskManagerMetrics.minimumSize.width, minHeight: TaskManagerMetrics.minimumSize.height)
+    }
+
+    private var bottomBar: some View {
+        HStack {
+            // What "≈" on a tab's row means, where the figures are read.
+            Text("≈ A tab's total is an estimate: a process tabs share is split evenly between them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(TaskManagerHelp.estimate)
+            Spacer()
+            Button("End task", action: endTask)
+                .disabled(!controller.canEndSelection)
+                .help("Ends the selected processes. Their tabs stop until you reload them.")
+        }
+        .padding(TaskManagerMetrics.barPadding)
+    }
+}
+
+/// The window's background: the system's, washed with the space's tint.
+struct TaskManagerBackground: View {
+    let ink: TaskManagerInk
+
+    var body: some View {
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            ink.tint
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// "Tab sleep now: 6 asleep, 3 unloaded · freed 1.9 GB by unloading this session".
+struct TaskManagerSummaryStrip: View {
+    let summary: TaskManagerTabSleepSummary
+    @Environment(\.taskManagerInk) private var ink
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "moon.zzz.fill")
+                .foregroundStyle(ink.accent)
+                .accessibilityHidden(true)
+            Text(summary.text)
+                .font(.callout.monospacedDigit())
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            Text("History in memory only · nothing leaves this Mac")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, TaskManagerMetrics.barPadding)
+        .padding(.vertical, 6)
+        .background(ink.accent.opacity(0.07))
+        .help(TaskManagerTabSleepSummary.help)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(TaskManagerTabSleepSummary.help)
     }
 }
 

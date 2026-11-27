@@ -796,6 +796,9 @@ final class BrowserViewModel {
     @ObservationIgnored var tabLastShown: [Tab.ID: Date] = [:]
     /// Freeze requests this shell made, for tab sleep's file log lines.
     @ObservationIgnored var tabFreezeJournal = TabFreezeJournal()
+    /// Tabs put to sleep from the Task Manager: the rule does not wake them
+    /// for being "no longer due"; using or showing them does.
+    @ObservationIgnored var tabsSleptByHand: Set<Tab.ID> = []
     @ObservationIgnored var tabSleepLog = TabSleepLog.standard
     /// Unload inactive tabs after this long unseen (remembered).
     var tabUnloadThreshold: TabUnloadThreshold = .load(from: .standard) {
@@ -1166,10 +1169,11 @@ final class BrowserViewModel {
         if engine == nil {
             releaseEngine(for: id)
             unloadedTabIDs.insert(id)
+            taskManager.noteTabControl(.unloaded, sidebarID: id.uuidString, cause: .sidebar)
         }
         // The selection moved; its page shows (and this one hides) before the discard.
         loadSelectedIfNeeded()
-        if let engine { unloadEngine(engine, tabID: id, dropIfRefused: true) }
+        if let engine { unloadEngine(engine, tabID: id, dropIfRefused: true, cause: .sidebar) }
     }
 
     /// Remove from Favorites: deletes the favorite.

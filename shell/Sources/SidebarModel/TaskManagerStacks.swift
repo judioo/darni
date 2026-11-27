@@ -242,6 +242,8 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
         public var isKillable: Bool
         /// How many stacks this process works for (1: this one only).
         public var sharedBy: Int
+        /// The whole process's CPU time since it started.
+        public var cpuMicros: Int64 = 0
 
         /// The part of the process's figures this stack counts.
         public var share: Double { 1 / Double(max(1, sharedBy)) }
@@ -258,6 +260,17 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
     public var members: [Member]
     public var sleep: TaskManagerTabSleep?
     public var tab: TaskManagerTabRef?
+    /// What the history files the stack under: the sidebar tab when the shell
+    /// knows it (so a tab keeps its history across an unload and a load), else the stack's ID.
+    public var historyKey: String = ""
+    /// A private window's page: its history is forgotten when the window closes.
+    public var isPrivate = false
+    /// The page's address and whether it is loading (`TaskManagerDirectory.Tab`).
+    public var pageURL: String?
+    public var isLoading = false
+
+    /// The history's key for a sidebar tab (`TaskManagerUnloadedTab.id`, `TaskManagerDirectory.Tab.sidebarID`).
+    public static func historyKey(sidebarID: String) -> String { "sidebar/\(sidebarID)" }
 
     /// The process this stack is about when it has one alone: the tab's page, the extension, Darni itself.
     var ownKind: TaskManagerTask.Kind {
@@ -275,7 +288,7 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
 
     /// Selecting the stack's row selects its processes, so End task ends
     /// the tab; never for Darni's own stack, whose processes are everything.
-    var selectsProcesses: Bool { kind != .browser && !members.isEmpty }
+    public var selectsProcesses: Bool { kind != .browser && !members.isEmpty }
 
     /// The sum of each process's share; nil with no process (an unloaded tab).
     public var memoryFootprint: UInt64? {
@@ -288,6 +301,16 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
             return known.isEmpty ? nil : known.reduce(0, +)
         }
         return TaskManagerUsage(cpuPercent: total(\.cpuPercent), networkBytesPerSecond: total(\.networkBytesPerSecond))
+    }
+
+    /// CPU seconds its processes have used since they started (each process's share).
+    public var cpuTime: Double {
+        members.reduce(0) { $0 + Double($1.cpuMicros) / 1_000_000 * $1.share }
+    }
+
+    /// The page's site: its own process's ("https://mail.google.com").
+    public var site: String {
+        members.first { $0.task.kind == .tab }?.task.site ?? ""
     }
 
     /// The stack's figures are a sum or a share, not one process's own.
@@ -329,6 +352,8 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
     public var isKillable: Bool
     /// Double-click or Show Tab brings this tab forward.
     public var tab: TaskManagerTabRef?
+    /// A stack's row: what its history is filed under (`TaskManagerStack.historyKey`); empty for a process's row.
+    public var historyKey: String = ""
 
     /// The engine tab a tab's or a frame's row belongs to.
     public var engineTabID: UInt64? {
@@ -368,6 +393,8 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
         case .network: return hasProcess ? estimated(TaskManagerFormat.network(usage.networkBytesPerSecond)) : ""
         // A pid is a number for a terminal: no grouping.
         case .processID: return pids.map(String.init).joined(separator: ", ")
+        // Drawn, not written (`TaskManagerHistory`).
+        case .memoryHistory, .cpuHistory: return ""
         }
     }
 }
@@ -398,7 +425,8 @@ extension TaskManagerRows {
             for task in group.tasks {
                 var member = TaskManagerStack.Member(
                     task: task, pid: group.pid, processKind: group.kind, profile: group.profile,
-                    memoryFootprint: group.memoryFootprint, usage: group.usage, isKillable: group.isKillable, sharedBy: 1
+                    memoryFootprint: group.memoryFootprint, usage: group.usage, isKillable: group.isKillable, sharedBy: 1,
+                    cpuMicros: group.cpuMicros
                 )
                 switch task.kind {
                 case .browser, .helper:
@@ -430,7 +458,9 @@ extension TaskManagerRows {
                         let title = tab?.title ?? ""
                         return TaskManagerStack(
                             id: id, kind: .tab, title: "\(tab?.isPrivate == true ? "Private tab" : "Tab"): \(title)", name: title,
-                            icon: .tab(tabID), profile: "", members: [], sleep: tab?.sleep, tab: .engine(tabID)
+                            icon: .tab(tabID), profile: "", members: [], sleep: tab?.sleep, tab: .engine(tabID),
+                            historyKey: tab?.sidebarID.map(TaskManagerStack.historyKey(sidebarID:)) ?? id,
+                            isPrivate: tab?.isPrivate ?? false, pageURL: tab?.pageURL, isLoading: tab?.isLoading ?? false
                         )
                     }, member)
                 }
@@ -442,6 +472,7 @@ extension TaskManagerRows {
         for id in order { for member in stacks[id]!.members { uses[member.pid, default: 0] += 1 } }
         var result = order.map { id -> TaskManagerStack in
             var stack = stacks[id]!
+            if stack.historyKey.isEmpty { stack.historyKey = stack.id }
             for index in stack.members.indices { stack.members[index].sharedBy = uses[stack.members[index].pid] ?? 1 }
             let own = stack.ownKind
             stack.members.sort { memberRank($0, own: own) < memberRank($1, own: own) }
@@ -452,7 +483,8 @@ extension TaskManagerRows {
         for tab in directory.unloadedTabs where !withPage.contains(tab.id) {
             result.append(TaskManagerStack(
                 id: "unloaded/\(tab.id)", kind: .tab, title: "Tab: \(tab.title)", name: tab.title, icon: .sidebarTab(tab.id),
-                profile: tab.profile, members: [], sleep: TaskManagerTabSleep(state: .unloaded, idle: tab.idle), tab: .sidebar(tab.id)
+                profile: tab.profile, members: [], sleep: TaskManagerTabSleep(state: .unloaded, idle: tab.idle), tab: .sidebar(tab.id),
+                historyKey: TaskManagerStack.historyKey(sidebarID: tab.id)
             ))
         }
         // The order holds from one reading to the next: Darni, the tabs by
@@ -543,7 +575,8 @@ extension TaskManagerRows {
             selectionKeys: stack.selectsProcesses ? pids.map(TaskManagerSelectionKey.process) : [.row(stack.id)],
             profile: stack.profile, memoryFootprint: stack.memoryFootprint, usage: stack.usage, isEstimate: stack.isEstimate,
             sharedBy: alone?.sharedBy ?? 1, sleep: stack.sleep, context: nil,
-            isKillable: stack.selectsProcesses && stack.members.contains(where: \.isKillable), tab: stack.tab
+            isKillable: stack.selectsProcesses && stack.members.contains(where: \.isKillable), tab: stack.tab,
+            historyKey: stack.historyKey
         )
     }
 
@@ -579,7 +612,7 @@ extension TaskManagerRows {
 
     private static func hasValue(_ row: TaskManagerRow, for column: TaskManagerColumn) -> Bool {
         switch column {
-        case .task, .profile: return true
+        case .task, .profile, .memoryHistory, .cpuHistory: return true
         case .state: return row.sleep != nil
         case .idle: return row.sleep.map { $0.isOnScreen || $0.idle != nil } ?? false
         case .memoryFootprint: return row.memoryFootprint != nil
@@ -606,6 +639,7 @@ extension TaskManagerRows {
         case .cpu: return order(a.usage.cpuPercent ?? 0, b.usage.cpuPercent ?? 0)
         case .network: return order(a.usage.networkBytesPerSecond ?? 0, b.usage.networkBytesPerSecond ?? 0)
         case .processID: return order(a.pids.first ?? 0, b.pids.first ?? 0)
+        case .memoryHistory, .cpuHistory: return .orderedSame
         }
     }
 }

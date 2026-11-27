@@ -15,6 +15,9 @@ struct TaskManagerSample {
 @MainActor
 protocol TaskManagerSource: AnyObject {
     func sample() async -> TaskManagerSample
+    /// The 60 s reading while the window is closed: the process list alone
+    /// (no 1.65 details, so the engine counts no network bytes for it).
+    func backgroundSample() async -> TaskManagerSample
     /// The picture for a row; nil draws the row's stock symbol.
     func icon(for icon: TaskManagerTask.Icon) -> NSImage?
     /// Ends the process as Chrome's End task does. False: it was not ended
@@ -24,11 +27,29 @@ protocol TaskManagerSource: AnyObject {
     func canShowTab(_ tab: TaskManagerTabRef) -> Bool
     /// Brings the last focused browser window forward and selects the tab there, in its space.
     func showTab(_ tab: TaskManagerTabRef)
+    /// The engine is running: a background reading would get its processes.
+    var isLive: Bool { get }
+    /// Tab sleep from the Task Manager (the inspector's Tab controls, the row menu).
+    func canSleepTab(_ tab: TaskManagerTabRef) -> Bool
+    func sleepTab(_ tab: TaskManagerTabRef)
+    func canUnloadTab(_ tab: TaskManagerTabRef) -> Bool
+    func unloadTab(_ tab: TaskManagerTabRef)
+    /// Darni's hosted DevTools for the tab (the Elements panel until ABI 1.75).
+    func canOpenDevTools(_ tab: TaskManagerTabRef) -> Bool
+    func openDevTools(_ tab: TaskManagerTabRef)
 }
 
 extension TaskManagerSource {
+    func backgroundSample() async -> TaskManagerSample { await sample() }
     func canShowTab(_ tab: TaskManagerTabRef) -> Bool { false }
     func showTab(_ tab: TaskManagerTabRef) {}
+    var isLive: Bool { true }
+    func canSleepTab(_ tab: TaskManagerTabRef) -> Bool { false }
+    func sleepTab(_ tab: TaskManagerTabRef) {}
+    func canUnloadTab(_ tab: TaskManagerTabRef) -> Bool { false }
+    func unloadTab(_ tab: TaskManagerTabRef) {}
+    func canOpenDevTools(_ tab: TaskManagerTabRef) -> Bool { false }
+    func openDevTools(_ tab: TaskManagerTabRef) {}
 }
 
 /// ReArc itself as the only process: the WebKit shell, and the Chromium
@@ -83,11 +104,15 @@ enum TaskManagerProcessControl {
 
 /// The Task Manager window's state: the last reading as process groups,
 /// what the window shows of them, and the once-a-second reading while the
-/// window is on screen.
+/// window is on screen. Also its history (`TaskManagerHistory`), which the
+/// 60 s background reading keeps going while the window is closed when
+/// Settings › Advanced allows it, and what tab sleep did to each tab.
 @Observable
 final class TaskManagerController {
     /// Chrome reads about once a second.
     static let refreshInterval: TimeInterval = 1
+    /// The reading while the window is closed: one process list a minute.
+    static let backgroundInterval: TimeInterval = 60
 
     var filter: TaskManagerFilter = .all
     var search = ""
@@ -109,11 +134,43 @@ final class TaskManagerController {
     /// What is selected: processes (a click on any row of a process selects
     /// every row of it), or a row with no process to end of its own.
     var selection: Set<TaskManagerSelectionKey> = []
+    /// List, Heat grid or Memory map; saved when it changes.
+    var viewMode: TaskManagerViewMode {
+        didSet { if viewMode != oldValue { viewMode.save(to: defaults) } }
+    }
+    /// The stack the inspector shows, by history key, so it stays on a tab
+    /// that is unloaded or loaded again. nil: no inspector.
+    var focusedKey: String?
+    /// ⌥⌘I and the toolbar button fold the inspector away.
+    var isInspectorCollapsed = false
+    /// Per stack: footprint and CPU at each reading, and tab sleep's events.
+    private(set) var history = TaskManagerHistory()
+    /// Bumped at each change of the history: the sparklines redraw.
+    private(set) var historyRevision = 0
+    /// Settings › Advanced: read once a minute while the window is closed.
+    private(set) var keepsBackgroundHistory: Bool
+    /// The focused space's theme at the last reading, for the window's tint and accent.
+    private(set) var spaceTheme: SpaceTheme?
+    /// The wall-clock time of the last reading, for "13:02".
+    private(set) var lastReadingDate = Date()
 
     @ObservationIgnored var source: any TaskManagerSource
     /// Seconds on a clock that never goes back.
     @ObservationIgnored var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    @ObservationIgnored var wallClock: () -> Date = { Date() }
+    /// The focused space's theme (`BrowserViewModel.showTaskManager` sets it).
+    @ObservationIgnored var spaceThemeProvider: (() -> SpaceTheme?)?
+    /// Runs `work` after a delay: the reading a few seconds after an unload while the window is closed.
+    @ObservationIgnored var schedule: (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { work() } }
+    }
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var backgroundTimer: Timer?
+    /// The engine reported ready: background readings have something to read.
+    @ObservationIgnored private var engineIsAttached = false
+    @ObservationIgnored private var backgroundReadingInFlight = false
+    /// Bumped when the background readings stop: one in flight is dropped.
+    @ObservationIgnored private var backgroundGeneration = 0
     @ObservationIgnored private var sampler = TaskManagerSampler()
     @ObservationIgnored private var timer: Timer?
     /// Bumped when polling stops: a reading asked for before that is dropped.
@@ -125,6 +182,8 @@ final class TaskManagerController {
         self.source = source
         self.defaults = defaults
         columns = .load(from: defaults)
+        viewMode = .load(from: defaults)
+        keepsBackgroundHistory = TaskManagerHistoryPreference.isEnabled(in: defaults)
     }
 
     var rows: [TaskManagerRow] {
@@ -184,8 +243,203 @@ final class TaskManagerController {
         if stacks != self.stacks { self.stacks = stacks }
         if sample.directory.sleepSettings != sleepSettings { sleepSettings = sample.directory.sleepSettings }
         if !hasReading { hasReading = true }
+        record(stacks, at: time, source: .window)
+        let theme = spaceThemeProvider?()
+        if theme != spaceTheme { spaceTheme = theme }
         let live = Set(groups.map { TaskManagerSelectionKey.process($0.pid) }).union(stacks.map { .row($0.id) })
         if !selection.isSubset(of: live) { selection.formIntersection(live) }
+        // The inspected tab was unloaded or loaded again: its row is a new one; keep it selected.
+        if selection.isEmpty, let stack = focusedStack {
+            selection = Set(stack.selectsProcesses ? stack.pids.map(TaskManagerSelectionKey.process) : [.row(stack.id)])
+        }
+    }
+
+    private func record(_ stacks: [TaskManagerStack], at time: TimeInterval, source: TaskManagerHistory.Source) {
+        history.record(stacks, at: time, source: source)
+        lastReadingDate = wallClock()
+        historyRevision &+= 1
+        // A focused tab closed for good (its history dropped): no inspector.
+        if let key = focusedKey, history[key] == nil, !stacks.contains(where: { $0.historyKey == key }) { focusedKey = nil }
+    }
+
+    // MARK: Reading while closed
+
+    /// Background readings run while the engine runs and Settings › Advanced
+    /// keeps the history; they skip a minute the window reads itself.
+    var isReadingInBackground: Bool { backgroundTimer != nil }
+
+    /// The engine is ready (`ChromiumHost`): the 60 s reading may start.
+    @MainActor func engineDidAttach() {
+        engineIsAttached = true
+        syncBackgroundReadings()
+    }
+
+    /// The engine is stopping or gone.
+    @MainActor func engineDidDetach() {
+        engineIsAttached = false
+        syncBackgroundReadings()
+    }
+
+    /// Settings › Advanced. Off stops the 60 s reading at once and clears
+    /// what it kept while the window was closed.
+    @MainActor func setKeepsBackgroundHistory(_ keeps: Bool) {
+        guard keeps != keepsBackgroundHistory else { return }
+        keepsBackgroundHistory = keeps
+        defaults.set(keeps, forKey: TaskManagerHistoryPreference.defaultsKey)
+        if !keeps {
+            history.clearClosedWindowHistory()
+            historyRevision &+= 1
+        }
+        syncBackgroundReadings()
+    }
+
+    @MainActor private func syncBackgroundReadings() {
+        let wanted = engineIsAttached && keepsBackgroundHistory
+        if wanted, backgroundTimer == nil {
+            let timer = Timer(timeInterval: Self.backgroundInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.readInBackground() }
+            }
+            // A minute's precision is plenty; the system may batch it with other wake-ups.
+            timer.tolerance = 10
+            RunLoop.main.add(timer, forMode: .common)
+            backgroundTimer = timer
+            readInBackground()
+        } else if !wanted, backgroundTimer != nil {
+            backgroundTimer?.invalidate()
+            backgroundTimer = nil
+            backgroundGeneration += 1
+        }
+    }
+
+    /// One background reading: the history only, never the window's rows or
+    /// its CPU sampler. Skipped while the window reads, and when the engine is not running.
+    @MainActor func readInBackground() {
+        guard isReadingInBackground, !isPolling, !backgroundReadingInFlight, source.isLive else { return }
+        backgroundReadingInFlight = true
+        let generation = backgroundGeneration
+        Task { @MainActor [weak self, source] in
+            let sample = await source.backgroundSample()
+            guard let self else { return }
+            self.backgroundReadingInFlight = false
+            guard generation == self.backgroundGeneration, !self.isPolling else { return }
+            self.applyInBackground(sample, at: self.clock())
+        }
+    }
+
+    func applyInBackground(_ sample: TaskManagerSample, at time: TimeInterval) {
+        let groups = TaskManagerRows.groups(processes: sample.processes, directory: sample.directory)
+        record(TaskManagerRows.stacks(groups, directory: sample.directory), at: time, source: .background)
+    }
+
+    // MARK: Tab sleep's events
+
+    /// Tab sleep or the person did something to a sidebar tab (or a private
+    /// window's page). Kept while the window is open, or while the history
+    /// is kept with it closed. An unload with the window closed gets a
+    /// reading a few seconds later, so its effect is measured.
+    func noteTabControl(_ kind: TaskManagerTabEvent.Kind, sidebarID: String, cause: TaskManagerTabEvent.Cause) {
+        let closed = !isPolling
+        guard !closed || isReadingInBackground else { return }
+        let key = TaskManagerStack.historyKey(sidebarID: sidebarID)
+        guard let event = history.note(kind, key: key, cause: cause, at: clock(), whileClosed: closed) else { return }
+        historyRevision &+= 1
+        if closed, event.effect == .measuring || event.effect == .sleep {
+            schedule(TaskManagerHistory.settleDelay + 0.5) { [weak self] in self?.readInBackground() }
+        }
+    }
+
+    /// A private window closed: its page's history goes now.
+    func forgetTab(sidebarID: String) {
+        let key = TaskManagerStack.historyKey(sidebarID: sidebarID)
+        guard history[key] != nil else { return }
+        history.forget(key: key)
+        if focusedKey == key { focusedKey = nil }
+        historyRevision &+= 1
+    }
+
+    // MARK: Insights
+
+    /// "13:02" for the history's times, anchored at the last reading.
+    var timeline: TaskManagerTimeline {
+        TaskManagerTimeline(now: history.lastReading ?? clock(), wallNow: history.lastReading == nil ? wallClock() : lastReadingDate)
+    }
+
+    var summary: TaskManagerTabSleepSummary { TaskManagerTabSleepSummary(stacks: stacks, history: history) }
+
+    /// The stacks the filter and the search leave, for the heat grid and the memory map.
+    var visibleStacks: [TaskManagerStack] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        func found(_ text: String) -> Bool {
+            query.isEmpty || text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }
+        return stacks.filter { stack in
+            switch (filter, stack.kind) {
+            case (.all, _), (.tabs, .tab), (.extensions, .browserExtension), (.browser, .browser): break
+            case (.subframes, .tab) where stack.members.contains(where: { $0.task.kind == .subframe }): break
+            default: return false
+            }
+            return found(stack.title) || stack.members.contains { found($0.task.title) }
+        }
+    }
+
+    /// "Spotted" under the heat grid: up to three hints over the stacks shown.
+    var spotted: [TaskManagerInsight] {
+        TaskManagerInsights.spotted(visibleStacks.map(\.historyKey), in: history, timeline: timeline)
+    }
+
+    // MARK: Inspector
+
+    /// The stack the inspector shows, at the last reading.
+    var focusedStack: TaskManagerStack? {
+        guard let focusedKey else { return nil }
+        return stacks.first { $0.historyKey == focusedKey }
+    }
+
+    var isInspectorShown: Bool { focusedStack != nil && !isInspectorCollapsed }
+
+    /// A click in the list, the heat grid or the memory map: the stack is
+    /// selected (its processes, as a click on its row does) and inspected.
+    func focus(_ stack: TaskManagerStack?) {
+        guard let stack else {
+            focusedKey = nil
+            return
+        }
+        focusedKey = stack.historyKey
+        isInspectorCollapsed = false
+        selection = Set(stack.selectsProcesses ? stack.pids.map(TaskManagerSelectionKey.process) : [.row(stack.id)])
+    }
+
+    /// The table's selection changed: the inspector follows the clicked row's stack.
+    func selectionChanged(toStack stackID: String?) {
+        focusedKey = stackID.flatMap { id in stacks.first { $0.id == id }?.historyKey }
+    }
+
+    func figures(for stack: TaskManagerStack) -> String {
+        TaskManagerFigures.text(stack: stack, history: history, timeline: timeline)
+    }
+
+    // MARK: Tab controls
+
+    @MainActor func canSleep(_ stack: TaskManagerStack) -> Bool { stack.tab.map(source.canSleepTab) ?? false }
+    @MainActor func canUnload(_ stack: TaskManagerStack) -> Bool { stack.tab.map(source.canUnloadTab) ?? false }
+    @MainActor func canOpenDevTools(_ stack: TaskManagerStack) -> Bool { stack.tab.map(source.canOpenDevTools) ?? false }
+
+    /// Sleep from the Task Manager: the shell notes the event; the next readings measure it.
+    @MainActor func sleep(_ stack: TaskManagerStack) {
+        guard let tab = stack.tab, source.canSleepTab(tab) else { return }
+        source.sleepTab(tab)
+        refresh()
+    }
+
+    @MainActor func unload(_ stack: TaskManagerStack) {
+        guard let tab = stack.tab, source.canUnloadTab(tab) else { return }
+        source.unloadTab(tab)
+        refresh()
+    }
+
+    @MainActor func openDevTools(_ stack: TaskManagerStack) {
+        guard let tab = stack.tab, source.canOpenDevTools(tab) else { return }
+        source.openDevTools(tab)
     }
 
     // MARK: Show Tab
@@ -234,6 +488,12 @@ extension BrowserViewModel {
     /// Window › Task Manager and the sidebar's empty-space menu: one window,
     /// brought forward when it is already open.
     func showTaskManager() {
+        if taskManager.spaceThemeProvider == nil {
+            taskManager.spaceThemeProvider = { [weak self] in
+                guard let self else { return nil }
+                return self.shownTheme(in: self.store.keyWindowID)
+            }
+        }
         if taskManagerWindow == nil { taskManagerWindow = TaskManagerWindowController(controller: taskManager) }
         taskManagerWindow?.showWindow(nil)
     }
