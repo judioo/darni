@@ -101,7 +101,7 @@ public struct TaskManagerTabEvent: Equatable, Identifiable, Sendable {
         case automatic
         /// The Task Manager's Sleep or Unload.
         case taskManager
-        /// The sidebar's Unload Tab, or ⌘W on a pinned tab.
+        /// The sidebar's Sleep Tab or Unload Tab, or ⌘W on a pinned tab.
         case sidebar
         /// The person showed the tab.
         case shown

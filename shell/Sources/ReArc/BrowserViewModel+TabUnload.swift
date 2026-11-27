@@ -150,12 +150,11 @@ extension BrowserViewModel {
         }
     }
 
-    /// The Task Manager's Sleep: a loaded tab, off screen, not in use (no
-    /// sound, camera, share, download or question), on an engine that can freeze.
+    /// The Task Manager's and the sidebar's Sleep: a loaded tab, off screen,
+    /// not in use (no sound, camera, share, download or question), on an
+    /// engine that can freeze. Why not, in words: `sleepTabUnavailable`.
     func canSleepTab(_ id: Tab.ID) -> Bool {
-        guard let freezing = liveEngine(for: id) as? TabFreezing, !freezing.isFreezeRequested, !isTabUnloaded(id) else { return false }
-        guard let candidate = tabSleepCandidates(now: Date(), recordsFirstSight: false).first(where: { $0.tabID == id }) else { return false }
-        return !candidate.isInUse
+        sleepTabUnavailable(id) == nil
     }
 
     /// Freezes the tab now, as the rule would after its wait. It sleeps until

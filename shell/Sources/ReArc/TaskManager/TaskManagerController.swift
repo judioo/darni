@@ -551,13 +551,13 @@ extension BrowserViewModel {
                 pageless.append(tab)
             }
         }
-        // A last-active time that several tabs share to the second is their
-        // import's or their making's (Arc's import stamps them all), not a visit.
+        // A tab's "opened in Darni" mark says it was shown or loaded here. With
+        // no mark yet, a last-active time that several tabs share to the second
+        // is their import's or their making's (Arc's import stamps them all), not a visit.
         let stamps = TaskManagerUnloadedTab.stampCounts(pageless.map(\.lastActiveAt))
         for tab in pageless {
             let profile = store.profile(withID: store.owningProfileID(of: profileID(for: tab)))?.name ?? ""
-            // Seen with a page this session, or with a date of its own: opened in Darni.
-            let opened = tabLastShown[tab.id] != nil || !TaskManagerUnloadedTab.isBatchStamp(tab.lastActiveAt, counts: stamps)
+            let opened = TaskManagerUnloadedTab.isOpenedInDarni(mark: tabOpenedAt(tab.id), lastActiveAt: tab.lastActiveAt, counts: stamps)
             unloaded.append(TaskManagerUnloadedTab(
                 id: tab.id.uuidString, title: tab.displayTitle, profile: profile,
                 idle: idle(tab.id, since: tabLastShown[tab.id] ?? tab.lastActiveAt),

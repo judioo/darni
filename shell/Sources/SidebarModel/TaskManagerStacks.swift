@@ -169,6 +169,50 @@ public struct TaskManagerUnloadedTab: Equatable, Sendable {
     }
 
     public static let batchSize = 3
+
+    /// Opened in Darni: its mark (`TabOpenedMarks`) says so. A tab with no
+    /// mark yet (one from before marks, or one an older build opened) falls
+    /// back to the same-second rule: not opened only when its last-active
+    /// time is a batch's stamp. The fallback ends for each tab the first time
+    /// it is shown or loaded, which writes its mark.
+    public static func isOpenedInDarni(mark: Date?, lastActiveAt: Date?, counts stamps: [Int: Int]) -> Bool {
+        if mark != nil { return true }
+        return !isBatchStamp(lastActiveAt, counts: stamps)
+    }
+}
+
+/// Why the sidebar's Sleep Tab (and the Task Manager's Sleep) is off for a
+/// tab; nil from `BrowserViewModel.sleepTabUnavailable` when it applies.
+public enum TabSleepUnavailable: Equatable, Sendable {
+    /// No page in memory: nothing to freeze.
+    case notLoaded
+    /// Unloaded by tab sleep or by hand.
+    case unloaded
+    case onScreen
+    /// Already asked to sleep, frozen or about to be.
+    case asleep
+    /// Sound, camera or microphone, a share, a download or a question keeps it awake.
+    case inUse(TaskManagerTabState.Reason)
+    /// The engine has no freeze (WebKit, or Chromium without `tab_freeze`).
+    case engineCannotFreeze
+    /// Not a tab tab sleep looks after (a page in another role).
+    case notNow
+
+    /// The disabled item's tooltip.
+    public var text: String {
+        switch self {
+        case .notLoaded: return "Not loaded: nothing in memory to freeze."
+        case .unloaded: return "Already unloaded."
+        case .onScreen: return "On screen. A tab sleeps once you leave it."
+        case .asleep: return "Already asleep."
+        case .inUse(let reason): return TaskManagerTabState.keptAwake(reason).explanation
+        case .engineCannotFreeze: return "This engine can't freeze a tab."
+        case .notNow: return "Can't put this tab to sleep now."
+        }
+    }
+
+    /// The Sleep item's tooltip when it applies.
+    public static let sleepHelp = "Freezes the tab now: it stays in memory and runs nothing until you show it."
 }
 
 /// Tab sleep's settings as the State column's help tells them.
@@ -221,7 +265,7 @@ public enum TaskManagerHelp {
     }
 
     public static let idle = "How long since you last looked at the tab. Now: it's on screen. "
-        + "Not opened in Darni: its only date is when it was imported or made."
+        + "Not opened in Darni: Darni has never shown or loaded it, and its only date is when it was imported or made."
 
     public static let notOpenedInDarni = "Not opened in Darni"
 

@@ -309,8 +309,7 @@ struct TaskManagerTabControlsCard: View {
             HStack(spacing: 8) {
                 Button { controller.sleep(stack) } label: { Label("Sleep", systemImage: "moon.zzz") }
                     .disabled(!controller.canSleep(stack))
-                    .help(controller.canSleep(stack) ? "Freezes the tab now: it stays in memory and runs nothing until you show it."
-                          : Self.unavailable(stack, action: "sleep"))
+                    .help(controller.canSleep(stack) ? TabSleepUnavailable.sleepHelp : Self.unavailable(stack, action: "sleep"))
                 Button { controller.unload(stack) } label: { Label("Unload", systemImage: "arrow.down.to.line") }
                     .disabled(!controller.canUnload(stack))
                     .help(controller.canUnload(stack) ? "Takes the page out of memory now. It loads again when you show it."
@@ -381,14 +380,24 @@ struct TaskManagerTabControlsCard: View {
     /// Why Sleep or Unload is off for this tab.
     static func unavailable(_ stack: TaskManagerStack, action: String) -> String {
         guard let sleep = stack.sleep else { return "Only a tab of a space can \(action) from here." }
+        if action == "sleep" { return sleepUnavailable(sleep).text }
         switch sleep.state {
         case .unloaded: return "Already unloaded."
-        case .notLoaded: return "Not loaded: nothing in memory to \(action == "sleep" ? "freeze" : "unload")."
-        case .sleeping, .fallingAsleep: return action == "sleep" ? "Already asleep." : "Can't unload this tab now."
+        case .notLoaded: return "Not loaded: nothing in memory to unload."
         case .keptAwake: return sleep.state.explanation
-        case .active:
-            if sleep.isOnScreen { return "On screen. A tab \(action == "sleep" ? "sleeps" : "unloads") once you leave it." }
-            return action == "sleep" ? "This engine can't freeze a tab." : "Can't unload this tab now."
+        case .active where sleep.isOnScreen: return "On screen. A tab unloads once you leave it."
+        case .sleeping, .fallingAsleep, .active: return "Can't unload this tab now."
+        }
+    }
+
+    /// Sleep's reason, in the sidebar menu's words (`TabSleepUnavailable`).
+    static func sleepUnavailable(_ sleep: TaskManagerTabSleep) -> TabSleepUnavailable {
+        switch sleep.state {
+        case .unloaded: return .unloaded
+        case .notLoaded: return .notLoaded
+        case .sleeping, .fallingAsleep: return .asleep
+        case .keptAwake(let reason): return .inUse(reason)
+        case .active: return sleep.isOnScreen ? .onScreen : .engineCannotFreeze
         }
     }
 }
