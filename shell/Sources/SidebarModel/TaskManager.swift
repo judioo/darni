@@ -238,6 +238,8 @@ public struct TaskManagerTask: Equatable, Identifiable, Sendable {
         case frame
         /// A tab of the sidebar with no page in memory, by its sidebar ID.
         case sidebarTab(String)
+        /// The folded "Not loaded" group.
+        case notLoadedGroup
     }
 
     /// What the task is, for the filter and for its tab's stack.
@@ -544,7 +546,7 @@ public enum TaskManagerFormat {
     }
 
     /// Time since a tab was last on screen: "Now" while it is, then
-    /// "< 1 min", "12 min", "3 h 5 min", "2 d 4 h". "–" when not known.
+    /// "< 1 min", "12 min", "3 h 5 min", then days only: "2 d". "–" when not known.
     public static func idle(_ seconds: TimeInterval?, onScreen: Bool = false) -> String {
         if onScreen { return "Now" }
         guard let seconds else { return notAvailable }
@@ -553,9 +555,8 @@ public enum TaskManagerFormat {
         case 0: return "< 1 min"
         case ..<60: return "\(minutes) min"
         case ..<(24 * 60): return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
-        default:
-            let hours = minutes / 60
-            return hours % 24 == 0 ? "\(hours / 24) d" : "\(hours / 24) d \(hours % 24) h"
+        // Past a day, days only: "14 d", not "14 d 7 h".
+        default: return "\(minutes / (24 * 60)) d"
         }
     }
 

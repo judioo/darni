@@ -27,7 +27,7 @@ public struct TaskManagerHistoryCell: Equatable, Sendable {
         public init(_ sleep: TaskManagerTabState?) {
             switch sleep {
             case .sleeping?, .fallingAsleep?: self = .asleep
-            case .unloaded?: self = .unloaded
+            case .unloaded?, .notLoaded?: self = .unloaded
             default: self = .awake
             }
         }
@@ -313,7 +313,8 @@ public struct TaskManagerHistory: Equatable, Sendable {
         let recent = Self.recentIndex(time)
         let minute = Self.minuteIndex(time)
         var seen: Set<String> = []
-        for stack in readings {
+        // The folded "Not loaded" group is not a stack of its own, and its tabs have nothing to read.
+        for stack in readings where stack.kind != .notLoaded {
             let key = stack.historyKey.isEmpty ? stack.id : stack.historyKey
             guard seen.insert(key).inserted else { continue }
             var track = stacks[key] ?? TaskManagerStackHistory(key: key, time: time)

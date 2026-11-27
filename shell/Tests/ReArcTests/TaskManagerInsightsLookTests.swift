@@ -143,7 +143,19 @@ final class TaskManagerInsightsLookTests: XCTestCase {
                                details: .init(extensionID: "passwords", extensionName: "Keyring Passwords")),
             TaskManagerProcess(pid: 80, kind: .renderer, tabIDs: [7], details: .init(mainFrameTabIDs: [7], site: "https://pay.example")),
         ]
-        source.directory.unloadedTabs = [.init(id: "R", title: "Recipes – Example Kitchen", idle: 26 * 3600)]
+        // Tabs not loaded since launch: one opened 26 h ago, six 3 to 9 days ago, and 34 imported from
+        // another browser 14 days ago and never opened in Darni. They fold into one row.
+        source.directory.unloadedTabs = [.init(id: "R", title: "Recipes – Example Kitchen", idle: 26 * 3600, wasUnloaded: false)]
+        let sites = ["Garden Notes", "Trail Maps", "Bread Club", "Chess Puzzles", "Synth Patches", "Tide Tables", "Kite Plans",
+                     "Moth Atlas", "Tea Ledger", "Pottery Log", "Star Charts", "Knot Guide"]
+        for index in 0 ..< 6 {
+            source.directory.unloadedTabs.append(.init(id: "W\(index)", title: "\(sites[index]) – Example Wiki",
+                                                       idle: Double(3 + index) * 86_400 + 3600, wasUnloaded: false))
+        }
+        for index in 0 ..< 34 {
+            source.directory.unloadedTabs.append(.init(id: "I\(index)", title: "\(sites[index % sites.count]) \(index / sites.count + 1) – Example Archive",
+                                                       idle: (14 * 24 + 7) * 3600, wasUnloaded: false, openedInDarni: false))
+        }
         source.directory.sleepSettings = .init(freeze: .thirtyMinutes, unload: .fourHours, canFreeze: true)
 
         var digestAsleep = false
@@ -163,7 +175,7 @@ final class TaskManagerInsightsLookTests: XCTestCase {
                 docsGone = true
                 controller.noteTabControl(.unloaded, sidebarID: "K", cause: .taskManager)
                 source.processes.removeAll { $0.pid == 80 }
-                source.directory.unloadedTabs.insert(.init(id: "K", title: "Docs – Example Pay", idle: 2 * 3600), at: 0)
+                source.directory.unloadedTabs.insert(.init(id: "K", title: "Docs – Example Pay", idle: 2 * 3600, wasUnloaded: true), at: 0)
             }
             source.directory.tabs = [
                 1: tab("Feed | Example Social", "F", idle: 3 * 3600 + 240, url: "https://feed.example/"),
@@ -213,31 +225,43 @@ final class TaskManagerInsightsLookTests: XCTestCase {
         let feed = try XCTUnwrap(controller.history["sidebar/F"])
         XCTAssertNotNil(TaskManagerInsights.growth(feed, now: timeline.now), "the feed's growth")
         XCTAssertEqual(controller.spotted.map(\.kind), [.growth, .busyWhileHidden, .burst])
-        XCTAssertTrue(controller.summary.text.hasPrefix("Tab sleep now: 1 asleep, 2 unloaded · freed "), controller.summary.text)
+        XCTAssertTrue(controller.summary.text.hasPrefix("Tab sleep now: 1 asleep, 1 unloaded · freed "), controller.summary.text)
+        XCTAssertEqual(controller.stacks.last?.title, "Not loaded · 41 tabs")
+        XCTAssertEqual(controller.stacks.last?.summary, "last opened 1 d – 8 d ago · 34 not opened in Darni")
         let docs = try XCTUnwrap(controller.history["sidebar/K"]?.events.first)
         guard case .freed(let bytes, false) = docs.effect else { return XCTFail("\(docs.effect)") }
         XCTAssertGreaterThan(bytes, 400 << 20)
         XCTAssertEqual(controller.history["sidebar/D"]?.events.first?.kind, .fellAsleep)
+        // The memory line climbs with the feed (a UInt64 must become its value, not its bit pattern).
+        let values = controller.history.minuteCells("sidebar/F", now: timeline.now).map { $0?.memory.map { Double($0) } }
+        XCTAssertGreaterThan(values.compactMap { $0 }.max() ?? 0, 900 * mb)
+        let scale = TaskManagerLineChart.memoryScale(values)
+        let line = try XCTUnwrap(TaskManagerLineChart.points(values, low: scale.low, high: scale.high, size: CGSize(width: 300, height: 64)).first)
+        XCTAssertGreaterThan(try XCTUnwrap(line.first).y - (try XCTUnwrap(line.last).y), 30, "it rises across the chart")
     }
 
     func testTaskManagerInsightsSnapshots() throws {
         let directory = try outputDirectory()
         let (controller, _) = makeController()
         let size = NSSize(width: 1320, height: 880)
-        let cases: [(name: String, mode: TaskManagerViewMode, focus: String?)] = [
-            ("insights-list", .list, "sidebar/F"),
-            ("insights-heat", .heatGrid, nil),
-            ("insights-map", .memoryMap, nil),
-            ("insights-sleep", .list, "sidebar/D"),
-            ("insights-unloaded", .memoryMap, "sidebar/K"),
-            ("insights-heat-inspector", .heatGrid, "sidebar/V"),
+        let fold = TaskManagerRows.notLoadedStackID
+        let cases: [(name: String, mode: TaskManagerViewMode, focus: String?, filter: TaskManagerFilter, expanded: Set<String>)] = [
+            ("insights-fold", .list, nil, .tabs, [fold]),
+            ("insights-fold-collapsed", .list, nil, .tabs, []),
+            ("insights-list", .list, "sidebar/F", .all, ["tab/1"]),
+            ("insights-heat", .heatGrid, nil, .all, []),
+            ("insights-map", .memoryMap, nil, .all, []),
+            ("insights-sleep", .list, "sidebar/D", .all, []),
+            ("insights-unloaded", .memoryMap, "sidebar/K", .all, []),
+            ("insights-heat-inspector", .heatGrid, "sidebar/V", .all, []),
         ]
         for item in cases {
             for dark in [false, true] {
                 controller.viewMode = item.mode
                 controller.focus(item.focus.flatMap { key in controller.stacks.first { $0.historyKey == key } })
                 if item.focus == nil { controller.selection = [] }
-                controller.expanded = item.focus == "sidebar/F" ? ["tab/1"] : []
+                controller.expanded = item.expanded
+                controller.filter = item.filter
                 let view = TaskManagerView(controller: controller, endTask: {})
                 let rep = try render(view, size: size, dark: dark)
                 try write(rep, to: directory.appendingPathComponent("\(item.name)\(dark ? "-dark" : "").png"))

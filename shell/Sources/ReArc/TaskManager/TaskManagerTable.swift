@@ -201,6 +201,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         switch icon {
         case .browser: return NSApp.applicationIconImage
         case .tab, .sidebarTab: return Self.pageSymbol
+        case .notLoadedGroup: return Self.foldSymbol
         case .frame: return Self.frameSymbol
         // Chrome's puzzle piece, for extensions and for the engine's helpers.
         case .browserExtension, .system: return Self.helperSymbol
@@ -208,6 +209,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
     }
 
     private static let frameSymbol = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: nil)
+    private static let foldSymbol = NSImage(systemSymbolName: "tray.2", accessibilityDescription: nil)
 
     static let sparklineHelp = "Each tab's last 10 minutes, one point per 10 s, while this window was open. "
         + "Orange memory: the growth rule fired (scripted rule, not AI: steady growth for 30 minutes or more on the same page)."
@@ -223,7 +225,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         let cells = controller.history.recentCells(row.historyKey, now: timeline.now)
         let ink = TaskManagerInk(theme: controller.spaceTheme, dark: tableView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
         if column == .memoryHistory {
-            let values = cells.map { $0?.memory.map(Double.init) }
+            let values = cells.map { $0?.memory.map { Double($0) } }
             let growing = controller.history[row.historyKey].flatMap { TaskManagerInsights.growth($0, now: timeline.now) }
             cell.configure(values: values, scale: TaskManagerLineChart.memoryScale(values),
                            color: growing == nil ? ink.accentNS : .systemOrange,
@@ -341,6 +343,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         let tip: String?
         switch column {
         case .state: tip = item.sleep?.state.explanation
+        case .idle: tip = item.sleep?.openedInDarni == false ? TaskManagerHelp.idle : nil
         case .memoryFootprint, .cpu, .network: tip = item.isEstimate ? "Estimate: the total of the processes under this row. Shared processes count their share." : nil
         default: tip = nil
         }

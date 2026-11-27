@@ -79,8 +79,9 @@ struct TaskManagerInspector: View {
         if let host = URL(string: stack.site)?.host { parts.append(host) }
         if let sleep = stack.sleep {
             parts.append(sleep.state.title)
-            if !sleep.isOnScreen, sleep.idle != nil { parts.append("idle \(TaskManagerFormat.idle(sleep.idle))") }
+            if !sleep.isOnScreen, sleep.idle != nil, sleep.openedInDarni { parts.append("idle \(TaskManagerFormat.idle(sleep.idle))") }
             if sleep.isOnScreen { parts.append("on screen") }
+            if !sleep.openedInDarni { parts.append(TaskManagerHelp.notOpenedInDarni.lowercased()) }
         }
         if parts.isEmpty { parts.append(stack.kind == .browser ? "Darni's own processes" : "Extension") }
         return parts.joined(separator: " · ")
@@ -164,7 +165,7 @@ struct TaskManagerInspector: View {
         let cells = history.minuteCells(stack.historyKey, now: timeline.now)
         let firstIndex = cells.firstIndex { $0 != nil }
         let shown = firstIndex.map { Array(cells[$0...]) } ?? []
-        let values = shown.map { $0?.memory.map(Double.init) }
+        let values = shown.map { $0?.memory.map { Double($0) } }
         let scale = TaskManagerLineChart.memoryScale(values)
         let minutes = Double(shown.count)
         let start = timeline.now - (minutes - 1) * TaskManagerHistory.minuteSeconds
@@ -364,6 +365,7 @@ struct TaskManagerTabControlsCard: View {
         case .keptAwake: return "eye"
         case .fallingAsleep, .sleeping: return "moon.zzz.fill"
         case .unloaded: return "arrow.down.to.line"
+        case .notLoaded: return "tray"
         }
     }
 
@@ -381,6 +383,7 @@ struct TaskManagerTabControlsCard: View {
         guard let sleep = stack.sleep else { return "Only a tab of a space can \(action) from here." }
         switch sleep.state {
         case .unloaded: return "Already unloaded."
+        case .notLoaded: return "Not loaded: nothing in memory to \(action == "sleep" ? "freeze" : "unload")."
         case .sleeping, .fallingAsleep: return action == "sleep" ? "Already asleep." : "Can't unload this tab now."
         case .keptAwake: return sleep.state.explanation
         case .active:

@@ -654,6 +654,30 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertFalse(model.isTabFrozen(tabs["idle"]!.id))
     }
 
+    func testTabsImportedTogetherAreNotLoadedAndNotOpenedInDarniAndAnUnloadedTabIsUnloaded() throws {
+        let (model, tabs, _) = makeModel(["gone"])
+        // An import: every tab gets the import's time.
+        let imported = now.addingTimeInterval(-(14 * 24 + 7) * 3600)
+        model.store.now = { imported }
+        let batch = (0 ..< 4).map { model.store.addTab(kind: .today, title: "Imported \($0)", url: URL(string: "https://import\($0).test/")!) }
+        // One opened in Darni two days ago, alone at its time.
+        model.store.now = { self.now.addingTimeInterval(-2 * 24 * 3600) }
+        let visited = model.store.addTab(kind: .today, title: "Visited", url: URL(string: "https://visited.test/")!)
+        model.unloadTab(tabs["gone"]!.id)
+        let sleep = model.taskManagerTabSleep(now: now)
+        let row = { (id: Tab.ID) in sleep.unloaded.first { $0.id == id.uuidString } }
+        for tab in batch {
+            XCTAssertEqual(row(tab.id)?.openedInDarni, false, tab.title)
+            XCTAssertEqual(row(tab.id)?.wasUnloaded, false)
+            XCTAssertEqual(row(tab.id)?.hasOwnRow, false, "folds")
+        }
+        XCTAssertEqual(row(visited.id)?.openedInDarni, true)
+        XCTAssertEqual(row(visited.id)?.wasUnloaded, false)
+        XCTAssertEqual(row(visited.id)?.hasOwnRow, false, "opened two days ago: folds")
+        XCTAssertEqual(row(tabs["gone"]!.id)?.wasUnloaded, true, "tab sleep or the person unloaded it")
+        XCTAssertEqual(row(tabs["gone"]!.id)?.hasOwnRow, true)
+    }
+
     func testATabNotOpenedSinceLaunchIsListedUnloadedWithItsLastUse() throws {
         let (model, _, _) = makeModel([])
         model.store.now = { self.now.addingTimeInterval(-2 * 3600 - 59) }

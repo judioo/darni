@@ -565,7 +565,9 @@ final class TaskManagerTests: XCTestCase {
         XCTAssertEqual(TaskManagerFormat.idle(60 * 60), "1 h")
         XCTAssertEqual(TaskManagerFormat.idle(3 * 3600 + 5 * 60), "3 h 5 min")
         XCTAssertEqual(TaskManagerFormat.idle(48 * 3600), "2 d")
-        XCTAssertEqual(TaskManagerFormat.idle(52 * 3600 + 59 * 60), "2 d 4 h")
+        XCTAssertEqual(TaskManagerFormat.idle(52 * 3600 + 59 * 60), "2 d", "past a day, days only")
+        XCTAssertEqual(TaskManagerFormat.idle((14 * 24 + 7) * 3600), "14 d")
+        XCTAssertEqual(TaskManagerFormat.idle(23 * 3600 + 59 * 60), "23 h 59 min")
     }
 
     // MARK: Columns

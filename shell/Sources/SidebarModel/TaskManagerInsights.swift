@@ -132,7 +132,7 @@ public enum TaskManagerInsights {
     public static let avoidedRule = "≈ CPU avoided, \(notAI): the tab's average CPU in the 10 minutes before it slept, "
         + "times how long it has slept, less the CPU it used since. An estimate of what it would have used awake, never a measurement."
     public static let freedRule = "Freed: the footprint the tab's processes gave back, measured from the readings before an unload "
-        + "and a few seconds after it. ≈: a process stayed alive (Chromium keeps a discarded tab's emptied frame in its renderer) "
+        + "and a few seconds after it. ≈: a process stayed alive (the engine keeps an unloaded tab's emptied frame in its process) "
         + "or other tabs share it, so only the measured drop counts. Nothing is counted that a process didn't give back."
 
     /// Every hint for one stack, most important first.

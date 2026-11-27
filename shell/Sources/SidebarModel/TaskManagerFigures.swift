@@ -31,7 +31,7 @@ public enum TaskManagerFigures {
         var lines = ["\(Brand.name) Task Manager · \(stack.title)"]
         if !stack.site.isEmpty { lines.append("Site: \(stack.site)") }
         if let sleep = stack.sleep {
-            lines.append("State: \(sleep.state.title) · idle \(TaskManagerFormat.idle(sleep.idle, onScreen: sleep.isOnScreen))")
+            lines.append("State: \(sleep.state.title) · idle \(sleep.idleText)")
         }
         if let memory = stack.memoryFootprint {
             lines.append("Memory footprint: \(approx)\(TaskManagerFormat.memory(memory))"

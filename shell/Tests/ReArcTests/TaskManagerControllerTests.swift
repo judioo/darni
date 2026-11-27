@@ -564,9 +564,33 @@ final class TaskManagerControllerTests: XCTestCase {
         let memory = try XCTUnwrap(tableController.tableView(table, viewFor: column(.memoryHistory), row: bank) as? TaskManagerSparklineCell)
         XCTAssertEqual(memory.accessibilityLabel(), "Memory, last 10 minutes: 300 MB to 300 MB, peak 300 MB")
         XCTAssertEqual(memory.sparkline.values.compactMap { $0 }.count, 1, "one 10 s cell so far")
+        XCTAssertEqual(memory.sparkline.values.compactMap { $0 }.first, Double(300 << 20), "the footprint itself")
         let cpu = try XCTUnwrap(tableController.tableView(table, viewFor: column(.cpuHistory), row: bank) as? TaskManagerSparklineCell)
         XCTAssertEqual(cpu.accessibilityLabel(), "CPU, last 10 minutes: average 50.0 %, peak 50.0 %")
         XCTAssertEqual(column(.cpuHistory).headerToolTip, TaskManagerTableController.sparklineHelp)
+    }
+
+    func testTheNotLoadedFoldKeepsItsStateAcrossReadingsAndItsTabsCanBeInspected() {
+        let source = sidebarSource()
+        source.directory.unloadedTabs = (0 ..< 40).map {
+            .init(id: "A\($0)", title: "Imported \($0)", idle: 14 * 86_400, wasUnloaded: false, openedInDarni: false)
+        } + [.init(id: "U", title: "Report", idle: 300, wasUnloaded: true)]
+        let controller = makeController(source)
+        controller.filter = .tabs
+        controller.apply(sample(source), at: 50)
+        XCTAssertEqual(controller.rows.map(\.title), ["Tab: Mail", "Tab: News", "Tab: Bank", "Tab: Report", "Not loaded · 40 tabs"])
+        controller.toggleExpanded(TaskManagerRows.notLoadedStackID)
+        controller.apply(sample(source), at: 51)
+        XCTAssertEqual(controller.rows.count, 5 + 40, "still open after a reading")
+        controller.selectionChanged(toStack: "unloaded/A3")
+        XCTAssertEqual(controller.focusedStack?.name, "Imported 3", "a folded tab opens the inspector")
+        controller.selection = [.row("unloaded/A3")]
+        controller.apply(sample(source), at: 52)
+        XCTAssertEqual(controller.selection, [.row("unloaded/A3")], "a folded tab's row stays selected")
+        XCTAssertFalse(controller.visibleStacks.contains { $0.kind == .notLoaded }, "nothing to draw in the grid or the map")
+        XCTAssertEqual(controller.summary.text, "Tab sleep now: 0 asleep, 1 unloaded")
+        controller.toggleExpanded(TaskManagerRows.notLoadedStackID)
+        XCTAssertEqual(controller.rows.count, 5)
     }
 
     func testTheColumnChoiceIsSavedWhenItChanges() {

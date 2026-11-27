@@ -19,7 +19,7 @@ enum TaskManagerMetrics {
         switch column {
         case .task: return (300, 160)
         case .state: return (150, 70)
-        case .idle: return (80, 50)
+        case .idle: return (130, 50)
         case .profile: return (110, 60)
         case .memoryFootprint: return (120, 80)
         case .cpu: return (60, 44)

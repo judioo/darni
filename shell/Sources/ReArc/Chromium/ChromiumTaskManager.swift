@@ -38,7 +38,7 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
 
     func icon(for icon: TaskManagerTask.Icon) -> NSImage? {
         switch icon {
-        case .browser, .system, .frame:
+        case .browser, .system, .frame, .notLoadedGroup:
             return nil
         case .sidebarTab(let id):
             return model.sidebarTab(fromTaskManager: id).flatMap { model.store.tab(withID: $0) }.flatMap(model.favicon(for:))

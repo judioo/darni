@@ -158,6 +158,7 @@ struct TaskManagerStackIcon: View {
         switch icon {
         case .browser: return NSApp.applicationIconImage ?? NSImage()
         case .tab, .sidebarTab: symbol = "globe"
+        case .notLoadedGroup: symbol = "tray.2"
         case .frame: symbol = "rectangle.dashed"
         case .browserExtension, .system: symbol = "puzzlepiece.extension"
         }

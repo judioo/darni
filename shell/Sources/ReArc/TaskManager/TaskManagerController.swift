@@ -246,7 +246,7 @@ final class TaskManagerController {
         record(stacks, at: time, source: .window)
         let theme = spaceThemeProvider?()
         if theme != spaceTheme { spaceTheme = theme }
-        let live = Set(groups.map { TaskManagerSelectionKey.process($0.pid) }).union(stacks.map { .row($0.id) })
+        let live = Set(groups.map { TaskManagerSelectionKey.process($0.pid) }).union(allStacks.map { .row($0.id) })
         if !selection.isSubset(of: live) { selection.formIntersection(live) }
         // The inspected tab was unloaded or loaded again: its row is a new one; keep it selected.
         if selection.isEmpty, let stack = focusedStack {
@@ -259,7 +259,7 @@ final class TaskManagerController {
         lastReadingDate = wallClock()
         historyRevision &+= 1
         // A focused tab closed for good (its history dropped): no inspector.
-        if let key = focusedKey, history[key] == nil, !stacks.contains(where: { $0.historyKey == key }) { focusedKey = nil }
+        if let key = focusedKey, history[key] == nil, !allStacks.contains(where: { $0.historyKey == key }) { focusedKey = nil }
     }
 
     // MARK: Reading while closed
@@ -373,7 +373,9 @@ final class TaskManagerController {
             query.isEmpty || text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
         return stacks.filter { stack in
+            // The folded "Not loaded" tabs have nothing to draw in a grid or a map.
             switch (filter, stack.kind) {
+            case (_, .notLoaded): return false
             case (.all, _), (.tabs, .tab), (.extensions, .browserExtension), (.browser, .browser): break
             case (.subframes, .tab) where stack.members.contains(where: { $0.task.kind == .subframe }): break
             default: return false
@@ -392,7 +394,12 @@ final class TaskManagerController {
     /// The stack the inspector shows, at the last reading.
     var focusedStack: TaskManagerStack? {
         guard let focusedKey else { return nil }
-        return stacks.first { $0.historyKey == focusedKey }
+        return allStacks.first { $0.historyKey == focusedKey }
+    }
+
+    /// The stacks and the tabs folded into "Not loaded" (not the group itself).
+    var allStacks: [TaskManagerStack] {
+        stacks.flatMap { $0.kind == .notLoaded ? $0.folded : [$0] }
     }
 
     var isInspectorShown: Bool { focusedStack != nil && !isInspectorCollapsed }
@@ -411,7 +418,7 @@ final class TaskManagerController {
 
     /// The table's selection changed: the inspector follows the clicked row's stack.
     func selectionChanged(toStack stackID: String?) {
-        focusedKey = stackID.flatMap { id in stacks.first { $0.id == id }?.historyKey }
+        focusedKey = stackID.flatMap { id in allStacks.first { $0.id == id }?.historyKey }
     }
 
     func figures(for stack: TaskManagerStack) -> String {
@@ -526,17 +533,28 @@ extension BrowserViewModel {
         }
         var unloaded: [TaskManagerUnloadedTab] = []
         var listed: Set<Tab.ID> = []
+        var pageless: [Tab] = []
         // Every tab of every space, in folders and tab groups too; a tab
         // group shared by several spaces and the favorites are listed once.
         for space in store.spaces {
             for tab in store.displayTabs(in: space.id) where listed.insert(tab.id).inserted {
                 if let sleep = byTab[tab.id], sleep.state != .unloaded { continue }
-                let profile = store.profile(withID: store.owningProfileID(of: profileID(for: tab)))?.name ?? ""
-                unloaded.append(TaskManagerUnloadedTab(
-                    id: tab.id.uuidString, title: tab.displayTitle, profile: profile,
-                    idle: idle(tab.id, since: tabLastShown[tab.id] ?? tab.lastActiveAt)
-                ))
+                pageless.append(tab)
             }
+        }
+        // A last-active time that several tabs share to the second is their
+        // import's or their making's (Arc's import stamps them all), not a visit.
+        let stamps = TaskManagerUnloadedTab.stampCounts(pageless.map(\.lastActiveAt))
+        for tab in pageless {
+            let profile = store.profile(withID: store.owningProfileID(of: profileID(for: tab)))?.name ?? ""
+            // Seen with a page this session, or with a date of its own: opened in Darni.
+            let opened = tabLastShown[tab.id] != nil || !TaskManagerUnloadedTab.isBatchStamp(tab.lastActiveAt, counts: stamps)
+            unloaded.append(TaskManagerUnloadedTab(
+                id: tab.id.uuidString, title: tab.displayTitle, profile: profile,
+                idle: idle(tab.id, since: tabLastShown[tab.id] ?? tab.lastActiveAt),
+                // Unloaded by tab sleep or by hand this session, not merely never loaded.
+                wasUnloaded: isTabUnloaded(tab.id), openedInDarni: opened
+            ))
         }
         return (byTab, unloaded)
     }
