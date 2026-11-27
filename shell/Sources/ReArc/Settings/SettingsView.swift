@@ -750,6 +750,7 @@ struct ShortcutsSettingsPane: View {
             .padding(.bottom, 26)
         }
         .onAppear {
+            takeQueryRequest()
             // The model does not hold the recorder: no cycle.
             recorder.onRecord = { [model] id, change in
                 switch change {
@@ -759,6 +760,14 @@ struct ShortcutsSettingsPane: View {
             }
         }
         .onDisappear { recorder.stop() }
+        .onChange(of: model.shortcutsPaneQuery) { _, _ in takeQueryRequest() }
+    }
+
+    /// A command row's Set Shortcut… names the binding to list.
+    private func takeQueryRequest() {
+        guard let request = model.shortcutsPaneQuery else { return }
+        query = request
+        model.shortcutsPaneQuery = nil
     }
 
     private var pill: some View {

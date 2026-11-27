@@ -64,14 +64,72 @@ public enum CommandBarInk {
     /// (Arc: 17 % of the colour over the card, gone in ≈ 0.25 s).
     public static let collapseTint = 0.17
 
+    // MARK: Command rows
+
+    /// How much of the space's colour a command row's resting fill takes.
+    /// Search, page and tab rows sit on the bare card; commands get this
+    /// "low light", far quieter than the selected row's solid fill. Increase
+    /// Contrast doubles it (and adds `commandRowEdge`).
+    public static func commandTintFraction(dark: Bool, increasedContrast: Bool = false) -> Double {
+        switch (dark, increasedContrast) {
+        case (false, false): return 0.08
+        case (true, false): return 0.16
+        case (false, true): return 0.16
+        case (true, true): return 0.30
+        }
+    }
+
+    /// A command row's resting fill: the card mixed with `accent`, the
+    /// selected row's fill (`selectionFill` / the theme's `commandBarFill`),
+    /// so commands carry the space's hue without competing with the selection.
+    public static func commandRowFill(accent: SpaceColor, dark: Bool, increasedContrast: Bool = false) -> SpaceColor {
+        surface(dark: dark).mixed(with: accent.clamped,
+                                  fraction: commandTintFraction(dark: dark, increasedContrast: increasedContrast)).clamped
+    }
+
+    /// The hairline round a command row with Increase Contrast: the accent
+    /// fitted to 3:1 on the row's fill.
+    public static func commandRowEdge(accent: SpaceColor, dark: Bool) -> SpaceColor {
+        let fill = commandRowFill(accent: accent, dark: dark, increasedContrast: true)
+        return fit(accent.clamped, on: fill, dark: dark, floor: SidebarContrast.glyph)
+    }
+
+    /// A command row's ⌘ glyph: the accent, fitted to the glyph floor on the row.
+    public static func commandGlyph(accent: SpaceColor, dark: Bool, increasedContrast: Bool = false) -> SpaceColor {
+        let fill = commandRowFill(accent: accent, dark: dark, increasedContrast: increasedContrast)
+        return fit(accent.clamped, on: fill, dark: dark, floor: SidebarContrast.glyph)
+    }
+
+    /// Titles on a command row: the card's title ink, refitted on the tint.
+    public static func commandPrimaryText(accent: SpaceColor, dark: Bool, increasedContrast: Bool = false) -> SpaceColor {
+        fit(primaryText(dark: dark), on: commandRowFill(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            dark: dark, floor: SidebarContrast.text)
+    }
+
+    /// Subtitles, keys and "No shortcut" on a command row, refitted on the tint.
+    public static func commandSecondaryText(accent: SpaceColor, dark: Bool, increasedContrast: Bool = false) -> SpaceColor {
+        fit(secondaryText(dark: dark), on: commandRowFill(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            dark: dark, floor: SidebarContrast.text)
+    }
+
+    /// The keycap behind a command's keys: the card's keycap, nudged toward
+    /// the accent as the row is, so it still reads as a key on the tint.
+    public static func commandKeycap(accent: SpaceColor, dark: Bool, increasedContrast: Bool = false) -> SpaceColor {
+        keycap(dark: dark).mixed(with: accent.clamped,
+                                 fraction: commandTintFraction(dark: dark, increasedContrast: increasedContrast)).clamped
+    }
+
     private static func grey(_ value: Int) -> SpaceColor {
         let v = Double(value) / 255
         return SpaceColor(red: v, green: v, blue: v)
     }
 
     private static func fit(_ ink: SpaceColor, dark: Bool, floor: Double) -> SpaceColor {
-        let card = surface(dark: dark)
-        return SidebarBackdrop(darkest: card, lightest: card).legible(ink, floor: floor, lightInk: dark)
+        fit(ink, on: surface(dark: dark), dark: dark, floor: floor)
+    }
+
+    private static func fit(_ ink: SpaceColor, on fill: SpaceColor, dark: Bool, floor: Double) -> SpaceColor {
+        SidebarBackdrop(darkest: fill, lightest: fill).legible(ink, floor: floor, lightInk: dark)
     }
 }
 

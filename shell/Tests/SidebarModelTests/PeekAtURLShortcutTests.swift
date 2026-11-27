@@ -96,8 +96,14 @@ final class PeekAtURLShortcutTests: XCTestCase {
         ]
         let results = CommandBarSearch.results(for: ">", in: store, commandCatalog: catalog, menuCommands: menu)
         XCTAssertEqual(results.first { $0.commandID == "peek-at-url" }?.keyEquivalent, "⇧⌘P")
-        XCTAssertNil(results.first { $0.commandID == "new-note" }?.keyEquivalent, "a disabled menu item lends no keys")
-        XCTAssertNil(results.first { $0.commandID == "new-easel" }?.keyEquivalent, "no menu item, no keys")
+        // New Note and New Easel have Settings › Shortcuts bindings (⌃⇧N, ⌃⇧E): their
+        // rows show those keys whatever the menu snapshot holds
+        // (CommandBarCommandRowTests). A disabled menu item still lends none:
+        let unbound = AppCommand(id: "made-up", title: "New Note", action: .newNote)
+        XCTAssertNil(CommandBarSearch.results(for: ">", in: store, commandCatalog: [unbound], menuCommands: menu)
+            .first { $0.commandID == "made-up" }?.keyEquivalent, "a disabled menu item lends no keys")
+        XCTAssertEqual(results.first { $0.commandID == "new-note" }?.keyEquivalent, "⌃⇧N")
+        XCTAssertEqual(results.first { $0.commandID == "new-easel" }?.keyEquivalent, "⌃⇧E")
         XCTAssertEqual(results.filter { $0.title == "Peek at URL…" }.count, 1)
         let blended = CommandBarSearch.results(for: "peek at", in: store, commandCatalog: catalog, menuCommands: menu)
         XCTAssertEqual(blended.first { $0.commandID == "peek-at-url" }?.keyEquivalent, "⇧⌘P")

@@ -422,7 +422,7 @@ public enum AppCommandRegistry {
         return commands.filter { $0.isEnabled(in: context) }
     }
 
-    private static func staticCommands(in context: CommandBarContext) -> [AppCommand] {
+    static func staticCommands(in context: CommandBarContext) -> [AppCommand] {
         let sidebarTitle = context.isSidebarVisible ? "Hide Sidebar" : "Show Sidebar"
         let splitOrientation = context.store.selectedTabID
             .flatMap { context.store.splitContaining(tabID: $0)?.split.orientation } ?? .horizontal
