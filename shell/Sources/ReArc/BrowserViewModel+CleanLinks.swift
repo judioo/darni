@@ -86,7 +86,8 @@ enum AddressFieldCopy {
     static let privateWindowPlaceholder = "Search or enter address"
 
     static var placeholders: Set<String> {
-        [CommandBarOverlay.placeholder(text: "", siteSearch: nil), littleArcPlaceholder, privateWindowPlaceholder]
+        [CommandBarOverlay.placeholder(text: "", siteSearch: nil), CommandBarOverlay.peekPlaceholder, littleArcPlaceholder,
+         privateWindowPlaceholder]
     }
 
     /// The clean link for this key: ⌘C alone, in an address field whose text

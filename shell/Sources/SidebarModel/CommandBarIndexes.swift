@@ -156,11 +156,21 @@ extension MenuCommandSearch {
         let entries: [Entry]
         public let commands: [MenuCommand]
         public let registered: [AppCommand]
+        /// The keys of the menu items a registered command stands for, by its
+        /// normalized title: the command's row shows them, as the menu does
+        /// (with the person's own keys from Settings › Shortcuts).
+        public let registeredKeys: [String: String]
 
         public init(_ commands: [MenuCommand], registered: [AppCommand]) {
             self.commands = commands
             self.registered = registered
             let registeredTitles = Set(registered.map { MenuCommandSearch.normalized($0.title) })
+            var keys: [String: String] = [:]
+            for command in commands where command.isEnabled && command.hasAction && !command.keyEquivalent.isEmpty {
+                let title = MenuCommandSearch.normalized(command.title)
+                if registeredTitles.contains(title), keys[title] == nil { keys[title] = command.keyEquivalent }
+            }
+            registeredKeys = keys
             entries = commands.compactMap { command in
                 let title = MenuCommandSearch.normalized(command.title)
                 guard command.isEnabled, command.hasAction, !title.isEmpty, !registeredTitles.contains(title) else { return nil }

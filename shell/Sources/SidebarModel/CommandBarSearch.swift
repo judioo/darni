@@ -124,14 +124,16 @@ public enum CommandBarSearch {
             navigationSchemes: navigationSchemes,
             externalLinkDestination: externalLinkDestination
         )))
-        let menuMatches = (menuIndex ?? MenuCommandSearch.Index(menuCommands, registered: commands.catalog)).matches(query: needle)
+        let menuIndex = menuIndex ?? MenuCommandSearch.Index(menuCommands, registered: commands.catalog)
+        let menuMatches = menuIndex.matches(query: needle)
         let menus = menuMatches.map {
             Result(id: "menu-\($0.id)", kind: .command, title: $0.title, subtitle: $0.path,
                    menuCommandID: $0.id, keyEquivalent: $0.keyEquivalent)
         }
         switch mode {
         case .commandsOnly:
-            return commandResults(matching: needle, index: commands, store: store, allowEmpty: true) + menus
+            return commandResults(matching: needle, index: commands, store: store, allowEmpty: true,
+                                  keys: menuIndex.registeredKeys) + menus
         case .blended:
             guard !needle.isEmpty else { return [] }
             let index = tabIndex ?? TabIndex(store: store)
@@ -245,7 +247,8 @@ public enum CommandBarSearch {
                 later += 1
             }
             output.append(contentsOf: suggestionResults(current?.suggestions ?? [], query: query, excluding: shown, fallback: resolved))
-            output.append(contentsOf: commandResults(matching: needle, index: commands, store: store, allowEmpty: false))
+            output.append(contentsOf: commandResults(matching: needle, index: commands, store: store, allowEmpty: false,
+                                                     keys: menuIndex.registeredKeys))
             output.append(contentsOf: menus)
             return output
         }
@@ -345,7 +348,8 @@ public enum CommandBarSearch {
         matching needle: String,
         index: CommandIndex,
         store: SidebarStore,
-        allowEmpty: Bool
+        allowEmpty: Bool,
+        keys: [String: String] = [:]
     ) -> [Result] {
         var ranked: [RankedCommand] = []
         let prepared = TypeTravelFuzzyMatch.Needle(needle)
@@ -378,7 +382,8 @@ public enum CommandBarSearch {
                 title: item.command.title,
                 subtitle: "Command",
                 commandAction: item.command.action,
-                commandID: item.command.id
+                commandID: item.command.id,
+                keyEquivalent: keys[MenuCommandSearch.normalized(item.command.title)]
             )
         }
     }

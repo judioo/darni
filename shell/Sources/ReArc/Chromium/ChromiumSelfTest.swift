@@ -4078,9 +4078,11 @@ extension ChromiumSelfTest {
             return
         }
         let linkPlan = menus.plans[0]
-        // Split needs a sidebar tab; this engine is not one.
+        // Split and Peek need a sidebar tab; this engine is not one.
         try check(linkPlan.items.prefix(2) == [.openLinkInNewTab, .openLinkInNewWindow] && linkPlan.items.contains(.openLinkInLittleArc)
                   && linkPlan.items.contains(.copyLink) && linkPlan.items.contains(.openLinkInNewSplit) == (prompts.ownerTabID != nil)
+                  && linkPlan.items.contains(.openLinkInPeek)
+                      == (prompts.ownerTabID != nil && prompts.role == .tab && prompts.privateSession == nil)
                   && linkPlan.items.contains(.saveLinkAs) == ReArcEngineHasFeature("context_menu_save_link"),
                   "link menu \(linkPlan.items.map(\.title))")
         try check(linkPlan.entry(.inspect)?.isEnabled == runtime.capabilities.canInspect,
@@ -7991,6 +7993,30 @@ extension ChromiumSelfTest {
         try check(pageFocused(), "copying moved focus")
         results.append("⇧⌘C put '\(base)/keys' on the pasteboard (utm_source stripped, toast '\(PageLinkCopyFormat.cleanConfirmation)'), "
             + "⌥⇧⌘C '[keys](\(base)/keys)'")
+
+        // ⇧⌘P (Darni's Peek at URL…, website first): the page sees the key, and
+        // as it does not take it the bar opens in Peek mode, with the copied
+        // link (this run's private pasteboard, read at once) as its first row;
+        // Return peeks it and the page under the Peek stays as it was.
+        let copied = "\(base)/a"
+        model.linkPasteboard.clearContents()
+        model.linkPasteboard.setString(copied, forType: .string)
+        let pKeysBefore = await pageKeys().filter { $0 == "MS:p" }.count
+        press("P", keyCode: 35, [.command, .shift], in: window)
+        try await wait("⇧⌘P opened the command bar in Peek mode") { model.isCommandBarPresented && model.commandBarURLIntent == .peek }
+        try check(model.commandBarResults.first?.id == CommandBarCopiedLink.rowID
+                  && model.commandBarResults.first?.destinationURL?.absoluteString == copied,
+                  "Peek mode's first row \(model.commandBarResults.first.map { "\($0.id) \($0.subtitle ?? "")" } ?? "none")")
+        let pKeys = await pageKeys().filter { $0 == "MS:p" }.count
+        try check(pKeys > pKeysBefore, "the page never saw ⇧⌘P (website first: it goes to the page first)")
+        try await waitForCommandBarField("⇧⌘P")
+        model.submitCommandBar()
+        try await wait("Return peeked the copied link") { model.peekSession?.url.absoluteString == copied && !model.isCommandBarPresented }
+        try check(engine.currentURL?.absoluteString == "\(base)/keys", "peeking moved the page under it to \(engine.currentURL?.absoluteString ?? "-")")
+        model.dismissPeek(animated: false)
+        try await wait("the Peek closed") { model.peekSession == nil }
+        try await focusPage()
+        results.append("⇧⌘P opened Peek at URL… over a focused page with the copied link first; Return peeked \(copied)")
 
         // ⌘T: the command bar for a new tab, made only when a page is chosen
         // (perf-2); tab A stays selected and Esc leaves no tab behind.

@@ -32,7 +32,8 @@ enum ChromiumContextCommand: UInt32 {
         case .openImageInNewTab: self = .openImageInBackgroundTab
         case .saveLinkAs: self = .saveLink
         // A private window is another profile: Chrome opens its links without the page as initiator too.
-        case .openLinkInPrivateWindow, .copyImageAddress, .searchImage, .searchFor, .viewSource:
+        // A Peek is the shell's, as a Shift-click's is.
+        case .openLinkInPeek, .openLinkInPrivateWindow, .copyImageAddress, .searchImage, .searchFor, .viewSource:
             return nil
         }
     }

@@ -67,6 +67,7 @@ struct ReArcApp: App {
                     .keyboardShortcut("n", modifiers: [.command, .option])
                 Button("Open Command Bar") { model.focusLocation() }
                     .keyboardShortcut("l")
+                ShellMenuButtons(groups: ShellMenus.peek(model), overrides: model.shortcutOverrides)
                 Divider()
                 ShellMenuButtons(groups: ShellMenus.documents(model), overrides: model.shortcutOverrides)
             }
