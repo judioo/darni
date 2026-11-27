@@ -107,11 +107,15 @@ public struct CommandBarQueryGate: Equatable, Sendable {
 public enum CommandBarRowAction: Equatable, Sendable {
     case copyURL
     case deleteFromHistory
+    /// A command row with a Settings › Shortcuts binding: Settings opens on
+    /// Shortcuts, filtered to that binding.
+    case setShortcut
 
     public var title: String {
         switch self {
         case .copyURL: return "Copy URL"
         case .deleteFromHistory: return "Remove from History"
+        case .setShortcut: return "Set Shortcut…"
         }
     }
 
@@ -119,6 +123,7 @@ public enum CommandBarRowAction: Equatable, Sendable {
         switch self {
         case .copyURL: return "doc.on.doc"
         case .deleteFromHistory: return "trash"
+        case .setShortcut: return "keyboard"
         }
     }
 }
@@ -133,7 +138,9 @@ extension CommandBarSearch {
             return [.copyURL, .deleteFromHistory]
         case .openTab, .openURL, .suggestion:
             return result.destinationURL == nil ? [] : [.copyURL]
-        case .search, .command:
+        case .command:
+            return result.shortcutID == nil ? [] : [.setShortcut]
+        case .search:
             return []
         }
     }

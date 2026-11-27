@@ -74,11 +74,15 @@ public struct ShortcutOverrides: Equatable, Sendable {
 
     public private(set) var overrides: [String: ShortcutOverride]
     private let table: [ArcShortcut]
+    /// Each binding's default chord by id: the command bar asks for a chord
+    /// per command row on every keystroke.
+    private let defaults: [String: ShortcutChord]
 
     public init(_ overrides: [String: ShortcutOverride] = [:], table: [ArcShortcut] = ArcShortcuts.all) {
         self.table = table
-        let ids = Set(table.map(\.id))
-        self.overrides = overrides.filter { ids.contains($0.key) }
+        let chords = Dictionary(table.map { ($0.id, ShortcutChord(of: $0)) }, uniquingKeysWith: { first, _ in first })
+        defaults = chords
+        self.overrides = overrides.filter { chords[$0.key] != nil }
     }
 
     public static func == (lhs: ShortcutOverrides, rhs: ShortcutOverrides) -> Bool {
@@ -95,7 +99,7 @@ public struct ShortcutOverrides: Equatable, Sendable {
         switch overrides[id] {
         case .chord(let chord): return chord
         case .unbound: return nil
-        case nil: return table.first { $0.id == id }.map(ShortcutChord.init(of:))
+        case nil: return defaults[id]
         }
     }
 
