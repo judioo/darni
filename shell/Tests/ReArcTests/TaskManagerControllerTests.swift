@@ -644,4 +644,54 @@ final class TaskManagerControllerTests: XCTestCase {
         XCTAssertEqual(items.dropLast().last?.isSeparatorItem, true, "after a divider")
         XCTAssertEqual(items.filter { !$0.isSeparatorItem }.map(\.title), ["New Tab", "New Folder", "Reopen Closed Tab", "Task Manager"])
     }
+
+    // MARK: The row menu holds the table still
+
+    /// Owner, RC 1447: a right-click menu jumped away and went dead while the
+    /// once-a-second reading redrew the rows under it. While a menu is open
+    /// the table keeps its rows and the menu its items; the change lands
+    /// when the menu closes.
+    func testTheTableHoldsStillWhileItsMenuIsOpen() throws {
+        let source = makeSource()
+        let controller = makeController(source)
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 50)
+        let table = TaskManagerTableController(controller: controller)
+        let scroll = table.makeScrollView()
+        defer { table.invalidate() }
+        let view = try XCTUnwrap(scroll.documentView as? NSTableView)
+        let menu = try XCTUnwrap(view.menu)
+        func drain() { for _ in 0 ..< 20 { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) } }
+        drain()
+        let before = table.rows
+        XCTAssertFalse(before.isEmpty)
+        XCTAssertEqual(view.numberOfRows, before.count)
+
+        table.menuNeedsUpdate(menu)
+        table.menuWillOpen(menu)
+        let items = menu.items.map(\.title)
+        source.directory.tabs[4] = .init(title: "Shop")
+        source.processes.append(TaskManagerProcess(pid: 330, kind: .renderer, tabIDs: [4], cpuMicros: 9_000_000))
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 51)
+        drain()
+        XCTAssertNotEqual(controller.rows.map(\.id), before.map(\.id), "the reading itself went on")
+        XCTAssertEqual(table.rows, before, "the rows under an open menu did not move")
+        XCTAssertEqual(view.numberOfRows, before.count)
+        XCTAssertTrue(table.hasDeferredRebuild)
+        table.menuNeedsUpdate(menu)
+        XCTAssertEqual(menu.items.map(\.title), items, "an open menu keeps its items")
+
+        table.menuDidClose(menu)
+        drain()
+        XCTAssertFalse(table.hasDeferredRebuild)
+        XCTAssertEqual(table.rows.map(\.id), controller.rows.map(\.id), "the change landed once the menu closed")
+        XCTAssertEqual(view.numberOfRows, controller.rows.count)
+
+        // With no menu open, a reading redraws at once, as before.
+        source.directory.tabs[5] = .init(title: "Maps")
+        source.processes.append(TaskManagerProcess(pid: 340, kind: .renderer, tabIDs: [5]))
+        controller.apply(TaskManagerSample(processes: source.processes, directory: source.directory), at: 52)
+        drain()
+        XCTAssertEqual(table.rows.map(\.id), controller.rows.map(\.id))
+    }
+
 }
