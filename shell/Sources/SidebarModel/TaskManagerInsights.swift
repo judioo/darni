@@ -441,8 +441,7 @@ extension TaskManagerFormat {
         default:
             let minutes = total / 60
             switch minutes {
-            case ..<60: return "\(minutes) min"
-            case ..<(24 * 60): return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
+            case ..<(24 * 60): return underADay(minutes)
             default:
                 let hours = minutes / 60
                 return hours % 24 == 0 ? "\(hours / 24) d" : "\(hours / 24) d \(hours % 24) h"

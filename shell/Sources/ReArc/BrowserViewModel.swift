@@ -1844,8 +1844,8 @@ final class BrowserViewModel {
 
     /// The page the Peek shows now (it may have followed a link since it opened).
     func peekCopyLink() {
-        guard let session = peekSession else { return }
-        copyLink(peekEngine?.currentURL ?? session.url)
+        guard let url = peekPageURL else { return }
+        copyLink(url)
     }
 
     /// The Peek over the key browser window, when one shows there: ⇧⌘C and the
@@ -1861,11 +1861,14 @@ final class BrowserViewModel {
         return engineHost.ephemeralEngine(withID: session.engineID, profileID: session.profileID)
     }
 
+    /// The address the open Peek shows now: its engine's, which follows a
+    /// link clicked in the Peek, else the address it opened with.
+    var peekPageURL: URL? {
+        peekSession.map { peekEngine?.currentURL ?? $0.url }
+    }
+
     func peekEngineView() -> AnyView? {
-        guard let session = peekSession,
-              let engine = engineHost.ephemeralEngine(withID: session.engineID, profileID: session.profileID)
-        else { return nil }
-        return engine.makeView()
+        peekEngine?.makeView()
     }
 
     func clearLittleArcOpenRequests() {
@@ -2213,6 +2216,15 @@ final class BrowserViewModel {
         }
     }
 
+    /// The open bar turns to a mode where what is typed opens somewhere else
+    /// (a Peek, a Little Darni window), with an empty field.
+    func beginURLIntent(_ intent: CommandBarURLIntent) {
+        commandBarURLIntent = intent
+        commandBarText = ""
+        commandBarHighlightedIndex = 0
+        commandBarError = nil
+    }
+
     func openCommandBar(target: Tab.ID?, text: String) {
         commandBarMenuSnapshot = nil
         commandBarCreatesNewTab = false
@@ -2454,10 +2466,7 @@ final class BrowserViewModel {
         case .peekAtURL:
             beginPeekAtURL()
         case .openLittleArcWindow:
-            commandBarURLIntent = .littleArc
-            commandBarText = ""
-            commandBarHighlightedIndex = 0
-            commandBarError = nil
+            beginURLIntent(.littleArc)
         case .openInLittleArc:
             openInLittleArcFromContext()
         case .promoteLittleArcToTab:

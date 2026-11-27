@@ -553,11 +553,17 @@ public enum TaskManagerFormat {
         let minutes = Int(max(0, seconds) / 60)
         switch minutes {
         case 0: return "< 1 min"
-        case ..<60: return "\(minutes) min"
-        case ..<(24 * 60): return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
+        case ..<(24 * 60): return underADay(minutes)
         // Past a day, days only: "14 d", not "14 d 7 h".
         default: return "\(minutes / (24 * 60)) d"
         }
+    }
+
+    /// Under a day, in the Task Manager's words: "12 min", "3 h", "3 h 5 min".
+    /// Idle and the insights' durations both write it.
+    static func underADay(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
     }
 
     private static func amount(_ value: Double, units: [String]) -> String {

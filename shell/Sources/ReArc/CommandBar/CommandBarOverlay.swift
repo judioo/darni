@@ -465,7 +465,7 @@ struct CommandBarResultRow: View, Equatable {
                             .font(.system(size: 11, weight: .semibold))
                             .frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(isHighlighted ? Color.white.opacity(0.2) : commandStyle?.keycap ?? Color(CommandBarInk.keycap(dark: dark))))
+                                .fill(keycapFill))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(secondary)
@@ -514,6 +514,11 @@ struct CommandBarResultRow: View, Equatable {
         }
     }
 
+    /// The fill behind a keycap on this row: a row action's and a command's keys.
+    private var keycapFill: Color {
+        isHighlighted ? Color.white.opacity(0.2) : commandStyle?.keycap ?? Color(CommandBarInk.keycap(dark: dark))
+    }
+
     /// A command's keys on a keycap, or a quiet "No shortcut" in the subtitle grey.
     @ViewBuilder
     private func shortcutHint(_ hint: CommandBarShortcutHint, primary: Color, secondary: Color) -> some View {
@@ -525,7 +530,7 @@ struct CommandBarResultRow: View, Equatable {
                 .padding(.horizontal, 7)
                 .frame(minWidth: 24, minHeight: 22)
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(isHighlighted ? Color.white.opacity(0.2) : commandStyle?.keycap ?? Color(CommandBarInk.keycap(dark: dark))))
+                    .fill(keycapFill))
                 .padding(.leading, 8)
                 .fixedSize()
                 .accessibilityLabel(hint.accessibilityText)

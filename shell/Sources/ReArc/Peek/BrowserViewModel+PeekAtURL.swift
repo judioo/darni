@@ -19,10 +19,7 @@ extension BrowserViewModel {
 
     /// The open bar turns to Peek mode (the shortcut, or the bar's own command).
     func beginPeekAtURL() {
-        commandBarURLIntent = .peek
-        commandBarText = ""
-        commandBarHighlightedIndex = 0
-        commandBarError = nil
+        beginURLIntent(.peek)
         offerCopiedLink()
     }
 

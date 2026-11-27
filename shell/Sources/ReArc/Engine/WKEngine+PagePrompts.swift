@@ -180,14 +180,8 @@ final class ReArcWebView: WKWebView {
         if params.openableLink != nil, let open = index(openLinkInNewWindow) {
             if let item = makeItem(.openLinkInNewTab) { menu.items[open] = item }
             var insert = open + 1
-            // Arc's order after New Tab: Split View, Little Arc, (Darni's Peek,) private window.
-            let added: [(Bool, PageContextMenuItem)] = [
-                (options.canOpenSplit, .openLinkInNewSplit),
-                (options.canOpenLittleArc, .openLinkInLittleArc),
-                (options.canOpenPeek, .openLinkInPeek),
-                (options.canOpenPrivateWindow, .openLinkInPrivateWindow),
-            ]
-            for (allowed, entry) in added where allowed {
+            // After New Tab, the plan's own order (`PageContextMenuPlan.Options.linkOpeners`).
+            for entry in options.linkOpeners {
                 guard let item = makeItem(entry) else { continue }
                 menu.insertItem(item, at: insert)
                 insert += 1

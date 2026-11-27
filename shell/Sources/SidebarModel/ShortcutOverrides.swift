@@ -106,10 +106,15 @@ public struct ShortcutOverrides: Equatable, Sendable {
         switch overrides[id] {
         case .chord(let chord): return chord
         case .unbound: return nil
-        case nil:
-            guard let chord = defaults[id] else { return nil }
-            return userOwner(of: chord, excluding: id) == nil ? chord : nil
+        case nil: return displacement(of: id) == nil ? defaults[id] : nil
         }
+    }
+
+    /// When the user gave `id`'s default chord to another binding and left
+    /// `id` as it was: that binding, and the chord. `id` then has no chord.
+    public func displacement(of id: String) -> (by: ArcShortcut, chord: ShortcutChord)? {
+        guard overrides[id] == nil, let chord = defaults[id], let owner = userOwner(of: chord, excluding: id) else { return nil }
+        return (owner, chord)
     }
 
     /// The binding, first in menu-bar order, the user gave `chord` to.
@@ -172,9 +177,8 @@ public struct ShortcutOverrides: Equatable, Sendable {
         let rows = table.map { shortcut -> ShortcutListRow in
             let chord = chord(for: shortcut.id)
             var conflicts = chord.map { conflicts(for: $0, excluding: shortcut.id) } ?? []
-            if chord == nil, !isCustomized(shortcut.id), let original = defaults[shortcut.id],
-               let owner = userOwner(of: original, excluding: shortcut.id) {
-                conflicts.append(.displaced(by: owner, chord: original))
+            if let displaced = displacement(of: shortcut.id) {
+                conflicts.append(.displaced(by: displaced.by, chord: displaced.chord))
             }
             return ShortcutListRow(
                 shortcut: shortcut,
