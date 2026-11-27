@@ -590,6 +590,8 @@ public enum PageContextMenuItem: Equatable, Sendable {
     case openLinkInNewWindow
     case openLinkInNewSplit
     case openLinkInLittleArc
+    /// Darni's: the link in a Peek over the page, as a Shift-click opens it.
+    case openLinkInPeek
     case openLinkInPrivateWindow
     case saveLinkAs
     case copyLink
@@ -616,6 +618,7 @@ public enum PageContextMenuItem: Equatable, Sendable {
         case .openLinkInNewWindow: return "Open Link in New Window"
         case .openLinkInNewSplit: return "Open Link in Split View"
         case .openLinkInLittleArc: return "Open Link in Little Darni"
+        case .openLinkInPeek: return "Open Link in Peek"
         case .openLinkInPrivateWindow: return "Open Link in Private Window"
         case .saveLinkAs: return "Save Link As…"
         case .copyLink: return "Copy Link Address"
@@ -659,6 +662,8 @@ public struct PageContextMenuPlan: Equatable, Sendable {
         public var canGoForward = false
         public var canOpenLittleArc = true
         public var canOpenSplit = true
+        /// A Peek over the page: a sidebar tab's page, not a private window's.
+        public var canOpenPeek = true
         /// A new browser window, and a private window: not from a private window's page.
         public var canOpenWindow = true
         public var canOpenPrivateWindow = true
@@ -674,13 +679,14 @@ public struct PageContextMenuPlan: Equatable, Sendable {
 
         public init(
             canGoBack: Bool = false, canGoForward: Bool = false, canOpenLittleArc: Bool = true, canOpenSplit: Bool = true,
-            canOpenWindow: Bool = true, canOpenPrivateWindow: Bool = true, canSaveLink: Bool = false, imageSearchName: String? = nil,
+            canOpenPeek: Bool = true, canOpenWindow: Bool = true, canOpenPrivateWindow: Bool = true, canSaveLink: Bool = false, imageSearchName: String? = nil,
             canViewSource: Bool = false, canInspect: Bool = false, showsDisabledInspect: Bool = true
         ) {
             self.canGoBack = canGoBack
             self.canGoForward = canGoForward
             self.canOpenLittleArc = canOpenLittleArc
             self.canOpenSplit = canOpenSplit
+            self.canOpenPeek = canOpenPeek
             self.canOpenWindow = canOpenWindow
             self.canOpenPrivateWindow = canOpenPrivateWindow
             self.canSaveLink = canSaveLink
@@ -703,6 +709,7 @@ public struct PageContextMenuPlan: Equatable, Sendable {
             if options.canOpenWindow { section.append(on(.openLinkInNewWindow)) }
             if options.canOpenSplit { section.append(on(.openLinkInNewSplit)) }
             if options.canOpenLittleArc { section.append(on(.openLinkInLittleArc)) }
+            if options.canOpenPeek { section.append(on(.openLinkInPeek)) }
             if options.canOpenPrivateWindow { section.append(on(.openLinkInPrivateWindow)) }
             sections.append(section)
             sections.append(options.canSaveLink ? [on(.saveLinkAs), on(.copyLink)] : [on(.copyLink)])

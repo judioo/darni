@@ -32,6 +32,13 @@ extension BrowserViewModel: PageLinkRouting {
         openLittleArc(url: url, profileID: prompts.profileID, pageLink: true)
     }
 
+    /// The link in a Peek over the page, in the page's profile, as a
+    /// Shift-click on it opens one (Darni's; the page menu's "Open Link in Peek").
+    func openLinkInPeek(_ url: URL, from prompts: PagePromptCenter) {
+        guard prompts.privateSession == nil else { return openLinkInNewTab(url, from: prompts) }
+        showPeek(url: url, profileID: prompts.profileID, sourceTabID: prompts.ownerTabID)
+    }
+
     /// The link in a new pane next to the page (Arc "Open in Split View").
     func openLinkInNewSplit(_ url: URL, from prompts: PagePromptCenter) {
         guard let anchorID = prompts.ownerTabID, let anchor = store.tab(withID: anchorID),

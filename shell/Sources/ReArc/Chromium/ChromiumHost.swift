@@ -1293,6 +1293,7 @@ final class ChromiumShell: NSObject, BrowserWindowPresenting, NSWindowDelegate {
         }
         file.addItem(target.item("Reopen Closed Tab", "t", [.command, .shift]) { model.reopenClosedTab() })
         file.addItem(target.item("Open Command Bar", "l") { model.focusLocation() })
+        target.add(ShellMenus.peek(model), to: file)
         file.addItem(.separator())
         target.add(ShellMenus.documents(model), to: file)
         file.addItem(.separator())

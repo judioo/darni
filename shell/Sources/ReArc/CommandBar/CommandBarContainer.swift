@@ -20,6 +20,7 @@ struct CommandBarContainer: View {
             highlightedIndex: model.commandBarHighlightedIndex,
             errorMessage: model.commandBarError,
             siteSearch: siteSearch,
+            peekMode: model.commandBarURLIntent == .peek,
             siteSearchSuggestion: model.commandBarSiteSearchSuggestion,
             siteSearchFill: siteSearch.map {
                 model.commandBarSiteFill($0, accentFill: themeChrome.commandBarFill, dark: themeChrome.isWindowDark)

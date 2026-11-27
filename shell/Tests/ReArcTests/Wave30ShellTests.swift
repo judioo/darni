@@ -141,6 +141,7 @@ final class Wave30ShellTests: XCTestCase {
             + ShellMenus.tabNavigation(model) + ShellMenus.split(model) + ShellMenus.documents(model) + ShellMenus.tabSwitcher(model)
             + ShellMenus.tabPositions(model) + ShellMenus.spaces(model) + ShellMenus.sidebarItems(model) + ShellMenus.library(model)
             + ShellMenus.developer(model) + ShellMenus.capture(model) + ShellMenus.printing(model) + [ShellMenus.miniSidebar(model)]
+            + ShellMenus.peek(model)
         let items = groups.flatMap { $0 }
         let expected: [String: String] = [
             "Back": "goBack", "Forward": "goForward", "Reload Page": "reloadPage", "Reload Ignoring Cache": "forceReloadPage",
@@ -155,6 +156,7 @@ final class Wave30ShellTests: XCTestCase {
             "Pin/Unpin Tab": "pinTab", "Clear Unpinned Tabs": "clearExplore", "View Library": "viewLibrary",
             "Developer Tools": "developerTools", "Inspect Elements": "inspectElements", "JavaScript Console": "javaScriptConsole",
             "Capture": "capturePage", "Print…": "printPage", "Show Mini Sidebar": "toggleMiniSidebar",
+            "Peek at URL…": "peekAtURL",
         ]
         for (title, id) in expected {
             let item = items.first { $0.title == title && !$0.isAlternate }
@@ -180,7 +182,7 @@ final class Wave30ShellTests: XCTestCase {
         let menu = NSMenu(title: "Main")
         let groups = ShellMenus.copyLink(model) + ShellMenus.navigation(model) + ShellMenus.find(model) + ShellMenus.split(model)
             + ShellMenus.capture(model) + ShellMenus.tabNavigation(model) + ShellMenus.sidebarItems(model) + ShellMenus.library(model)
-            + ShellMenus.zoom(model)
+            + ShellMenus.zoom(model) + ShellMenus.peek(model)
         for item in groups.flatMap({ $0 }) where item.key != nil {
             let equivalent = item.appKitKeyEquivalent
             let menuItem = NSMenuItem(title: item.title, action: #selector(Target.run(_:)), keyEquivalent: equivalent.key)
@@ -201,6 +203,7 @@ final class Wave30ShellTests: XCTestCase {
             ("_", "_", [.control, .shift], 27, "Close this Split Pane"),
             ("K", "K", [.command, .shift], 40, "Clear Unpinned Tabs"),
             ("L", "L", [.command, .shift], 37, "View Library"),
+            ("P", "P", [.command, .shift], 35, "Peek at URL…"),
             ("+", "+", [.command, .shift], 24, "Zoom In"),
             ("\u{F701}", "\u{F701}", [.command, .option, .numericPad, .function], 125, "Next Tab"),
             ("\u{F702}", "\u{F702}", [.command, .numericPad, .function], 123, "Back"),

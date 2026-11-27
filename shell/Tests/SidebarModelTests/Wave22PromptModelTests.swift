@@ -186,13 +186,14 @@ final class Wave22PromptModelTests: XCTestCase {
     func testLinkMenuHasArcDestinationsAndCopyLink() {
         let plan = PageContextMenuPlan.plan(for: PageContextMenuParams(linkURL: "https://a.test/x", pageURL: "https://a.test/"), options: options)
         XCTAssertEqual(plan.items, [.openLinkInNewTab, .openLinkInNewWindow, .openLinkInNewSplit, .openLinkInLittleArc,
-                                    .openLinkInPrivateWindow, .copyLink, .inspect])
+                                    .openLinkInPeek, .openLinkInPrivateWindow, .copyLink, .inspect])
         XCTAssertEqual(plan.entry(.inspect)?.isEnabled, false, "inspect is unsupported until an engine offers it")
         XCTAssertEqual(plan.sections.count, 3)
 
         var noExtras = options
         noExtras.canOpenLittleArc = false
         noExtras.canOpenSplit = false
+        noExtras.canOpenPeek = false
         noExtras.canOpenWindow = false
         noExtras.canOpenPrivateWindow = false
         noExtras.showsDisabledInspect = false
@@ -236,7 +237,8 @@ final class Wave22PromptModelTests: XCTestCase {
         arc.imageSearchName = "Google"
         let plan = PageContextMenuPlan.plan(for: params, options: arc)
         XCTAssertEqual(plan.sections.map { $0.map(\.item) }, [
-            [.openLinkInNewTab, .openLinkInNewWindow, .openLinkInNewSplit, .openLinkInLittleArc, .openLinkInPrivateWindow],
+            [.openLinkInNewTab, .openLinkInNewWindow, .openLinkInNewSplit, .openLinkInLittleArc, .openLinkInPeek,
+             .openLinkInPrivateWindow],
             [.saveLinkAs, .copyLink],
             [.openImageInNewTab, .saveImage, .copyImage, .copyImageAddress, .searchImage("Google")],
             [.inspect],
@@ -244,7 +246,7 @@ final class Wave22PromptModelTests: XCTestCase {
         XCTAssertTrue(plan.sections.dropLast().joined().allSatisfy(\.isEnabled))
         XCTAssertEqual(plan.items.map(\.title), [
             "Open Link in New Tab", "Open Link in New Window", "Open Link in Split View", "Open Link in Little Darni",
-            "Open Link in Private Window", "Save Link As…", "Copy Link Address", "Open Image in New Tab", "Save Image As…",
+            "Open Link in Peek", "Open Link in Private Window", "Save Link As…", "Copy Link Address", "Open Image in New Tab", "Save Image As…",
             "Copy Image", "Copy Image Address", "Search Google for Image", "Inspect",
         ])
         // Without the engine's Save Link As (before ABI 1.64) the item is left out, not shown dead.

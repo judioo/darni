@@ -19,6 +19,7 @@ private final class PlainRouter: PageLinkRouting {
     func openBrowserWindow(from prompts: PagePromptCenter) {}
     func openLinkInLittleArc(_ url: URL, from prompts: PagePromptCenter) {}
     func openLinkInNewSplit(_ url: URL, from prompts: PagePromptCenter) {}
+    func openLinkInPeek(_ url: URL, from prompts: PagePromptCenter) {}
     func openLinkInPrivateWindow(_ url: URL, from prompts: PagePromptCenter) {}
     func searchWeb(for text: String, from prompts: PagePromptCenter) {}
     func imageSearchProvider(for prompts: PagePromptCenter) -> SearchProvider? { nil }

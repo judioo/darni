@@ -17,6 +17,7 @@ private final class FakeRouter: PageLinkRouting {
     func openBrowserWindow(from prompts: PagePromptCenter) { windows += 1 }
     func openLinkInLittleArc(_ url: URL, from prompts: PagePromptCenter) { opened.append(("littleArc", url)) }
     func openLinkInNewSplit(_ url: URL, from prompts: PagePromptCenter) { opened.append(("split", url)) }
+    func openLinkInPeek(_ url: URL, from prompts: PagePromptCenter) { opened.append(("peek", url)) }
     func openLinkInPrivateWindow(_ url: URL, from prompts: PagePromptCenter) { opened.append(("private", url)) }
     func searchWeb(for text: String, from prompts: PagePromptCenter) { opened.append(("search", URL(string: "search:\(text.count)")!)) }
     func imageSearchProvider(for prompts: PagePromptCenter) -> SearchProvider? { imageSearch }
@@ -127,7 +128,7 @@ final class Wave22ShellTests: XCTestCase {
         XCTAssertEqual(ChromiumContextCommand(.openLinkInNewWindow)?.rawValue, 14)
         // Engine ABI 1.64 (context_menu_save_link).
         XCTAssertEqual(ChromiumContextCommand(.saveLinkAs)?.rawValue, 21)
-        for shellItem: PageContextMenuItem in [.openLinkInPrivateWindow, .searchImage("Google")] {
+        for shellItem: PageContextMenuItem in [.openLinkInPrivateWindow, .openLinkInPeek, .searchImage("Google")] {
             XCTAssertNil(ChromiumContextCommand(shellItem), "\(shellItem) is the shell's")
         }
     }
@@ -373,7 +374,7 @@ final class Wave22ShellTests: XCTestCase {
         let menu = presenter.makeMenu(plan)
         XCTAssertEqual(menu.items.filter { !$0.isSeparatorItem }.map(\.title),
                        ["Open Link in New Tab", "Open Link in New Window", "Open Link in Split View", "Open Link in Little Darni",
-                        "Open Link in Private Window", "Copy Link Address", "Inspect"])
+                        "Open Link in Peek", "Open Link in Private Window", "Copy Link Address", "Inspect"])
         XCTAssertEqual(menu.items.filter(\.isSeparatorItem).count, 2)
         XCTAssertFalse(menu.items.last?.isEnabled ?? true, "Inspect is disabled")
     }
@@ -394,8 +395,8 @@ final class Wave22ShellTests: XCTestCase {
             NSMenuItem(title: item.title, action: nil, keyEquivalent: "")
         }
         XCTAssertEqual(menu.items.map(\.title), [
-            "Open Link in New Tab", "Open Link in Split View", "Open Link in Little Darni", "Open Link in Private Window",
-            "Download Linked File", "Copy Link", "Search for “red pandas”",
+            "Open Link in New Tab", "Open Link in Split View", "Open Link in Little Darni", "Open Link in Peek",
+            "Open Link in Private Window", "Download Linked File", "Copy Link", "Search for “red pandas”",
         ])
     }
 

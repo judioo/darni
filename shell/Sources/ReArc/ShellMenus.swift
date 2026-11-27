@@ -181,6 +181,13 @@ enum ShellMenus {
         ]]
     }
 
+    /// File menu, after Open Command Bar: Darni's Peek at URL… (⇧⌘P). The
+    /// command bar opens in Peek mode; what is typed, or a copied link, opens
+    /// in a Peek. Arc has the command in its bar only, with no key (docs/SHORTCUTS.md).
+    static func peek(_ model: BrowserViewModel) -> [[ShellMenuItem]] {
+        [[ShellMenuItem("Peek at URL…", "p", [.command, .shift]) { model.peekAtURL() }]]
+    }
+
     /// File menu: Arc's New Note (⌃⇧N) and New Easel (⌃⇧E), and ⌘O, Arc's
     /// "Open Little Arc or Peek in…": the Peek, or the key Little Arc, moves to
     /// a tab in the active space (Arc asks which space; ReArc has no chooser yet).

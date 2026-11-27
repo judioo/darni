@@ -49,6 +49,8 @@ protocol PageLinkRouting: AnyObject {
     func openBrowserWindow(from prompts: PagePromptCenter)
     func openLinkInLittleArc(_ url: URL, from prompts: PagePromptCenter)
     func openLinkInNewSplit(_ url: URL, from prompts: PagePromptCenter)
+    /// The link in a Peek over the page (as a Shift-click opens it).
+    func openLinkInPeek(_ url: URL, from prompts: PagePromptCenter)
     func openLinkInPrivateWindow(_ url: URL, from prompts: PagePromptCenter)
     func searchWeb(for text: String, from prompts: PagePromptCenter)
     /// Copy Link Address: true when the shell copied the link, without its
@@ -919,6 +921,8 @@ final class PagePromptCenter {
             if let url = params.openableLink { router?.openLinkInLittleArc(url, from: self) }
         case .openLinkInNewSplit:
             if let url = params.openableLink { router?.openLinkInNewSplit(url, from: self) }
+        case .openLinkInPeek:
+            if let url = params.openableLink { router?.openLinkInPeek(url, from: self) }
         case .openImageInNewTab:
             if let url = params.openableImage { router?.openLinkInNewTab(url, from: self) }
         case .copyImageAddress:
@@ -949,6 +953,7 @@ final class PagePromptCenter {
             canGoForward: canGoForward,
             canOpenLittleArc: privateSession == nil,
             canOpenSplit: ownerTabID != nil && role == .tab,
+            canOpenPeek: ownerTabID != nil && role == .tab && privateSession == nil,
             canOpenWindow: privateSession == nil,
             canOpenPrivateWindow: privateSession == nil,
             canSaveLink: canSaveLink,
