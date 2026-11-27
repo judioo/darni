@@ -24,7 +24,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1127.1442 — 2026-11-27
+## Darni 2026.1127.1445 — 2026-11-27
 
 **New**
 - Peek at URL… has a shortcut: ⇧⌘P (also in the File menu) opens the command bar in Peek
@@ -35,6 +35,10 @@ lines and this section starts empty again.
   Tabs, Subframes, Extensions or Browser. New State and Idle columns show which tabs are
   active, sleeping (frozen, still in memory) or unloaded (no process, still listed so you can
   find them), and how long since you last looked at each.
+- Command bar: commands stand apart from web search on a soft tint of your space's colour.
+  Each shows its shortcut, or "No shortcut" with Set Shortcut… to pick one in Settings ›
+  Shortcuts. A command whose name starts with what you typed comes right after the search
+  ("peek" gives Peek at URL…).
 
 ## Darni 2026.1125.1433 — 2026-11-25
 

@@ -19,6 +19,7 @@ import SidebarModel
 struct CommandBarOverlay: View {
     @Environment(\.themeChrome) private var themeChrome
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Binding var text: String
     /// The inline completion's remainder after the typed text.
     var inlineSuffix: String?
@@ -144,6 +145,8 @@ struct CommandBarOverlay: View {
                         // and equal rows skip their body. Hover stays with the
                         // row under the pointer.
                         let selection = Color(selectionFill)
+                        let commandStyle = CommandRowStyle(accent: selectionFill, dark: dark,
+                                                           increasedContrast: colorSchemeContrast == .increased)
                         ForEach(results.indices, id: \.self) { index in
                             let result = results[index]
                             CommandBarResultRow(
@@ -151,6 +154,7 @@ struct CommandBarOverlay: View {
                                 isHighlighted: index == highlightedIndex,
                                 selection: selection,
                                 dark: dark,
+                                commandStyle: result.kind == .command ? commandStyle : nil,
                                 spaceName: result.kind == .openTab ? result.spaceID.flatMap(spaceName) : nil,
                                 icon: result.destinationURL.flatMap { result.kind == .search ? nil : favicon($0) },
                                 instantLinks: instantLinks,
@@ -399,7 +403,8 @@ struct CommandBarOverlay: View {
 
 /// One result on one line: icon, title, then "— subtitle" in grey; at the
 /// right, the row's action hint ("Switch to Tab" and an → keycap, a
-/// command's keys). The selected row is a rounded solid fill with white
+/// command's keys or "No shortcut"). Command rows rest on a low light of
+/// the space's colour (`CommandRowStyle`). The selected row is a rounded solid fill with white
 /// text. Row actions show while hovered or selected. Equal rows skip their
 /// body: the closures route through the model with this row's result, so a
 /// kept closure acts the same.
@@ -408,6 +413,8 @@ struct CommandBarResultRow: View, Equatable {
     let isHighlighted: Bool
     let selection: Color
     var dark = false
+    /// A command row's low light, keycap and inks (nil for every other row).
+    var commandStyle: CommandRowStyle?
     var spaceName: String?
     var icon: NSImage?
     var instantLinks = false
@@ -417,8 +424,14 @@ struct CommandBarResultRow: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.result == rhs.result && lhs.isHighlighted == rhs.isHighlighted && lhs.dark == rhs.dark
-            && lhs.selection == rhs.selection && lhs.spaceName == rhs.spaceName && lhs.icon === rhs.icon
-            && lhs.instantLinks == rhs.instantLinks
+            && lhs.selection == rhs.selection && lhs.commandStyle == rhs.commandStyle
+            && lhs.spaceName == rhs.spaceName && lhs.icon === rhs.icon && lhs.instantLinks == rhs.instantLinks
+    }
+
+    /// The row's tooltip: a command's shortcut (or that it has none), else
+    /// what each modifier with Return does.
+    static func help(for result: CommandBarSearch.Result, instantLinks: Bool) -> String {
+        result.shortcutHint?.help ?? modifierHelp(for: result.kind, instantLinks: instantLinks)
     }
 
     /// The row's tooltip: what each modifier with Return does. With Instant
@@ -431,8 +444,10 @@ struct CommandBarResultRow: View, Equatable {
 
     var body: some View {
         let actions = CommandBarSearch.rowActions(for: result)
-        let primary = isHighlighted ? Color(CommandBarInk.selectedText) : Color(CommandBarInk.primaryText(dark: dark))
-        let secondary = isHighlighted ? Color(CommandBarInk.selectedText).opacity(0.85) : Color(CommandBarInk.secondaryText(dark: dark))
+        let primary = isHighlighted ? Color(CommandBarInk.selectedText)
+            : commandStyle?.primary ?? Color(CommandBarInk.primaryText(dark: dark))
+        let secondary = isHighlighted ? Color(CommandBarInk.selectedText).opacity(0.85)
+            : commandStyle?.secondary ?? Color(CommandBarInk.secondaryText(dark: dark))
         HStack(spacing: 0) {
             rowIcon(secondary: secondary)
                 .frame(width: 24, height: 24)
@@ -450,7 +465,7 @@ struct CommandBarResultRow: View, Equatable {
                             .font(.system(size: 11, weight: .semibold))
                             .frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(isHighlighted ? Color.white.opacity(0.2) : Color(CommandBarInk.keycap(dark: dark))))
+                                .fill(isHighlighted ? Color.white.opacity(0.2) : commandStyle?.keycap ?? Color(CommandBarInk.keycap(dark: dark))))
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(secondary)
@@ -458,10 +473,8 @@ struct CommandBarResultRow: View, Equatable {
                     .padding(.leading, 6)
                 }
             }
-            if let key = result.keyEquivalent, !key.isEmpty {
-                Text(key)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(secondary)
+            if let hint = result.shortcutHint {
+                shortcutHint(hint, primary: primary, secondary: secondary)
             }
             if result.kind == .openTab {
                 Text("Switch to Tab")
@@ -481,16 +494,47 @@ struct CommandBarResultRow: View, Equatable {
         .padding(.leading, 10)
         .padding(.trailing, 13)
         .frame(height: CommandBarOverlay.rowHeight)
-        .background(isHighlighted ? selection : Color.clear, in: RoundedRectangle(cornerRadius: CommandBarOverlay.rowCornerRadius, style: .continuous))
+        .background(isHighlighted ? selection : commandStyle?.fill ?? Color.clear,
+                    in: RoundedRectangle(cornerRadius: CommandBarOverlay.rowCornerRadius, style: .continuous))
+        .overlay {
+            if !isHighlighted, let edge = commandStyle?.edge {
+                RoundedRectangle(cornerRadius: CommandBarOverlay.rowCornerRadius, style: .continuous)
+                    .strokeBorder(edge, lineWidth: 1)
+            }
+        }
         .padding(.horizontal, CommandBarOverlay.rowInset)
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { isHovering = $0 }
-        .help(Self.modifierHelp(for: result.kind, instantLinks: instantLinks))
+        .help(Self.help(for: result, instantLinks: instantLinks))
         .contextMenu {
             ForEach(actions, id: \.title) { action in
                 Button(action.title) { onAction(action) }
             }
+        }
+    }
+
+    /// A command's keys on a keycap, or a quiet "No shortcut" in the subtitle grey.
+    @ViewBuilder
+    private func shortcutHint(_ hint: CommandBarShortcutHint, primary: Color, secondary: Color) -> some View {
+        switch hint {
+        case .keys(let keys):
+            Text(keys)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isHighlighted ? primary : secondary)
+                .padding(.horizontal, 7)
+                .frame(minWidth: 24, minHeight: 22)
+                .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(isHighlighted ? Color.white.opacity(0.2) : commandStyle?.keycap ?? Color(CommandBarInk.keycap(dark: dark))))
+                .padding(.leading, 8)
+                .fixedSize()
+                .accessibilityLabel(hint.accessibilityText)
+        case .none:
+            Text(hint.text)
+                .font(.system(size: 12))
+                .foregroundStyle(secondary)
+                .padding(.leading, 8)
+                .fixedSize()
         }
     }
 
@@ -513,7 +557,11 @@ struct CommandBarResultRow: View, Equatable {
 
     @ViewBuilder
     private func rowIcon(secondary: Color) -> some View {
-        if let icon {
+        if icon == nil, !isHighlighted, let commandStyle {
+            Image(systemName: Self.icon(for: result.kind))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(commandStyle.glyph)
+        } else if let icon {
             Image(nsImage: icon)
                 .resizable()
                 .interpolation(.high)
@@ -536,6 +584,60 @@ struct CommandBarResultRow: View, Equatable {
         case .search: return "magnifyingglass"
         case .command: return "command"
         }
+    }
+}
+
+/// A command row's colours on the card (`CommandBarInk`'s command inks):
+/// a low light of the space's colour, so commands stand apart from search,
+/// page and tab rows, quieter than the selected row's solid fill. Increase
+/// Contrast deepens the tint and adds an accent hairline.
+struct CommandRowStyle: Equatable {
+    let fill: Color
+    let edge: Color?
+    let glyph: Color
+    let primary: Color
+    let secondary: Color
+    let keycap: Color
+
+    @MainActor init(accent: SpaceColor, dark: Bool, increasedContrast: Bool) {
+        let inks = Self.inks(accent: accent, dark: dark, increasedContrast: increasedContrast)
+        fill = Color(inks.fill)
+        edge = inks.edge.map { Color($0) }
+        glyph = Color(inks.glyph)
+        primary = Color(inks.primary)
+        secondary = Color(inks.secondary)
+        keycap = Color(inks.keycap)
+    }
+
+    struct Inks: Equatable {
+        var fill, glyph, primary, secondary, keycap: SpaceColor
+        var edge: SpaceColor?
+    }
+
+    private struct Key: Hashable {
+        let accent: SpaceColor
+        let dark: Bool
+        let increasedContrast: Bool
+    }
+
+    /// Fitting the inks runs a few searches: once per theme and appearance,
+    /// not on every keystroke.
+    @MainActor private static var memo: [Key: Inks] = [:]
+
+    @MainActor static func inks(accent: SpaceColor, dark: Bool, increasedContrast: Bool) -> Inks {
+        let key = Key(accent: accent, dark: dark, increasedContrast: increasedContrast)
+        if let inks = memo[key] { return inks }
+        let inks = Inks(
+            fill: CommandBarInk.commandRowFill(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            glyph: CommandBarInk.commandGlyph(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            primary: CommandBarInk.commandPrimaryText(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            secondary: CommandBarInk.commandSecondaryText(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            keycap: CommandBarInk.commandKeycap(accent: accent, dark: dark, increasedContrast: increasedContrast),
+            edge: increasedContrast ? CommandBarInk.commandRowEdge(accent: accent, dark: dark) : nil
+        )
+        if memo.count > 64 { memo.removeAll() }
+        memo[key] = inks
+        return inks
     }
 }
 

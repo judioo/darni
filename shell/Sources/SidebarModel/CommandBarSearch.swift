@@ -31,6 +31,9 @@ public enum CommandBarSearch {
         public var commandID: String?
         public var menuCommandID: String?
         public var keyEquivalent: String?
+        /// The Settings › Shortcuts binding that runs this command
+        /// (`CommandBarShortcuts`): with no keys, the row says the person can set some.
+        public var shortcutID: String?
         /// The site search (`SiteSearchEngine.id`) whose template made `destinationURL`.
         public var siteSearchID: String?
 
@@ -46,6 +49,7 @@ public enum CommandBarSearch {
             commandID: String? = nil,
             menuCommandID: String? = nil,
             keyEquivalent: String? = nil,
+            shortcutID: String? = nil,
             siteSearchID: String? = nil
         ) {
             self.id = id
@@ -59,6 +63,7 @@ public enum CommandBarSearch {
             self.commandID = commandID
             self.menuCommandID = menuCommandID
             self.keyEquivalent = keyEquivalent
+            self.shortcutID = shortcutID
             self.siteSearchID = siteSearchID
         }
     }
@@ -77,7 +82,9 @@ public enum CommandBarSearch {
 
     /// Builds ranked results: open tabs first, then visit history (pages not
     /// already open), then the provider's suggestions, then commands, then the
-    /// search fallback. A query that is itself an address puts its "Open" row
+    /// search fallback. The best command moves up behind the search when the
+    /// typed words start its title (`isTitlePrefixMatch`), never ahead of
+    /// the first row. A query that is itself an address puts its "Open" row
     /// first, ahead of any open tab, even one showing that same page, so
     /// Return opens what the person typed (owner's report, 2026-11-20). Tabs
     /// showing exactly that page follow it, then other matching tabs. With
@@ -110,6 +117,7 @@ public enum CommandBarSearch {
         searchProvider: SearchProvider = .duckDuckGo,
         inlineCompletion: String? = nil,
         typedAddressFirst: Bool = true,
+        shortcuts: ShortcutOverrides = ShortcutOverrides(),
         now: Date = Date()
     ) -> [Result] {
         let (mode, needle) = parseMode(query)
@@ -133,7 +141,7 @@ public enum CommandBarSearch {
         switch mode {
         case .commandsOnly:
             return commandResults(matching: needle, index: commands, store: store, allowEmpty: true,
-                                  keys: menuIndex.registeredKeys) + menus
+                                  keys: menuIndex.registeredKeys, shortcuts: shortcuts) + menus
         case .blended:
             guard !needle.isEmpty else { return [] }
             let index = tabIndex ?? TabIndex(store: store)
@@ -217,7 +225,9 @@ public enum CommandBarSearch {
                 }
             }
             // A plain search for the typed text comes before pages (Arc's second row).
+            var searchRow = false
             if direct == nil, let searchURL = resolved {
+                searchRow = true
                 output.append(Result(
                     id: "search-\(searchURL.absoluteString)",
                     kind: .search,
@@ -225,6 +235,14 @@ public enum CommandBarSearch {
                     subtitle: searchURL.host(),
                     destinationURL: searchURL
                 ))
+            }
+            var commandRows = commandResults(matching: needle, index: commands, store: store, allowEmpty: false,
+                                             keys: menuIndex.registeredKeys, shortcuts: shortcuts) + menus
+            // The best command, when its title starts with the typed words
+            // ("peek" → Peek at URL…), comes straight after the search, ahead
+            // of history and the provider's suggestions (owner, 2026-11-27).
+            if searchRow, let first = commandRows.first, Self.isTitlePrefixMatch(needle, title: first.title) {
+                output.append(commandRows.removeFirst())
             }
             // Pages already open as tabs (or typed exactly) are not repeated as history.
             let allTabs = ranked.first + ranked.later
@@ -247,11 +265,23 @@ public enum CommandBarSearch {
                 later += 1
             }
             output.append(contentsOf: suggestionResults(current?.suggestions ?? [], query: query, excluding: shown, fallback: resolved))
-            output.append(contentsOf: commandResults(matching: needle, index: commands, store: store, allowEmpty: false,
-                                                     keys: menuIndex.registeredKeys))
-            output.append(contentsOf: menus)
+            output.append(contentsOf: commandRows)
             return output
         }
+    }
+
+    /// Shortest typed text that moves a command up (`isTitlePrefixMatch`):
+    /// three letters ("new", "pin") are as often the start of a site's name.
+    public static let commandPromotionMinLength = 4
+
+    /// The typed text is the start of the command's title, whole words or the
+    /// last one cut short ("peek", "peek at u" for Peek at URL…; not "dark"
+    /// for Appearance: Dark, nor "eek").
+    static func isTitlePrefixMatch(_ needle: String, title: String) -> Bool {
+        let typed = needle.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard typed.count >= commandPromotionMinLength else { return false }
+        let words = title.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return words.hasPrefix(typed)
     }
 
     /// Most open tabs listed first; the rest of the strong matches wait until after history.
@@ -349,7 +379,8 @@ public enum CommandBarSearch {
         index: CommandIndex,
         store: SidebarStore,
         allowEmpty: Bool,
-        keys: [String: String] = [:]
+        keys: [String: String] = [:],
+        shortcuts: ShortcutOverrides = ShortcutOverrides()
     ) -> [Result] {
         var ranked: [RankedCommand] = []
         let prepared = TypeTravelFuzzyMatch.Needle(needle)
@@ -375,15 +406,26 @@ public enum CommandBarSearch {
             return lhs.titleLength < rhs.titleLength
         }
 
+        // ⌃1…⌃9 follow the active profile's spaces, as the Spaces menu does.
+        var spaceIndex: [Space.ID: Int]?
+        func place(of spaceID: Space.ID) -> Int? {
+            if spaceIndex == nil {
+                spaceIndex = Dictionary(store.spacesInActiveProfile.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+            }
+            return spaceIndex?[spaceID]
+        }
         return ranked.map { item in
-            Result(
+            let binding = CommandBarShortcuts.bindingID(for: item.command, spaceIndex: place(of:))
+            return Result(
                 id: "cmd-\(item.command.id)",
                 kind: .command,
                 title: item.command.title,
                 subtitle: "Command",
                 commandAction: item.command.action,
                 commandID: item.command.id,
-                keyEquivalent: keys[MenuCommandSearch.normalized(item.command.title)]
+                keyEquivalent: CommandBarShortcuts.keys(for: binding, title: item.command.title, overrides: shortcuts,
+                                                        menuKeys: keys),
+                shortcutID: binding
             )
         }
     }

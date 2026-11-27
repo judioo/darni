@@ -143,6 +143,9 @@ final class BrowserViewModel {
     }
     /// The Chromium shell re-applies its menu key equivalents.
     @ObservationIgnored var onShortcutOverridesChanged: (() -> Void)?
+    /// Text for Settings › Shortcuts' search the next time the pane shows
+    /// (a command row's Set Shortcut…); the pane takes it and clears it.
+    var shortcutsPaneQuery: String?
     /// Settings › Links: Shift-click on a link opens it in Peek (Arc's default).
     var peekOnShiftClick = UserDefaults.standard.object(forKey: BrowserViewModel.peekOnShiftClickKey) as? Bool ?? true {
         didSet {
@@ -614,7 +617,8 @@ final class BrowserViewModel {
             live: commandBarLive ?? commandBarCarriedLive,
             searchProvider: searchProvider,
             inlineCompletion: commandBarInlineCompletion,
-            typedAddressFirst: commandBarText != commandBarPrefill
+            typedAddressFirst: commandBarText != commandBarPrefill,
+            shortcuts: shortcutOverrides
         )
     }
 
@@ -2294,15 +2298,26 @@ final class BrowserViewModel {
         searchProviderRevision += 1
     }
 
-    /// Copy URL / Remove from History on a command-bar row.
+    /// Copy URL / Remove from History / Set Shortcut… on a command-bar row.
     func performCommandBarRowAction(_ action: CommandBarRowAction, on result: CommandBarSearch.Result) {
-        guard let url = result.destinationURL else { return }
         switch action {
         case .copyURL:
-            copyLink(url)
+            if let url = result.destinationURL { copyLink(url) }
         case .deleteFromHistory:
-            deleteFromHistory(url)
+            if let url = result.destinationURL { deleteFromHistory(url) }
+        case .setShortcut:
+            guard let id = result.shortcutID else { return }
+            showShortcutSettings(for: id)
         }
+    }
+
+    /// Settings › Shortcuts with its search set to `bindingID`'s name, so
+    /// that one row is listed, ready to record keys.
+    func showShortcutSettings(for bindingID: String) {
+        guard let binding = ArcShortcuts.binding(id: bindingID) else { return }
+        dismissCommandBar()
+        shortcutsPaneQuery = binding.title
+        showSettings(.shortcuts)
     }
 
     /// Removes a page from the shell's visit store and from the engine's

@@ -110,6 +110,35 @@ final class Wave33LookSnapshotTests: XCTestCase {
         try write(rep, to: directory.appendingPathComponent("command-bar.png"))
     }
 
+    /// The owner's "peek" (2026-11-27): the search, Peek at URL… moved up
+    /// with its keys, Google's suggestions, then commands with no shortcut
+    /// on their low light; light and dark.
+    func testCommandBarCommandRowsSnapshot() throws {
+        let directory = try outputDirectory()
+        let google = "www.google.com"
+        let results: [CommandBarSearch.Result] = [
+            .init(id: "s", kind: .search, title: "peek", subtitle: google),
+            .init(id: "c1", kind: .command, title: "Peek at URL…", subtitle: "Command", keyEquivalent: "⇧⌘P", shortcutID: "peekAtURL"),
+            .init(id: "g1", kind: .suggestion, title: "peeky blinders", subtitle: google),
+            .init(id: "g2", kind: .suggestion, title: "peekaboo", subtitle: google),
+            .init(id: "g3", kind: .suggestion, title: "peek a boo", subtitle: google),
+            .init(id: "c2", kind: .command, title: "Appearance: Dark", subtitle: "Command"),
+            .init(id: "c3", kind: .command, title: "Open External Links in the Current Space", subtitle: "Command"),
+            .init(id: "c4", kind: .command, title: "Pin Tab", subtitle: "Command", shortcutID: "pinTab"),
+        ]
+        for dark in [false, true] {
+            for highlighted in [0, 1] {
+                let bar = CommandBarOverlay(text: .constant("peek"), results: results, highlightedIndex: highlighted,
+                                            onMoveHighlight: { _ in }, onSelectResult: { _ in }, onSubmit: {}, onCancel: {})
+                    .environment(\.themeChrome, ThemeChromeColors(theme: .arcDefault, dark: dark))
+                    .padding(40)
+                    .background(Color.black)
+                let rep = try render(bar, size: NSSize(width: CommandBarOverlay.arcWidth + 80, height: 560), dark: dark)
+                try write(rep, to: directory.appendingPathComponent("command-bar-commands-\(dark ? "dark" : "light")-\(highlighted).png"))
+            }
+        }
+    }
+
     // MARK: Offscreen rendering
 
     private func render<V: View>(_ view: V, size: NSSize, dark: Bool, frameView: Bool = false,
