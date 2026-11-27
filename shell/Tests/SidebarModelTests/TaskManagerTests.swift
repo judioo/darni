@@ -430,6 +430,58 @@ final class TaskManagerTests: XCTestCase {
         XCTAssertEqual(docs.disclosure, .none)
     }
 
+    /// Chromium's discard keeps the tab's emptied main frame in its renderer,
+    /// so the engine still lists a discarded tab in that process (with
+    /// `task_manager`, as the page's main frame). It is a row of its own,
+    /// Unloaded with no process, never a tab with a process (release
+    /// self-test of 1440: the row never came).
+    func testADiscardedTabTheEngineStillListsIsAnUnloadedRowWithNoProcess() {
+        let directory = TaskManagerDirectory(
+            tabs: [
+                53: .init(title: "search results", sleep: .init(state: .active, idle: 0, isOnScreen: true), sidebarID: "S-53"),
+                54: .init(title: "search results", sleep: .init(state: .unloaded, idle: 0), sidebarID: "S-54"),
+                55: .init(title: "Alone", sleep: .init(state: .unloaded, idle: 60), sidebarID: "S-55"),
+            ],
+            unloadedTabs: [.init(id: "S-54", title: "Task manager unloaded"), .init(id: "S-55", title: "Alone", idle: 60)]
+        )
+        for details in [true, false] {
+            let processes = [
+                Process(pid: 100, kind: .browser),
+                Process(pid: 500, kind: .renderer, tabIDs: [53, 54], memoryFootprint: 90 << 20,
+                        details: details ? .init(mainFrameTabIDs: [53, 54], site: "http://127.0.0.1/") : nil),
+                Process(pid: 510, kind: .renderer, tabIDs: [55], memoryFootprint: 10 << 20,
+                        details: details ? .init(mainFrameTabIDs: [55]) : nil),
+            ]
+            let groups = TaskManagerRows.groups(processes: processes, directory: directory)
+            XCTAssertEqual(groups.first { $0.pid == 500 }?.tabTitles, ["search results"], "details \(details)")
+            let stacks = TaskManagerRows.stacks(groups, directory: directory)
+            XCTAssertEqual(stacks.map(\.id), ["darni", "tab/53", "unloaded/S-55", "unloaded/S-54"], "details \(details)")
+            XCTAssertEqual(stacks[0].members.map(\.task.title), ["Browser", "Renderer"], "a renderer left with only an emptied frame")
+            XCTAssertEqual(stacks[1].memoryFootprint, 90 << 20, "the process is the tab with a page's alone")
+
+            let tabs = TaskManagerRows.rows(stacks, filter: .tabs)
+            let unloaded = tabs.first { $0.tab == .sidebar("S-54") }
+            XCTAssertEqual(unloaded?.text(for: .state), "Unloaded", "details \(details)")
+            XCTAssertEqual(unloaded?.pids, [])
+            XCTAssertEqual(unloaded?.title, "Tab: Task manager unloaded")
+            XCTAssertEqual(unloaded?.selectionKeys, [.row("unloaded/S-54")])
+            XCTAssertFalse(tabs.contains { $0.engineTabID == 54 || $0.engineTabID == 55 }, "also listed with a process")
+        }
+    }
+
+    func testATabListedWithAPageIsNeverAlsoUnloaded() {
+        let directory = TaskManagerDirectory(
+            tabs: [
+                1: .init(title: "Mail", sleep: .init(state: .sleeping), sidebarID: "S-1"),
+                2: .init(title: "News", sidebarID: "S-2"),
+            ],
+            unloadedTabs: [.init(id: "S-1", title: "Mail"), .init(id: "S-2", title: "News"), .init(id: "S-3", title: "Docs")]
+        )
+        let processes = [Process(pid: 300, kind: .renderer, tabIDs: [1, 2])]
+        let stacks = TaskManagerRows.stacks(TaskManagerRows.groups(processes: processes, directory: directory), directory: directory)
+        XCTAssertEqual(stacks.map(\.id), ["tab/1", "tab/2", "unloaded/S-3"])
+    }
+
     func testSortingByStateAndIdle() {
         let stacks = gmailStacks()
         XCTAssertEqual(titles(TaskManagerRows.rows(stacks, sort: TaskManagerSort(column: .idle, ascending: false))),

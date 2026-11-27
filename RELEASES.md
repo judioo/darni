@@ -24,6 +24,18 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1127.1442 — 2026-11-27
+
+**New**
+- Peek at URL… has a shortcut: ⇧⌘P (also in the File menu) opens the command bar in Peek
+  mode. With a link copied, ⇧⌘P then Return peeks it. Right-click a link for "Open Link in
+  Peek". Command bar commands now show their shortcuts.
+- Task Manager: each tab is now a stack with its page and frame processes under it, and an
+  estimated total (≈; a process that tabs share is split evenly between them). Filter by All,
+  Tabs, Subframes, Extensions or Browser. New State and Idle columns show which tabs are
+  active, sleeping (frozen, still in memory) or unloaded (no process, still listed so you can
+  find them), and how long since you last looked at each.
+
 ## Darni 2026.1125.1433 — 2026-11-25
 
 **Fixed**

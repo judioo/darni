@@ -443,7 +443,9 @@ extension TaskManagerRows {
             stack.members.sort { memberRank($0, own: own) < memberRank($1, own: own) }
             return stack
         }
-        for tab in directory.unloadedTabs {
+        // A tab the engine lists with a page is never also a row of its own.
+        let withPage = Set(directory.tabs.values.compactMap { $0.hasPage ? $0.sidebarID : nil })
+        for tab in directory.unloadedTabs where !withPage.contains(tab.id) {
             result.append(TaskManagerStack(
                 id: "unloaded/\(tab.id)", kind: .tab, title: "Tab: \(tab.title)", name: tab.title, icon: .sidebarTab(tab.id),
                 profile: tab.profile, members: [], sleep: TaskManagerTabSleep(state: .unloaded, idle: tab.idle), tab: .sidebar(tab.id)
