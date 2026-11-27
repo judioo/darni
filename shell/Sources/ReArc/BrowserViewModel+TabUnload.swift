@@ -161,11 +161,20 @@ extension BrowserViewModel {
     /// it is shown or used; the rule's "no longer due" does not wake it.
     @discardableResult
     func sleepTab(_ id: Tab.ID, cause: TaskManagerTabEvent.Cause = .taskManager) -> Bool {
-        guard canSleepTab(id), let freezing = liveEngine(for: id) as? TabFreezing, freezing.freeze() == .requested else { return false }
+        guard canSleepTab(id), let freezing = liveEngine(for: id) as? TabFreezing,
+              requestFreeze(id, freezing, cause: cause) else { return false }
         tabsSleptByHand.insert(id)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.freezeObservationDelay) { [weak self] in self?.observeTabFreezes() }
+        return true
+    }
+
+    /// Asks the engine to freeze the tab's page; when it takes the request,
+    /// tab sleep's file log and the Task Manager's history say so. The rule
+    /// and Sleep Tab both freeze through here.
+    private func requestFreeze(_ id: Tab.ID, _ freezing: any TabFreezing, cause: TaskManagerTabEvent.Cause) -> Bool {
+        guard freezing.freeze() == .requested else { return false }
         tabSleepLog.write(tabFreezeJournal.freezeRequested(id))
         taskManager.noteTabControl(.fellAsleep, sidebarID: id.uuidString, cause: cause)
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.freezeObservationDelay) { [weak self] in self?.observeTabFreezes() }
         return true
     }
 
@@ -261,11 +270,7 @@ extension BrowserViewModel {
         var frozen: [Tab.ID] = []
         for id in TabUnloadPolicy.tabsToFreeze(candidates, threshold: tabFreezeThreshold, now: now) {
             guard let freezing = liveEngine(for: id) as? TabFreezing else { continue }
-            if freezing.freeze() == .requested {
-                frozen.append(id)
-                tabSleepLog.write(tabFreezeJournal.freezeRequested(id))
-                taskManager.noteTabControl(.fellAsleep, sidebarID: id.uuidString, cause: .automatic)
-            }
+            if requestFreeze(id, freezing, cause: .automatic) { frozen.append(id) }
         }
         if !frozen.isEmpty {
             // The renderer reports the freeze a moment later: a line for it then, not five minutes on.
@@ -285,5 +290,30 @@ extension BrowserViewModel {
             return
         }
         selectNextTab()
+    }
+}
+
+/// The sidebar's Sleep Tab, beside Unload Tab: tab sleep's freeze now, as
+/// the Task Manager's Sleep does, filed in its history as "from the sidebar".
+extension BrowserViewModel {
+    /// Why Sleep doesn't apply to the tab now; nil when it does. The same
+    /// checks as `canSleepTab`, which is this being nil.
+    func sleepTabUnavailable(_ id: Tab.ID) -> TabSleepUnavailable? {
+        if isTabUnloaded(id) { return .unloaded }
+        guard let engine = liveEngine(for: id) else { return .notLoaded }
+        guard let freezing = engine as? TabFreezing else { return .engineCannotFreeze }
+        if freezing.isFreezeRequested { return .asleep }
+        guard let candidate = tabSleepCandidates(now: Date(), recordsFirstSight: false).first(where: { $0.tabID == id }) else {
+            return .notLoaded
+        }
+        if candidate.isVisible { return .onScreen }
+        if let reason = candidate.keptAwakeReason { return .inUse(reason) }
+        if candidate.isInUse { return .notNow }
+        return nil
+    }
+
+    /// The sidebar menu's Sleep Tab.
+    func sleepTabFromSidebar(_ id: Tab.ID) {
+        sleepTab(id, cause: .sidebar)
     }
 }

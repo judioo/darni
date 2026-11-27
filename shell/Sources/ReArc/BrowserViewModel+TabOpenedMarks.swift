@@ -72,32 +72,3 @@ extension BrowserViewModel {
         }
     }
 }
-
-/// The sidebar's Sleep Tab, beside Unload Tab: tab sleep's freeze now, as
-/// the Task Manager's Sleep does, filed in its history as "from the sidebar".
-extension BrowserViewModel {
-    /// Why Sleep doesn't apply to the tab now; nil when it does. The same
-    /// checks as `canSleepTab`, which is this being nil.
-    func sleepTabUnavailable(_ id: Tab.ID) -> TabSleepUnavailable? {
-        if isTabUnloaded(id) { return .unloaded }
-        guard let engine = liveEngine(for: id) else { return .notLoaded }
-        guard let freezing = engine as? TabFreezing else { return .engineCannotFreeze }
-        if freezing.isFreezeRequested { return .asleep }
-        guard let candidate = tabSleepCandidates(now: Date(), recordsFirstSight: false).first(where: { $0.tabID == id }) else {
-            return .notLoaded
-        }
-        if candidate.isVisible { return .onScreen }
-        if candidate.isAudible { return .inUse(.playingSound) }
-        if candidate.isCapturing { return .inUse(.capturing) }
-        if candidate.isShared { return .inUse(.shared) }
-        if candidate.hasDownload { return .inUse(.downloading) }
-        if candidate.hasPendingPrompt { return .inUse(.waitingForAnswer) }
-        if candidate.isInUse { return .notNow }
-        return nil
-    }
-
-    /// The sidebar menu's Sleep Tab.
-    func sleepTabFromSidebar(_ id: Tab.ID) {
-        sleepTab(id, cause: .sidebar)
-    }
-}
