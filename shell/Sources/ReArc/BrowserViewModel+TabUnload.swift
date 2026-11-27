@@ -152,14 +152,16 @@ extension BrowserViewModel {
     /// Every sidebar tab with a live engine, as the freeze and unload checks
     /// see it. Peek pages and Little Darni windows have engines of their own
     /// and are not tabs: they are never listed, so never frozen or unloaded.
-    func tabSleepCandidates(now: Date) -> [TabUnloadCandidate] {
+    /// A tab seen for the first time starts its wait now, unless
+    /// `recordsFirstSight` is false (the Task Manager only looks).
+    func tabSleepCandidates(now: Date, recordsFirstSight: Bool = true) -> [TabUnloadCandidate] {
         let visible = visibleTabIDs
         let shared = screenShares.chosenTargets.union(screenShareMarkedTabs)
         var candidates: [TabUnloadCandidate] = []
         for (id, profile, engine) in engineHost.allTabEngines() {
             guard store.tab(withID: id) != nil, profile == store.tab(withID: id).map(profileID(for:)) else { continue }
             let lastShown = tabLastShown[id] ?? now
-            tabLastShown[id] = lastShown
+            if recordsFirstSight { tabLastShown[id] = lastShown }
             let media = mediaState(for: id)
             candidates.append(TabUnloadCandidate(
                 tabID: id,
