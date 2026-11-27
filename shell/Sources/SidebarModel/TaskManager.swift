@@ -112,11 +112,15 @@ public struct TaskManagerDirectory: Equatable, Sendable {
         public var isPrivate: Bool
         /// The extension whose page this tab shows (a popup, a side panel, an options page).
         public var extensionID: String?
+        /// Tab sleep: a tab of the sidebar's. nil for the others (a private
+        /// window's, Developer Tools).
+        public var sleep: TaskManagerTabSleep?
 
-        public init(title: String, isPrivate: Bool = false, extensionID: String? = nil) {
+        public init(title: String, isPrivate: Bool = false, extensionID: String? = nil, sleep: TaskManagerTabSleep? = nil) {
             self.title = title
             self.isPrivate = isPrivate
             self.extensionID = extensionID
+            self.sleep = sleep
         }
     }
 
@@ -126,11 +130,21 @@ public struct TaskManagerDirectory: Equatable, Sendable {
     public var profiles: [UInt64: String]
     /// Extension names by extension ID.
     public var extensions: [String: String]
+    /// Tabs of the sidebar with no page in memory: no process, so the
+    /// engine's list does not have them. Each shows as a row of its own.
+    public var unloadedTabs: [TaskManagerUnloadedTab]
+    /// Tab sleep's settings, for the State column's help. nil: no tab sleeps (no engine).
+    public var sleepSettings: TaskManagerSleepSettings?
 
-    public init(tabs: [UInt64: Tab] = [:], profiles: [UInt64: String] = [:], extensions: [String: String] = [:]) {
+    public init(
+        tabs: [UInt64: Tab] = [:], profiles: [UInt64: String] = [:], extensions: [String: String] = [:],
+        unloadedTabs: [TaskManagerUnloadedTab] = [], sleepSettings: TaskManagerSleepSettings? = nil
+    ) {
         self.tabs = tabs
         self.profiles = profiles
         self.extensions = extensions
+        self.unloadedTabs = unloadedTabs
+        self.sleepSettings = sleepSettings
     }
 }
 
@@ -190,19 +204,6 @@ public struct TaskManagerSampler: Equatable, Sendable {
     }
 }
 
-/// The window's three segments, as Chrome's.
-public enum TaskManagerCategory: String, CaseIterable, Sendable {
-    case tabsAndExtensions, browser, all
-
-    public var title: String {
-        switch self {
-        case .tabsAndExtensions: return "Tabs and extensions"
-        case .browser: return "Browser"
-        case .all: return "All tasks"
-        }
-    }
-}
-
 /// One line of the table: a tab, a frame, an extension or the process itself.
 public struct TaskManagerTask: Equatable, Identifiable, Sendable {
     public enum Icon: Equatable, Sendable {
@@ -214,17 +215,45 @@ public struct TaskManagerTask: Equatable, Identifiable, Sendable {
         case browserExtension(String?)
         /// The engine's own helpers.
         case system
+        /// A frame of a tab's page, under the tab's row.
+        case frame
+        /// A tab of the sidebar with no page in memory, by its sidebar ID.
+        case sidebarTab(String)
+    }
+
+    /// What the task is, for the filter and for its tab's stack.
+    public enum Kind: Equatable, Sendable {
+        /// Darni's own process.
+        case browser
+        /// The engine's helpers: the GPU process, utilities, a renderer with no page of the shell's.
+        case helper
+        /// A tab's page (its main frame).
+        case tab
+        /// A frame of another site in a tab's page.
+        case subframe
+        case browserExtension
     }
 
     /// The same from one reading to the next.
     public var id: String
     public var title: String
     public var icon: Icon
+    public var kind: Kind
+    /// The site of a page's or a frame's process ("https://mail.google.com/"); empty when not known.
+    public var site: String
 
-    public init(id: String, title: String, icon: Icon) {
+    public init(id: String, title: String, icon: Icon, kind: Kind = .helper, site: String = "") {
         self.id = id
         self.title = title
         self.icon = icon
+        self.kind = kind
+        self.site = site
+    }
+
+    /// The engine tab of a "Tab:" or "Subframe:" task.
+    public var engineTabID: UInt64? {
+        if case .tab(let id) = icon { return id }
+        return nil
     }
 }
 
@@ -232,8 +261,6 @@ public struct TaskManagerTask: Equatable, Identifiable, Sendable {
 public struct TaskManagerGroup: Equatable, Sendable {
     public var pid: Int32
     public var kind: TaskManagerProcess.Kind
-    /// The segment the process belongs to (never `.all`).
-    public var category: TaskManagerCategory
     /// At least one.
     public var tasks: [TaskManagerTask]
     public var profile: String
@@ -246,47 +273,14 @@ public struct TaskManagerGroup: Equatable, Sendable {
     public var isKillable: Bool { kind != .browser && pid > 0 }
 }
 
-/// A group's task with the group's figures, for one table row.
-public struct TaskManagerRow: Equatable, Identifiable, Sendable {
-    public var id: String
-    public var title: String
-    public var icon: TaskManagerTask.Icon
-    public var pid: Int32
-    /// Tasks sharing a process show its figures on their first row only.
-    public var isFirstInGroup: Bool
-    public var profile: String
-    public var memoryFootprint: UInt64
-    public var usage: TaskManagerUsage
-    public var isKillable: Bool
-
-    /// The engine tab a "Tab:" or "Subframe:" row belongs to: double-click
-    /// or Show Tab brings that tab forward.
-    public var engineTabID: UInt64? {
-        if case .tab(let id) = icon { return id }
-        return nil
-    }
-
-    /// The cell's text. A figure of the whole process is blank on every row but the group's first.
-    public func text(for column: TaskManagerColumn) -> String {
-        if column.isSharedByGroup, !isFirstInGroup { return "" }
-        switch column {
-        case .task: return title
-        case .profile: return profile
-        case .memoryFootprint: return TaskManagerFormat.memory(memoryFootprint)
-        case .cpu: return TaskManagerFormat.cpu(usage.cpuPercent)
-        case .network: return TaskManagerFormat.network(usage.networkBytesPerSecond)
-        // A pid is a number for a terminal: no grouping.
-        case .processID: return String(pid)
-        }
-    }
-}
-
 public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
-    case task, profile, memoryFootprint, cpu, network, processID
+    case task, state, idle, profile, memoryFootprint, cpu, network, processID
 
     public var title: String {
         switch self {
         case .task: return "Task"
+        case .state: return "State"
+        case .idle: return "Idle"
         case .profile: return "Profile"
         case .memoryFootprint: return "Memory footprint"
         case .cpu: return "CPU"
@@ -298,8 +292,16 @@ public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
     /// The task's name always shows.
     public var canHide: Bool { self != .task }
 
-    /// One value for the whole process, shown on its first row.
-    public var isSharedByGroup: Bool { self != .task && self != .profile }
+    /// A number: drawn on the right, and sorted from the largest first.
+    public var isFigure: Bool {
+        switch self {
+        case .task, .state, .profile: return false
+        case .idle, .memoryFootprint, .cpu, .network, .processID: return true
+        }
+    }
+
+    /// The columns of the first Task Manager, before a saved choice listed the columns it knew.
+    static let firstColumns: [TaskManagerColumn] = [.task, .profile, .memoryFootprint, .cpu, .network, .processID]
 }
 
 /// The columns the header's menu has switched on. Kept across launches.
@@ -321,15 +323,22 @@ public struct TaskManagerColumns: Equatable, Sendable {
     }
 
     static let defaultsKey = "ReArcTaskManagerColumns"
+    /// The columns the build that saved the choice knew: a column added since shows.
+    static let knownKey = "ReArcTaskManagerColumnsKnown"
 
-    /// Names this build does not know are ignored; nothing saved shows every column.
+    /// Names this build does not know are ignored; nothing saved shows every
+    /// column; a column newer than the saved choice shows.
     public static func load(from defaults: UserDefaults) -> TaskManagerColumns {
         guard let names = defaults.stringArray(forKey: defaultsKey) else { return TaskManagerColumns() }
-        return TaskManagerColumns(visible: Set(names.compactMap(TaskManagerColumn.init(rawValue:))))
+        let known = defaults.stringArray(forKey: knownKey).map { Set($0.compactMap(TaskManagerColumn.init(rawValue:))) }
+            ?? Set(TaskManagerColumn.firstColumns)
+        let added = Set(TaskManagerColumn.allCases).subtracting(known)
+        return TaskManagerColumns(visible: Set(names.compactMap(TaskManagerColumn.init(rawValue:))).union(added))
     }
 
     public func save(to defaults: UserDefaults) {
         defaults.set(ordered.map(\.rawValue), forKey: Self.defaultsKey)
+        defaults.set(TaskManagerColumn.allCases.map(\.rawValue), forKey: Self.knownKey)
     }
 }
 
@@ -343,7 +352,8 @@ public struct TaskManagerSort: Equatable, Sendable {
     }
 }
 
-/// From process lists to the rows on screen.
+/// From process lists to process groups. `TaskManagerStacks.swift` puts
+/// the groups' tasks under their tabs and makes the rows on screen.
 public enum TaskManagerRows {
     /// One group per process, ReArc first, then the engine's helpers, then
     /// the pages, each kind by process ID. The order holds from one reading
@@ -353,48 +363,14 @@ public enum TaskManagerRows {
     ) -> [TaskManagerGroup] {
         processes
             .map { process in
-                let (tasks, category, tabTitles) = tasks(of: process, directory: directory)
+                let (tasks, tabTitles) = tasks(of: process, directory: directory)
                 return TaskManagerGroup(
-                    pid: process.pid, kind: process.kind, category: category, tasks: tasks,
+                    pid: process.pid, kind: process.kind, tasks: tasks,
                     profile: directory.profiles[process.profileID] ?? "", memoryFootprint: process.memoryFootprint,
                     usage: usage[process.pid] ?? TaskManagerUsage(), tabTitles: tabTitles
                 )
             }
             .sorted(by: inDefaultOrder)
-    }
-
-    /// The rows of one segment that match the search, sorted. A process
-    /// stays whole, as in Chrome: it shows when any of its tasks matches,
-    /// and sorting moves it with all its tasks.
-    public static func rows(
-        _ groups: [TaskManagerGroup], category: TaskManagerCategory = .all, search: String = "", sort: TaskManagerSort? = nil
-    ) -> [TaskManagerRow] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        var shown = groups.filter { group in
-            (category == .all || group.category == category)
-                && (query.isEmpty || group.tasks.contains { matches($0.title, query) })
-        }
-        if let sort {
-            shown.sort { a, b in
-                switch compare(a, b, by: sort.column) {
-                case .orderedSame: return inDefaultOrder(a, b)
-                case .orderedAscending: return sort.ascending
-                case .orderedDescending: return !sort.ascending
-                }
-            }
-            // A figure that is not known goes last whichever way the column sorts.
-            let known = shown.filter { hasValue($0, for: sort.column) }
-            shown = known + shown.filter { !hasValue($0, for: sort.column) }
-        }
-        return shown.flatMap { group in
-            group.tasks.enumerated().map { index, task in
-                TaskManagerRow(
-                    id: task.id, title: task.title, icon: task.icon, pid: group.pid, isFirstInGroup: index == 0,
-                    profile: group.profile, memoryFootprint: group.memoryFootprint, usage: group.usage,
-                    isKillable: group.isKillable
-                )
-            }
-        }
     }
 
     /// A utility's name for its row. An engine without `task_manager` gives
@@ -414,21 +390,21 @@ public enum TaskManagerRows {
 
     private static func tasks(
         of process: TaskManagerProcess, directory: TaskManagerDirectory
-    ) -> (tasks: [TaskManagerTask], category: TaskManagerCategory, tabTitles: [String]) {
+    ) -> (tasks: [TaskManagerTask], tabTitles: [String]) {
         let pid = process.pid
-        func single(_ title: String, _ icon: TaskManagerTask.Icon) -> [TaskManagerTask] {
-            [TaskManagerTask(id: "\(pid)", title: title, icon: icon)]
+        func single(_ title: String, _ icon: TaskManagerTask.Icon, _ kind: TaskManagerTask.Kind = .helper) -> [TaskManagerTask] {
+            [TaskManagerTask(id: "\(pid)", title: title, icon: icon, kind: kind)]
         }
         switch process.kind {
         case .browser:
-            return (single("Browser", .browser), .browser, [])
+            return (single("Browser", .browser, .browser), [])
         case .gpu:
-            return (single("GPU Process", .system), .browser, [])
+            return (single("GPU Process", .system), [])
         case .utility:
             let name = process.details.map(\.title).flatMap { $0.isEmpty ? nil : $0 } ?? utilityName(process.name)
-            return (single(name.isEmpty ? "Utility" : "Utility: \(name)", .system), .browser, [])
+            return (single(name.isEmpty ? "Utility" : "Utility: \(name)", .system), [])
         case .other:
-            return (single(process.name.isEmpty ? "Helper" : utilityName(process.name), .system), .browser, [])
+            return (single(process.name.isEmpty ? "Helper" : utilityName(process.name), .system), [])
         case .renderer:
             break
         }
@@ -439,16 +415,19 @@ public enum TaskManagerRows {
                 ?? known.lazy.compactMap(\.tab.extensionID).first
             let name = process.details.map(\.extensionName).flatMap { $0.isEmpty ? nil : $0 }
                 ?? id.flatMap { directory.extensions[$0] }
-            return (single(name.map { "Extension: \($0)" } ?? "Extension", .browserExtension(id)), .tabsAndExtensions, [])
+            return (single(name.map { "Extension: \($0)" } ?? "Extension", .browserExtension(id), .browserExtension), [])
         }
 
         // Without `task_manager` the engine does not say which tabs only have
         // a frame here: every tab with a frame in the process is listed as a tab.
         let mainFrames = process.details.map { Set($0.mainFrameTabIDs) }
+        let site = process.details?.site ?? ""
         var tasks: [TaskManagerTask] = []
         var tabTitles: [String] = []
         for (id, tab) in known where mainFrames?.contains(id) ?? true {
-            tasks.append(TaskManagerTask(id: "\(pid)/tab/\(id)", title: "\(tab.isPrivate ? "Private tab" : "Tab"): \(tab.title)", icon: .tab(id)))
+            tasks.append(TaskManagerTask(
+                id: "\(pid)/tab/\(id)", title: "\(tab.isPrivate ? "Private tab" : "Tab"): \(tab.title)", icon: .tab(id), kind: .tab, site: site
+            ))
             tabTitles.append(tab.title)
         }
         if let mainFrames, let details = process.details {
@@ -456,19 +435,19 @@ public enum TaskManagerRows {
             for (id, tab) in known where subframes.contains(id) {
                 let prefix = tab.isPrivate ? "Private subframe" : "Subframe"
                 tasks.append(TaskManagerTask(
-                    id: "\(pid)/frame/\(id)", title: details.site.isEmpty ? prefix : "\(prefix): \(details.site)", icon: .tab(id)
+                    id: "\(pid)/frame/\(id)", title: site.isEmpty ? prefix : "\(prefix): \(site)", icon: .tab(id), kind: .subframe, site: site
                 ))
             }
         }
-        if !tasks.isEmpty { return (tasks, .tabsAndExtensions, tabTitles) }
+        if !tasks.isEmpty { return (tasks, tabTitles) }
         // No page of the shell's: Chrome lists these with the browser's own processes.
         let title = process.details?.isSpare == true ? "Spare renderer" : "Renderer"
-        return (single(title, .system), .browser, [])
+        return (single(title, .system), [])
     }
 
     // MARK: Order
 
-    private static func rank(_ kind: TaskManagerProcess.Kind) -> Int {
+    static func rank(_ kind: TaskManagerProcess.Kind) -> Int {
         switch kind {
         case .browser: return 0
         case .gpu: return 1
@@ -481,48 +460,37 @@ public enum TaskManagerRows {
     private static func inDefaultOrder(_ a: TaskManagerGroup, _ b: TaskManagerGroup) -> Bool {
         (rank(a.kind), a.pid) < (rank(b.kind), b.pid)
     }
-
-    private static func hasValue(_ group: TaskManagerGroup, for column: TaskManagerColumn) -> Bool {
-        switch column {
-        case .cpu: return group.usage.cpuPercent != nil
-        case .network: return group.usage.networkBytesPerSecond != nil
-        case .task, .profile, .memoryFootprint, .processID: return true
-        }
-    }
-
-    private static func compare(_ a: TaskManagerGroup, _ b: TaskManagerGroup, by column: TaskManagerColumn) -> ComparisonResult {
-        func order<Value: Comparable>(_ x: Value, _ y: Value) -> ComparisonResult {
-            x == y ? .orderedSame : (x < y ? .orderedAscending : .orderedDescending)
-        }
-        switch column {
-        case .task: return (a.tasks.first?.title ?? "").localizedStandardCompare(b.tasks.first?.title ?? "")
-        case .profile: return a.profile.localizedStandardCompare(b.profile)
-        case .memoryFootprint: return order(a.memoryFootprint, b.memoryFootprint)
-        case .cpu: return order(a.usage.cpuPercent ?? 0, b.usage.cpuPercent ?? 0)
-        case .network: return order(a.usage.networkBytesPerSecond ?? 0, b.usage.networkBytesPerSecond ?? 0)
-        case .processID: return order(a.pid, b.pid)
-        }
-    }
-
-    private static func matches(_ title: String, _ query: String) -> Bool {
-        title.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil
-    }
 }
 
-/// Which rows a click selects. A process is selected whole, as in Chrome:
-/// a click on any of its tasks takes them all.
+/// What a row stands for when it is selected. A process is selected
+/// whole, as in Chrome: every row of it lights up, under whichever tab it
+/// is. A row with no process of its own to end (Darni's stack, an unloaded
+/// tab) is selected by itself.
+public enum TaskManagerSelectionKey: Hashable, Sendable {
+    case process(Int32)
+    case row(String)
+}
+
+/// Which rows a click selects.
 public enum TaskManagerSelection {
-    /// `pids` is the process of each row on screen. `proposed` is what the
-    /// table would select by itself, `current` what is selected now.
-    /// `toggles`: a ⌘-click, which adds a row or takes one away; taking
-    /// one row of a process away lets the whole process go.
-    public static func rows(proposed: IndexSet, current: IndexSet, pids: [Int32], toggles: Bool) -> IndexSet {
-        func processes(_ rows: IndexSet) -> Set<Int32> {
-            Set(rows.filter(pids.indices.contains).map { pids[$0] })
+    /// `keys` is what each row on screen stands for (`TaskManagerRow.selectionKeys`).
+    /// `proposed` is what the table would select by itself, `current` what is
+    /// selected now. `toggles`: a ⌘-click, which adds a row or takes one
+    /// away; taking one row of a process away lets the whole process go. A
+    /// row is selected when everything it stands for is: a tab's row when
+    /// all of the tab's processes are.
+    public static func rows(proposed: IndexSet, current: IndexSet, keys: [[TaskManagerSelectionKey]], toggles: Bool) -> IndexSet {
+        func union(_ rows: IndexSet) -> Set<TaskManagerSelectionKey> {
+            Set(rows.filter(keys.indices.contains).flatMap { keys[$0] })
         }
-        var wanted = processes(proposed)
-        if toggles { wanted.subtract(processes(current.subtracting(proposed))) }
-        return IndexSet(pids.indices.filter { wanted.contains(pids[$0]) })
+        var wanted = union(proposed)
+        if toggles { wanted.subtract(union(current.subtracting(proposed))) }
+        return selected(keys: keys, by: wanted)
+    }
+
+    /// The rows a selection lights up.
+    public static func selected(keys: [[TaskManagerSelectionKey]], by selection: Set<TaskManagerSelectionKey>) -> IndexSet {
+        IndexSet(keys.indices.filter { !keys[$0].isEmpty && selection.isSuperset(of: keys[$0]) })
     }
 }
 
@@ -547,6 +515,22 @@ public enum TaskManagerFormat {
         guard let bytesPerSecond else { return notAvailable }
         guard bytesPerSecond >= 0.5 else { return "0" }
         return amount(bytesPerSecond, units: ["B/s", "KB/s", "MB/s", "GB/s"])
+    }
+
+    /// Time since a tab was last on screen: "Now" while it is, then
+    /// "< 1 min", "12 min", "3 h 5 min", "2 d 4 h". "–" when not known.
+    public static func idle(_ seconds: TimeInterval?, onScreen: Bool = false) -> String {
+        if onScreen { return "Now" }
+        guard let seconds else { return notAvailable }
+        let minutes = Int(max(0, seconds) / 60)
+        switch minutes {
+        case 0: return "< 1 min"
+        case ..<60: return "\(minutes) min"
+        case ..<(24 * 60): return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
+        default:
+            let hours = minutes / 60
+            return hours % 24 == 0 ? "\(hours / 24) d" : "\(hours / 24) d \(hours % 24) h"
+        }
     }
 
     private static func amount(_ value: Double, units: [String]) -> String {

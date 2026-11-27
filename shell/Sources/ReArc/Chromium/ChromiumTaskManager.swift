@@ -28,8 +28,10 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
 
     func icon(for icon: TaskManagerTask.Icon) -> NSImage? {
         switch icon {
-        case .browser, .system:
+        case .browser, .system, .frame:
             return nil
+        case .sidebarTab(let id):
+            return model.sidebarTab(fromTaskManager: id).flatMap { model.store.tab(withID: $0) }.flatMap(model.favicon(for:))
         case .tab(let id):
             guard let data = runtime.engine(forTab: id)?.faviconData else { return nil }
             if let cached = favicons[id], cached.data == data { return cached.image }
@@ -54,13 +56,20 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
     }
 
     /// A tab of a space (not a Little Arc, a private window's or DevTools).
-    func canShowTab(_ engineTabID: UInt64) -> Bool {
-        shellTabID(engineTabID) != nil
+    func canShowTab(_ tab: TaskManagerTabRef) -> Bool {
+        shellTabID(tab) != nil
     }
 
-    func showTab(_ engineTabID: UInt64) {
-        guard let id = shellTabID(engineTabID) else { return }
+    func showTab(_ tab: TaskManagerTabRef) {
+        guard let id = shellTabID(tab) else { return }
         model.showTabFromTaskManager(id)
+    }
+
+    private func shellTabID(_ tab: TaskManagerTabRef) -> Tab.ID? {
+        switch tab {
+        case .engine(let id): return shellTabID(id)
+        case .sidebar(let id): return model.sidebarTab(fromTaskManager: id)
+        }
     }
 
     private func shellTabID(_ engineTabID: UInt64) -> Tab.ID? {
@@ -91,9 +100,15 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
 
     private func directory(for processes: [ChromiumProcessInfo]) -> TaskManagerDirectory {
         var directory = TaskManagerDirectory()
-        for id in Set(processes.flatMap(\.tabIDs)) {
-            directory.tabs[id] = tab(id)
+        let sleep = model.taskManagerTabSleep()
+        let listed = Set(processes.flatMap(\.tabIDs))
+        for id in listed {
+            directory.tabs[id] = tab(id, sleep: sleep.byTab)
         }
+        // A tab the engine lists has a page: never also a row of its own.
+        let live = Set(listed.compactMap { runtime.engine(forTab: $0)?.shellID.uuidString })
+        directory.unloadedTabs = sleep.unloaded.filter { !live.contains($0.id) }
+        directory.sleepSettings = model.taskManagerSleepSettings(canFreeze: runtime.capabilities.tabFreeze)
         for id in Set(processes.map(\.profileID)) where id != 0 {
             directory.profiles[id] = profileName(id)
         }
@@ -103,7 +118,7 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         return directory
     }
 
-    private func tab(_ id: UInt64) -> TaskManagerDirectory.Tab? {
+    private func tab(_ id: UInt64, sleep: [Tab.ID: TaskManagerTabSleep]) -> TaskManagerDirectory.Tab? {
         guard let engine = runtime.engine(forTab: id) else {
             // DevTools windows are engine tabs with no page of the shell's.
             let isDevTools = runtime.devToolsFrontends.contains(id) || runtime.devToolsToolboxes.contains(id)
@@ -115,7 +130,7 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         let title = [engine.pageTitle, saved, url?.absoluteString].compactMap { $0 }.first { !$0.isEmpty } ?? "New Tab"
         return TaskManagerDirectory.Tab(
             title: title, isPrivate: engine.profileKey.isOffTheRecord,
-            extensionID: url?.scheme == "chrome-extension" ? url?.host : nil
+            extensionID: url?.scheme == "chrome-extension" ? url?.host : nil, sleep: sleep[engine.shellID]
         )
     }
 
