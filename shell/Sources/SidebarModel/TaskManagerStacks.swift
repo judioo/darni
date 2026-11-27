@@ -15,10 +15,8 @@ import Foundation
 
 /// What tab sleep has done with a tab, for the State column.
 public enum TaskManagerTabState: Equatable, Sendable {
-    /// Why a hidden tab is not put to sleep: the checks' reasons (`TabUnloadCandidate.isInUse`).
-    public enum Reason: Equatable, Sendable {
-        case playingSound, capturing, shared, downloading, waitingForAnswer
-    }
+    /// Why a hidden tab is not put to sleep: the checks' own reasons (`TabUnloadCandidate.keptAwakeReason`).
+    public typealias Reason = TabKeptAwakeReason
 
     /// Running as usual: on screen, or not unseen long enough yet.
     case active
@@ -84,12 +82,7 @@ public enum TaskManagerTabState: Equatable, Sendable {
         if isDiscarded { return .unloaded }
         if candidate.isVisible { return .active }
         if candidate.isFrozen { return isPageFrozen == false ? .fallingAsleep : .sleeping }
-        if candidate.isAudible { return .keptAwake(.playingSound) }
-        if candidate.isCapturing { return .keptAwake(.capturing) }
-        if candidate.isShared { return .keptAwake(.shared) }
-        if candidate.hasDownload { return .keptAwake(.downloading) }
-        if candidate.hasPendingPrompt { return .keptAwake(.waitingForAnswer) }
-        return .active
+        return candidate.keptAwakeReason.map(TaskManagerTabState.keptAwake) ?? .active
     }
 }
 
@@ -176,6 +169,9 @@ public enum TaskManagerHelp {
 
     public static let estimate = "A tab's row adds up the processes under it, so it's an estimate (≈). "
         + "A process several tabs share is split evenly between them: each tab counts its share, and nothing is counted twice."
+
+    /// A stack's figure cell.
+    public static let estimateCell = "Estimate: the total of the processes under this row. Shared processes count their share."
 
     /// "30 minutes", "1 hour", "4 hours".
     static func duration(_ seconds: TimeInterval) -> String {

@@ -127,8 +127,24 @@ public struct TabUnloadCandidate: Equatable, Sendable {
 
     /// In use: neither frozen nor unloaded, however long ago it was shown.
     public var isInUse: Bool {
-        isVisible || isAudible || hasPendingPrompt || isCapturing || isShared || hasDownload || isTransient
+        isVisible || isTransient || keptAwakeReason != nil
     }
+
+    /// Why a hidden tab of the sidebar is never frozen or unloaded, as the
+    /// Task Manager's State column tells it: the first that holds.
+    public var keptAwakeReason: TabKeptAwakeReason? {
+        if isAudible { return .playingSound }
+        if isCapturing { return .capturing }
+        if isShared { return .shared }
+        if hasDownload { return .downloading }
+        if hasPendingPrompt { return .waitingForAnswer }
+        return nil
+    }
+}
+
+/// What keeps a hidden tab awake (`TabUnloadCandidate.keptAwakeReason`).
+public enum TabKeptAwakeReason: Equatable, Sendable {
+    case playingSound, capturing, shared, downloading, waitingForAnswer
 }
 
 public enum TabUnloadPolicy {

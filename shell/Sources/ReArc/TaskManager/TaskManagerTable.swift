@@ -258,7 +258,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         let tip: String?
         switch column {
         case .state: tip = item.sleep?.state.explanation
-        case .memoryFootprint, .cpu, .network: tip = item.isEstimate ? "Estimate: the total of the processes under this row. Shared processes count their share." : nil
+        case .memoryFootprint, .cpu, .network: tip = item.isEstimate ? TaskManagerHelp.estimateCell : nil
         default: tip = nil
         }
         cell.configure(text: item.text(for: column), alignment: Self.alignment(of: column), toolTip: tip)
