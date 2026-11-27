@@ -24,7 +24,7 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
-## Darni 2026.1127.1445 — 2026-11-27
+## Darni 2026.1127.1451 — 2026-11-27
 
 **New**
 - Peek at URL… has a shortcut: ⇧⌘P (also in the File menu) opens the command bar in Peek
@@ -39,6 +39,12 @@ lines and this section starts empty again.
   Each shows its shortcut, or "No shortcut" with Set Shortcut… to pick one in Settings ›
   Shortcuts. A command whose name starts with what you typed comes right after the search
   ("peek" gives Peek at URL…).
+
+**Fixed**
+- A shortcut you set yourself now always wins over one of Darni's defaults. If you had given
+  ⇧⌘P (or any default key) to another command, it stays yours; the command that had it by
+  default shows "No shortcut" in Settings › Shortcuts and tells you why. Resetting your key
+  gives the default back.
 
 ## Darni 2026.1125.1433 — 2026-11-25
 

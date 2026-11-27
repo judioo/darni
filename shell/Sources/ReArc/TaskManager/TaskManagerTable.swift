@@ -43,6 +43,12 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
     private var generation = 0
     /// The table's selection is being set from the controller's, not by the user.
     private var appliesSelection = false
+    /// A row or header menu is open. The table holds still under it: a
+    /// reading that redraws or re-sorts the rows while AppKit tracks the menu
+    /// moved the menu away from the pointer and left it dead (owner, RC 1447).
+    private(set) var isMenuOpen = false
+    /// A change came while a menu was open; applied when it closes.
+    private(set) var hasDeferredRebuild = false
 
     static let taskCellID = NSUserInterfaceItemIdentifier("TaskManagerTaskCell")
     static let figureCellID = NSUserInterfaceItemIdentifier("TaskManagerFigureCell")
@@ -131,6 +137,10 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
 
     private func rebuild() {
         guard isActive, let table = tableView else { return }
+        guard !isMenuOpen else {
+            hasDeferredRebuild = true
+            return
+        }
         let state = observedState()
         for tableColumn in table.tableColumns {
             guard let column = TaskManagerColumn(rawValue: tableColumn.identifier.rawValue) else { continue }
@@ -230,7 +240,23 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
 
     // MARK: Header menu
 
+    func menuWillOpen(_ menu: NSMenu) {
+        isMenuOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isMenuOpen = false
+        guard hasDeferredRebuild else { return }
+        hasDeferredRebuild = false
+        // After the chosen item's action, which AppKit sends once the menu is gone.
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.rebuild() }
+        }
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        // Never rebuild a menu that is on screen: its items would shift under the pointer.
+        guard !isMenuOpen else { return }
         menu.removeAllItems()
         if menu === tableView?.menu { return fillRowMenu(menu) }
         for column in TaskManagerColumn.allCases {

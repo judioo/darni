@@ -43,6 +43,60 @@ final class PeekAtURLShortcutTests: XCTestCase {
         XCTAssertEqual(overrides.binding(for: chord.key, modifiers: chord.modifiers)?.priority, .websiteFirst)
     }
 
+    /// Security, RC 1447: a key someone gave another command on an earlier
+    /// build keeps working when a new default (⇧⌘P) arrives; the new binding
+    /// has no key and Settings says why. Reset gives it back.
+    func testAKeyTheUserSetEarlierBeatsTheNewDefault() throws {
+        let shiftP = ShortcutChord(.character("p"), [.shift, .command])
+        let suite = "rearc.tests.shortcut-user-chord-wins.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var earlier = ShortcutOverrides()
+        earlier.set(shiftP, for: "newTab")
+        earlier.save(to: defaults)
+
+        var overrides = ShortcutOverrides.load(from: defaults)
+        XCTAssertEqual(overrides.binding(for: shiftP.key, modifiers: shiftP.modifiers)?.id, "newTab")
+        XCTAssertEqual(overrides.chord(for: "newTab"), shiftP)
+        XCTAssertNil(overrides.chord(for: "peekAtURL"))
+        // The menu bar: New Tab carries ⇧⌘P, Peek at URL… none.
+        XCTAssertEqual(overrides.effectiveChord(forDefault: ShortcutChord(.character("t"), .command)), shiftP)
+        XCTAssertNil(overrides.effectiveChord(forDefault: shiftP))
+
+        let rows = overrides.rows()
+        let peek = try XCTUnwrap(rows.first { $0.id == "peekAtURL" })
+        XCTAssertEqual(peek.chipText, "—")
+        XCTAssertFalse(peek.isCustomized)
+        let newTab = try XCTUnwrap(ArcShortcuts.all.first { $0.id == "newTab" })
+        XCTAssertEqual(peek.conflicts, [.displaced(by: newTab, chord: shiftP)])
+        XCTAssertEqual(peek.conflicts.first?.message, "No shortcut: you set ⇧⌘P for \(newTab.title)")
+        XCTAssertEqual(rows.first { $0.id == "newTab" }?.conflicts, [], "no clash left to flag on the user's own key")
+
+        // Recording ⇧⌘P for Peek again is kept as the user's choice; both
+        // are now set, so the usual clash rule (first in menu order, ⚠) holds.
+        overrides.set(shiftP, for: "peekAtURL")
+        XCTAssertTrue(overrides.isCustomized("peekAtURL"))
+        XCTAssertEqual(overrides.chord(for: "peekAtURL"), shiftP)
+        XCTAssertFalse(try XCTUnwrap(overrides.rows().first { $0.id == "peekAtURL" }).conflicts.isEmpty)
+        overrides.reset("peekAtURL")
+
+        // Resetting New Tab gives ⇧⌘P back to Peek at URL….
+        overrides.reset("newTab")
+        XCTAssertEqual(overrides.chord(for: "peekAtURL"), shiftP)
+        XCTAssertEqual(overrides.binding(for: shiftP.key, modifiers: shiftP.modifiers)?.id, "peekAtURL")
+        XCTAssertEqual(try XCTUnwrap(overrides.rows().first { $0.id == "peekAtURL" }).conflicts, [])
+    }
+
+    /// Without a user chord in the way, recording a binding's own default
+    /// still clears the override, as before.
+    func testRecordingTheDefaultStillClearsTheOverride() {
+        var overrides = ShortcutOverrides()
+        overrides.set(ShortcutChord(.character("k"), [.option, .command]), for: "peekAtURL")
+        overrides.set(ShortcutChord(.character("p"), [.shift, .command]), for: "peekAtURL")
+        XCTAssertFalse(overrides.isCustomized("peekAtURL"))
+        XCTAssertFalse(overrides.hasChanges)
+    }
+
     // MARK: The copied link
 
     func testALinkIsOneWebAddressAndNothingElse() {
