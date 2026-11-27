@@ -279,7 +279,7 @@ final class TaskManagerTests: XCTestCase {
 
         let header = TaskManagerRows.rows(stacks, filter: .tabs)[0]
         XCTAssertEqual(TaskManagerColumn.allCases.map(header.text(for:)),
-                       ["Tab: Gmail", "Active", "Now", "Personal", "≈ 280 MB", "≈ 11.0", "≈ 1000 B/s", "400, 410, 420"])
+                       ["Tab: Gmail", "Active", "Now", "Personal", "≈ 280 MB", "", "≈ 11.0", "", "≈ 1000 B/s", "400, 410, 420"])
         XCTAssertTrue(header.isEstimate)
     }
 
@@ -313,7 +313,7 @@ final class TaskManagerTests: XCTestCase {
         XCTAssertEqual(rows.map(\.disclosure), [.expanded, .none, .none, .none, .collapsed, .none])
         let accounts = rows[2]
         XCTAssertEqual(TaskManagerColumn.allCases.map(accounts.text(for:)),
-                       ["Subframe: https://accounts.google.com/", "", "", "Personal", "40.0 MB", "2.0", "–", "410"])
+                       ["Subframe: https://accounts.google.com/", "", "", "Personal", "40.0 MB", "", "2.0", "", "–", "410"])
         XCTAssertEqual(accounts.note, "shared by 2 tabs")
         XCTAssertEqual(accounts.icon, .frame)
         XCTAssertEqual(accounts.tab, .engine(1), "Show Tab on a frame shows the tab it is in")
@@ -419,7 +419,7 @@ final class TaskManagerTests: XCTestCase {
 
     func testAnUnloadedTabIsARowWithNoProcessAndNoFigures() {
         let docs = TaskManagerRows.rows(gmailStacks()).last!
-        XCTAssertEqual(TaskManagerColumn.allCases.map(docs.text(for:)), ["Tab: Docs", "Unloaded", "3 h", "Work", "", "", "", ""])
+        XCTAssertEqual(TaskManagerColumn.allCases.map(docs.text(for:)), ["Tab: Docs", "Unloaded", "3 h", "Work", "", "", "", "", "", ""])
         XCTAssertTrue(docs.isUnloaded)
         XCTAssertEqual(docs.pids, [])
         XCTAssertNil(docs.pid)
@@ -565,24 +565,28 @@ final class TaskManagerTests: XCTestCase {
         XCTAssertEqual(TaskManagerFormat.idle(60 * 60), "1 h")
         XCTAssertEqual(TaskManagerFormat.idle(3 * 3600 + 5 * 60), "3 h 5 min")
         XCTAssertEqual(TaskManagerFormat.idle(48 * 3600), "2 d")
-        XCTAssertEqual(TaskManagerFormat.idle(52 * 3600 + 59 * 60), "2 d 4 h")
+        XCTAssertEqual(TaskManagerFormat.idle(52 * 3600 + 59 * 60), "2 d", "past a day, days only")
+        XCTAssertEqual(TaskManagerFormat.idle((14 * 24 + 7) * 3600), "14 d")
+        XCTAssertEqual(TaskManagerFormat.idle(23 * 3600 + 59 * 60), "23 h 59 min")
     }
 
     // MARK: Columns
 
     func testColumnsAreChromesAndTheTaskAlwaysShows() {
         XCTAssertEqual(TaskManagerColumn.allCases.map(\.title),
-                       ["Task", "State", "Idle", "Profile", "Memory footprint", "CPU", "Network", "Process ID"])
+                       ["Task", "State", "Idle", "Profile", "Memory footprint", "Memory 10 min", "CPU", "CPU 10 min", "Network", "Process ID"])
         XCTAssertEqual(TaskManagerColumn.allCases.filter(\.isFigure), [.idle, .memoryFootprint, .cpu, .network, .processID])
+        XCTAssertEqual(TaskManagerColumn.allCases.filter(\.isSparkline), [.memoryHistory, .cpuHistory], "drawn, not sorted")
         var columns = TaskManagerColumns()
         XCTAssertEqual(columns.ordered, TaskManagerColumn.allCases)
         columns.toggle(.task)
         XCTAssertTrue(columns.isVisible(.task))
         columns.toggle(.network)
         columns.toggle(.profile)
-        XCTAssertEqual(columns.ordered, [.task, .state, .idle, .memoryFootprint, .cpu, .processID])
+        columns.toggle(.memoryHistory)
+        XCTAssertEqual(columns.ordered, [.task, .state, .idle, .memoryFootprint, .cpu, .cpuHistory, .processID])
         columns.toggle(.network)
-        XCTAssertEqual(columns.ordered, [.task, .state, .idle, .memoryFootprint, .cpu, .network, .processID])
+        XCTAssertEqual(columns.ordered, [.task, .state, .idle, .memoryFootprint, .cpu, .cpuHistory, .network, .processID])
         XCTAssertTrue(TaskManagerColumns(visible: []).isVisible(.task))
     }
 
@@ -597,7 +601,8 @@ final class TaskManagerTests: XCTestCase {
         columns.toggle(.idle)
         columns.save(to: defaults)
         XCTAssertEqual(TaskManagerColumns.load(from: defaults), columns)
-        XCTAssertEqual(TaskManagerColumns.load(from: defaults).ordered, [.task, .state, .memoryFootprint, .cpu, .network],
+        XCTAssertEqual(TaskManagerColumns.load(from: defaults).ordered,
+                       [.task, .state, .memoryFootprint, .memoryHistory, .cpu, .cpuHistory, .network],
                        "a new column hidden on purpose stays hidden")
         // A column of a later build, and the task column missing from the list.
         defaults.set(["cpu", "gpuMemory"], forKey: TaskManagerColumns.defaultsKey)
@@ -610,8 +615,13 @@ final class TaskManagerTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         // As the first Task Manager saved it: the visible columns, nothing about the ones it knew.
         defaults.set(["task", "memoryFootprint", "cpu"], forKey: TaskManagerColumns.defaultsKey)
-        XCTAssertEqual(TaskManagerColumns.load(from: defaults).ordered, [.task, .state, .idle, .memoryFootprint, .cpu],
+        XCTAssertEqual(TaskManagerColumns.load(from: defaults).ordered,
+                       [.task, .state, .idle, .memoryFootprint, .memoryHistory, .cpu, .cpuHistory],
                        "columns added since show; the ones hidden then stay hidden")
+        // As the build before the sparklines saved it: they show, the choice stays.
+        defaults.set(["task", "cpu"], forKey: TaskManagerColumns.defaultsKey)
+        defaults.set(["task", "state", "idle", "profile", "memoryFootprint", "cpu", "network", "processID"], forKey: TaskManagerColumns.knownKey)
+        XCTAssertEqual(TaskManagerColumns.load(from: defaults).ordered, [.task, .memoryHistory, .cpu, .cpuHistory])
     }
 
     // MARK: Selection

@@ -118,22 +118,29 @@ public struct TaskManagerDirectory: Equatable, Sendable {
         /// The shell's tab this page is (its `TaskManagerUnloadedTab.id`), so
         /// a tab listed with a page is not also listed as unloaded.
         public var sidebarID: String?
+        /// The page's committed address without its fragment, for the history:
+        /// a new one starts the growth rule's window again (`TaskManagerHistory`).
+        public var pageURL: String?
+        /// The page is loading (a reload or a navigation): the growth rule's window starts again.
+        public var isLoading: Bool
 
         public init(
             title: String, isPrivate: Bool = false, extensionID: String? = nil, sleep: TaskManagerTabSleep? = nil,
-            sidebarID: String? = nil
+            sidebarID: String? = nil, pageURL: String? = nil, isLoading: Bool = false
         ) {
             self.title = title
             self.isPrivate = isPrivate
             self.extensionID = extensionID
             self.sleep = sleep
             self.sidebarID = sidebarID
+            self.pageURL = pageURL
+            self.isLoading = isLoading
         }
 
         /// Unloaded: Chromium's discard keeps the tab's main frame, emptied,
         /// in its renderer, so the engine still lists the tab in that
         /// process. Nothing of the page is in memory: no task of the process.
-        public var hasPage: Bool { sleep?.isUnloaded != true }
+        public var hasPage: Bool { sleep?.state != .unloaded }
     }
 
     /// By engine tab ID. A tab the shell has no page for is left out.
@@ -231,6 +238,8 @@ public struct TaskManagerTask: Equatable, Identifiable, Sendable {
         case frame
         /// A tab of the sidebar with no page in memory, by its sidebar ID.
         case sidebarTab(String)
+        /// The folded "Not loaded" group.
+        case notLoadedGroup
     }
 
     /// What the task is, for the filter and for its tab's stack.
@@ -280,13 +289,15 @@ public struct TaskManagerGroup: Equatable, Sendable {
     public var usage: TaskManagerUsage
     /// The tabs that stop working when this process ends, by title.
     public var tabTitles: [String]
+    /// CPU time since the process started (the engine's running total).
+    public var cpuMicros: Int64 = 0
 
     /// Everything but ReArc itself can be ended.
     public var isKillable: Bool { kind != .browser && pid > 0 }
 }
 
 public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
-    case task, state, idle, profile, memoryFootprint, cpu, network, processID
+    case task, state, idle, profile, memoryFootprint, memoryHistory, cpu, cpuHistory, network, processID
 
     public var title: String {
         switch self {
@@ -295,7 +306,9 @@ public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
         case .idle: return "Idle"
         case .profile: return "Profile"
         case .memoryFootprint: return "Memory footprint"
+        case .memoryHistory: return "Memory 10 min"
         case .cpu: return "CPU"
+        case .cpuHistory: return "CPU 10 min"
         case .network: return "Network"
         case .processID: return "Process ID"
         }
@@ -307,10 +320,13 @@ public enum TaskManagerColumn: String, CaseIterable, Codable, Sendable {
     /// A number: drawn on the right, and sorted from the largest first.
     public var isFigure: Bool {
         switch self {
-        case .task, .state, .profile: return false
+        case .task, .state, .profile, .memoryHistory, .cpuHistory: return false
         case .idle, .memoryFootprint, .cpu, .network, .processID: return true
         }
     }
+
+    /// A sparkline of the stack's last 10 minutes (`TaskManagerHistory`), not text: not sorted.
+    public var isSparkline: Bool { self == .memoryHistory || self == .cpuHistory }
 
     /// The columns of the first Task Manager, before a saved choice listed the columns it knew.
     static let firstColumns: [TaskManagerColumn] = [.task, .profile, .memoryFootprint, .cpu, .network, .processID]
@@ -379,7 +395,7 @@ public enum TaskManagerRows {
                 return TaskManagerGroup(
                     pid: process.pid, kind: process.kind, tasks: tasks,
                     profile: directory.profiles[process.profileID] ?? "", memoryFootprint: process.memoryFootprint,
-                    usage: usage[process.pid] ?? TaskManagerUsage(), tabTitles: tabTitles
+                    usage: usage[process.pid] ?? TaskManagerUsage(), tabTitles: tabTitles, cpuMicros: process.cpuMicros
                 )
             }
             .sorted(by: inDefaultOrder)
@@ -530,7 +546,7 @@ public enum TaskManagerFormat {
     }
 
     /// Time since a tab was last on screen: "Now" while it is, then
-    /// "< 1 min", "12 min", "3 h 5 min", "2 d 4 h". "–" when not known.
+    /// "< 1 min", "12 min", "3 h 5 min", then days only: "2 d". "–" when not known.
     public static func idle(_ seconds: TimeInterval?, onScreen: Bool = false) -> String {
         if onScreen { return "Now" }
         guard let seconds else { return notAvailable }
@@ -539,9 +555,8 @@ public enum TaskManagerFormat {
         case 0: return "< 1 min"
         case ..<60: return "\(minutes) min"
         case ..<(24 * 60): return minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min"
-        default:
-            let hours = minutes / 60
-            return hours % 24 == 0 ? "\(hours / 24) d" : "\(hours / 24) d \(hours % 24) h"
+        // Past a day, days only: "14 d", not "14 d 7 h".
+        default: return "\(minutes / (24 * 60)) d"
         }
     }
 

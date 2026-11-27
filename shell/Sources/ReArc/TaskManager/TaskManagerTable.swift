@@ -52,6 +52,9 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
 
     static let taskCellID = NSUserInterfaceItemIdentifier("TaskManagerTaskCell")
     static let figureCellID = NSUserInterfaceItemIdentifier("TaskManagerFigureCell")
+    static let sparklineCellID = NSUserInterfaceItemIdentifier("TaskManagerSparklineCell")
+    /// The history's revision the sparklines were last drawn at.
+    private var drawnRevision = -1
 
     init(controller: TaskManagerController) {
         self.controller = controller
@@ -68,8 +71,8 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
             tableColumn.minWidth = width.minimum
             tableColumn.headerCell.alignment = Self.alignment(of: column)
             tableColumn.headerToolTip = headerHelp(column)
-            // Names sort from A first, figures from the largest first.
-            tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.rawValue, ascending: !column.isFigure)
+            // Names sort from A first, figures from the largest first; a sparkline does not sort.
+            tableColumn.sortDescriptorPrototype = column.isSparkline ? nil : NSSortDescriptor(key: column.rawValue, ascending: !column.isFigure)
             tableColumn.resizingMask = column == .task ? [.autoresizingMask, .userResizingMask] : .userResizingMask
             tableColumn.isHidden = !controller.columns.isVisible(column)
             table.addTableColumn(tableColumn)
@@ -120,11 +123,12 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
     /// Reads what the table shows under observation; any change rebuilds
     /// once, on the next main turn.
     private func observedState()
-        -> (rows: [TaskManagerRow], columns: TaskManagerColumns, selection: Set<TaskManagerSelectionKey>, sleep: TaskManagerSleepSettings?) {
+        -> (rows: [TaskManagerRow], columns: TaskManagerColumns, selection: Set<TaskManagerSelectionKey>, sleep: TaskManagerSleepSettings?,
+            revision: Int, theme: SpaceTheme?) {
         generation += 1
         let current = generation
         return withObservationTracking {
-            (controller.rows, controller.columns, controller.selection, controller.sleepSettings)
+            (controller.rows, controller.columns, controller.selection, controller.sleepSettings, controller.historyRevision, controller.spaceTheme)
         } onChange: { [weak self] in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
@@ -162,6 +166,14 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         }
         let selected = TaskManagerSelection.selected(keys: rows.map(\.selectionKeys), by: state.selection)
         if table.selectedRowIndexes != selected { table.selectRowIndexes(selected, byExtendingSelection: false) }
+        // The sparklines move at each reading even where a row's figures did not.
+        if state.revision != drawnRevision, !rows.isEmpty {
+            drawnRevision = state.revision
+            let columns = IndexSet(table.tableColumns.indices.filter {
+                TaskManagerColumn(rawValue: table.tableColumns[$0].identifier.rawValue)?.isSparkline == true && !table.tableColumns[$0].isHidden
+            })
+            if !columns.isEmpty { table.reloadData(forRowIndexes: IndexSet(integersIn: 0 ..< rows.count), columnIndexes: columns) }
+        }
     }
 
     private static func alignment(of column: TaskManagerColumn) -> NSTextAlignment {
@@ -174,6 +186,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         case .state: return TaskManagerHelp.state(controller.sleepSettings)
         case .idle: return TaskManagerHelp.idle
         case .memoryFootprint, .cpu, .network: return TaskManagerHelp.estimate
+        case .memoryHistory, .cpuHistory: return TaskManagerTableController.sparklineHelp
         case .task, .profile, .processID: return nil
         }
     }
@@ -188,6 +201,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         switch icon {
         case .browser: return NSApp.applicationIconImage
         case .tab, .sidebarTab: return Self.pageSymbol
+        case .notLoadedGroup: return Self.foldSymbol
         case .frame: return Self.frameSymbol
         // Chrome's puzzle piece, for extensions and for the engine's helpers.
         case .browserExtension, .system: return Self.helperSymbol
@@ -195,6 +209,35 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
     }
 
     private static let frameSymbol = NSImage(systemSymbolName: "rectangle.dashed", accessibilityDescription: nil)
+    private static let foldSymbol = NSImage(systemSymbolName: "tray.2", accessibilityDescription: nil)
+
+    static let sparklineHelp = "Each tab's last 10 minutes, one point per 10 s, while this window was open. "
+        + "Orange memory: the growth rule fired (scripted rule, not AI: steady growth for 30 minutes or more on the same page)."
+
+    /// A stack's sparkline: its 10 s cells from the history.
+    private func sparkline(_ column: TaskManagerColumn, for row: TaskManagerRow, in tableView: NSTableView) -> NSView {
+        let cell = tableView.makeView(withIdentifier: Self.sparklineCellID, owner: nil) as? TaskManagerSparklineCell ?? TaskManagerSparklineCell()
+        guard row.level == 0, !row.historyKey.isEmpty else {
+            cell.configure(values: [], scale: (0, 1), color: .clear, label: "", help: nil)
+            return cell
+        }
+        let timeline = controller.timeline
+        let cells = controller.history.recentCells(row.historyKey, now: timeline.now)
+        let ink = TaskManagerInk(theme: controller.spaceTheme, dark: tableView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        if column == .memoryHistory {
+            let values = cells.map { $0?.memory.map { Double($0) } }
+            let growing = controller.history[row.historyKey].flatMap { TaskManagerInsights.growth($0, now: timeline.now) }
+            cell.configure(values: values, scale: TaskManagerLineChart.memoryScale(values),
+                           color: growing == nil ? ink.accentNS : .systemOrange,
+                           label: TaskManagerAccessibility.memorySparkline(cells) + (growing.map { ". \($0.text)" } ?? ""),
+                           help: growing?.text)
+        } else {
+            let values = cells.map { $0?.cpuPercent }
+            cell.configure(values: values, scale: TaskManagerLineChart.cpuScale(values), color: ink.accentNS,
+                           label: TaskManagerAccessibility.cpuSparkline(cells), help: nil)
+        }
+        return cell
+    }
 
     // MARK: Stacks
 
@@ -228,6 +271,21 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         let show = ClosureMenuItem(row.isUnloaded ? "Show and Load Tab" : "Show Tab") { [weak self] in self?.controller.showTab(of: row) }
         show.isEnabled = controller.canShowTab(of: row)
         menu.addItem(show)
+        // Tab sleep from here: the inspector's Tab controls card shows what it changed.
+        if let stack = controller.stacks.first(where: { $0.id == row.stackID }), stack.kind == .tab {
+            let sleep = ClosureMenuItem("Sleep Tab") { [weak self] in
+                self?.controller.focus(stack)
+                self?.controller.sleep(stack)
+            }
+            sleep.isEnabled = controller.canSleep(stack)
+            let unload = ClosureMenuItem("Unload Tab") { [weak self] in
+                self?.controller.focus(stack)
+                self?.controller.unload(stack)
+            }
+            unload.isEnabled = controller.canUnload(stack)
+            menu.addItem(sleep)
+            menu.addItem(unload)
+        }
         menu.addItem(.separator())
         let ids = controller.stacks.filter(\.hasChildren).map(\.id)
         let expand = ClosureMenuItem("Expand All") { [weak self] in self?.controller.expanded.formUnion(ids) }
@@ -275,6 +333,7 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         guard rows.indices.contains(row), let tableColumn,
               let column = TaskManagerColumn(rawValue: tableColumn.identifier.rawValue) else { return nil }
         let item = rows[row]
+        if column.isSparkline { return sparkline(column, for: item, in: tableView) }
         if column == .task {
             let cell = tableView.makeView(withIdentifier: Self.taskCellID, owner: nil) as? TaskManagerTaskCell ?? TaskManagerTaskCell()
             cell.configure(item, icon: image(for: item.icon)) { [weak self] in self?.toggle(item) }
@@ -284,7 +343,8 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         let tip: String?
         switch column {
         case .state: tip = item.sleep?.state.explanation
-        case .memoryFootprint, .cpu, .network: tip = item.isEstimate ? TaskManagerHelp.estimateCell : nil
+        case .idle: tip = item.sleep?.openedInDarni == false ? TaskManagerHelp.idle : nil
+        case .memoryFootprint, .cpu, .network: tip = item.isEstimate ? "Estimate: the total of the processes under this row. Shared processes count their share." : nil
         default: tip = nil
         }
         cell.configure(text: item.text(for: column), alignment: Self.alignment(of: column), toolTip: tip)
@@ -310,6 +370,10 @@ final class TaskManagerTableController: NSObject, NSTableViewDataSource, NSTable
         guard !appliesSelection, let table = tableView else { return }
         let selection = Set(table.selectedRowIndexes.filter(rows.indices.contains).flatMap { rows[$0].selectionKeys })
         if controller.selection != selection { controller.selection = selection }
+        // The inspector shows the clicked row's stack (else the first selected one's).
+        let selected = table.selectedRowIndexes.filter(rows.indices.contains)
+        let focus = selected.contains(table.clickedRow) ? table.clickedRow : selected.first
+        controller.selectionChanged(toStack: focus.map { rows[$0].stackID })
     }
 }
 

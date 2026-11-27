@@ -40,6 +40,27 @@ private final class FakeTaskManagerSource: TaskManagerSource {
     private(set) var shown: [TaskManagerTabRef] = []
     func canShowTab(_ tab: TaskManagerTabRef) -> Bool { showable.contains(tab) }
     func showTab(_ tab: TaskManagerTabRef) { shown.append(tab) }
+
+    /// The engine runs: background readings get a list.
+    var live = true
+    var isLive: Bool { live }
+    /// Tab sleep as the shell does it: the action, then the event noted with the Task Manager.
+    weak var controller: TaskManagerController?
+    var sleepable: Set<TaskManagerTabRef> = []
+    var unloadable: Set<TaskManagerTabRef> = []
+    private(set) var actions: [String] = []
+    func canSleepTab(_ tab: TaskManagerTabRef) -> Bool { sleepable.contains(tab) }
+    func canUnloadTab(_ tab: TaskManagerTabRef) -> Bool { unloadable.contains(tab) }
+    func sleepTab(_ tab: TaskManagerTabRef) { act("sleep", tab, .fellAsleep) }
+    func unloadTab(_ tab: TaskManagerTabRef) { act("unload", tab, .unloaded) }
+    func canOpenDevTools(_ tab: TaskManagerTabRef) -> Bool { showable.contains(tab) }
+    func openDevTools(_ tab: TaskManagerTabRef) { actions.append("devtools \(tab)") }
+
+    private func act(_ name: String, _ tab: TaskManagerTabRef, _ kind: TaskManagerTabEvent.Kind) {
+        actions.append("\(name) \(tab)")
+        guard case .engine(let id) = tab, let sidebar = directory.tabs[id]?.sidebarID else { return }
+        controller?.noteTabControl(kind, sidebarID: sidebar, cause: .taskManager)
+    }
 }
 
 /// Window › Task Manager: the window's state over a made-up process list.
@@ -335,13 +356,250 @@ final class TaskManagerControllerTests: XCTestCase {
 
     // MARK: Columns
 
+    // MARK: History and insights
+
+    private func sidebarSource() -> FakeTaskManagerSource {
+        let source = makeSource()
+        source.directory.tabs = [
+            1: .init(title: "Mail", sleep: .init(state: .active, idle: 0, isOnScreen: true), sidebarID: "S1"),
+            2: .init(title: "News", sleep: .init(state: .active, idle: 60), sidebarID: "S2"),
+            3: .init(title: "Bank", sleep: .init(state: .active, idle: 600), sidebarID: "S3"),
+        ]
+        source.processes[3].memoryFootprint = 300 << 20
+        return source
+    }
+
+    private func sample(_ source: FakeTaskManagerSource) -> TaskManagerSample {
+        TaskManagerSample(processes: source.processes, directory: source.directory)
+    }
+
+    func testTheHistoryAndItsEventsSurviveTheWindowHiding() async {
+        let source = sidebarSource()
+        let controller = makeController(source)
+        source.controller = controller
+        var now: TimeInterval = 50
+        controller.clock = { now }
+        controller.startPolling()
+        await settle { controller.hasReading }
+        controller.apply(sample(source), at: 51)
+        let bank = controller.stacks.first { $0.historyKey == "sidebar/S3" }!
+        source.unloadable = [.engine(3)]
+        controller.focus(bank)
+        now = 52
+        controller.unload(bank)
+        XCTAssertEqual(source.actions, ["unload engine(3)"])
+        XCTAssertEqual(controller.history["sidebar/S3"]?.events.map(\.kind), [.unloaded])
+        XCTAssertEqual(controller.history["sidebar/S3"]?.events.first?.cause, .taskManager)
+        controller.stopPolling()
+        XCTAssertFalse(controller.isPolling)
+        XCTAssertNotNil(controller.history["sidebar/S3"]?.recent, "the window hid: nothing is lost")
+        XCTAssertEqual(controller.history["sidebar/S3"]?.events.count, 1)
+        XCTAssertEqual(controller.focusedKey, "sidebar/S3")
+        // Back on screen: the tab is unloaded now, and the inspector is still on it, with the measured effect.
+        source.processes.removeAll { $0.pid == 310 }
+        source.directory.tabs[3] = nil
+        source.directory.unloadedTabs = [.init(id: "S3", title: "Bank")]
+        controller.apply(sample(source), at: 60)
+        XCTAssertEqual(controller.focusedStack?.id, "unloaded/S3")
+        XCTAssertEqual(controller.selection, [.row("unloaded/S3")], "its new row is selected")
+        XCTAssertEqual(controller.history["sidebar/S3"]?.events.first?.effect, .freed(bytes: 300 << 20, approximate: false))
+        XCTAssertEqual(controller.summary.text, "Tab sleep now: 0 asleep, 1 unloaded · freed 300 MB by unloading this session")
+    }
+
+    func testTheBackgroundReadingStartsAndStopsWithTheEngineAndLeavesTheWindowAlone() async {
+        let source = sidebarSource()
+        let controller = makeController(source)
+        XCTAssertTrue(controller.keepsBackgroundHistory, "on by default")
+        XCTAssertFalse(controller.isReadingInBackground, "nothing before the engine")
+        controller.engineDidAttach()
+        XCTAssertTrue(controller.isReadingInBackground)
+        await settle("the first background reading") { controller.history.lastReading != nil }
+        XCTAssertEqual(source.samples, 1)
+        XCTAssertFalse(controller.hasReading, "the window's rows are untouched")
+        XCTAssertNotNil(controller.history["sidebar/S1"]?.minutes.first, "the 1 min cells")
+        XCTAssertEqual(controller.history["sidebar/S1"]?.recent.isEmpty, true, "not the 10 s ones")
+        XCTAssertEqual(TaskManagerController.backgroundInterval, 60)
+
+        // While the window reads, the background reading skips.
+        controller.startPolling()
+        await settle { controller.hasReading }
+        let samples = source.samples
+        controller.readInBackground()
+        for _ in 0 ..< 20 { await Task.yield() }
+        XCTAssertEqual(source.samples, samples)
+        controller.stopPolling()
+
+        // An engine that is stopping is not asked.
+        source.live = false
+        controller.readInBackground()
+        for _ in 0 ..< 20 { await Task.yield() }
+        XCTAssertEqual(source.samples, samples)
+
+        controller.engineDidDetach()
+        XCTAssertFalse(controller.isReadingInBackground, "stops with the engine")
+    }
+
+    func testTurningTheSettingOffStopsTheTickAtOnceAndClearsWhatItKept() async {
+        let source = sidebarSource()
+        source.live = false  // this test drives the readings itself
+        let controller = makeController(source)
+        source.controller = controller
+        var scheduled: [TimeInterval] = []
+        controller.schedule = { delay, _ in scheduled.append(delay) }
+        var now: TimeInterval = 1000
+        controller.clock = { now }
+        controller.engineDidAttach()
+        controller.applyInBackground(sample(source), at: 1000)
+        controller.applyInBackground(sample(source), at: 1060)
+        now = 1070
+        controller.noteTabControl(.unloaded, sidebarID: "S3", cause: .automatic)
+        XCTAssertEqual(controller.history["sidebar/S3"]?.events.first?.whileClosed, true)
+        XCTAssertEqual(scheduled, [TaskManagerHistory.settleDelay + 0.5], "a reading once the unload settles")
+
+        controller.setKeepsBackgroundHistory(false)
+        XCTAssertFalse(controller.isReadingInBackground, "stopped at once")
+        XCTAssertNil(controller.history["sidebar/S3"], "what the closed window's readings kept is gone")
+        XCTAssertNil(controller.history["sidebar/S1"])
+        XCTAssertFalse(TaskManagerHistoryPreference.isEnabled(in: defaults))
+        XCTAssertFalse(makeController(sidebarSource()).keepsBackgroundHistory, "the choice is kept")
+        // Off, with the window closed, nothing is noted.
+        controller.noteTabControl(.unloaded, sidebarID: "S2", cause: .automatic)
+        XCTAssertNil(controller.history["sidebar/S2"])
+
+        controller.setKeepsBackgroundHistory(true)
+        XCTAssertTrue(controller.isReadingInBackground)
+        XCTAssertTrue(TaskManagerHistoryPreference.isEnabled(in: defaults))
+        controller.engineDidDetach()
+    }
+
+    func testAPrivateWindowsTabIsForgottenWhenItsWindowCloses() {
+        let source = sidebarSource()
+        source.directory.tabs[3] = .init(title: "Bank", isPrivate: true, sidebarID: "P1")
+        let controller = makeController(source)
+        controller.apply(sample(source), at: 50)
+        XCTAssertNotNil(controller.history["sidebar/P1"])
+        controller.focus(controller.stacks.first { $0.historyKey == "sidebar/P1" })
+        controller.forgetTab(sidebarID: "P1")
+        XCTAssertNil(controller.history["sidebar/P1"])
+        XCTAssertNil(controller.focusedKey)
+        // Gone from a reading, a private tab goes at once, not after 10 minutes.
+        controller.apply(sample(source), at: 51)
+        source.processes.removeAll { $0.pid == 310 }
+        source.directory.tabs[3] = nil
+        controller.apply(sample(source), at: 52)
+        XCTAssertNil(controller.history["sidebar/P1"])
+        XCTAssertNotNil(controller.history["sidebar/S2"])
+    }
+
+    func testTheViewChoiceIsSavedAndTheInspectorFollowsTheSelection() {
+        let source = sidebarSource()
+        let controller = makeController(source)
+        XCTAssertEqual(controller.viewMode, .list)
+        controller.viewMode = .heatGrid
+        XCTAssertEqual(makeController(source).viewMode, .heatGrid)
+        controller.apply(sample(source), at: 50)
+        XCTAssertFalse(controller.isInspectorShown, "nothing selected: no inspector")
+        controller.selectionChanged(toStack: "tab/2")
+        XCTAssertEqual(controller.focusedStack?.title, "Tab: News")
+        XCTAssertTrue(controller.isInspectorShown)
+        controller.isInspectorCollapsed = true
+        XCTAssertFalse(controller.isInspectorShown)
+        controller.focus(controller.stacks.first { $0.historyKey == "sidebar/S3" })
+        XCTAssertTrue(controller.isInspectorShown, "a click in the grid or the map opens it")
+        XCTAssertEqual(controller.selection, [.process(310)])
+        controller.selectionChanged(toStack: nil)
+        XCTAssertNil(controller.focusedStack)
+        // The heat grid and the map follow the filter and the search.
+        controller.filter = .tabs
+        controller.search = "ban"
+        XCTAssertEqual(controller.visibleStacks.map(\.title), ["Tab: Bank"])
+        controller.filter = .browser
+        controller.search = ""
+        XCTAssertEqual(controller.visibleStacks.map(\.title), ["Darni"])
+    }
+
+    func testSleepFromTheTaskManagerIsNotedAndOffWhereTheShellSaysNo() {
+        let source = sidebarSource()
+        let controller = makeController(source)
+        source.controller = controller
+        source.sleepable = [.engine(2)]
+        var now: TimeInterval = 50
+        controller.clock = { now }
+        controller.startPolling()
+        controller.apply(sample(source), at: 50)
+        let news = controller.stacks.first { $0.historyKey == "sidebar/S2" }!
+        let mail = controller.stacks.first { $0.historyKey == "sidebar/S1" }!
+        XCTAssertTrue(controller.canSleep(news))
+        XCTAssertFalse(controller.canSleep(mail), "on screen")
+        XCTAssertFalse(controller.canUnload(mail))
+        controller.sleep(mail)
+        XCTAssertEqual(source.actions, [])
+        now = 51
+        controller.sleep(news)
+        XCTAssertEqual(source.actions, ["sleep engine(2)"])
+        XCTAssertEqual(controller.history["sidebar/S2"]?.events.map(\.kind), [.fellAsleep])
+        XCTAssertEqual(controller.history["sidebar/S2"]?.events.first?.effect, .sleep)
+        XCTAssertFalse(controller.canOpenDevTools(news))
+        source.showable = [.engine(2)]
+        controller.openDevTools(news)
+        XCTAssertEqual(source.actions.last, "devtools engine(2)")
+        XCTAssertTrue(controller.figures(for: news).hasPrefix("Darni Task Manager · Tab: News"))
+        controller.stopPolling()
+    }
+
+    func testTheTableDrawsASparklinePerStackWithWordsForVoiceOver() throws {
+        let source = sidebarSource()
+        let controller = makeController(source)
+        controller.apply(sample(source), at: 50)
+        source.processes[3].cpuMicros += 500_000
+        controller.apply(sample(source), at: 51)
+        let tableController = TaskManagerTableController(controller: controller)
+        let table = try XCTUnwrap(tableController.makeScrollView().documentView as? TaskManagerTableView)
+        defer { tableController.invalidate() }
+        func column(_ column: TaskManagerColumn) -> NSTableColumn { table.tableColumns.first { $0.identifier.rawValue == column.rawValue }! }
+        XCTAssertNil(column(.memoryHistory).sortDescriptorPrototype, "a sparkline does not sort")
+        XCTAssertFalse(column(.cpuHistory).isHidden, "on by default")
+        XCTAssertEqual(column(.memoryHistory).title, "Memory 10 min")
+        let bank = try XCTUnwrap(tableController.rows.firstIndex { $0.title == "Tab: Bank" })
+        let memory = try XCTUnwrap(tableController.tableView(table, viewFor: column(.memoryHistory), row: bank) as? TaskManagerSparklineCell)
+        XCTAssertEqual(memory.accessibilityLabel(), "Memory, last 10 minutes: 300 MB to 300 MB, peak 300 MB")
+        XCTAssertEqual(memory.sparkline.values.compactMap { $0 }.count, 1, "one 10 s cell so far")
+        XCTAssertEqual(memory.sparkline.values.compactMap { $0 }.first, Double(300 << 20), "the footprint itself")
+        let cpu = try XCTUnwrap(tableController.tableView(table, viewFor: column(.cpuHistory), row: bank) as? TaskManagerSparklineCell)
+        XCTAssertEqual(cpu.accessibilityLabel(), "CPU, last 10 minutes: average 50.0 %, peak 50.0 %")
+        XCTAssertEqual(column(.cpuHistory).headerToolTip, TaskManagerTableController.sparklineHelp)
+    }
+
+    func testTheNotLoadedFoldKeepsItsStateAcrossReadingsAndItsTabsCanBeInspected() {
+        let source = sidebarSource()
+        source.directory.unloadedTabs = (0 ..< 40).map {
+            .init(id: "A\($0)", title: "Imported \($0)", idle: 14 * 86_400, wasUnloaded: false, openedInDarni: false)
+        } + [.init(id: "U", title: "Report", idle: 300, wasUnloaded: true)]
+        let controller = makeController(source)
+        controller.filter = .tabs
+        controller.apply(sample(source), at: 50)
+        XCTAssertEqual(controller.rows.map(\.title), ["Tab: Mail", "Tab: News", "Tab: Bank", "Tab: Report", "Not loaded · 40 tabs"])
+        controller.toggleExpanded(TaskManagerRows.notLoadedStackID)
+        controller.apply(sample(source), at: 51)
+        XCTAssertEqual(controller.rows.count, 5 + 40, "still open after a reading")
+        controller.selectionChanged(toStack: "unloaded/A3")
+        XCTAssertEqual(controller.focusedStack?.name, "Imported 3", "a folded tab opens the inspector")
+        controller.selection = [.row("unloaded/A3")]
+        controller.apply(sample(source), at: 52)
+        XCTAssertEqual(controller.selection, [.row("unloaded/A3")], "a folded tab's row stays selected")
+        XCTAssertFalse(controller.visibleStacks.contains { $0.kind == .notLoaded }, "nothing to draw in the grid or the map")
+        XCTAssertEqual(controller.summary.text, "Tab sleep now: 0 asleep, 1 unloaded")
+        controller.toggleExpanded(TaskManagerRows.notLoadedStackID)
+        XCTAssertEqual(controller.rows.count, 5)
+    }
+
     func testTheColumnChoiceIsSavedWhenItChanges() {
         let controller = makeController(makeSource())
         XCTAssertEqual(controller.columns.ordered, TaskManagerColumn.allCases)
         controller.columns.toggle(.network)
         controller.columns.toggle(.profile)
         let reopened = makeController(makeSource())
-        XCTAssertEqual(reopened.columns.ordered, [.task, .state, .idle, .memoryFootprint, .cpu, .processID])
+        XCTAssertEqual(reopened.columns.ordered, [.task, .state, .idle, .memoryFootprint, .memoryHistory, .cpu, .cpuHistory, .processID])
     }
 
     // MARK: Without an engine

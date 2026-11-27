@@ -46,6 +46,12 @@ struct TabContextMenu: View {
                 .disabled(!tab.isAwayFromSavedURL)
         }
         Divider()
+        // Tab sleep's freeze now, as the Task Manager's Sleep Tab (same order: Sleep, then
+        // Unload); off with the reason when it can't apply.
+        let sleepRefusal = model.sleepTabUnavailable(tab.id)
+        Button("Sleep Tab") { model.sleepTabFromSidebar(tab.id) }
+            .disabled(sleepRefusal != nil)
+            .help(sleepRefusal?.text ?? TabSleepUnavailable.sleepHelp)
         Button("Unload Tab") { model.unloadTab(tab.id) }
             .disabled(!model.canUnloadTab(tab.id))
             .help("Frees the page's memory; the tab stays here and reloads when you open it")

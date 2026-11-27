@@ -794,8 +794,16 @@ final class BrowserViewModel {
     var unloadedTabIDs: Set<Tab.ID> = []
     /// Last time each tab was on screen, for the automatic unload.
     @ObservationIgnored var tabLastShown: [Tab.ID: Date] = [:]
+    /// When each sidebar tab was first shown or loaded in Darni, kept in
+    /// `TabOpened.json` beside the sidebar file, local only (`BrowserViewModel+TabOpenedMarks.swift`).
+    @ObservationIgnored var tabOpenedMarks: TabOpenedMarks
+    @ObservationIgnored let tabOpenedMarksURL: URL?
+    @ObservationIgnored var tabOpenedMarksSaveWorkItem: DispatchWorkItem?
     /// Freeze requests this shell made, for tab sleep's file log lines.
     @ObservationIgnored var tabFreezeJournal = TabFreezeJournal()
+    /// Tabs put to sleep from the Task Manager: the rule does not wake them
+    /// for being "no longer due"; using or showing them does.
+    @ObservationIgnored var tabsSleptByHand: Set<Tab.ID> = []
     @ObservationIgnored var tabSleepLog = TabSleepLog.standard
     /// Unload inactive tabs after this long unseen (remembered).
     var tabUnloadThreshold: TabUnloadThreshold = .load(from: .standard) {
@@ -840,6 +848,9 @@ final class BrowserViewModel {
         let historyFile = Self.siblingFile(VisitHistoryFile.fileName, of: persistence.fileURL)
         self.historyFileURL = historyFile
         self.visitHistory = preparedStartup?.history ?? VisitHistoryFile.load(from: historyFile)
+        let marksFile = Self.siblingFile(TabOpenedMarks.fileName, of: persistence.fileURL)
+        self.tabOpenedMarksURL = marksFile
+        self.tabOpenedMarks = TabOpenedMarks.load(from: marksFile)
         let siteSearchFile = Self.siblingFile(ImportedSiteSearches.fileName, of: persistence.fileURL)
         self.importedSiteSearchesURL = siteSearchFile
         self.importedSiteSearches = ImportedSiteSearches.load(from: siteSearchFile)
@@ -1137,6 +1148,7 @@ final class BrowserViewModel {
     private func deleteTabNow(_ id: Tab.ID) {
         store.closeTab(id)
         tabOpeners.forget(id)
+        pruneTabOpenedMarks()
         releaseEngine(for: id)
         TabThumbnails.shared.remove(id)
         loadSelectedIfNeeded()
@@ -1166,10 +1178,11 @@ final class BrowserViewModel {
         if engine == nil {
             releaseEngine(for: id)
             unloadedTabIDs.insert(id)
+            taskManager.noteTabControl(.unloaded, sidebarID: id.uuidString, cause: .sidebar)
         }
         // The selection moved; its page shows (and this one hides) before the discard.
         loadSelectedIfNeeded()
-        if let engine { unloadEngine(engine, tabID: id, dropIfRefused: true) }
+        if let engine { unloadEngine(engine, tabID: id, dropIfRefused: true, cause: .sidebar) }
     }
 
     /// Remove from Favorites: deletes the favorite.
@@ -1384,6 +1397,7 @@ final class BrowserViewModel {
         if store.selectedEaselRef != nil { return }
         if let split = activeSplit {
             for tab in split.tabs {
+                markTabOpened(tab.id)
                 let pid = profileID(for: tab)
                 let engine = engineHost.engine(for: tab, profileID: pid)
                 configureLinkPeek(on: engine, tab: tab)
@@ -1396,6 +1410,7 @@ final class BrowserViewModel {
             return
         }
         guard let tab = store.selectedTab else { return }
+        markTabOpened(tab.id)
         let engine = engineHost.engine(for: tab, profileID: profileID(for: tab))
         configureLinkPeek(on: engine, tab: tab)
         if engine.currentURL != tab.url {
@@ -1436,6 +1451,8 @@ final class BrowserViewModel {
             guard let self else { return }
             self.mutationFollowUpScheduled = false
             self.reconcileEngineOwnership()
+            // A tab that left the sidebar (closed, archived, deleted, here or by sync) takes its mark with it.
+            self.pruneTabOpenedMarks()
             // A boost that sync just brought, or one just switched on: a file's script boost
             // scoped to a public suffix does not stay on until the next launch (security BO-01).
             self.switchOffFileScriptBoostsScopedToASuffix()
@@ -1490,6 +1507,8 @@ final class BrowserViewModel {
         let title = Self.isBlankDocumentTitle(title, for: url) ? nil : title
         if let tab = store.tab(withID: tabID) { websiteDarkModePageCommitted(.tab(tabID), profile: profileID(for: tab), url: url) }
         recordVisit(tabID: tabID, url: url, title: title)
+        // A page loaded in the tab, shown or in the background: opened in Darni.
+        markTabOpened(tabID)
         let resolvedTitle = (title?.isEmpty == false) ? title : nil
         let fallback = store.tab(withID: tabID)?.title ?? url.host() ?? "Page"
         store.updateTab(tabID, title: resolvedTitle ?? fallback, url: url)
@@ -1987,6 +2006,7 @@ final class BrowserViewModel {
         // History.json encodes on its own queue while the sidebar and the
         // downloads save here; all three are on disk when this returns.
         startVisitHistorySave()
+        startTabOpenedMarksSave()
         persistence.flush()
         downloads.save()
         historySaveQueue.sync {}
@@ -2146,6 +2166,12 @@ final class BrowserViewModel {
     /// (no `webui_daily_pages` for the daily-use hosts) do nothing.
     func openBrowserPage(_ page: BrowserInternalPage) {
         guard page.isAvailable(engine: engineHost.navigationSchemes) else { return }
+        // About to clear history: the Task Manager drops the closed tabs it keeps for 10 minutes,
+        // and every tab's "opened in Darni" mark goes (the engine doesn't say when the page has cleared).
+        if page == .clearBrowsingData {
+            taskManager.forgetClosedTabs()
+            clearTabOpenedMarks()
+        }
         if let existing = store.displayTabs().first(where: { page.isShown(by: $0.url) }) {
             store.updateTab(existing.id, title: page.title, url: page.url)
             store.focusTab(existing.id)

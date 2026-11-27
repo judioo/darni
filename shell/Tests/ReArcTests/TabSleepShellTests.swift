@@ -80,6 +80,45 @@ private final class SleepEngine: WebEngine, TabDiscarding, TabFreezing {
     func count(_ call: String) -> Int { calls.filter { $0 == call }.count }
 }
 
+/// An engine with no freeze and no discard, as WebKit's.
+private final class PlainEngine: WebEngine {
+    var currentURL: URL?
+    var pageTitle: String?
+    var isLoading = false
+    var loadProgress = 1.0
+    var isCrashed = false
+    var canGoBack = false
+    var canGoForward = false
+    var securityState = WebSecurityState.secure
+    var faviconData: Data?
+    var pageColor: PageColor?
+    var mediaState = WebMediaState.silent
+    var mediaStatePublisher: AnyPublisher<WebMediaState, Never> { Empty().eraseToAnyPublisher() }
+    var linkPeekHandler: ((URL) -> Void)?
+    var automaticPeekSourceURL: URL?
+    var zoomFactor = 1.0
+    let pagePrompts = PagePromptCenter()
+
+    init(url: URL) { currentURL = url }
+
+    func load(_ url: URL) { currentURL = url }
+    func reload(ignoringCache: Bool) {}
+    func stopLoading() {}
+    func goBack() {}
+    func goForward() {}
+    func setMuted(_ muted: Bool) {}
+    func togglePlayPause() {}
+    func skipToNextTrack() {}
+    func skipToPreviousTrack() {}
+    func pauseAllMedia() {}
+    func setPictureInPicture(_ active: Bool) {}
+    func setZoomFactor(_ factor: Double) {}
+    func makeView() -> AnyView { AnyView(EmptyView()) }
+    func installBoosts(_ entries: [BoostRuntimeEntry]) {}
+    func refreshBoostsOnPage() {}
+    func captureSnapshot(scope: CaptureScope) async throws -> Data { Data() }
+}
+
 final class TabSleepShellTests: XCTestCase {
     /// The clock's own time: a change of the setting checks at once, with the time it is.
     private let now = Date()
@@ -399,6 +438,104 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertEqual(engines["idle"]!.calls, [])
     }
 
+    // MARK: The Task Manager's history
+
+    private func events(_ model: BrowserViewModel, _ tab: Tab) -> [String] {
+        (model.taskManager.history[TaskManagerStack.historyKey(sidebarID: tab.id.uuidString)]?.events ?? [])
+            .map { "\($0.kind.rawValue) \($0.cause.rawValue)" }
+    }
+
+    func testTheTaskManagerHearsWhatTabSleepDidAndWhatDidIt() {
+        let (model, tabs, _) = makeModel(["idle", "other"])
+        // As with its window open (or the history kept while it's closed).
+        model.taskManager.startPolling()
+        defer { model.taskManager.stopPolling() }
+        model.runAutoFreeze(now: now)
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep automatic"])
+        model.selectTab(tabs["idle"]!.id)
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep automatic", "woke shown"])
+        model.unloadTab(tabs["other"]!.id)
+        XCTAssertEqual(events(model, tabs["other"]!), ["fellAsleep automatic", "unloaded sidebar"], "an unload ends its sleep")
+        model.selectTab(tabs["other"]!.id)
+        XCTAssertEqual(events(model, tabs["other"]!), ["fellAsleep automatic", "unloaded sidebar", "loaded shown"])
+        XCTAssertEqual(events(model, tabs["front"]!), [], "showing a tab that never slept is no news")
+    }
+
+    func testTheTaskManagerHearsNothingWithItsWindowClosedAndItsHistoryOff() {
+        let (model, tabs, _) = makeModel()
+        XCTAssertFalse(model.taskManager.isPolling)
+        XCTAssertFalse(model.taskManager.isReadingInBackground, "no engine attached in a test")
+        model.runAutoFreeze(now: now)
+        XCTAssertEqual(events(model, tabs["idle"]!), [])
+    }
+
+    func testSleepFromTheTaskManagerHoldsUntilTheTabIsUsedOrShown() {
+        // Seen 5 minutes ago: the rule would not freeze it for another 25.
+        let (model, tabs, engines) = makeModel(["idle"], shown: 5)
+        let id = tabs["idle"]!.id
+        model.taskManager.startPolling()
+        defer { model.taskManager.stopPolling() }
+        XCTAssertFalse(model.canSleepTab(tabs["front"]!.id), "on screen")
+        XCTAssertTrue(model.canSleepTab(id))
+        XCTAssertTrue(model.sleepTab(id))
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze"])
+        XCTAssertFalse(model.canSleepTab(id), "already asleep")
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep taskManager"])
+        // The rule's next check finds it "not due" and leaves it asleep.
+        model.runAutoFreeze(now: now.addingTimeInterval(60))
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze"])
+        XCTAssertTrue(model.isTabFrozen(id))
+        // In use: it runs again.
+        model.captureStateByTab[id] = MediaCaptureState(isCapturingAudio: true)
+        model.runAutoFreeze(now: now.addingTimeInterval(120))
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze", "unfreeze"])
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep taskManager", "woke rule"])
+        XCTAssertFalse(model.canSleepTab(id), "in use")
+    }
+
+    /// Security N-3 (PRE-task-manager-history-insights): Sleep from the Task
+    /// Manager is refused, and its action does nothing, for every reason the
+    /// rule counts a tab as in use.
+    func testSleepIsRefusedForEveryInUseReason() {
+        let reasons = ["heard", "playing", "pip", "prompt", "camera", "microphone", "sharing", "shareTarget", "download", "peek", "littleArc"]
+        let (model, tabs, engines) = makeModel(["idle"] + reasons)
+        let id = { (name: String) in tabs[name]!.id }
+        model.mediaStateByTab[id("heard")] = WebMediaState(isAudible: true)
+        model.mediaStateByTab[id("playing")] = WebMediaState(isPlaying: true)
+        model.mediaStateByTab[id("pip")] = WebMediaState(isPictureInPicture: true)
+        engines["prompt"]!.pagePrompts.presentDialog(
+            JavaScriptDialogRequest(id: 1, kind: .confirm, message: "Sure?", origin: "https://prompt.test")) { _ in }
+        model.captureStateByTab[id("camera")] = MediaCaptureState(isCapturingVideo: true)
+        model.captureStateByTab[id("microphone")] = MediaCaptureState(isCapturingAudio: true)
+        model.screenShareCaptureChanged(id("sharing"), live: true)
+        let prompts = PagePromptCenter()
+        prompts.ownerTabID = id("idle")
+        model.screenShareStarted(ScreenShare(kind: .tab, target: id("shareTarget")), site: "meet.test", from: prompts)
+        let created = DownloadEvent(kind: .created, guid: "n3", url: "https://download.test/big.zip", targetPath: "/tmp/big.zip", totalBytes: 100)
+        model.downloads.apply(created, source: .webKit)
+        model.downloads.noteOrigin(DownloadOrigin(page: TidyDownloads.Origin(), isPrivate: false, engine: ObjectIdentifier(engines["download"]!)), for: "n3")
+        engines["peek"]!.pagePrompts.role = .peek
+        engines["littleArc"]!.pagePrompts.role = .littleArc
+
+        XCTAssertFalse(model.canSleepTab(id("front")), "on screen")
+        XCTAssertFalse(model.sleepTab(id("front")), "on screen")
+        for name in reasons {
+            XCTAssertFalse(model.canSleepTab(id(name)), "\(name): Sleep is offered for a tab in use")
+            XCTAssertFalse(model.sleepTab(id(name)), "\(name): the action froze a tab in use")
+            XCTAssertEqual(engines[name]!.calls, [], name)
+        }
+        // The control: a tab with none of them sleeps.
+        XCTAssertTrue(model.canSleepTab(id("idle")))
+        XCTAssertTrue(model.sleepTab(id("idle")))
+    }
+
+    func testAnEngineThatCannotFreezeOffersNoSleep() throws {
+        let (model, tabs, engines) = makeModel(["idle"])
+        engines["idle"]!.freezeAnswer = .refusedForNow
+        XCTAssertFalse(model.sleepTab(tabs["idle"]!.id), "the engine said not now")
+        XCTAssertFalse(model.isTabFrozen(tabs["idle"]!.id))
+    }
+
     func testTurningFreezingOffThawsEveryFrozenTabAtOnce() {
         let (model, tabs, engines) = makeModel(["one", "two"])
         model.runAutoFreeze(now: now)
@@ -592,6 +729,30 @@ final class TabSleepShellTests: XCTestCase {
         XCTAssertFalse(model.isTabFrozen(tabs["idle"]!.id))
     }
 
+    func testTabsImportedTogetherAreNotLoadedAndNotOpenedInDarniAndAnUnloadedTabIsUnloaded() throws {
+        let (model, tabs, _) = makeModel(["gone"])
+        // An import: every tab gets the import's time.
+        let imported = now.addingTimeInterval(-(14 * 24 + 7) * 3600)
+        model.store.now = { imported }
+        let batch = (0 ..< 4).map { model.store.addTab(kind: .today, title: "Imported \($0)", url: URL(string: "https://import\($0).test/")!) }
+        // One opened in Darni two days ago, alone at its time.
+        model.store.now = { self.now.addingTimeInterval(-2 * 24 * 3600) }
+        let visited = model.store.addTab(kind: .today, title: "Visited", url: URL(string: "https://visited.test/")!)
+        model.unloadTab(tabs["gone"]!.id)
+        let sleep = model.taskManagerTabSleep(now: now)
+        let row = { (id: Tab.ID) in sleep.unloaded.first { $0.id == id.uuidString } }
+        for tab in batch {
+            XCTAssertEqual(row(tab.id)?.openedInDarni, false, tab.title)
+            XCTAssertEqual(row(tab.id)?.wasUnloaded, false)
+            XCTAssertEqual(row(tab.id)?.hasOwnRow, false, "folds")
+        }
+        XCTAssertEqual(row(visited.id)?.openedInDarni, true)
+        XCTAssertEqual(row(visited.id)?.wasUnloaded, false)
+        XCTAssertEqual(row(visited.id)?.hasOwnRow, false, "opened two days ago: folds")
+        XCTAssertEqual(row(tabs["gone"]!.id)?.wasUnloaded, true, "tab sleep or the person unloaded it")
+        XCTAssertEqual(row(tabs["gone"]!.id)?.hasOwnRow, true)
+    }
+
     func testATabNotOpenedSinceLaunchIsListedUnloadedWithItsLastUse() throws {
         let (model, _, _) = makeModel([])
         model.store.now = { self.now.addingTimeInterval(-2 * 3600 - 59) }
@@ -632,5 +793,259 @@ final class TabSleepShellTests: XCTestCase {
         _ = journal.freezeRequested(id)
         journal.forget(id)
         XCTAssertEqual(journal, TabFreezeJournal())
+    }
+
+    // MARK: "Opened in Darni" marks (owner, 2026-11-27)
+
+    /// Spins the main queue until `condition` holds (the mutation follow-up runs on the next turn).
+    private func waitUntil(_ condition: () -> Bool, timeout: TimeInterval = 5) {
+        let end = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    }
+
+    func testATabIsMarkedTheFirstTimeItIsShownOrLoadedAndKeepsItsFirstDate() throws {
+        let (model, tabs, _) = makeModel(["idle", "background"])
+        XCTAssertNotNil(model.tabOpenedAt(tabs["front"]!.id), "selected, so shown")
+        XCTAssertNil(model.tabOpenedAt(tabs["idle"]!.id), "never shown, never loaded")
+        XCTAssertNil(model.tabOpenedAt(tabs["background"]!.id))
+
+        model.selectTab(tabs["idle"]!.id)
+        let first = try XCTUnwrap(model.tabOpenedAt(tabs["idle"]!.id))
+        model.selectTab(tabs["front"]!.id)
+        model.selectTab(tabs["idle"]!.id)
+        XCTAssertEqual(model.tabOpenedAt(tabs["idle"]!.id), first, "the first time, not the last")
+
+        // A page committed in a tab that isn't shown: loaded in Darni.
+        model.handleTabNavigationCommit(tabID: tabs["background"]!.id, url: URL(string: "https://background.test/")!, title: "Background")
+        XCTAssertNotNil(model.tabOpenedAt(tabs["background"]!.id))
+
+        // A new engine's empty first document is not the tab's page.
+        let fresh = model.store.addTab(kind: .today, title: "Fresh", url: URL(string: "https://fresh.test/")!)
+        model.handleTabNavigationCommit(tabID: fresh.id, url: URL(string: "about:blank")!, title: "about:blank")
+        XCTAssertNil(model.tabOpenedAt(fresh.id))
+    }
+
+    func testTheMarksOutliveALaunchInTheirOwnFileAndNotInTheSidebarFile() throws {
+        let (model, tabs, _) = makeModel(["idle"])
+        model.selectTab(tabs["idle"]!.id)
+        let idle = try XCTUnwrap(model.tabOpenedAt(tabs["idle"]!.id))
+        model.saveTabOpenedMarks()
+        model.persistence.flush()
+        let marksFile = try XCTUnwrap(model.tabOpenedMarksURL)
+        XCTAssertEqual(marksFile.deletingLastPathComponent(), model.persistence.fileURL.deletingLastPathComponent(), "beside the sidebar file")
+        XCTAssertNotEqual(marksFile.lastPathComponent, model.persistence.fileURL.lastPathComponent)
+        let mode = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: marksFile.path)[.posixPermissions] as? NSNumber)
+        XCTAssertEqual(mode.intValue & 0o777, 0o600, "the person's only")
+
+        // The next launch reads them back (to the second: the file keeps ISO 8601 times).
+        let relaunched = BrowserViewModel(store: SidebarStore(spaces: [Space(name: "Main", sortRank: "a")]),
+                                          persistence: SidebarFilePersistence(fileURL: model.persistence.fileURL),
+                                          syncEngine: LocalSyncEngine(), faviconStore: FaviconStore(directory: nil))
+        let reread = try XCTUnwrap(relaunched.tabOpenedMarks[tabs["idle"]!.id])
+        XCTAssertEqual(reread.timeIntervalSince1970, idle.timeIntervalSince1970, accuracy: 1)
+        XCTAssertNotNil(relaunched.tabOpenedMarks[tabs["front"]!.id])
+
+        // sidebar.json, which builds up to 1451 read, is as it was: no key of the marks in any object.
+        let sidebar = try JSONSerialization.jsonObject(with: Data(contentsOf: model.persistence.fileURL))
+        XCTAssertFalse(Self.jsonKeys(sidebar).contains { $0.lowercased().contains("opened") }, "\(Self.jsonKeys(sidebar).sorted())")
+    }
+
+    private static func jsonKeys(_ value: Any) -> Set<String> {
+        if let object = value as? [String: Any] {
+            return object.reduce(into: Set(object.keys)) { $0.formUnion(jsonKeys($1.value)) }
+        }
+        if let array = value as? [Any] { return array.reduce(into: Set<String>()) { $0.formUnion(jsonKeys($1)) } }
+        return []
+    }
+
+    private static func syncKeys(_ value: SyncValue) -> Set<String> {
+        switch value {
+        case .object(let fields): return fields.reduce(into: Set(fields.keys)) { $0.formUnion(syncKeys($1.value)) }
+        case .array(let items): return items.reduce(into: Set<String>()) { $0.formUnion(syncKeys($1)) }
+        default: return []
+        }
+    }
+
+    func testTheMarksAreInNoSyncRecord() throws {
+        let (model, tabs, _) = makeModel(["idle"])
+        let store = model.store
+        let pinned = store.addTab(kind: .pinned, title: "Wiki", url: URL(string: "https://wiki.test/")!)
+        let favorite = store.addTab(kind: .favorite, title: "Mail", url: URL(string: "https://mail.test/")!)
+        // A pinned split: its record carries its tabs whole (a `Tab` minus the per-Mac keys).
+        let left = store.addTab(kind: .pinned, title: "Left", url: URL(string: "https://left.test/")!)
+        let right = store.addTab(kind: .pinned, title: "Right", url: URL(string: "https://right.test/")!)
+        XCTAssertNotNil(store.createSplit(tabIDs: [left.id, right.id], orientation: .horizontal))
+        let marked = [tabs["idle"]!.id, left.id, right.id, pinned.id, favorite.id]
+        let opened = Date(timeIntervalSinceReferenceDate: 812_345_678)
+        for id in marked { model.markTabOpened(id, at: opened) }
+        XCTAssertEqual(marked.filter { model.tabOpenedAt($0) == opened }.count, marked.count)
+
+        let records = SidebarSyncProjection.extract(store.makeSnapshot())
+        XCTAssertTrue(records.values.contains { $0.values["type"] == .string("split") }, "the split is synced")
+        XCTAssertTrue(records.values.contains { $0.values["url"] == .string("https://wiki.test/") }, "the pinned tab is synced")
+        var keys = Set<String>()
+        for body in records.values { keys.formUnion(Self.syncKeys(.object(body.values))) }
+        XCTAssertFalse(keys.contains { $0.lowercased().contains("opened") }, "\(keys.sorted())")
+        let written = String(describing: records)
+        XCTAssertFalse(written.contains(String(opened.timeIntervalSinceReferenceDate)), "no record carries the mark's time")
+        XCTAssertFalse(written.contains(ISO8601DateFormatter().string(from: opened)))
+        // A tab as sidebar.json and a split record encode it: no mark either.
+        let tab = try JSONSerialization.jsonObject(with: JSONEncoder().encode(try XCTUnwrap(store.tab(withID: pinned.id))))
+        XCTAssertFalse(Self.jsonKeys(tab).contains { $0.lowercased().contains("opened") })
+    }
+
+    func testAPrivateWindowWritesNoMark() {
+        let (model, _, _) = makeModel([])
+        let before = model.tabOpenedMarks
+        let window = model.openPrivateWindow(engine: PlainEngine(url: URL(string: "https://private.test/")!),
+                                             url: URL(string: "https://private.test/")!)
+        model.markTabOpened(window.id)
+        XCTAssertEqual(model.tabOpenedMarks, before, "not a sidebar tab")
+        XCTAssertNil(model.tabOpenedAt(window.id))
+        model.privateWindowClosed(window.id)
+        XCTAssertEqual(model.tabOpenedMarks, before)
+    }
+
+    func testClosingOrDeletingATabTakesItsMarkAndUnloadingKeepsIt() throws {
+        let (model, tabs, _) = makeModel(["closed", "unloaded"])
+        let pinned = model.store.addTab(kind: .pinned, title: "Wiki", url: URL(string: "https://wiki.test/")!)
+        let deleted = model.store.addTab(kind: .pinned, title: "Old", url: URL(string: "https://old.test/")!)
+        let gone = model.store.addTab(kind: .today, title: "Synced away", url: URL(string: "https://away.test/")!)
+        for id in [tabs["closed"]!.id, tabs["unloaded"]!.id, pinned.id, deleted.id, gone.id] { model.markTabOpened(id) }
+
+        model.closeTab(tabs["closed"]!.id)
+        XCTAssertNil(model.store.tab(withID: tabs["closed"]!.id), "closed: archived")
+        XCTAssertNil(model.tabOpenedAt(tabs["closed"]!.id))
+
+        model.deleteTab(deleted.id)
+        XCTAssertNil(model.tabOpenedAt(deleted.id))
+
+        // ⌘W on a pinned tab unloads it: still in the sidebar, still opened in Darni.
+        model.closeTab(pinned.id)
+        XCTAssertNotNil(model.store.tab(withID: pinned.id))
+        XCTAssertNotNil(model.tabOpenedAt(pinned.id))
+        model.unloadTab(tabs["unloaded"]!.id)
+        XCTAssertNotNil(model.tabOpenedAt(tabs["unloaded"]!.id))
+
+        // Gone another way (a sync merge, a folder deleted): the next follow-up drops it.
+        model.store.closeTab(gone.id)
+        waitUntil { model.tabOpenedAt(gone.id) == nil }
+        XCTAssertNil(model.tabOpenedAt(gone.id))
+
+        model.saveTabOpenedMarks()
+        let file = TabOpenedMarks.load(from: try XCTUnwrap(model.tabOpenedMarksURL))
+        XCTAssertEqual(Set(file.openedAt.keys), Set(model.tabOpenedMarks.openedAt.keys))
+        XCTAssertNil(file[tabs["closed"]!.id])
+    }
+
+    func testClearHistoryClearsEveryMarkAndRemovesTheFile() throws {
+        let (model, tabs, _) = makeModel(["idle"])
+        model.selectTab(tabs["idle"]!.id)
+        model.saveTabOpenedMarks()
+        let file = try XCTUnwrap(model.tabOpenedMarksURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+
+        model.clearVisitHistory()
+        XCTAssertTrue(model.tabOpenedMarks.isEmpty)
+        model.historySaveQueue.sync {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "nothing left to say when a tab was opened")
+        // Shown again afterwards: a new mark.
+        model.selectTab(tabs["front"]!.id)
+        XCTAssertNotNil(model.tabOpenedAt(tabs["front"]!.id))
+    }
+
+    func testTheTaskManagerUsesTheMarkAndFallsBackToTheSameSecondRuleOnlyWithoutOne() throws {
+        let (model, _, _) = makeModel([])
+        // An Arc import: four tabs with the import's time.
+        let imported = now.addingTimeInterval(-(14 * 24 + 7) * 3600)
+        model.store.now = { imported }
+        let batch = (0 ..< 4).map { model.store.addTab(kind: .today, title: "Imported \($0)", url: URL(string: "https://import\($0).test/")!) }
+        // A tab of its own time, from before marks: the fallback says opened.
+        model.store.now = { self.now.addingTimeInterval(-2 * 24 * 3600) }
+        let legacy = model.store.addTab(kind: .today, title: "Legacy", url: URL(string: "https://legacy.test/")!)
+        model.store.now = { self.now }
+        // One imported tab was opened in Darni (a page loaded in it, in the background): its
+        // last-active time is still the import's, yet it has a mark.
+        model.handleTabNavigationCommit(tabID: batch[0].id, url: URL(string: "https://import0.test/")!, title: "Imported 0")
+
+        func row(_ id: Tab.ID) -> TaskManagerUnloadedTab? {
+            model.taskManagerTabSleep(now: now).unloaded.first { $0.id == id.uuidString }
+        }
+        XCTAssertEqual(model.store.tab(withID: batch[0].id)?.lastActiveAt, imported, "the date alone would say import")
+        XCTAssertEqual(row(batch[0].id)?.openedInDarni, true, "the mark says opened")
+        for tab in batch.dropFirst() { XCTAssertEqual(row(tab.id)?.openedInDarni, false, tab.title) }
+        XCTAssertEqual(row(legacy.id)?.openedInDarni, true, "no mark: the fallback, a date of its own")
+        let sleep = TaskManagerTabSleep(state: .notLoaded, idle: row(batch[1].id)?.idle, openedInDarni: row(batch[1].id)?.openedInDarni ?? true)
+        XCTAssertEqual(sleep.idleText, TaskManagerHelp.notOpenedInDarni)
+
+        // Clear History takes the mark: the fallback again.
+        model.clearVisitHistory()
+        XCTAssertEqual(row(batch[0].id)?.openedInDarni, false)
+    }
+
+    // MARK: The sidebar's Sleep Tab (owner, 2026-11-27)
+
+    func testSidebarSleepIsOffWithItsReasonWhenItCantApply() {
+        let (model, tabs, engines) = makeModel(["idle", "heard", "asleep", "gone"])
+        model.mediaStateByTab[tabs["heard"]!.id] = WebMediaState(isAudible: true)
+        engines["asleep"]!.isFreezeRequested = true
+        model.unloadTab(tabs["gone"]!.id)
+        let unopened = model.store.addTab(kind: .today, title: "Unopened", url: URL(string: "https://unopened.test/")!)
+        let webKitLike = model.store.addTab(kind: .today, title: "No freeze", url: URL(string: "https://nofreeze.test/")!)
+        model.engineHost.adopt(PlainEngine(url: webKitLike.url), for: webKitLike, profileID: model.profileID(for: webKitLike))
+
+        XCTAssertNil(model.sleepTabUnavailable(tabs["idle"]!.id))
+        XCTAssertTrue(model.canSleepTab(tabs["idle"]!.id))
+        XCTAssertEqual(model.sleepTabUnavailable(tabs["front"]!.id), .onScreen)
+        XCTAssertEqual(model.sleepTabUnavailable(tabs["heard"]!.id), .inUse(.playingSound))
+        XCTAssertEqual(model.sleepTabUnavailable(tabs["asleep"]!.id), .asleep)
+        XCTAssertEqual(model.sleepTabUnavailable(tabs["gone"]!.id), .unloaded)
+        XCTAssertEqual(model.sleepTabUnavailable(unopened.id), .notLoaded)
+        XCTAssertEqual(model.sleepTabUnavailable(webKitLike.id), .engineCannotFreeze)
+        for id in [tabs["front"]!.id, tabs["heard"]!.id, tabs["asleep"]!.id, tabs["gone"]!.id, unopened.id, webKitLike.id] {
+            XCTAssertFalse(model.canSleepTab(id))
+        }
+        // The disabled item's tooltip says why.
+        XCTAssertEqual(TabSleepUnavailable.onScreen.text, "On screen. A tab sleeps once you leave it.")
+        XCTAssertEqual(TabSleepUnavailable.inUse(.playingSound).text, "Doesn't sleep while it plays sound.")
+        XCTAssertEqual(TabSleepUnavailable.engineCannotFreeze.text, "This engine can't freeze a tab.")
+
+        // Off means off: the menu's action does nothing to a tab it can't sleep.
+        for engine in engines.values { engine.calls = [] }
+        model.sleepTabFromSidebar(tabs["front"]!.id)
+        model.sleepTabFromSidebar(tabs["heard"]!.id)
+        XCTAssertEqual(engines["front"]!.calls, [])
+        XCTAssertEqual(engines["heard"]!.calls, [])
+    }
+
+    func testSidebarSleepFreezesTheTabAndTheTaskManagerSaysFromTheSidebar() {
+        let (model, tabs, engines) = makeModel(["idle"], shown: 5)
+        let id = tabs["idle"]!.id
+        model.taskManager.startPolling()
+        defer { model.taskManager.stopPolling() }
+        model.sleepTabFromSidebar(id)
+        XCTAssertEqual(engines["idle"]!.calls, ["freeze"])
+        XCTAssertEqual(events(model, tabs["idle"]!), ["fellAsleep sidebar"])
+        XCTAssertEqual(TaskManagerTabEvent.Cause.sidebar.title, "from the sidebar")
+        XCTAssertEqual(model.sleepTabUnavailable(id), .asleep, "the item is off once it sleeps")
+        XCTAssertTrue(model.tabsSleptByHand.contains(id), "it holds until shown or used, as the Task Manager's Sleep")
+        model.runAutoFreeze(now: now)
+        XCTAssertTrue(model.isTabFrozen(id), "not woken for being no longer due")
+    }
+
+    func testSidebarSleepInAMultiSelectionActsOnTheClickedRowOnly() {
+        let (model, tabs, engines) = makeModel(["a", "b", "outside"])
+        _ = model.handleSelectionClick(on: tabs["a"]!.id, in: nil, modifiers: .command)
+        _ = model.handleSelectionClick(on: tabs["b"]!.id, in: nil, modifiers: .command)
+        // A row of the selection gets the selection's menu, which (as for Unload Tab) has no Sleep.
+        let targets = model.store.menuTargets(for: tabs["a"]!.id, in: nil)
+        XCTAssertGreaterThan(targets.count, 1)
+        XCTAssertTrue(targets.contains(tabs["b"]!.id))
+        // A row outside it gets its own menu and its own Sleep Tab.
+        XCTAssertEqual(model.store.menuTargets(for: tabs["outside"]!.id, in: nil), [tabs["outside"]!.id])
+        model.sleepTabFromSidebar(tabs["outside"]!.id)
+        XCTAssertEqual(engines["outside"]!.calls, ["freeze"])
+        XCTAssertEqual(engines["a"]!.calls, [], "the selection is not put to sleep with it")
+        XCTAssertEqual(engines["b"]!.calls, [])
     }
 }

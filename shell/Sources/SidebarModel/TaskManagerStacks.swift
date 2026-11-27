@@ -15,8 +15,10 @@ import Foundation
 
 /// What tab sleep has done with a tab, for the State column.
 public enum TaskManagerTabState: Equatable, Sendable {
-    /// Why a hidden tab is not put to sleep: the checks' own reasons (`TabUnloadCandidate.keptAwakeReason`).
-    public typealias Reason = TabKeptAwakeReason
+    /// Why a hidden tab is not put to sleep: the checks' reasons (`TabUnloadCandidate.isInUse`).
+    public enum Reason: Equatable, Sendable {
+        case playingSound, capturing, shared, downloading, waitingForAnswer
+    }
 
     /// Running as usual: on screen, or not unseen long enough yet.
     case active
@@ -26,8 +28,10 @@ public enum TaskManagerTabState: Equatable, Sendable {
     case fallingAsleep
     /// Frozen: in memory, running nothing.
     case sleeping
-    /// No page in memory and no process.
+    /// No page in memory and no process: tab sleep or the person unloaded it this session.
     case unloaded
+    /// No page in memory and no process: not opened since Darni started (or never in Darni).
+    case notLoaded
 
     public var title: String {
         switch self {
@@ -43,6 +47,7 @@ public enum TaskManagerTabState: Equatable, Sendable {
         case .fallingAsleep: return "Falling asleep"
         case .sleeping: return "Sleeping"
         case .unloaded: return "Unloaded"
+        case .notLoaded: return "Not loaded"
         }
     }
 
@@ -61,6 +66,7 @@ public enum TaskManagerTabState: Equatable, Sendable {
         case .fallingAsleep: return "Darni asked the page to sleep. It hasn't stopped yet."
         case .sleeping: return "Frozen: still in memory, but running nothing. Wakes at once when you show it."
         case .unloaded: return "Not in memory. Loads again when you show it."
+        case .notLoaded: return "Not opened since Darni started. Loads when you show it."
         }
     }
 
@@ -72,6 +78,7 @@ public enum TaskManagerTabState: Equatable, Sendable {
         case .fallingAsleep: return 2
         case .sleeping: return 3
         case .unloaded: return 4
+        case .notLoaded: return 5
         }
     }
 
@@ -82,7 +89,12 @@ public enum TaskManagerTabState: Equatable, Sendable {
         if isDiscarded { return .unloaded }
         if candidate.isVisible { return .active }
         if candidate.isFrozen { return isPageFrozen == false ? .fallingAsleep : .sleeping }
-        return candidate.keptAwakeReason.map(TaskManagerTabState.keptAwake) ?? .active
+        if candidate.isAudible { return .keptAwake(.playingSound) }
+        if candidate.isCapturing { return .keptAwake(.capturing) }
+        if candidate.isShared { return .keptAwake(.shared) }
+        if candidate.hasDownload { return .keptAwake(.downloading) }
+        if candidate.hasPendingPrompt { return .keptAwake(.waitingForAnswer) }
+        return .active
     }
 }
 
@@ -93,14 +105,20 @@ public struct TaskManagerTabSleep: Equatable, Sendable {
     public var idle: TimeInterval?
     /// On screen now: idle "Now".
     public var isOnScreen: Bool
+    /// False: the only date the tab has is when it was imported or made, so
+    /// Idle says "Not opened in Darni" instead of a time.
+    public var openedInDarni: Bool
 
-    /// No page in memory: an Unloaded row, no task of any process.
-    public var isUnloaded: Bool { state == .unloaded }
-
-    public init(state: TaskManagerTabState, idle: TimeInterval? = nil, isOnScreen: Bool = false) {
+    public init(state: TaskManagerTabState, idle: TimeInterval? = nil, isOnScreen: Bool = false, openedInDarni: Bool = true) {
         self.state = state
         self.idle = idle
         self.isOnScreen = isOnScreen
+        self.openedInDarni = openedInDarni
+    }
+
+    /// The Idle cell.
+    public var idleText: String {
+        openedInDarni || isOnScreen ? TaskManagerFormat.idle(idle, onScreen: isOnScreen) : TaskManagerHelp.notOpenedInDarni
     }
 }
 
@@ -112,13 +130,89 @@ public struct TaskManagerUnloadedTab: Equatable, Sendable {
     public var title: String
     public var profile: String
     public var idle: TimeInterval?
+    /// Tab sleep or the person unloaded it this session; false: it was never
+    /// loaded since Darni started.
+    public var wasUnloaded: Bool
+    /// False: its only date is its import or creation time (`TaskManagerTabSleep.openedInDarni`).
+    public var openedInDarni: Bool
 
-    public init(id: String, title: String, profile: String = "", idle: TimeInterval? = nil) {
+    public init(id: String, title: String, profile: String = "", idle: TimeInterval? = nil, wasUnloaded: Bool = true,
+                openedInDarni: Bool = true) {
         self.id = id
         self.title = title
         self.profile = profile
         self.idle = idle
+        self.wasUnloaded = wasUnloaded
+        self.openedInDarni = openedInDarni
     }
+
+    /// Its own row: unloaded this session, or opened within the last day. The
+    /// others fold into the "Not loaded" group (`TaskManagerRows.notLoadedStackID`).
+    public var hasOwnRow: Bool {
+        wasUnloaded || (openedInDarni && (idle ?? .infinity) < TaskManagerRows.foldAfter)
+    }
+
+    /// Several tabs with the very same last-active time (to the second) got it
+    /// from an import or from being made together, not from being opened:
+    /// Arc's import stamps every tab with the import's time. `stamps` counts
+    /// the tabs per second.
+    public static func isBatchStamp(_ date: Date?, counts stamps: [Int: Int]) -> Bool {
+        guard let date else { return true }
+        return (stamps[Int(date.timeIntervalSinceReferenceDate.rounded(.down))] ?? 0) >= batchSize
+    }
+
+    /// The tabs per second of their last-active times, for `isBatchStamp`.
+    public static func stampCounts(_ dates: [Date?]) -> [Int: Int] {
+        var counts: [Int: Int] = [:]
+        for case let date? in dates { counts[Int(date.timeIntervalSinceReferenceDate.rounded(.down)), default: 0] += 1 }
+        return counts
+    }
+
+    public static let batchSize = 3
+
+    /// Opened in Darni: its mark (`TabOpenedMarks`) says so. A tab with no
+    /// mark yet (one from before marks, or one an older build opened) falls
+    /// back to the same-second rule: not opened only when its last-active
+    /// time is a batch's stamp. The fallback ends for each tab the first time
+    /// it is shown or loaded, which writes its mark.
+    public static func isOpenedInDarni(mark: Date?, lastActiveAt: Date?, counts stamps: [Int: Int]) -> Bool {
+        if mark != nil { return true }
+        return !isBatchStamp(lastActiveAt, counts: stamps)
+    }
+}
+
+/// Why the sidebar's Sleep Tab (and the Task Manager's Sleep) is off for a
+/// tab; nil from `BrowserViewModel.sleepTabUnavailable` when it applies.
+public enum TabSleepUnavailable: Equatable, Sendable {
+    /// No page in memory: nothing to freeze.
+    case notLoaded
+    /// Unloaded by tab sleep or by hand.
+    case unloaded
+    case onScreen
+    /// Already asked to sleep, frozen or about to be.
+    case asleep
+    /// Sound, camera or microphone, a share, a download or a question keeps it awake.
+    case inUse(TaskManagerTabState.Reason)
+    /// The engine has no freeze (WebKit, or Chromium without `tab_freeze`).
+    case engineCannotFreeze
+    /// Not a tab tab sleep looks after (a page in another role).
+    case notNow
+
+    /// The disabled item's tooltip.
+    public var text: String {
+        switch self {
+        case .notLoaded: return "Not loaded: nothing in memory to freeze."
+        case .unloaded: return "Already unloaded."
+        case .onScreen: return "On screen. A tab sleeps once you leave it."
+        case .asleep: return "Already asleep."
+        case .inUse(let reason): return TaskManagerTabState.keptAwake(reason).explanation
+        case .engineCannotFreeze: return "This engine can't freeze a tab."
+        case .notNow: return "Can't put this tab to sleep now."
+        }
+    }
+
+    /// The Sleep item's tooltip when it applies.
+    public static let sleepHelp = "Freezes the tab now: it stays in memory and runs nothing until you show it."
 }
 
 /// Tab sleep's settings as the State column's help tells them.
@@ -164,17 +258,22 @@ public enum TaskManagerHelp {
             lines.append("Unloaded: no page in memory and no process: a tab you unloaded, or one you haven't opened since Darni started. "
                 + "It loads again when you show it.")
         }
+        lines.append("Not loaded: a tab not opened since Darni started. Those last opened more than a day ago "
+            + "(or never in Darni) fold into one row at the bottom, left out of every total.")
         lines.append("Kept awake: a tab that plays sound, uses the camera or microphone, is shared, downloads or waits for your answer never sleeps.")
         return lines.joined(separator: "\n")
     }
 
-    public static let idle = "How long since you last looked at the tab. Now: it's on screen."
+    public static let idle = "How long since you last looked at the tab. Now: it's on screen. "
+        + "Not opened in Darni: Darni has never shown or loaded it, and its only date is when it was imported or made."
+
+    public static let notOpenedInDarni = "Not opened in Darni"
+
+    public static let notLoadedGroup = "Tabs not opened in this session and last opened more than a day ago (or never in Darni). "
+        + "They use no memory and are left out of every total. Unloaded tabs, and tabs opened within the last day, keep their own rows."
 
     public static let estimate = "A tab's row adds up the processes under it, so it's an estimate (≈). "
         + "A process several tabs share is split evenly between them: each tab counts its share, and nothing is counted twice."
-
-    /// A stack's figure cell.
-    public static let estimateCell = "Estimate: the total of the processes under this row. Shared processes count their share."
 
     /// "30 minutes", "1 hour", "4 hours".
     static func duration(_ seconds: TimeInterval) -> String {
@@ -226,6 +325,8 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
         /// The engine does not say which tab an extension's work is for (its
         /// content scripts run in the tab's own process): each extension is a stack of its own.
         case browserExtension
+        /// The folded group of tabs not loaded for more than a day (`folded`).
+        case notLoaded
     }
 
     /// One process's part in the stack.
@@ -241,6 +342,8 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
         public var isKillable: Bool
         /// How many stacks this process works for (1: this one only).
         public var sharedBy: Int
+        /// The whole process's CPU time since it started.
+        public var cpuMicros: Int64 = 0
 
         /// The part of the process's figures this stack counts.
         public var share: Double { 1 / Double(max(1, sharedBy)) }
@@ -257,6 +360,23 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
     public var members: [Member]
     public var sleep: TaskManagerTabSleep?
     public var tab: TaskManagerTabRef?
+    /// What the history files the stack under: the sidebar tab when the shell
+    /// knows it (so a tab keeps its history across an unload and a load), else the stack's ID.
+    public var historyKey: String = ""
+    /// A private window's page: its history is forgotten when the window closes.
+    public var isPrivate = false
+    /// The page's address and whether it is loading (`TaskManagerDirectory.Tab`).
+    public var pageURL: String?
+    public var isLoading = false
+    /// The "Not loaded" group's tabs, the most recently opened first.
+    public var folded: [TaskManagerStack] = []
+    /// The group's grey words: "last opened 3 d – 14 d ago".
+    public var summary = ""
+    /// The group's Idle cell: "3 d – 14 d".
+    public var idleRange = ""
+
+    /// The history's key for a sidebar tab (`TaskManagerUnloadedTab.id`, `TaskManagerDirectory.Tab.sidebarID`).
+    public static func historyKey(sidebarID: String) -> String { "sidebar/\(sidebarID)" }
 
     /// The process this stack is about when it has one alone: the tab's page, the extension, Darni itself.
     var ownKind: TaskManagerTask.Kind {
@@ -264,17 +384,18 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
         case .browser: return .browser
         case .tab: return .tab
         case .browserExtension: return .browserExtension
+        case .notLoaded: return .tab
         }
     }
 
     /// Rows under it: more than one process, or one that is not its own (a frame alone).
     public var hasChildren: Bool {
-        members.count > 1 || members.contains { $0.task.kind != ownKind }
+        !folded.isEmpty || members.count > 1 || members.contains { $0.task.kind != ownKind }
     }
 
     /// Selecting the stack's row selects its processes, so End task ends
     /// the tab; never for Darni's own stack, whose processes are everything.
-    var selectsProcesses: Bool { kind != .browser && !members.isEmpty }
+    public var selectsProcesses: Bool { kind != .browser && kind != .notLoaded && !members.isEmpty }
 
     /// The sum of each process's share; nil with no process (an unloaded tab).
     public var memoryFootprint: UInt64? {
@@ -287,6 +408,16 @@ public struct TaskManagerStack: Equatable, Identifiable, Sendable {
             return known.isEmpty ? nil : known.reduce(0, +)
         }
         return TaskManagerUsage(cpuPercent: total(\.cpuPercent), networkBytesPerSecond: total(\.networkBytesPerSecond))
+    }
+
+    /// CPU seconds its processes have used since they started (each process's share).
+    public var cpuTime: Double {
+        members.reduce(0) { $0 + Double($1.cpuMicros) / 1_000_000 * $1.share }
+    }
+
+    /// The page's site: its own process's ("https://mail.google.com").
+    public var site: String {
+        members.first { $0.task.kind == .tab }?.task.site ?? ""
     }
 
     /// The stack's figures are a sum or a share, not one process's own.
@@ -328,6 +459,12 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
     public var isKillable: Bool
     /// Double-click or Show Tab brings this tab forward.
     public var tab: TaskManagerTabRef?
+    /// A stack's row: what its history is filed under (`TaskManagerStack.historyKey`); empty for a process's row.
+    public var historyKey: String = ""
+    /// The "Not loaded" group's grey words.
+    public var summary: String = ""
+    /// The "Not loaded" group's Idle cell.
+    public var idleRange: String = ""
 
     /// The engine tab a tab's or a frame's row belongs to.
     public var engineTabID: UInt64? {
@@ -338,11 +475,13 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
     /// The row's one process, if it has exactly one.
     public var pid: Int32? { pids.count == 1 ? pids[0] : nil }
 
-    public var isUnloaded: Bool { sleep?.isUnloaded == true }
+    /// No page in memory (unloaded or not loaded): dimmed, as in the sidebar.
+    public var isUnloaded: Bool { sleep?.state == .unloaded || sleep?.state == .notLoaded }
 
     /// Grey words after the title: which tab a frame is in, who shares the process.
     public var note: String {
         var parts: [String] = []
+        if !summary.isEmpty { parts.append(summary) }
         if let context { parts.append("in \(context)") }
         if sharedBy > 1 {
             parts.append(level == 0 && context == nil ? "shares its process with \(sharedBy - 1) other tab\(sharedBy == 2 ? "" : "s")"
@@ -360,13 +499,15 @@ public struct TaskManagerRow: Equatable, Identifiable, Sendable {
         switch column {
         case .task: return title
         case .state: return sleep?.state.title ?? ""
-        case .idle: return sleep.map { TaskManagerFormat.idle($0.idle, onScreen: $0.isOnScreen) } ?? ""
+        case .idle: return sleep?.idleText ?? idleRange
         case .profile: return profile
         case .memoryFootprint: return memoryFootprint.map { estimated(TaskManagerFormat.memory($0)) } ?? ""
         case .cpu: return hasProcess ? estimated(TaskManagerFormat.cpu(usage.cpuPercent)) : ""
         case .network: return hasProcess ? estimated(TaskManagerFormat.network(usage.networkBytesPerSecond)) : ""
         // A pid is a number for a terminal: no grouping.
         case .processID: return pids.map(String.init).joined(separator: ", ")
+        // Drawn, not written (`TaskManagerHistory`).
+        case .memoryHistory, .cpuHistory: return ""
         }
     }
 }
@@ -397,7 +538,8 @@ extension TaskManagerRows {
             for task in group.tasks {
                 var member = TaskManagerStack.Member(
                     task: task, pid: group.pid, processKind: group.kind, profile: group.profile,
-                    memoryFootprint: group.memoryFootprint, usage: group.usage, isKillable: group.isKillable, sharedBy: 1
+                    memoryFootprint: group.memoryFootprint, usage: group.usage, isKillable: group.isKillable, sharedBy: 1,
+                    cpuMicros: group.cpuMicros
                 )
                 switch task.kind {
                 case .browser, .helper:
@@ -429,7 +571,9 @@ extension TaskManagerRows {
                         let title = tab?.title ?? ""
                         return TaskManagerStack(
                             id: id, kind: .tab, title: "\(tab?.isPrivate == true ? "Private tab" : "Tab"): \(title)", name: title,
-                            icon: .tab(tabID), profile: "", members: [], sleep: tab?.sleep, tab: .engine(tabID)
+                            icon: .tab(tabID), profile: "", members: [], sleep: tab?.sleep, tab: .engine(tabID),
+                            historyKey: tab?.sidebarID.map(TaskManagerStack.historyKey(sidebarID:)) ?? id,
+                            isPrivate: tab?.isPrivate ?? false, pageURL: tab?.pageURL, isLoading: tab?.isLoading ?? false
                         )
                     }, member)
                 }
@@ -441,6 +585,7 @@ extension TaskManagerRows {
         for id in order { for member in stacks[id]!.members { uses[member.pid, default: 0] += 1 } }
         var result = order.map { id -> TaskManagerStack in
             var stack = stacks[id]!
+            if stack.historyKey.isEmpty { stack.historyKey = stack.id }
             for index in stack.members.indices { stack.members[index].sharedBy = uses[stack.members[index].pid] ?? 1 }
             let own = stack.ownKind
             stack.members.sort { memberRank($0, own: own) < memberRank($1, own: own) }
@@ -448,12 +593,17 @@ extension TaskManagerRows {
         }
         // A tab the engine lists with a page is never also a row of its own.
         let withPage = Set(directory.tabs.values.compactMap { $0.hasPage ? $0.sidebarID : nil })
+        var folded: [(stack: TaskManagerStack, tab: TaskManagerUnloadedTab)] = []
         for tab in directory.unloadedTabs where !withPage.contains(tab.id) {
-            result.append(TaskManagerStack(
+            let stack = TaskManagerStack(
                 id: "unloaded/\(tab.id)", kind: .tab, title: "Tab: \(tab.title)", name: tab.title, icon: .sidebarTab(tab.id),
-                profile: tab.profile, members: [], sleep: TaskManagerTabSleep(state: .unloaded, idle: tab.idle), tab: .sidebar(tab.id)
-            ))
+                profile: tab.profile, members: [],
+                sleep: TaskManagerTabSleep(state: tab.wasUnloaded ? .unloaded : .notLoaded, idle: tab.idle, openedInDarni: tab.openedInDarni),
+                tab: .sidebar(tab.id), historyKey: TaskManagerStack.historyKey(sidebarID: tab.id)
+            )
+            if tab.hasOwnRow { result.append(stack) } else { folded.append((stack, tab)) }
         }
+        if !folded.isEmpty { result.append(notLoadedGroup(folded)) }
         // The order holds from one reading to the next: Darni, the tabs by
         // their first process, the extensions, then the unloaded tabs by title.
         return result.enumerated().sorted { a, b in
@@ -468,12 +618,41 @@ extension TaskManagerRows {
         }.map(\.element)
     }
 
+    /// Tabs not loaded for longer than this fold into one group row.
+    public static let foldAfter: TimeInterval = 24 * 3600
+    public static let notLoadedStackID = "not-loaded"
+
+    /// "Not loaded · 63 tabs", "last opened 3 d – 14 d ago · 40 not opened in Darni"; its
+    /// tabs the most recently opened first, then those never opened in Darni by title.
+    static func notLoadedGroup(_ folded: [(stack: TaskManagerStack, tab: TaskManagerUnloadedTab)]) -> TaskManagerStack {
+        let opened = folded.filter { $0.tab.openedInDarni && $0.tab.idle != nil }.sorted { $0.tab.idle! < $1.tab.idle! }
+        let never = folded.filter { !($0.tab.openedInDarni && $0.tab.idle != nil) }
+            .sorted { $0.stack.title.localizedStandardCompare($1.stack.title) == .orderedAscending }
+        var parts: [String] = []
+        var range = ""
+        if let newest = opened.first?.tab.idle, let oldest = opened.last?.tab.idle {
+            let a = TaskManagerFormat.idle(newest), b = TaskManagerFormat.idle(oldest)
+            range = a == b ? a : "\(a) – \(b)"
+            parts.append("last opened \(range) ago")
+        }
+        if !never.isEmpty {
+            parts.append(opened.isEmpty ? "not opened in Darni" : "\(never.count) not opened in Darni")
+        }
+        return TaskManagerStack(
+            id: notLoadedStackID, kind: .notLoaded, title: "Not loaded · \(folded.count) tab\(folded.count == 1 ? "" : "s")",
+            name: "Not loaded", icon: .notLoadedGroup, profile: "", members: [],
+            folded: (opened + never).map(\.stack), summary: parts.joined(separator: " · "),
+            idleRange: range.isEmpty ? TaskManagerHelp.notOpenedInDarni : range
+        )
+    }
+
     private static func stackRank(_ stack: TaskManagerStack) -> (rank: Int, pid: Int32) {
         let rank: Int
         switch stack.kind {
         case .browser: rank = 0
         case .tab: rank = stack.members.isEmpty ? 3 : 1
         case .browserExtension: rank = 2
+        case .notLoaded: rank = 4
         }
         return (rank, stack.members.map(\.pid).min() ?? .max)
     }
@@ -516,10 +695,22 @@ extension TaskManagerRows {
         }
 
         var shown: [(stack: TaskManagerRow, children: [TaskManagerRow])] = []
+        var group: (stack: TaskManagerRow, children: [TaskManagerRow])?
         for stack in stacks {
             switch (filter, stack.kind) {
-            case (.all, _), (.tabs, .tab), (.extensions, .browserExtension): break
+            case (.all, _), (.tabs, .tab), (.tabs, .notLoaded), (.extensions, .browserExtension): break
             default: continue
+            }
+            if stack.kind == .notLoaded {
+                // The search looks inside the fold and opens it on the tabs it finds.
+                let matching = query.isEmpty ? stack.folded : stack.folded.filter { found($0.title) }
+                let stackFound = query.isEmpty || found(stack.title)
+                guard stackFound || !matching.isEmpty else { continue }
+                let open = expanded.contains(stack.id) || (!query.isEmpty && !matching.isEmpty)
+                let children = open ? (query.isEmpty || matching.isEmpty ? stack.folded : matching)
+                    .map { row($0, disclosure: .none, level: 1) } : []
+                group = (row(stack, disclosure: open ? .expanded : .collapsed), children)
+                continue
             }
             let stackFound = found(stack.title)
             let memberFound = !query.isEmpty && stack.members.contains { found($0.task.title) }
@@ -530,19 +721,22 @@ extension TaskManagerRows {
             shown.append((row(stack, disclosure: disclosure), children))
         }
         let order = sortedIndices(shown.map(\.stack), by: sort)
+        // The fold stays last whatever the sort, its tabs in their own order.
         return order.flatMap { index in [shown[index].stack] + sorted(shown[index].children, by: sort) }
+            + (group.map { [$0.stack] + $0.children } ?? [])
     }
 
-    private static func row(_ stack: TaskManagerStack, disclosure: TaskManagerRow.Disclosure) -> TaskManagerRow {
+    private static func row(_ stack: TaskManagerStack, disclosure: TaskManagerRow.Disclosure, level: Int = 0) -> TaskManagerRow {
         let pids = stack.pids
         let alone = stack.hasChildren ? nil : stack.members.first
         return TaskManagerRow(
-            id: stack.id, title: stack.title, icon: stack.icon, kind: alone?.task.kind ?? stack.ownKind, level: 0, stackID: stack.id,
+            id: stack.id, title: stack.title, icon: stack.icon, kind: alone?.task.kind ?? stack.ownKind, level: level, stackID: stack.id,
             disclosure: disclosure, pids: pids,
             selectionKeys: stack.selectsProcesses ? pids.map(TaskManagerSelectionKey.process) : [.row(stack.id)],
             profile: stack.profile, memoryFootprint: stack.memoryFootprint, usage: stack.usage, isEstimate: stack.isEstimate,
             sharedBy: alone?.sharedBy ?? 1, sleep: stack.sleep, context: nil,
-            isKillable: stack.selectsProcesses && stack.members.contains(where: \.isKillable), tab: stack.tab
+            isKillable: stack.selectsProcesses && stack.members.contains(where: \.isKillable), tab: stack.tab,
+            historyKey: stack.kind == .notLoaded ? "" : stack.historyKey, summary: stack.summary, idleRange: stack.idleRange
         )
     }
 
@@ -578,7 +772,7 @@ extension TaskManagerRows {
 
     private static func hasValue(_ row: TaskManagerRow, for column: TaskManagerColumn) -> Bool {
         switch column {
-        case .task, .profile: return true
+        case .task, .profile, .memoryHistory, .cpuHistory: return true
         case .state: return row.sleep != nil
         case .idle: return row.sleep.map { $0.isOnScreen || $0.idle != nil } ?? false
         case .memoryFootprint: return row.memoryFootprint != nil
@@ -594,7 +788,8 @@ extension TaskManagerRows {
         }
         func idle(_ row: TaskManagerRow) -> TimeInterval {
             guard let sleep = row.sleep else { return 0 }
-            return sleep.isOnScreen ? -1 : sleep.idle ?? 0
+            if sleep.isOnScreen { return -1 }
+            return sleep.openedInDarni ? sleep.idle ?? 0 : .greatestFiniteMagnitude
         }
         switch column {
         case .task: return a.title.localizedStandardCompare(b.title)
@@ -605,6 +800,7 @@ extension TaskManagerRows {
         case .cpu: return order(a.usage.cpuPercent ?? 0, b.usage.cpuPercent ?? 0)
         case .network: return order(a.usage.networkBytesPerSecond ?? 0, b.usage.networkBytesPerSecond ?? 0)
         case .processID: return order(a.pids.first ?? 0, b.pids.first ?? 0)
+        case .memoryHistory, .cpuHistory: return .orderedSame
         }
     }
 }

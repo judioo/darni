@@ -22,8 +22,9 @@ extension BrowserViewModel {
     /// How long after a freeze request the file log asks whether the page froze.
     static let freezeObservationDelay: TimeInterval = 2
 
-    /// The context-menu Unload Tab and the Unload command: the tab stays where it is.
-    func unloadTab(_ id: Tab.ID) {
+    /// The context-menu Unload Tab and the Unload command (and the Task
+    /// Manager's Unload, `cause`): the tab stays where it is.
+    func unloadTab(_ id: Tab.ID, cause: TaskManagerTabEvent.Cause = .sidebar) {
         guard let tab = store.tab(withID: id) else { return }
         let profile = profileID(for: tab)
         guard let engine = engineHost.engine(forTabID: id, profileID: profile) else { return }
@@ -33,7 +34,7 @@ extension BrowserViewModel {
                 selectNextTabAway(from: id)
             }
         }
-        unloadEngine(engine, tabID: id, dropIfRefused: true)
+        unloadEngine(engine, tabID: id, dropIfRefused: true, cause: cause)
     }
 
     /// True for a tab the shell unloaded (or whose page Chromium discarded) that has not been shown since.
@@ -53,21 +54,28 @@ extension BrowserViewModel {
     /// engine keeps refusing (playing media, an unload handler) leaves the
     /// page loaded for the automatic unload; an explicit unload
     /// (`dropIfRefused`) then drops the engine instead.
-    func unloadEngine(_ engine: any WebEngine, tabID: Tab.ID, attempt: Int = 0, dropIfRefused: Bool = false) {
+    /// `cause` is what the Task Manager's history files the unload under.
+    func unloadEngine(_ engine: any WebEngine, tabID: Tab.ID, attempt: Int = 0, dropIfRefused: Bool = false,
+                      cause: TaskManagerTabEvent.Cause = .automatic) {
+        let unloaded = { [weak self] in
+            self?.tabsSleptByHand.remove(tabID)
+            self?.taskManager.noteTabControl(.unloaded, sidebarID: tabID.uuidString, cause: cause)
+        }
         guard let discarding = engine as? TabDiscarding else {
             releaseEngine(for: tabID)
             unloadedTabIDs.insert(tabID)
-            return
+            return unloaded()
         }
         switch discarding.discard() {
         case .discarded:
             unloadedTabIDs.remove(tabID)
+            unloaded()
         case .refusedForNow where attempt < discardRetryDelays.count:
             DispatchQueue.main.asyncAfter(deadline: .now() + discardRetryDelays[attempt]) { [weak self, weak engine] in
                 guard let self, let engine, !self.isTabVisible(tabID),
                       let tab = self.store.tab(withID: tabID),
                       self.engineHost.engine(forTabID: tabID, profileID: self.profileID(for: tab)) === engine else { return }
-                self.unloadEngine(engine, tabID: tabID, attempt: attempt + 1, dropIfRefused: dropIfRefused)
+                self.unloadEngine(engine, tabID: tabID, attempt: attempt + 1, dropIfRefused: dropIfRefused, cause: cause)
             }
         case .refusedForNow:
             // The automatic unload stops here: the page stays loaded. A page
@@ -76,9 +84,11 @@ extension BrowserViewModel {
             guard dropIfRefused, !isTabVisible(tabID) else { break }
             releaseEngine(for: tabID)
             unloadedTabIDs.insert(tabID)
+            unloaded()
         case .unsupported:
             releaseEngine(for: tabID)
             unloadedTabIDs.insert(tabID)
+            unloaded()
         }
     }
 
@@ -111,6 +121,8 @@ extension BrowserViewModel {
             tabLastShown[id] = date
             unloadedTabIDs.remove(id)
             thawTab(id, reason: .shown)
+            // The history keeps it only if the tab was unloaded.
+            taskManager.noteTabControl(.loaded, sidebarID: id.uuidString, cause: .shown)
         }
     }
 
@@ -118,6 +130,9 @@ extension BrowserViewModel {
     /// engine already ended (it thaws a page it shows) gets its log line too.
     func thawTab(_ id: Tab.ID, reason: TabFreezeJournal.ThawReason) {
         guard let freezing = liveEngine(for: id) as? TabFreezing else { return }
+        tabsSleptByHand.remove(id)
+        // The history keeps it only if the tab was asleep.
+        taskManager.noteTabControl(.woke, sidebarID: id.uuidString, cause: Self.wakeCause(reason))
         guard freezing.isFreezeRequested else {
             tabSleepLog.write(tabFreezeJournal.thawed(id, reason: reason))
             return
@@ -125,6 +140,33 @@ extension BrowserViewModel {
         let frozenNow = freezing.isPageFrozen
         freezing.unfreeze()
         tabSleepLog.write(tabFreezeJournal.thawed(id, reason: reason, frozenNow: frozenNow))
+    }
+
+    static func wakeCause(_ reason: TabFreezeJournal.ThawReason) -> TaskManagerTabEvent.Cause {
+        switch reason {
+        case .shown: return .shown
+        case .due: return .rule
+        case .engine: return .engine
+        }
+    }
+
+    /// The Task Manager's and the sidebar's Sleep: a loaded tab, off screen,
+    /// not in use (no sound, camera, share, download or question), on an
+    /// engine that can freeze. Why not, in words: `sleepTabUnavailable`.
+    func canSleepTab(_ id: Tab.ID) -> Bool {
+        sleepTabUnavailable(id) == nil
+    }
+
+    /// Freezes the tab now, as the rule would after its wait. It sleeps until
+    /// it is shown or used; the rule's "no longer due" does not wake it.
+    @discardableResult
+    func sleepTab(_ id: Tab.ID, cause: TaskManagerTabEvent.Cause = .taskManager) -> Bool {
+        guard canSleepTab(id), let freezing = liveEngine(for: id) as? TabFreezing, freezing.freeze() == .requested else { return false }
+        tabsSleptByHand.insert(id)
+        tabSleepLog.write(tabFreezeJournal.freezeRequested(id))
+        taskManager.noteTabControl(.fellAsleep, sidebarID: id.uuidString, cause: cause)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.freezeObservationDelay) { [weak self] in self?.observeTabFreezes() }
+        return true
     }
 
     /// Tab sleep's file log: which requested tabs the engine reports frozen
@@ -138,6 +180,8 @@ extension BrowserViewModel {
             if freezing.isFreezeRequested {
                 tabSleepLog.write(tabFreezeJournal.observed(id, frozen: freezing.isPageFrozen))
             } else {
+                tabsSleptByHand.remove(id)
+                taskManager.noteTabControl(.woke, sidebarID: id.uuidString, cause: .engine)
                 tabSleepLog.write(tabFreezeJournal.thawed(id, reason: .engine))
             }
         }
@@ -190,7 +234,7 @@ extension BrowserViewModel {
         let due = TabUnloadPolicy.tabsToUnload(tabSleepCandidates(now: now), threshold: tabUnloadThreshold, now: now)
         for id in due {
             guard let tab = store.tab(withID: id), let engine = engineHost.engine(forTabID: id, profileID: profileID(for: tab)) else { continue }
-            unloadEngine(engine, tabID: id)
+            unloadEngine(engine, tabID: id, cause: .automatic)
         }
         tabLastShown = tabLastShown.filter { store.tab(withID: $0.key) != nil }
         unloadedTabIDs = unloadedTabIDs.filter { store.tab(withID: $0) != nil }
@@ -207,7 +251,11 @@ extension BrowserViewModel {
         noteVisibleTabsShown(at: now)
         observeTabFreezes()
         let candidates = tabSleepCandidates(now: now)
-        for id in TabUnloadPolicy.tabsToThaw(candidates, threshold: tabFreezeThreshold, now: now) {
+        let inUse = Set(candidates.filter(\.isInUse).map(\.tabID))
+        tabsSleptByHand = tabsSleptByHand.filter { isTabFrozen($0) }
+        // A tab slept by hand stays asleep until it is used or shown, whatever the wait says.
+        for id in TabUnloadPolicy.tabsToThaw(candidates, threshold: tabFreezeThreshold, now: now)
+        where !tabsSleptByHand.contains(id) || inUse.contains(id) {
             thawTab(id, reason: .due)
         }
         var frozen: [Tab.ID] = []
@@ -216,6 +264,7 @@ extension BrowserViewModel {
             if freezing.freeze() == .requested {
                 frozen.append(id)
                 tabSleepLog.write(tabFreezeJournal.freezeRequested(id))
+                taskManager.noteTabControl(.fellAsleep, sidebarID: id.uuidString, cause: .automatic)
             }
         }
         if !frozen.isEmpty {

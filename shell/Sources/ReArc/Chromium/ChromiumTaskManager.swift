@@ -19,7 +19,17 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
     }
 
     func sample() async -> TaskManagerSample {
-        let processes = await engineProcesses()
+        await sample(withDetails: runtime.capabilities.taskManager)
+    }
+
+    /// No details: a tab's processes are the same stack (a frame's process is
+    /// a member either way), and the engine counts no network bytes for it.
+    func backgroundSample() async -> TaskManagerSample {
+        await sample(withDetails: false)
+    }
+
+    private func sample(withDetails: Bool) async -> TaskManagerSample {
+        let processes = await engineProcesses(withDetails: withDetails)
         // Before the engine answers (or as it stops) there is still ReArc itself.
         guard !processes.isEmpty else { return TaskManagerSample(processes: [TaskManagerProcessControl.browserProcess()]) }
         favicons = favicons.filter { runtime.engine(forTab: $0.key) != nil }
@@ -28,7 +38,7 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
 
     func icon(for icon: TaskManagerTask.Icon) -> NSImage? {
         switch icon {
-        case .browser, .system, .frame:
+        case .browser, .system, .frame, .notLoadedGroup:
             return nil
         case .sidebarTab(let id):
             return model.sidebarTab(fromTaskManager: id).flatMap { model.store.tab(withID: $0) }.flatMap(model.favicon(for:))
@@ -65,6 +75,38 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         model.showTabFromTaskManager(id)
     }
 
+    var isLive: Bool { runtime.isReady && !runtime.isStopping }
+
+    func canSleepTab(_ tab: TaskManagerTabRef) -> Bool {
+        shellTabID(tab).map(model.canSleepTab) ?? false
+    }
+
+    func sleepTab(_ tab: TaskManagerTabRef) {
+        guard let id = shellTabID(tab) else { return }
+        model.sleepTab(id, cause: .taskManager)
+    }
+
+    func canUnloadTab(_ tab: TaskManagerTabRef) -> Bool {
+        shellTabID(tab).map(model.canUnloadTab) ?? false
+    }
+
+    func unloadTab(_ tab: TaskManagerTabRef) {
+        guard let id = shellTabID(tab) else { return }
+        model.unloadTab(id, cause: .taskManager)
+    }
+
+    /// A tab with a page, of a space: its DevTools open beside it, on the Elements panel.
+    func canOpenDevTools(_ tab: TaskManagerTabRef) -> Bool {
+        guard case .engine = tab else { return false }
+        return model.canOpenDevTools && shellTabID(tab) != nil
+    }
+
+    func openDevTools(_ tab: TaskManagerTabRef) {
+        guard canOpenDevTools(tab), let id = shellTabID(tab) else { return }
+        model.showTabFromTaskManager(id)
+        model.openDevTools(for: id)
+    }
+
     private func shellTabID(_ tab: TaskManagerTabRef) -> Tab.ID? {
         switch tab {
         case .engine(let id): return shellTabID(id)
@@ -78,9 +120,9 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         return engine.shellID
     }
 
-    private func engineProcesses() async -> [ChromiumProcessInfo] {
+    private func engineProcesses(withDetails: Bool? = nil) async -> [ChromiumProcessInfo] {
         guard runtime.isReady, !runtime.isStopping else { return [] }
-        return await ChromiumPerfMetrics.shared.processes(withDetails: runtime.capabilities.taskManager)
+        return await ChromiumPerfMetrics.shared.processes(withDetails: withDetails ?? runtime.capabilities.taskManager)
     }
 
     private static func process(_ info: ChromiumProcessInfo) -> TaskManagerProcess {
@@ -129,10 +171,13 @@ final class ChromiumTaskManagerSource: TaskManagerSource {
         let saved = model.store.tab(withID: engine.shellID)?.displayTitle
         // Chrome's order: the page's title, else its address.
         let title = [engine.pageTitle, saved, url?.absoluteString].compactMap { $0 }.first { !$0.isEmpty } ?? "New Tab"
+        // The page's address for the history's growth rule: without its fragment, which is no new page.
+        var page = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        page?.fragment = nil
         return TaskManagerDirectory.Tab(
             title: title, isPrivate: engine.profileKey.isOffTheRecord,
             extensionID: url?.scheme == "chrome-extension" ? url?.host : nil, sleep: sleep[engine.shellID],
-            sidebarID: engine.shellID.uuidString
+            sidebarID: engine.shellID.uuidString, pageURL: page?.string, isLoading: engine.isLoading
         )
     }
 

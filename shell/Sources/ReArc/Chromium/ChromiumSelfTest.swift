@@ -5956,6 +5956,22 @@ extension ChromiumSelfTest {
                   "the unloaded tab's row: \(unloaded.title) \(unloaded.text(for: .state)) pids \(unloaded.pids)")
         try check(!manager.rows.contains { $0.engineTabID == otherEngine.tabID }, "the unloaded tab is also listed with a process: \(rows())")
         try check(manager.canShowTab(of: unloaded), "Show Tab is off for an unloaded tab")
+        // The history (docs/TASK-MANAGER-INSIGHTS.md §5.1): the unload is an event from the sidebar, and its
+        // effect is measured from the readings once it settles: a figure (≈ while the emptied frame's
+        // renderer lives), or why there is none. Never a guess.
+        let otherKey = TaskManagerStack.historyKey(sidebarID: other.id.uuidString)
+        try check(manager.history[otherKey]?.events.last.map { $0.kind == .unloaded && $0.cause == .sidebar } == true,
+                  "the Task Manager's history has no unload of the tab: \(String(describing: manager.history[otherKey]?.events))")
+        func unloadSettled() -> Bool {
+            guard let effect = manager.history[otherKey]?.events.last?.effect else { return false }
+            if case .measuring = effect { return false }
+            return true
+        }
+        try await wait("the unload's effect measured", timeout: 15, until: unloadSettled)
+        log("task manager: the second tab's unload: \(String(describing: manager.history[otherKey]?.events.last?.effect))")
+        try check(manager.summary.unloaded >= 1, "the tab sleep strip: \(manager.summary.text)")
+        try check(manager.history[TaskManagerStack.historyKey(sidebarID: tab.id.uuidString)]?.recent.isEmpty == false,
+                  "no 10 s cells for the page in the history")
         model.closeTab(other.id)
         try await wait("the closed tab's row gone", timeout: 10) { unloadedRow() == nil }
         manager.filter = .all

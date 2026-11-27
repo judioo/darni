@@ -1088,6 +1088,13 @@ struct AdvancedSettingsPane: View {
                                   icon: icon("paintbrush.fill", .purple),
                                   isOn: Binding(get: { model.boostsEnabledInAllProfiles }, set: { model.boostsEnabledInAllProfiles = $0 }))
             }
+            SettingsGroup {
+                // On by default (owner, 2026-11-27); off stops the minute's reading and clears what it kept.
+                SettingsSwitchRow(label: TaskManagerHistoryPreference.label, detail: TaskManagerHistoryPreference.detail,
+                                  icon: icon("chart.xyaxis.line", .orange),
+                                  isOn: Binding(get: { model.taskManager.keepsBackgroundHistory },
+                                                set: { model.taskManager.setKeepsBackgroundHistory($0) }))
+            }
             if model.canOpenBrowserPage(.settings) {
                 HStack {
                     Button("More Settings…") { model.openBrowserPage(.settings) }
