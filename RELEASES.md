@@ -24,6 +24,27 @@ that adds the entry, so write it as the last commit before the release, with
 Merged since the last release and not yet in a build. The next release's entry takes these
 lines and this section starts empty again.
 
+## Darni 2026.1128.1485 — 2026-11-28
+
+**New**
+- Task Manager insights. Two new columns show each tab's memory and CPU over the last 10
+  minutes. Switch the window to a heat grid of every tab's CPU over time, or a memory map
+  where each tab's size is its memory, split by its processes. Select a tab to open the
+  inspector: its memory by process, its memory over the last 3 hours, its CPU by process,
+  and "Copy figures" for a bug report. Fixed rules point out a page that keeps growing, a
+  hidden tab that stays busy, or a burst of CPU; they are scripted, not AI.
+- See what tab sleep does. The Task Manager marks when a tab fell asleep, woke, was unloaded
+  or loaded again, and why. It shows the memory an unload actually freed (≈ when the tab
+  shared a process), the CPU a sleeping tab no longer uses, and a summary for this session.
+  Sleep and Unload are buttons there too.
+- Sleep Tab in the sidebar's right-click menu, beside Unload Tab. It is greyed out, with the
+  reason, when the tab is on screen or in use.
+- Tabs you haven't opened for a day fold into one "Not loaded" row at the bottom of the Task
+  Manager, so it shows what is running now. Darni now remembers, on this Mac only, when it
+  first opened each tab; a tab never opened here says "Not opened in Darni".
+- The Task Manager keeps its history in memory while its window is closed (one reading a
+  minute). Nothing is saved or sent. Turn it off in Settings › Advanced.
+
 ## Darni 2026.1127.1451 — 2026-11-27
 
 **New**
